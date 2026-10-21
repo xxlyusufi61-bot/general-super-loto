@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "project": "GENERAL Super Loto",
+  "binding_rules": [
+    "Hedef çekiliş eğitim ve keşif sırasında gizli tutulmalı.",
+    "Değerlendirme kronolojik ve veri sızıntısından arındırılmış olmalı.",
+    "Analizden önce arşiv bütünlüğü kontrol edilmeli.",
+    "A->B->C, A->T ve MOD5->T yöntemleri korunmalı.",
+    "Walk-forward değerlendirmesi ve çapraz doğrulama kullanılmalı.",
+    "Veri, deney veya sonuç uydurulmamalı.",
+    "Bağlayıcı proje kuralları kullanıcı onayı olmadan değiştirilmemeli.",
+    "Hipotezler ile doğrulanmış bulgular birbirinden ayrılmalı.",
+    "Piyango sonuçları kesin olarak tahmin edilemez."
+  ],
+  "entries": []
+}
