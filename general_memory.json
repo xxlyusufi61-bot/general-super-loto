@@ -2,15 +2,27 @@
   "schema_version": 1,
   "project": "GENERAL Super Loto",
   "binding_rules": [
-    "Hedef çekiliş eğitim ve keşif sırasında gizli tutulmalı.",
-    "Değerlendirme kronolojik ve veri sızıntısından arındırılmış olmalı.",
-    "Analizden önce arşiv bütünlüğü kontrol edilmeli.",
-    "A->B->C, A->T ve MOD5->T yöntemleri korunmalı.",
-    "Walk-forward değerlendirmesi ve çapraz doğrulama kullanılmalı.",
-    "Veri, deney veya sonuç uydurulmamalı.",
-    "Bağlayıcı proje kuralları kullanıcı onayı olmadan değiştirilmemeli.",
-    "Hipotezler ile doğrulanmış bulgular birbirinden ayrılmalı.",
-    "Piyango sonuçları kesin olarak tahmin edilemez."
+    "Target draw must remain hidden during discovery and training.",
+    "Evaluation must be chronological and leakage-free.",
+    "Archive integrity must be checked before analysis.",
+    "Preserve A->B->C, A->T and MOD5->T research methods.",
+    "Use walk-forward evaluation and cross-validation.",
+    "Never invent data, experiments, or results.",
+    "Never silently change binding project rules.",
+    "Ask the user before changing binding rules.",
+    "Separate hypotheses from experimentally verified findings.",
+    "Lottery outcomes are uncertain; never promise predictions."
   ],
-  "entries": []
+  "entries": [
+    {
+      "id": 1,
+      "timestamp": "2026-10-21T18:35:44.083281+00:00",
+      "category": "agent_report",
+      "title": "Research report",
+      "content": "The user is asking in Turkish: \"Evaluate the current state of the GENERAL system and the next development steps.\"\n\nI'm the \"Research\" agent in the GENERAL project, a Super Loto research project. The binding rules are clear:\n1. Never use a hidden target draw for training or discovery.\n2. Preserve chronological, leakage-free evaluation.\n3. Respect archive integrity and verify data before analysis.\n4. Investigate A->B->C, A->T and MOD5->T methods.\n5. Use walk-forward evaluation and cross-validation.\n6. Never claim a hypothesis is proven without test results.\n7. Never silently change established project rules.\n8. Ask the user before changing binding rules.\n9. Do not invent archive data, test results or findings.\n10. Lottery outcomes are uncertain; do not promise predictions.\n\nThe saved project memory says: \"No matching saved memory entries were found.\" So I have no verified project state data. I must not invent archive data, test results, or findings (rule 9).\n\nSo my response should:\n- Be honest that I don't have saved memory entries or verified data about the current state.\n- Provide a framework/evaluation structure based on what I know from the binding rules (the methods to investiga",
+      "source": "GENERAL/research",
+      "status": "unverified"
+    }
+  ],
+  "updated_at": "2026-10-21T18:35:44.083303+00:00"
 }
