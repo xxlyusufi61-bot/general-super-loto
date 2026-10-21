@@ -1,0 +1,39 @@
+name: GENERAL Agent
+
+on:
+  workflow_dispatch:
+    inputs:
+      agent:
+        description: "Choose an agent"
+        required: true
+        type: choice
+        options:
+          - research
+          - debug
+          - validation
+          - crossover
+      task:
+        description: "Task for the selected agent"
+        required: true
+        type: string
+        default: "GENERAL sisteminin mevcut durumunu ve sonraki geliştirme adımlarını değerlendir."
+
+permissions:
+  contents: read
+
+jobs:
+  run-agent:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Get GENERAL source code
+        uses: actions/checkout@v4
+
+      - name: Run selected GENERAL agent
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          AGENT_ID: ${{ inputs.agent }}
+          TASK_TEXT: ${{ inputs.task }}
+        run: |
+          python3 general_core.py "$AGENT_ID" "$TASK_TEXT"
