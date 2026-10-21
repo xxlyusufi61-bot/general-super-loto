@@ -1,0 +1,138 @@
+name: GENERAL Data Guard Test
+
+on:
+workflow_dispatch:
+push:
+paths:
+- "general_data_guard.py"
+- ".github/workflows/general-data-guard-test.yml"
+
+permissions:
+contents: read
+
+jobs:
+data-guard-test:
+name: Test Data Guard
+runs-on: ubuntu-latest
+
+steps:
+  - name: Checkout repository
+    uses: actions/checkout@v4
+
+  - name: Set up Python
+    uses: actions/setup-python@v5
+    with:
+      python-version: "3.12"
+
+  - name: Run Data Guard tests
+    run: |
+      python3 - <<'PY'
+      import importlib.util
+      from pathlib import Path
+
+      path = Path("general_data_guard.py")
+      if not path.is_file():
+          raise SystemExit("FAIL: general_data_guard.py bulunamadi.")
+
+      spec = importlib.util.spec_from_file_location(
+          "general_data_guard", path
+      )
+      guard = importlib.util.module_from_spec(spec)
+      spec.loader.exec_module(guard)
+
+      def check(condition, message):
+          if not condition:
+              raise AssertionError(message)
+          print("PASS:", message)
+
+      archive = [
+          {"date": "2026-09-17", "numbers": [1, 8, 15, 22, 39, 51]},
+          {"date": "2026-09-20", "numbers": [2, 9, 16, 23, 40, 52]},
+          {"date": "2026-09-22", "numbers": [3, 10, 17, 24, 41, 53]},
+          {"date": "2026-09-24", "numbers": [4, 11, 18, 25, 42, 54]},
+      ]
+
+      summary = guard.validate_archive(archive)
+      check(summary["valid"], "Gecerli arsiv kabul edildi")
+      check(summary["record_count"] == 4, "Arsiv kayit sayisi dogru")
+
+      result = guard.isolate_target(archive, "2026-09-22")
+      check(result["isolation_pass"], "Hedef izolasyonu basarili")
+      check(result["training_record_count"] == 2, "Yalnizca iki hedef-oncesi kayit egitime alindi")
+      check(result["excluded_record_count"] == 2, "Hedef ve sonrasi dislandi")
+      check(
+          all(row["date"] < "2026-09-22" for row in result["train"]),
+          "Egitimde hedef tarihi veya sonrasi bulunmuyor"
+      )
+      check(
+          all("numbers" not in row for row in result["excluded_dates"]),
+          "Dislanan kayitlarda cekilis sayilari bulunmuyor"
+      )
+      check(
+          result["target_present_in_archive"],
+          "Hedef tarihi arsivde mevcut olarak belirlendi"
+      )
+
+      missing_target = guard.isolate_target(
+          archive, "2026-09-23"
+      )
+      check(
+          not missing_target["target_present_in_archive"],
+          "Arsivde bulunmayan hedef tarihi dogru belirlendi"
+      )
+      check(
+          all(row["date"] < "2026-09-23" for row in missing_target["train"]),
+          "Eksik hedef durumunda da sonraki kayitlar egitime sizmiyor"
+      )
+
+      invalid_cases = [
+          (
+              "Tekrarlanan tarih reddediliyor",
+              [
+                  {"date": "2026-09-17", "numbers": [1, 8, 15, 22, 39, 51]},
+                  {"date": "2026-09-17", "numbers": [2, 9, 16, 23, 40, 52]},
+              ],
+          ),
+          (
+              "Kronolojik olmayan arsiv reddediliyor",
+              [
+                  {"date": "2026-09-20", "numbers": [1, 8, 15, 22, 39, 51]},
+                  {"date": "2026-09-17", "numbers": [2, 9, 16, 23, 40, 52]},
+              ],
+          ),
+          (
+              "Yinelenen sayilar reddediliyor",
+              [
+                  {"date": "2026-09-17", "numbers": [1, 1, 15, 22, 39, 51]},
+              ],
+          ),
+          (
+              "Aralik disindaki sayilar reddediliyor",
+              [
+                  {"date": "2026-09-17", "numbers": [1, 8, 15, 22, 39, 61]},
+              ],
+          ),
+          (
+              "Eksik sayili cekilis reddediliyor",
+              [
+                  {"date": "2026-09-17", "numbers": [1, 8, 15, 22, 39]},
+              ],
+          ),
+          (
+              "Gecersiz tarih reddediliyor",
+              [
+                  {"date": "2026-02-30", "numbers": [1, 8, 15, 22, 39, 51]},
+              ],
+          ),
+      ]
+
+      for label, bad_archive in invalid_cases:
+          try:
+              guard.validate_archive(bad_archive)
+          except guard.DataGuardError:
+              check(True, label)
+          else:
+              check(False, label)
+
+      print("RESULT: ALL DATA GUARD TESTS PASSED")
+      PY
