@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+import hashlib
 import urllib.request
 import urllib.error
 from datetime import datetime, timezone
@@ -9,15 +10,17 @@ from pathlib import Path
 
 # ==========================================
 # GENERAL AI CORE
-# Version: 0.2.0
+# Version: 0.3.0
 # ==========================================
 
 MODEL = "z-ai/glm-5.3-flash"
 
 BASE_DIR = Path(__file__).resolve().parent
 MEMORY_FILE = BASE_DIR / "general_memory.json"
-MAX_MEMORY_ENTRIES = 100
-MAX_ENTRY_CHARS = 1200
+
+MAX_MEMORY_ENTRIES = 200
+MAX_CONTEXT_ENTRIES = 8
+MAX_CONTEXT_CHARS = 1800
 
 PROJECT_RULES = """
 You are part of GENERAL, a Super Loto research project.
@@ -34,7 +37,8 @@ BINDING RULES:
 9. Do not invent archive data, test results or findings.
 10. Lottery outcomes are uncertain; do not promise predictions.
 
-The system must distinguish hypotheses from verified findings.
+Distinguish hypotheses, unverified reports and experimentally
+verified findings. A previous agent report is not proof by itself.
 """
 
 BINDING_RULES = [
@@ -90,6 +94,13 @@ def utc_now():
     return datetime.now(timezone.utc).isoformat()
 
 
+def content_hash(content):
+    normalized = " ".join(str(content).split())
+    return hashlib.sha256(
+        normalized.encode("utf-8")
+    ).hexdigest()
+
+
 def empty_memory():
     return {
         "schema_version": 1,
@@ -117,13 +128,14 @@ def load_memory():
         raise RuntimeError("Memory file has an invalid format.")
 
     entries = memory.get("entries")
+
     if not isinstance(entries, list):
         raise RuntimeError("Memory entries must be a list.")
 
-    # Rules in code remain authoritative.
     memory["binding_rules"] = BINDING_RULES
     memory["entries"] = [
-        entry for entry in entries if isinstance(entry, dict)
+        entry for entry in entries
+        if isinstance(entry, dict)
     ]
 
     return memory
@@ -153,67 +165,106 @@ def save_memory(memory):
     os.replace(temporary_file, MEMORY_FILE)
 
 
-def add_memory_entry(category, title, content, source="GENERAL"):
+def add_memory_entry(category, title, content, source="GENERAL",
+                     status="unverified"):
     category = str(category).strip()
     title = str(title).strip()
     content = str(content).strip()
+    source = str(source).strip()
 
     if not category or not title or not content:
-        raise ValueError("Memory category, title and content are required.")
+        raise ValueError(
+            "Memory category, title and content are required."
+        )
 
     memory = load_memory()
     entries = memory["entries"]
+    new_hash = content_hash(content)
 
-    next_id = max(
-        [int(item.get("id", 0)) for item in entries
-         if str(item.get("id", "")).isdigit()] or [0]
-    ) + 1
+    # Avoid saving the same report from the same source repeatedly.
+    for existing in entries:
+        if (
+            existing.get("source") == source
+            and existing.get("content_hash") == new_hash
+        ):
+            print(
+                "GENERAL | Duplicate report detected; "
+                "existing memory entry retained."
+            )
+            return existing
+
+    numeric_ids = [
+        int(entry["id"])
+        for entry in entries
+        if str(entry.get("id", "")).isdigit()
+    ]
+
+    next_id = max(numeric_ids or [0]) + 1
 
     entry = {
         "id": next_id,
         "timestamp": utc_now(),
         "category": category,
         "title": title,
-        "content": content[:MAX_ENTRY_CHARS],
-        "source": str(source),
-        "status": "unverified"
+        "content": content,
+        "content_hash": new_hash,
+        "source": source,
+        "status": status
     }
 
     entries.append(entry)
     memory["entries"] = entries[-MAX_MEMORY_ENTRIES:]
+
     save_memory(memory)
 
     return entry
 
 
-def find_relevant_memory(task, limit=8):
+def find_relevant_memory(task, limit=MAX_CONTEXT_ENTRIES):
     memory = load_memory()
     entries = memory["entries"]
 
     if not entries:
         return []
 
-    # Lightweight keyword matching; this is retrieval, not proof.
-    words = {
-        word.lower().strip(".,:;!?()[]{}\"'")
-        for word in task.split()
-        if len(word.strip(".,:;!?()[]{}\"'")) >= 3
+    ignored = {
+        "the", "and", "for", "that", "this", "with",
+        "from", "have", "will", "your", "about",
+        "bir", "ve", "ile", "için", "gibi", "olan",
+        "olarak", "daha", "görev", "sistem", "genel"
     }
 
+    words = {
+        word.lower().strip(".,:;!?()[]{}\"'`")
+        for word in task.split()
+        if len(word.strip(".,:;!?()[]{}\"'`")) >= 3
+    }
+
+    words -= ignored
     scored = []
 
     for entry in entries:
-        text = " ".join([
+        searchable = " ".join([
             str(entry.get("category", "")),
             str(entry.get("title", "")),
-            str(entry.get("content", ""))
+            str(entry.get("content", "")),
+            str(entry.get("source", ""))
         ]).lower()
 
-        score = sum(1 for word in words if word in text)
-        if score:
+        score = sum(1 for word in words if word in searchable)
+
+        if score > 0:
             scored.append((score, entry))
 
-    scored.sort(key=lambda item: item[0], reverse=True)
+    # Relevant reports from all agents can be retrieved.
+    # Ties prefer more recent entries.
+    scored.sort(
+        key=lambda item: (
+            item[0],
+            str(item[1].get("timestamp", ""))
+        ),
+        reverse=True
+    )
 
     return [
         entry for _, entry in scored[:limit]
@@ -222,21 +273,42 @@ def find_relevant_memory(task, limit=8):
 
 def format_memory(entries):
     if not entries:
-        return "No matching saved memory entries were found."
+        return (
+            "No relevant saved reports were found. "
+            "Do not invent prior project results."
+        )
 
     blocks = []
 
     for entry in entries:
+        content = str(entry.get("content", ""))
+
+        # Limit only the prompt context, never the saved report.
+        if len(content) > MAX_CONTEXT_CHARS:
+            content = (
+                content[:MAX_CONTEXT_CHARS]
+                + "\n[Context excerpt; full report remains in memory.]"
+            )
+
         blocks.append(
-            "[{category}] {title} | status={status}\n{content}".format(
+            "Memory ID: {id}\n"
+            "Agent/source: {source}\n"
+            "Category: {category}\n"
+            "Title: {title}\n"
+            "Status: {status}\n"
+            "Timestamp: {timestamp}\n"
+            "Content:\n{content}".format(
+                id=entry.get("id", "?"),
+                source=entry.get("source", "unknown"),
                 category=entry.get("category", "unknown"),
                 title=entry.get("title", "untitled"),
                 status=entry.get("status", "unverified"),
-                content=str(entry.get("content", ""))[:MAX_ENTRY_CHARS]
+                timestamp=entry.get("timestamp", "unknown"),
+                content=content
             )
         )
 
-    return "\n\n".join(blocks)
+    return "\n\n---\n\n".join(blocks)
 
 
 def ask_nvidia(messages):
@@ -250,7 +322,7 @@ def ask_nvidia(messages):
     payload = {
         "model": MODEL,
         "messages": messages,
-        "max_tokens": 1200,
+        "max_tokens": 1600,
         "temperature": 0.2,
         "stream": False
     }
@@ -269,20 +341,24 @@ def ask_nvidia(messages):
     try:
         with urllib.request.urlopen(request, timeout=240) as response:
             result = json.loads(response.read().decode("utf-8"))
+
     except urllib.error.HTTPError as error:
         raise RuntimeError(
             "NVIDIA API HTTP error: " + str(error.code)
         ) from None
+
     except urllib.error.URLError as error:
         raise RuntimeError(
             "NVIDIA API connection error: " + str(error.reason)
         ) from None
 
     choices = result.get("choices", [])
+
     if not choices:
         raise RuntimeError("NVIDIA API returned no choices.")
 
     message = choices[0].get("message") or {}
+
     answer = (
         message.get("content")
         or message.get("reasoning_content")
@@ -299,10 +375,12 @@ def run_agent(agent_id, task):
     if agent_id not in AGENTS:
         raise ValueError("Unknown agent: " + agent_id)
 
+    if not task.strip():
+        raise ValueError("Task cannot be empty.")
+
     agent = AGENTS[agent_id]
     memory = load_memory()
     relevant_entries = find_relevant_memory(task)
-
     memory_context = format_memory(relevant_entries)
 
     system_prompt = (
@@ -311,11 +389,15 @@ def run_agent(agent_id, task):
         + agent["name"]
         + "\nYour responsibilities:\n"
         + agent["role"]
-        + "\n\nSAVED PROJECT MEMORY (context only; verify claims):\n"
+        + "\n\nRELEVANT SHARED PROJECT MEMORY:\n"
         + memory_context
-        + "\n\nMemory entries are not automatically verified facts. "
-          "Respect their status and do not treat an unverified claim "
-          "as established evidence."
+        + "\n\nMEMORY RULES:\n"
+        + "- Reports from other agents are context, not proof.\n"
+        + "- Treat status=unverified as unverified.\n"
+        + "- Do not claim to have read data that was not provided.\n"
+        + "- Clearly distinguish new hypotheses from tested findings.\n"
+        + "- Do not change binding project rules.\n"
+        + "- If prior reports conflict, explain the conflict.\n"
     )
 
     messages = [
@@ -324,8 +406,9 @@ def run_agent(agent_id, task):
     ]
 
     print("GENERAL | Agent:", agent["name"])
-    print("GENERAL | Memory entries:", len(memory["entries"]))
-    print("GENERAL | Relevant memory entries:", len(relevant_entries))
+    print("GENERAL | Total memory entries:", len(memory["entries"]))
+    print("GENERAL | Relevant entries loaded:", len(relevant_entries))
+    print("GENERAL | Shared context includes reports from any agent.")
     print("GENERAL | Sending task to NVIDIA AI...")
 
     answer = ask_nvidia(messages)
@@ -334,7 +417,6 @@ def run_agent(agent_id, task):
     print(answer)
     print("--- END OF REPORT ---")
 
-    # Saving is opt-in until persistent workflow storage is configured.
     if os.environ.get("GENERAL_SAVE_MEMORY") == "1":
         entry = add_memory_entry(
             category="agent_report",
@@ -342,11 +424,13 @@ def run_agent(agent_id, task):
             content=answer,
             source="GENERAL/" + agent_id
         )
-        print("GENERAL | Report saved locally; entry ID:", entry["id"])
+
+        print("GENERAL | Memory entry ID:", entry["id"])
+        print("GENERAL | Full report content was passed to memory.")
     else:
         print(
-            "GENERAL | Report not saved. "
-            "Persistent saving has not been enabled."
+            "GENERAL | Report not saved: "
+            "GENERAL_SAVE_MEMORY is not enabled."
         )
 
     return answer
@@ -354,19 +438,17 @@ def run_agent(agent_id, task):
 
 def main():
     if len(sys.argv) < 3:
-        print("GENERAL AI Core 0.2.0")
+        print("GENERAL AI Core 0.3.0")
         print('Usage: python general_core.py research "Your task"')
-        print("Available agents:")
+        print("\nAvailable agents:")
+
         for agent_id, agent in AGENTS.items():
             print("-", agent_id, ":", agent["name"])
+
         return
 
     agent_id = sys.argv[1].lower()
     task = " ".join(sys.argv[2:]).strip()
-
-    if not task:
-        print("ERROR: Task cannot be empty.")
-        sys.exit(1)
 
     try:
         run_agent(agent_id, task)
