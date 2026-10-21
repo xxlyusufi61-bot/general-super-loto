@@ -1,0 +1,54 @@
+name: GENERAL NVIDIA API Test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  nvidia-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Test NVIDIA API connection
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import urllib.request
+          import urllib.error
+
+          key = os.environ.get("NVIDIA_API_KEY", "")
+          if not key:
+              raise SystemExit("ERROR: NVIDIA_API_KEY secret is missing")
+
+          request = urllib.request.Request(
+              "https://integrate.api.nvidia.com/v1/models",
+              headers={
+                  "Authorization": "Bearer " + key,
+                  "Accept": "application/json"
+              }
+          )
+
+          try:
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  data = json.loads(response.read().decode())
+                  models = data.get("data", [])
+
+                  print("NVIDIA API connection successful.")
+                  print("Available models returned:", len(models))
+
+                  for model in models[:10]:
+                      print("-", model.get("id", "Unknown model"))
+
+          except urllib.error.HTTPError as error:
+              print("NVIDIA API returned HTTP status:", error.code)
+              print(error.read().decode()[:1000])
+              raise SystemExit(1)
+
+          except Exception as error:
+              print("Connection test failed:", type(error).__name__)
+              raise SystemExit(1)
+          PY
