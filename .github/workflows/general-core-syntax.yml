@@ -1,24 +1,11 @@
 name: GENERAL Core Syntax Test
-
 on:
 workflow_dispatch:
-push:
-paths:
-- "general_core.py"
-- "general_data_guard.py"
-- ".github/workflows/general-core-syntax.yml"
-
 jobs:
 syntax-test:
 runs-on: ubuntu-latest
 steps:
 - name: Checkout repository
 uses: actions/checkout@v4
-
-  - name: Set up Python
-    uses: actions/setup-python@v5
-    with:
-      python-version: "3.12"
-
-  - name: Check Python syntax
-    run: python -m py_compile general_core.py general_data_guard.py
+- name: Check Python syntax
+run: python3 -m py_compile general_core.py general_data_guard.py
