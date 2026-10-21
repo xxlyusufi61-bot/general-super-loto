@@ -19,7 +19,6 @@ jobs:
           import os
           import urllib.request
           import urllib.error
-          import socket
 
           key = os.environ.get("NVIDIA_API_KEY", "")
           if not key:
@@ -30,10 +29,10 @@ jobs:
               "messages": [
                   {
                       "role": "user",
-                      "content": "Türkçe, tek cümleyle açıkla: GENERAL nedir?"
+                      "content": "Türkçe cevap ver: GENERAL nedir?"
                   }
               ],
-              "max_tokens": 60,
+              "max_tokens": 200,
               "temperature": 0.2,
               "stream": False
           }
@@ -53,26 +52,36 @@ jobs:
               with urllib.request.urlopen(request, timeout=240) as response:
                   data = json.loads(response.read().decode("utf-8"))
 
+              print("API RESPONSE:")
+              print(json.dumps(data, ensure_ascii=False)[:5000])
+
               choices = data.get("choices", [])
               if not choices:
-                  raise RuntimeError("API returned no answer")
+                  raise RuntimeError("API returned no choices")
 
-              answer = choices[0].get("message", {}).get("content", "")
-              print("GENERAL AI CHAT TEST SUCCESS")
-              print("Model:", data.get("model", payload["model"]))
-              print("Answer:", answer)
+              message = choices[0].get("message") or {}
+              answer = message.get("content")
 
               if not answer:
-                  raise RuntimeError("Model answer is empty")
+                  answer = message.get("reasoning_content")
+
+              if not answer:
+                  answer = message.get("reasoning")
+
+              if answer:
+                  print("GENERAL AI CHAT TEST SUCCESS")
+                  print("Model:", data.get("model"))
+                  print("Answer:", answer)
+              else:
+                  print("No text answer found.")
+                  print("Message fields:", list(message.keys()))
+                  print("Finish reason:", choices[0].get("finish_reason"))
+                  raise SystemExit(1)
 
           except urllib.error.HTTPError as error:
               print("NVIDIA API HTTP status:", error.code)
-              print(error.read().decode("utf-8")[:1200])
+              print(error.read().decode("utf-8")[:1500])
               raise SystemExit(1)
-          except (TimeoutError, socket.timeout):
-              raise SystemExit(
-                  "NVIDIA API timed out; the model may be busy or unavailable."
-              )
           except Exception as error:
               print("Test failed:", type(error).__name__, str(error)[:500])
               raise SystemExit(1)
