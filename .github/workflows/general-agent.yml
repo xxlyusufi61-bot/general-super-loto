@@ -1,65 +1,87 @@
 name: GENERAL Agent
 
-on:
-  workflow_dispatch:
-    inputs:
-      agent:
-        description: "Choose an agent"
-        required: true
-        type: choice
-        options:
-          - research
-          - debug
-          - validation
-          - crossover
-      task:
-        description: "Task for the selected agent"
-        required: true
-        type: string
-        default: "GENERAL sisteminin mevcut durumunu ve sonraki geliştirme adımlarını değerlendir."
+'on':
+workflow_dispatch:
+inputs:
+agent:
+description: "Choose an agent"
+required: true
+type: choice
+options:
+- research
+- debug
+- validation
+- crossover
+- archive
+task:
+description: "Task for the selected agent"
+required: true
+type: string
+default: "GENERAL sisteminin mevcut durumunu ve sonraki geliştirme adımlarını değerlendir."
 
 permissions:
-  contents: write
+contents: write
 
 concurrency:
-  group: general-agent-memory
-  cancel-in-progress: false
+group: general-agent-memory
+cancel-in-progress: false
 
 jobs:
-  run-agent:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+run-agent:
+runs-on: ubuntu-latest
+timeout-minutes: 15
 
-    steps:
-      - name: Get GENERAL source code
-        uses: actions/checkout@v4
+steps:
+  - name: Get GENERAL source code
+    uses: actions/checkout@v4
 
-      - name: Set up Python
-        run: python3 --version
+  - name: Set up Python
+    uses: actions/setup-python@v5
+    with:
+      python-version: "3.12"
 
-      - name: Initialize memory if missing
-        run: |
-          if [ ! -f general_memory.json ]; then
-            python3 general_memory.py init
-          fi
+  - name: Initialize memory if missing
+    if: ${{ inputs.agent != 'archive' }}
+    run: |
+      if [ ! -f general_memory.json ]; then
+        python3 general_memory.py init
+      fi
 
-      - name: Run selected GENERAL agent
-        env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-          AGENT_ID: ${{ inputs.agent }}
-          TASK_TEXT: ${{ inputs.task }}
-          GENERAL_SAVE_MEMORY: "1"
-        run: |
-          python3 general_core.py "$AGENT_ID" "$TASK_TEXT"
+  - name: Download Super Loto archive
+    if: ${{ inputs.agent == 'archive' }}
+    run: python3 general_archive_fetch.py
 
-      - name: Save updated memory to repository
-        run: |
-          if ! git diff --quiet -- general_memory.json; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add general_memory.json
-            git commit -m "Update GENERAL project memory"
-            git push
-          else
-            echo "No memory changes to commit."
-          fi
+  - name: Validate downloaded archive with Data Guard
+    if: ${{ inputs.agent == 'archive' }}
+    run: |
+      python3 -c 'import json; from pathlib import Path; import general_data_guard as g; p=Path("super_loto_archive.json"); assert p.is_file(), "Archive file missing"; data=json.loads(p.read_text(encoding="utf-8")); assert isinstance(data, dict), "Invalid archive container"; rows=data.get("draws"); assert isinstance(rows, list), "Archive must contain a draws list"; result=g.validate_archive(rows); assert result.get("valid") is True, "Data Guard validation failed"; print("DATA GUARD: PASS"); print("Records:", result["record_count"]); print("Unique dates:", result["unique_dates"]); print("First date:", result["first_date"]); print("Last date:", result["last_date"]); print("Draw numbers exposed in summary: NO")'
+
+  - name: Run selected GENERAL agent
+    if: ${{ inputs.agent != 'archive' }}
+    env:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      AGENT_ID: ${{ inputs.agent }}
+      TASK_TEXT: ${{ inputs.task }}
+      GENERAL_SAVE_MEMORY: "1"
+    run: |
+      python3 general_core.py "$AGENT_ID" "$TASK_TEXT"
+
+  - name: Save validated archive or updated memory
+    if: ${{ success() }}
+    run: |
+      if [ "${{ inputs.agent }}" = "archive" ]; then
+        git add super_loto_archive.json
+      else
+        if [ -f general_memory.json ]; then
+          git add general_memory.json
+        fi
+      fi
+
+      if ! git diff --cached --quiet; then
+        git config user.name "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git commit -m "Update validated GENERAL data"
+        git push
+      else
+        echo "No changes to save."
+      fi
