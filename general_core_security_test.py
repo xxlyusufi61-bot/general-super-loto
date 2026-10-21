@@ -27,12 +27,11 @@ def main():
 
     core.ask_nvidia = fake_nvidia
 
-    # Test sırasında raporları kalıcı hafızaya kaydetme.
+    # Test raporunun kalıcı hafızaya yazılmasını engelle.
     old_save = os.environ.get("GENERAL_SAVE_MEMORY")
     os.environ.pop("GENERAL_SAVE_MEMORY", None)
 
     try:
-        # Hedef tarihli, kontrollü bir doğrulama görevi çalıştır.
         core.run_agent(
             "validation",
             "target_date=" + TARGET_DATE
@@ -46,6 +45,7 @@ def main():
         fail("Mock model was not called.")
 
     messages = captured["messages"]
+
     if not messages or messages[0].get("role") != "system":
         fail("System message is missing.")
 
@@ -55,6 +55,7 @@ def main():
         fail("Validated target-aware data was not supplied.")
 
     marker = system.rfind('{"guard":')
+
     if marker < 0:
         fail("Structured guarded data was not found.")
 
@@ -73,24 +74,55 @@ def main():
         fail("Target date was not confirmed in the archive.")
 
     training = data.get("training_data")
+
     if not isinstance(training, list) or not training:
         fail("Training data is missing or empty.")
 
     for row in training:
+        if not isinstance(row, dict):
+            fail("Invalid training record.")
+
         day = row.get("date")
+
         if not isinstance(day, str) or day >= TARGET_DATE:
             fail("Target or future date found in training data.")
 
-    if "Target numbers exposed: NO" not in system:
-        fail("Target-number exposure status is missing.")
+        numbers = row.get("numbers")
 
-    # Başarı mesajı dışında çekiliş numaralarını yazdırma.
+        if (
+            not isinstance(numbers, (list, tuple))
+            or len(numbers) != 6
+            or len(set(numbers)) != 6
+            or any(
+                not isinstance(n, int) or isinstance(n, bool)
+                or not 1 <= n <= 60
+                for n in numbers
+            )
+        ):
+            fail("Invalid numbers in a training record.")
+
+    allowed_keys = {
+        "guard",
+        "target_date",
+        "archive_count",
+        "training_count",
+        "target_present",
+        "training_data",
+    }
+
+    if set(data.keys()) != allowed_keys:
+        fail("Unexpected fields in guarded data.")
+
+    if data.get("training_count") != len(training):
+        fail("Training record count mismatch.")
+
     print("SECURITY TEST: PASS")
     print("Mock NVIDIA API used: YES")
     print("Real NVIDIA API called: NO")
-    print("Target isolation in model input: PASS")
+    print("Data Guard status: PASS")
+    print("Training records:", len(training))
     print("Target/future dates in training: NONE")
-    print("Target numbers printed: NO")
+    print("Target numbers printed by test: NO")
 
 
 if __name__ == "__main__":
