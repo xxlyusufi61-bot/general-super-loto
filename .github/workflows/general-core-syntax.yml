@@ -1,11 +1,9 @@
 name: GENERAL Core Syntax Test
-on:
+'on':
 workflow_dispatch:
 jobs:
 syntax-test:
 runs-on: ubuntu-latest
 steps:
-- name: Checkout repository
-uses: actions/checkout@v4
-- name: Check Python syntax
-run: python3 -m py_compile general_core.py general_data_guard.py
+- uses: actions/checkout@v4
+- run: python3 -m py_compile general_core.py general_data_guard.py
