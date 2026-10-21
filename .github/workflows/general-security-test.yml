@@ -1,0 +1,32 @@
+name: GENERAL Security Test
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  security-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Get GENERAL source code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check required files
+        run: |
+          test -f general_core.py
+          test -f general_data_guard.py
+          test -f general_core_security_test.py
+          test -f super_loto_archive.json
+          echo "Required files: PASS"
+
+      - name: Run security test without real NVIDIA API calls
+        run: python3 general_core_security_test.py
