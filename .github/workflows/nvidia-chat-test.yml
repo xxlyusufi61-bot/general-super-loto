@@ -19,29 +19,21 @@ jobs:
           import os
           import urllib.request
           import urllib.error
+          import socket
 
           key = os.environ.get("NVIDIA_API_KEY", "")
           if not key:
-              raise SystemExit(
-                  "ERROR: NVIDIA_API_KEY secret is missing"
-              )
+              raise SystemExit("NVIDIA_API_KEY secret is missing")
 
           payload = {
               "model": "z-ai/glm-5.3-flash",
               "messages": [
                   {
-                      "role": "system",
-                      "content": "You are GENERAL, a concise AI assistant."
-                  },
-                  {
                       "role": "user",
-                      "content": (
-                          "Türkçe cevap ver: "
-                          "GENERAL nedir? Tek kısa cümle yaz."
-                      )
+                      "content": "Türkçe, tek cümleyle açıkla: GENERAL nedir?"
                   }
               ],
-              "max_tokens": 120,
+              "max_tokens": 60,
               "temperature": 0.2,
               "stream": False
           }
@@ -58,37 +50,30 @@ jobs:
           )
 
           try:
-              with urllib.request.urlopen(
-                  request, timeout=90
-              ) as response:
-                  data = json.loads(
-                      response.read().decode("utf-8")
-                  )
+              with urllib.request.urlopen(request, timeout=240) as response:
+                  data = json.loads(response.read().decode("utf-8"))
 
               choices = data.get("choices", [])
               if not choices:
-                  raise RuntimeError(
-                      "API response contains no choices"
-                  )
+                  raise RuntimeError("API returned no answer")
 
-              answer = (
-                  choices[0].get("message", {}).get("content", "")
-              )
-
-              if not answer:
-                  raise RuntimeError("Model returned an empty answer")
-
+              answer = choices[0].get("message", {}).get("content", "")
               print("GENERAL AI CHAT TEST SUCCESS")
               print("Model:", data.get("model", payload["model"]))
-              print("Model answer:")
-              print(answer)
+              print("Answer:", answer)
+
+              if not answer:
+                  raise RuntimeError("Model answer is empty")
 
           except urllib.error.HTTPError as error:
               print("NVIDIA API HTTP status:", error.code)
-              print(error.read().decode("utf-8")[:1500])
+              print(error.read().decode("utf-8")[:1200])
               raise SystemExit(1)
-
+          except (TimeoutError, socket.timeout):
+              raise SystemExit(
+                  "NVIDIA API timed out; the model may be busy or unavailable."
+              )
           except Exception as error:
-              print("Test failed:", type(error).__name__, str(error))
+              print("Test failed:", type(error).__name__, str(error)[:500])
               raise SystemExit(1)
-          PY 
+          PY
