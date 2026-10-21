@@ -1,459 +1,306 @@
-import json
 import os
 import sys
+import json
 import hashlib
 import urllib.request
 import urllib.error
-from datetime import datetime, timezone
 from pathlib import Path
+from datetime import datetime, date, timezone
 
-
-# ==========================================
-# GENERAL AI CORE
-# Version: 0.3.0
-# ==========================================
-
+VERSION = "0.4.0"
 MODEL = "z-ai/glm-5.3-flash"
+BASE = Path(__file__).resolve().parent
+MEMORY = BASE / "general_memory.json"
+ARCHIVE = BASE / os.environ.get(
+    "GENERAL_ARCHIVE_FILE", "super_loto_archive.json"
+)
 
-BASE_DIR = Path(__file__).resolve().parent
-MEMORY_FILE = BASE_DIR / "general_memory.json"
-
-MAX_MEMORY_ENTRIES = 200
-MAX_CONTEXT_ENTRIES = 8
-MAX_CONTEXT_CHARS = 1800
-
-PROJECT_RULES = """
-You are part of GENERAL, a Super Loto research project.
-
-BINDING RULES:
-1. Never use a hidden target draw for training or discovery.
-2. Preserve chronological, leakage-free evaluation.
-3. Respect archive integrity and verify data before analysis.
-4. Investigate A->B->C, A->T and MOD5->T methods.
-5. Use walk-forward evaluation and cross-validation.
-6. Never claim a hypothesis is proven without test results.
-7. Never silently change established project rules.
-8. Ask the user before changing binding rules.
-9. Do not invent archive data, test results or findings.
-10. Lottery outcomes are uncertain; do not promise predictions.
-
-Distinguish hypotheses, unverified reports and experimentally
-verified findings. A previous agent report is not proof by itself.
-"""
-
-BINDING_RULES = [
-    "Target draw must remain hidden during discovery and training.",
+RULES = [
+    "Target draw must remain hidden during training and discovery.",
     "Evaluation must be chronological and leakage-free.",
-    "Archive integrity must be checked before analysis.",
-    "Preserve A->B->C, A->T and MOD5->T research methods.",
+    "Validate archive integrity before analysis.",
+    "Preserve A->B->C, A->T and MOD5->T research.",
     "Use walk-forward evaluation and cross-validation.",
-    "Never invent data, experiments, or results.",
-    "Never silently change binding project rules.",
-    "Ask the user before changing binding rules.",
-    "Separate hypotheses from experimentally verified findings.",
+    "Never invent data, tests or results.",
+    "Ask before changing binding rules.",
     "Lottery outcomes are uncertain; never promise predictions."
 ]
 
 AGENTS = {
-    "research": {
-        "name": "Research",
-        "role": """
-Investigate mathematical hypotheses and possible patterns.
-Explore A->B->C, A->T, MOD5->T and alternative transformations.
-Propose experiments without claiming unverified discoveries.
-"""
-    },
-    "debug": {
-        "name": "Debug",
-        "role": """
-Investigate code errors, logic errors and inconsistent results.
-Explain likely causes and propose reproducible fixes.
-Never claim code was executed unless execution evidence exists.
-"""
-    },
-    "validation": {
-        "name": "Validation",
-        "role": """
-Check archive integrity, chronology, target isolation and leakage.
-Review walk-forward testing, cross-validation and baselines.
-Identify missing evidence and invalid evaluation methods.
-"""
-    },
-    "crossover": {
-        "name": "Crossover",
-        "role": """
-Investigate combining independently evaluated methods.
-Compare method stability and test combinations chronologically.
-Reject unsupported improvements and avoid overfitting.
-"""
-    }
+    "research": "Investigate hypotheses and A->B->C, A->T, MOD5->T.",
+    "debug": "Investigate code errors and propose reproducible fixes.",
+    "validation": "Check archive, chronology, leakage and evaluation.",
+    "crossover": "Compare methods and test combinations without overfitting."
 }
 
 
-def utc_now():
+def now():
     return datetime.now(timezone.utc).isoformat()
 
 
-def content_hash(content):
-    normalized = " ".join(str(content).split())
-    return hashlib.sha256(
-        normalized.encode("utf-8")
-    ).hexdigest()
-
-
-def empty_memory():
-    return {
-        "schema_version": 1,
-        "project": "GENERAL Super Loto",
-        "created_at": utc_now(),
-        "updated_at": utc_now(),
-        "binding_rules": BINDING_RULES,
-        "entries": []
-    }
-
-
 def load_memory():
-    if not MEMORY_FILE.exists():
-        return empty_memory()
+    if not MEMORY.exists():
+        return {"schema_version": 1, "project": "GENERAL Super Loto",
+                "binding_rules": RULES, "entries": []}
+    with MEMORY.open(encoding="utf-8") as f:
+        m = json.load(f)
+    if not isinstance(m, dict) or not isinstance(m.get("entries"), list):
+        raise RuntimeError("Invalid memory file.")
+    m["binding_rules"] = RULES
+    return m
+
+
+def save_memory(m):
+    m["binding_rules"] = RULES
+    m["updated_at"] = now()
+    temp = MEMORY.with_suffix(".tmp")
+    with temp.open("w", encoding="utf-8") as f:
+        json.dump(m, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+    os.replace(temp, MEMORY)
+
+
+def add_memory(agent, content):
+    m = load_memory()
+    digest = hashlib.sha256(content.encode()).hexdigest()
+    for e in m["entries"]:
+        if e.get("content_hash") == digest and e.get("source") == agent:
+            print("Existing report already saved.")
+            return
+    ids = [e.get("id", 0) for e in m["entries"]
+           if isinstance(e.get("id"), int)]
+    m["entries"].append({
+        "id": max(ids or [0]) + 1,
+        "timestamp": now(),
+        "category": "agent_report",
+        "title": agent + " report",
+        "content": content,
+        "content_hash": digest,
+        "source": "GENERAL/" + agent,
+        "status": "unverified"
+    })
+    m["entries"] = m["entries"][-200:]
+    save_memory(m)
+
+
+def target_date_from(task):
+    import re
+    matches = re.findall(
+        r"(?i)(?:target_date|hedef_tarihi)\s*[:=]\s*(\d{4}-\d{2}-\d{2})",
+        task
+    )
+    env_target = os.environ.get("GENERAL_TARGET_DATE", "").strip()
+    if len(set(matches)) > 1:
+        raise RuntimeError("Conflicting target dates.")
+    task_target = matches[0] if matches else ""
+    if env_target and task_target and env_target != task_target:
+        raise RuntimeError("Conflicting target dates.")
+    target = env_target or task_target
+    if target:
+        try:
+            if date.fromisoformat(target).isoformat() != target:
+                raise ValueError()
+        except ValueError:
+            raise RuntimeError("Target date must be YYYY-MM-DD.") from None
+    task = re.sub(
+        r"(?i)(?:target_date|hedef_tarihi)\s*[:=]\s*\d{4}-\d{2}-\d{2}",
+        " ", task
+    )
+    return target or None, " ".join(task.split())
+
+
+def prepare_data(target):
+    try:
+        import general_data_guard as guard
+    except ImportError:
+        raise RuntimeError("Data Guard module missing.") from None
+
+    if not ARCHIVE.is_file():
+        raise RuntimeError("Archive missing; analysis stopped.")
 
     try:
-        with MEMORY_FILE.open("r", encoding="utf-8") as file:
-            memory = json.load(file)
-    except (json.JSONDecodeError, OSError) as error:
-        raise RuntimeError(
-            "Memory file could not be read: " + str(error)
-        ) from None
+        with ARCHIVE.open(encoding="utf-8") as f:
+            payload = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        raise RuntimeError("Archive could not be read; analysis stopped.") from None
 
-    if not isinstance(memory, dict):
-        raise RuntimeError("Memory file has an invalid format.")
+    if isinstance(payload, dict):
+        if "draws" in payload and "records" in payload:
+            raise RuntimeError("Ambiguous archive format.")
+        rows = payload.get("draws", payload.get("records"))
+    else:
+        rows = payload
 
-    entries = memory.get("entries")
+    if not isinstance(rows, list):
+        raise RuntimeError("Archive must contain a list of records.")
 
-    if not isinstance(entries, list):
-        raise RuntimeError("Memory entries must be a list.")
+    try:
+        checked = guard.validate_archive(rows)
+        split = guard.isolate_target(rows, target)
+    except Exception as e:
+        raise RuntimeError("Data Guard rejected archive: " + str(e)) from None
 
-    memory["binding_rules"] = BINDING_RULES
-    memory["entries"] = [
-        entry for entry in entries
-        if isinstance(entry, dict)
-    ]
+    if not checked.get("valid") or not split.get("isolation_pass"):
+        raise RuntimeError("Data Guard did not pass.")
 
-    return memory
+    training = split.get("train", [])
+    if not training:
+        raise RuntimeError("No pre-target training records.")
 
+    for row in training:
+        if date.fromisoformat(row["date"]) >= date.fromisoformat(target):
+            raise RuntimeError("SECURITY: target leakage detected.")
 
-def save_memory(memory):
-    if not isinstance(memory, dict):
-        raise ValueError("Memory must be a dictionary.")
-
-    if not isinstance(memory.get("entries"), list):
-        raise ValueError("Memory entries must be a list.")
-
-    memory["binding_rules"] = BINDING_RULES
-    memory["updated_at"] = utc_now()
-
-    temporary_file = MEMORY_FILE.with_suffix(".tmp")
-
-    with temporary_file.open("w", encoding="utf-8") as file:
-        json.dump(
-            memory,
-            file,
-            ensure_ascii=False,
-            indent=2
-        )
-        file.write("\n")
-
-    os.replace(temporary_file, MEMORY_FILE)
-
-
-def add_memory_entry(category, title, content, source="GENERAL",
-                     status="unverified"):
-    category = str(category).strip()
-    title = str(title).strip()
-    content = str(content).strip()
-    source = str(source).strip()
-
-    if not category or not title or not content:
-        raise ValueError(
-            "Memory category, title and content are required."
-        )
-
-    memory = load_memory()
-    entries = memory["entries"]
-    new_hash = content_hash(content)
-
-    # Avoid saving the same report from the same source repeatedly.
-    for existing in entries:
-        if (
-            existing.get("source") == source
-            and existing.get("content_hash") == new_hash
-        ):
-            print(
-                "GENERAL | Duplicate report detected; "
-                "existing memory entry retained."
-            )
-            return existing
-
-    numeric_ids = [
-        int(entry["id"])
-        for entry in entries
-        if str(entry.get("id", "")).isdigit()
-    ]
-
-    next_id = max(numeric_ids or [0]) + 1
-
-    entry = {
-        "id": next_id,
-        "timestamp": utc_now(),
-        "category": category,
-        "title": title,
-        "content": content,
-        "content_hash": new_hash,
-        "source": source,
-        "status": status
+    # Only pre-target records are passed to the model.
+    return {
+        "guard": "PASS",
+        "target_date": target,
+        "archive_count": checked["record_count"],
+        "training_count": len(training),
+        "target_present": split["target_present_in_archive"],
+        "training_data": training
     }
-
-    entries.append(entry)
-    memory["entries"] = entries[-MAX_MEMORY_ENTRIES:]
-
-    save_memory(memory)
-
-    return entry
-
-
-def find_relevant_memory(task, limit=MAX_CONTEXT_ENTRIES):
-    memory = load_memory()
-    entries = memory["entries"]
-
-    if not entries:
-        return []
-
-    ignored = {
-        "the", "and", "for", "that", "this", "with",
-        "from", "have", "will", "your", "about",
-        "bir", "ve", "ile", "için", "gibi", "olan",
-        "olarak", "daha", "görev", "sistem", "genel"
-    }
-
-    words = {
-        word.lower().strip(".,:;!?()[]{}\"'`")
-        for word in task.split()
-        if len(word.strip(".,:;!?()[]{}\"'`")) >= 3
-    }
-
-    words -= ignored
-    scored = []
-
-    for entry in entries:
-        searchable = " ".join([
-            str(entry.get("category", "")),
-            str(entry.get("title", "")),
-            str(entry.get("content", "")),
-            str(entry.get("source", ""))
-        ]).lower()
-
-        score = sum(1 for word in words if word in searchable)
-
-        if score > 0:
-            scored.append((score, entry))
-
-    # Relevant reports from all agents can be retrieved.
-    # Ties prefer more recent entries.
-    scored.sort(
-        key=lambda item: (
-            item[0],
-            str(item[1].get("timestamp", ""))
-        ),
-        reverse=True
-    )
-
-    return [
-        entry for _, entry in scored[:limit]
-    ]
-
-
-def format_memory(entries):
-    if not entries:
-        return (
-            "No relevant saved reports were found. "
-            "Do not invent prior project results."
-        )
-
-    blocks = []
-
-    for entry in entries:
-        content = str(entry.get("content", ""))
-
-        # Limit only the prompt context, never the saved report.
-        if len(content) > MAX_CONTEXT_CHARS:
-            content = (
-                content[:MAX_CONTEXT_CHARS]
-                + "\n[Context excerpt; full report remains in memory.]"
-            )
-
-        blocks.append(
-            "Memory ID: {id}\n"
-            "Agent/source: {source}\n"
-            "Category: {category}\n"
-            "Title: {title}\n"
-            "Status: {status}\n"
-            "Timestamp: {timestamp}\n"
-            "Content:\n{content}".format(
-                id=entry.get("id", "?"),
-                source=entry.get("source", "unknown"),
-                category=entry.get("category", "unknown"),
-                title=entry.get("title", "untitled"),
-                status=entry.get("status", "unverified"),
-                timestamp=entry.get("timestamp", "unknown"),
-                content=content
-            )
-        )
-
-    return "\n\n---\n\n".join(blocks)
 
 
 def ask_nvidia(messages):
-    api_key = os.environ.get("NVIDIA_API_KEY")
+    key = os.environ.get("NVIDIA_API_KEY")
+    if not key:
+        raise RuntimeError("NVIDIA_API_KEY missing.")
 
-    if not api_key:
-        raise RuntimeError(
-            "NVIDIA_API_KEY environment variable is missing."
-        )
+    body = json.dumps({
+        "model": MODEL, "messages": messages,
+        "max_tokens": 1600, "temperature": 0.2
+    }).encode()
 
-    payload = {
-        "model": MODEL,
-        "messages": messages,
-        "max_tokens": 1600,
-        "temperature": 0.2,
-        "stream": False
-    }
-
-    request = urllib.request.Request(
+    req = urllib.request.Request(
         "https://integrate.api.nvidia.com/v1/chat/completions",
-        data=json.dumps(payload).encode("utf-8"),
+        data=body,
         headers={
-            "Authorization": "Bearer " + api_key,
-            "Content-Type": "application/json",
-            "Accept": "application/json"
+            "Authorization": "Bearer " + key,
+            "Content-Type": "application/json"
         },
         method="POST"
     )
-
     try:
-        with urllib.request.urlopen(request, timeout=240) as response:
-            result = json.loads(response.read().decode("utf-8"))
-
-    except urllib.error.HTTPError as error:
-        raise RuntimeError(
-            "NVIDIA API HTTP error: " + str(error.code)
-        ) from None
-
-    except urllib.error.URLError as error:
-        raise RuntimeError(
-            "NVIDIA API connection error: " + str(error.reason)
-        ) from None
+        with urllib.request.urlopen(req, timeout=240) as r:
+            result = json.loads(r.read().decode())
+    except urllib.error.HTTPError as e:
+        raise RuntimeError("NVIDIA HTTP error: " + str(e.code)) from None
+    except urllib.error.URLError as e:
+        raise RuntimeError("NVIDIA connection error.") from None
 
     choices = result.get("choices", [])
-
     if not choices:
-        raise RuntimeError("NVIDIA API returned no choices.")
-
+        raise RuntimeError("NVIDIA returned no choices.")
     message = choices[0].get("message") or {}
-
-    answer = (
-        message.get("content")
-        or message.get("reasoning_content")
-        or message.get("reasoning")
-    )
-
+    answer = message.get("content") or message.get("reasoning_content")
     if not isinstance(answer, str) or not answer.strip():
-        raise RuntimeError("The model returned no readable text.")
-
+        raise RuntimeError("Empty model response.")
     return answer.strip()
 
 
-def run_agent(agent_id, task):
-    if agent_id not in AGENTS:
-        raise ValueError("Unknown agent: " + agent_id)
+def run_agent(agent, task):
+    if agent not in AGENTS:
+        raise RuntimeError("Unknown agent: " + agent)
 
-    if not task.strip():
-        raise ValueError("Task cannot be empty.")
+    target, task = target_date_from(task)
+    if not task:
+        raise RuntimeError("Task is empty.")
 
-    agent = AGENTS[agent_id]
+    # Fail closed: validate and isolate before any AI request.
+    data = prepare_data(target) if target else None
+
     memory = load_memory()
-    relevant_entries = find_relevant_memory(task)
-    memory_context = format_memory(relevant_entries)
+    entries = memory["entries"]
 
-    system_prompt = (
-        PROJECT_RULES
-        + "\n\nYour agent name: "
-        + agent["name"]
-        + "\nYour responsibilities:\n"
-        + agent["role"]
-        + "\n\nRELEVANT SHARED PROJECT MEMORY:\n"
-        + memory_context
-        + "\n\nMEMORY RULES:\n"
-        + "- Reports from other agents are context, not proof.\n"
-        + "- Treat status=unverified as unverified.\n"
-        + "- Do not claim to have read data that was not provided.\n"
-        + "- Clearly distinguish new hypotheses from tested findings.\n"
-        + "- Do not change binding project rules.\n"
-        + "- If prior reports conflict, explain the conflict.\n"
+    # For target-aware runs, exclude reports from the target day
+    # and all later dates. Unknown timestamps are excluded too.
+    if target:
+        td = date.fromisoformat(target)
+        eligible = []
+        for e in entries:
+            try:
+                stamp = datetime.fromisoformat(
+                    str(e["timestamp"]).replace("Z", "+00:00")
+                )
+                if stamp.tzinfo is None:
+                    stamp = stamp.replace(tzinfo=timezone.utc)
+                if stamp.astimezone(timezone.utc).date() < td:
+                    eligible.append(e)
+            except (KeyError, ValueError, TypeError):
+                continue
+        entries = eligible
+
+    words = set(task.lower().split())
+    ranked = []
+    for e in entries:
+        text = " ".join(str(e.get(k, "")) for k in
+                        ("title", "category", "content", "source")).lower()
+        score = sum(1 for w in words if len(w) >= 3 and w in text)
+        if score:
+            ranked.append((score, e))
+    ranked.sort(key=lambda x: (x[0], str(x[1].get("timestamp", ""))),
+                reverse=True)
+
+    context = []
+    for _, e in ranked[:8]:
+        context.append({
+            "id": e.get("id"),
+            "source": e.get("source"),
+            "status": e.get("status"),
+            "title": e.get("title"),
+            "content": str(e.get("content", ""))[:1800]
+        })
+
+    system = (
+        "You are GENERAL Super Loto agent: " + agent + ".\n"
+        "Role: " + AGENTS[agent] + "\n"
+        "Binding rules:\n- " + "\n- ".join(RULES) + "\n"
+        "Memory reports are not proof. Distinguish hypotheses "
+        "from verified results. Never invent data or tests.\n"
+        "Memory context:\n" + json.dumps(context, ensure_ascii=False)
     )
 
-    messages = [
-        {"role": "system", "content": system_prompt},
+    if data:
+        system += (
+            "\nDATA GUARD PASS. Only pre-target training records follow. "
+            "Never claim to have inspected excluded draw numbers.\n"
+            + json.dumps(data, ensure_ascii=False)
+        )
+        print("Data Guard: PASS")
+        print("Training records:", data["training_count"])
+        print("Target numbers exposed: NO")
+    else:
+        system += (
+            "\nNO TARGET-AWARE DATA SESSION. No archive was loaded "
+            "or validated. Do not claim archive analysis was performed."
+        )
+        print("Data Guard: not run; no target date supplied.")
+
+    print("GENERAL Core", VERSION, "| Agent:", agent)
+    answer = ask_nvidia([
+        {"role": "system", "content": system},
         {"role": "user", "content": task}
-    ]
-
-    print("GENERAL | Agent:", agent["name"])
-    print("GENERAL | Total memory entries:", len(memory["entries"]))
-    print("GENERAL | Relevant entries loaded:", len(relevant_entries))
-    print("GENERAL | Shared context includes reports from any agent.")
-    print("GENERAL | Sending task to NVIDIA AI...")
-
-    answer = ask_nvidia(messages)
-
-    print("\n--- AGENT REPORT ---")
-    print(answer)
-    print("--- END OF REPORT ---")
+    ])
+    print("\n--- AGENT REPORT ---\n" + answer + "\n--- END ---")
 
     if os.environ.get("GENERAL_SAVE_MEMORY") == "1":
-        entry = add_memory_entry(
-            category="agent_report",
-            title=agent["name"] + " report",
-            content=answer,
-            source="GENERAL/" + agent_id
-        )
-
-        print("GENERAL | Memory entry ID:", entry["id"])
-        print("GENERAL | Full report content was passed to memory.")
+        add_memory(agent, answer)
+        print("Report saved to shared memory.")
     else:
-        print(
-            "GENERAL | Report not saved: "
-            "GENERAL_SAVE_MEMORY is not enabled."
-        )
-
-    return answer
+        print("Report not saved: GENERAL_SAVE_MEMORY is not enabled.")
 
 
 def main():
     if len(sys.argv) < 3:
-        print("GENERAL AI Core 0.3.0")
+        print("GENERAL Core", VERSION)
         print('Usage: python general_core.py research "Your task"')
-        print("\nAvailable agents:")
-
-        for agent_id, agent in AGENTS.items():
-            print("-", agent_id, ":", agent["name"])
-
+        print("Agents:", ", ".join(AGENTS))
         return
-
-    agent_id = sys.argv[1].lower()
-    task = " ".join(sys.argv[2:]).strip()
-
     try:
-        run_agent(agent_id, task)
-    except Exception as error:
-        print("GENERAL ERROR:", str(error))
+        run_agent(sys.argv[1].lower(), " ".join(sys.argv[2:]))
+    except Exception as e:
+        print("GENERAL ERROR:", str(e))
         sys.exit(1)
 
 
