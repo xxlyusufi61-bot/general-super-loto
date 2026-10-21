@@ -1,0 +1,30 @@
+name: GENERAL No Target Test
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  no-target-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Get GENERAL source code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check test files
+        run: |
+          test -f general_core.py
+          test -f general_core_no_target_test.py
+          echo "Required files: PASS"
+
+      - name: Run no-target behavior test
+        run: python3 general_core_no_target_test.py
