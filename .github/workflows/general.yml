@@ -1,0 +1,71 @@
+name: GENERAL Heartbeat
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 */6 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  heartbeat:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Telegram bot and send status
+        env:
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import urllib.request
+          import urllib.parse
+
+          token = os.environ["BOT_TOKEN"]
+          base = "https://api.telegram.org/bot" + token
+
+          def request(url, data=None):
+              encoded = None
+              if data is not None:
+                  encoded = urllib.parse.urlencode(data).encode()
+              req = urllib.request.Request(url, data=encoded)
+              with urllib.request.urlopen(req, timeout=30) as response:
+                  return json.loads(response.read().decode())
+
+          updates = request(base + "/getUpdates")
+          if not updates.get("ok"):
+              raise RuntimeError("Telegram updates request failed")
+
+          chats = []
+          for update in updates.get("result", []):
+              message = (
+                  update.get("message")
+                  or update.get("edited_message")
+              )
+              if message and message.get("chat", {}).get("id") is not None:
+                  chats.append(message["chat"]["id"])
+
+          if not chats:
+              raise RuntimeError(
+                  "Chat not found. Open your bot in Telegram "
+                  "and send /start, then run this workflow again."
+              )
+
+          chat_id = chats[-1]
+          result = request(
+              base + "/sendMessage",
+              {
+                  "chat_id": chat_id,
+                  "text": (
+                      "GENERAL: Telegram bağlantı testi başarılı. "
+                      "Otomatik çalışma görevi çalıştı."
+                  )
+              }
+          )
+
+          if not result.get("ok"):
+              raise RuntimeError("Telegram message could not be sent")
+
+          print("GENERAL heartbeat test successful.")
+          PY
