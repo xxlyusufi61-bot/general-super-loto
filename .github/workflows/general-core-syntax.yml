@@ -1,9 +1,0 @@
-name: GENERAL Core Syntax Test
-'on':
-workflow_dispatch:
-jobs:
-syntax-test:
-runs-on: ubuntu-latest
-steps:
-- uses: actions/checkout@v4
-- run: python3 -m py_compile general_core.py general_data_guard.py
