@@ -13,6 +13,7 @@ name: GENERAL Agent
           - validation
           - crossover
           - archive
+          - isolation-test
       task:
         description: "Task for the selected agent"
         required: true
@@ -33,15 +34,15 @@ jobs:
 
     steps:
       - name: Get GENERAL source code
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
       - name: Initialize memory if missing
-        if: ${{ inputs.agent != 'archive' }}
+        if: ${{ inputs.agent != 'archive' && inputs.agent != 'isolation-test' }}
         run: |
           if [ ! -f general_memory.json ]; then
             python3 general_memory.py init
@@ -63,36 +64,86 @@ jobs:
           if not archive_path.is_file():
               raise SystemExit("ARCHIVE VALIDATION FAILED: file is missing")
 
-          payload = json.loads(
-              archive_path.read_text(encoding="utf-8")
-          )
-
+          payload = json.loads(archive_path.read_text(encoding="utf-8"))
           if not isinstance(payload, dict):
-              raise SystemExit(
-                  "ARCHIVE VALIDATION FAILED: root must be an object"
-              )
+              raise SystemExit("ARCHIVE VALIDATION FAILED: root must be an object")
 
           rows = payload.get("draws")
           if not isinstance(rows, list):
-              raise SystemExit(
-                  "ARCHIVE VALIDATION FAILED: 'draws' must be a list"
-              )
+              raise SystemExit("ARCHIVE VALIDATION FAILED: 'draws' must be a list")
 
           result = guard.validate_archive(rows)
           if not isinstance(result, dict) or result.get("valid") is not True:
-              raise SystemExit(
-                  "ARCHIVE VALIDATION FAILED: Data Guard rejected the data"
-              )
+              raise SystemExit("ARCHIVE VALIDATION FAILED: Data Guard rejected the data")
 
           print("DATA GUARD: PASS")
           print("Records:", result["record_count"])
           print("Unique dates:", result["unique_dates"])
           print("First date:", result["first_date"])
           print("Last date:", result["last_date"])
+          print("Draw numbers exposed in summary: NO")
+          PY
+
+      - name: Test target isolation with Data Guard
+        if: ${{ inputs.agent == 'isolation-test' }}
+        env:
+          TARGET_DATE: "2026-09-22"
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import general_data_guard as guard
+
+          target_date = os.environ["TARGET_DATE"]
+          archive_path = Path("super_loto_archive.json")
+
+          if not archive_path.is_file():
+              raise SystemExit("ISOLATION TEST FAILED: archive file is missing")
+
+          payload = json.loads(archive_path.read_text(encoding="utf-8"))
+          if not isinstance(payload, dict):
+              raise SystemExit("ISOLATION TEST FAILED: archive root is not an object")
+
+          rows = payload.get("draws")
+          if not isinstance(rows, list):
+              raise SystemExit("ISOLATION TEST FAILED: draws list is missing")
+
+          archive_check = guard.validate_archive(rows)
+          if not isinstance(archive_check, dict) or archive_check.get("valid") is not True:
+              raise SystemExit("ISOLATION TEST FAILED: archive validation failed")
+
+          target_matches = [row for row in rows if row.get("date") == target_date]
+          if len(target_matches) != 1:
+              raise SystemExit("ISOLATION TEST FAILED: target date must appear exactly once")
+
+          result = guard.isolate_target(rows, target_date)
+          train = result.get("train")
+          excluded_dates = result.get("excluded_dates")
+
+          if not isinstance(train, list) or not isinstance(excluded_dates, list):
+              raise SystemExit("ISOLATION TEST FAILED: unexpected Data Guard result")
+
+          train_dates = [row.get("date") for row in train]
+          if target_date in train_dates:
+              raise SystemExit("ISOLATION TEST FAILED: target date leaked into training")
+
+          if any(not isinstance(day, str) or day >= target_date for day in train_dates):
+              raise SystemExit("ISOLATION TEST FAILED: target or future date in training")
+
+          if any(not isinstance(day, str) or day < target_date for day in excluded_dates):
+              raise SystemExit("ISOLATION TEST FAILED: a pre-target date was incorrectly excluded")
+
+          print("TARGET ISOLATION: PASS")
+          print("Target date:", target_date)
+          print("Training records strictly before target:", len(train))
+          print("Target/future dates excluded:", len(excluded_dates))
+          print("Target date present exactly once in source archive: YES")
+          print("Target numbers displayed: NO")
           PY
 
       - name: Run selected GENERAL agent
-        if: ${{ inputs.agent != 'archive' }}
+        if: ${{ inputs.agent != 'archive' && inputs.agent != 'isolation-test' }}
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           AGENT_ID: ${{ inputs.agent }}
@@ -102,7 +153,7 @@ jobs:
           python3 general_core.py "$AGENT_ID" "$TASK_TEXT"
 
       - name: Save validated archive or updated memory
-        if: ${{ success() }}
+        if: ${{ success() && inputs.agent != 'isolation-test' }}
         env:
           AGENT_ID: ${{ inputs.agent }}
         run: |
