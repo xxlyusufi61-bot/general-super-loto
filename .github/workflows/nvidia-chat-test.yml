@@ -22,24 +22,33 @@ jobs:
 
           key = os.environ.get("NVIDIA_API_KEY", "")
           if not key:
-              raise SystemExit("ERROR: NVIDIA_API_KEY secret is missing")
+              raise SystemExit(
+                  "ERROR: NVIDIA_API_KEY secret is missing"
+              )
 
           payload = {
-              "model": "meta/llama-3.3-70b-instruct",
+              "model": "z-ai/glm-5.3-flash",
               "messages": [
                   {
+                      "role": "system",
+                      "content": "You are GENERAL, a concise AI assistant."
+                  },
+                  {
                       "role": "user",
-                      "content": "Reply in Turkish with one short sentence: What is GENERAL?"
+                      "content": (
+                          "Türkçe cevap ver: "
+                          "GENERAL nedir? Tek kısa cümle yaz."
+                      )
                   }
               ],
-              "max_tokens": 100,
+              "max_tokens": 120,
               "temperature": 0.2,
               "stream": False
           }
 
           request = urllib.request.Request(
               "https://integrate.api.nvidia.com/v1/chat/completions",
-              data=json.dumps(payload).encode(),
+              data=json.dumps(payload).encode("utf-8"),
               headers={
                   "Authorization": "Bearer " + key,
                   "Content-Type": "application/json",
@@ -49,18 +58,37 @@ jobs:
           )
 
           try:
-              with urllib.request.urlopen(request, timeout=60) as response:
-                  data = json.loads(response.read().decode())
-                  answer = data["choices"][0]["message"]["content"]
-                  print("NVIDIA AI response received successfully:")
-                  print(answer)
+              with urllib.request.urlopen(
+                  request, timeout=90
+              ) as response:
+                  data = json.loads(
+                      response.read().decode("utf-8")
+                  )
+
+              choices = data.get("choices", [])
+              if not choices:
+                  raise RuntimeError(
+                      "API response contains no choices"
+                  )
+
+              answer = (
+                  choices[0].get("message", {}).get("content", "")
+              )
+
+              if not answer:
+                  raise RuntimeError("Model returned an empty answer")
+
+              print("GENERAL AI CHAT TEST SUCCESS")
+              print("Model:", data.get("model", payload["model"]))
+              print("Model answer:")
+              print(answer)
 
           except urllib.error.HTTPError as error:
-              print("NVIDIA API returned HTTP status:", error.code)
-              print(error.read().decode()[:1500])
+              print("NVIDIA API HTTP status:", error.code)
+              print(error.read().decode("utf-8")[:1500])
               raise SystemExit(1)
 
           except Exception as error:
               print("Test failed:", type(error).__name__, str(error))
               raise SystemExit(1)
-          PY
+          PY 
