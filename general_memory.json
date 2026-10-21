@@ -22,7 +22,16 @@
       "content": "The user is asking in Turkish: \"Evaluate the current state of the GENERAL system and the next development steps.\"\n\nI'm the \"Research\" agent in the GENERAL project, a Super Loto research project. The binding rules are clear:\n1. Never use a hidden target draw for training or discovery.\n2. Preserve chronological, leakage-free evaluation.\n3. Respect archive integrity and verify data before analysis.\n4. Investigate A->B->C, A->T and MOD5->T methods.\n5. Use walk-forward evaluation and cross-validation.\n6. Never claim a hypothesis is proven without test results.\n7. Never silently change established project rules.\n8. Ask the user before changing binding rules.\n9. Do not invent archive data, test results or findings.\n10. Lottery outcomes are uncertain; do not promise predictions.\n\nThe saved project memory says: \"No matching saved memory entries were found.\" So I have no verified project state data. I must not invent archive data, test results, or findings (rule 9).\n\nSo my response should:\n- Be honest that I don't have saved memory entries or verified data about the current state.\n- Provide a framework/evaluation structure based on what I know from the binding rules (the methods to investiga",
       "source": "GENERAL/research",
       "status": "unverified"
+    },
+    {
+      "id": 2,
+      "timestamp": "2026-10-21T18:40:40.609452+00:00",
+      "category": "agent_report",
+      "title": "Research report",
+      "content": "The user is asking in Turkish for the first verification test of the GENERAL memory system. They want:\n1. Summary of the project's binding rules\n2. Not to assume memory records are verified facts\n3. Not to pretend any analysis was done since no archive or draw data was presented in this run\n4. Clearly state in the result report which checks were actually done and which were not\n\nThis is a compliance/integrity test. I should respond in Turkish (matching the user's language), be honest, structured, and follow the binding rules. I'm the Research agent.\n\nLet me structure the response:\n\n1. **Bağlayıcı kuralların özeti** - Summarize the 10 binding rules faithfully. I should not change them, just summarize them accurately.\n\n2. **Hafıza kayıtlarının durumu** - The saved project memory contains one entry: \"[agent_report] Research report | status=unverified\" with content about a previous evaluation request. Per the system prompt, memory entries are not automatically verified facts. I must treat it as unverified. I should note its status explicitly.\n\n3. **Analiz yapılmadı** - No archive or draw data was presented in this run. So no analysis of A->B->C, A->T, MOD5->T was performed. I must not ",
+      "source": "GENERAL/research",
+      "status": "unverified"
     }
   ],
-  "updated_at": "2026-10-21T18:35:44.083303+00:00"
+  "updated_at": "2026-10-21T18:40:40.609476+00:00"
 }
