@@ -1,0 +1,66 @@
+name: GENERAL AI Chat Test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  chat-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ask NVIDIA AI model
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import urllib.request
+          import urllib.error
+
+          key = os.environ.get("NVIDIA_API_KEY", "")
+          if not key:
+              raise SystemExit("ERROR: NVIDIA_API_KEY secret is missing")
+
+          payload = {
+              "model": "meta/llama-3.3-70b-instruct",
+              "messages": [
+                  {
+                      "role": "user",
+                      "content": "Reply in Turkish with one short sentence: What is GENERAL?"
+                  }
+              ],
+              "max_tokens": 100,
+              "temperature": 0.2,
+              "stream": False
+          }
+
+          request = urllib.request.Request(
+              "https://integrate.api.nvidia.com/v1/chat/completions",
+              data=json.dumps(payload).encode(),
+              headers={
+                  "Authorization": "Bearer " + key,
+                  "Content-Type": "application/json",
+                  "Accept": "application/json"
+              },
+              method="POST"
+          )
+
+          try:
+              with urllib.request.urlopen(request, timeout=60) as response:
+                  data = json.loads(response.read().decode())
+                  answer = data["choices"][0]["message"]["content"]
+                  print("NVIDIA AI response received successfully:")
+                  print(answer)
+
+          except urllib.error.HTTPError as error:
+              print("NVIDIA API returned HTTP status:", error.code)
+              print(error.read().decode()[:1500])
+              raise SystemExit(1)
+
+          except Exception as error:
+              print("Test failed:", type(error).__name__, str(error))
+              raise SystemExit(1)
+          PY
