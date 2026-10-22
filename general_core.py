@@ -476,6 +476,8 @@ def run_agent(agent, task):
         "Binding rules:\n- " + "\n- ".join(RULES) + "\n"
         "Memory reports are not proof. Distinguish hypotheses from verified "
         "results. Never invent data or tests.\n"
+        "Output only a final report. Do not include internal deliberation, scratchpad, "
+        "or private step-by-step reasoning. State what was actually checked and what remains unknown.\n"
         + safety_text
         + "Memory context:\n"
         + json.dumps(context, ensure_ascii=False, separators=(",", ":"))
