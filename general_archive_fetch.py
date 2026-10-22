@@ -203,7 +203,7 @@ def parse_cross_rows(html):
 
             # Read attributes even when the cell has no visible text.
             # Skip prize cells before collecting text or attributes.
-            if "₺" in t or re.search(r"\\b(?:TL|TRY)\\b", t, re.I):
+            if "₺" in t or re.search(r"\b(?:TL|TRY)\b", t, re.I):
                 continue
 
             if t:
@@ -216,7 +216,7 @@ def parse_cross_rows(html):
             # try those attributes; do not combine both paths and double-count.
             nums = [int(x) for x in re.findall(r"(?<!\d)\d{1,2}(?!\d)", " ".join(attr_cells))]
         if not _valid_six(nums):
-            raise RuntimeError(f"Cross-check row {draw_date}: expected six distinct numbers but parsed {nums}; archive not saved")
+            raise RuntimeError(f"Cross-check row {draw_date}: expected six distinct numbers but parsed {nums}; cells={json.dumps(cells, ensure_ascii=False)[:2000]}; archive not saved")
         values = tuple(sorted(nums))
         if draw_date in found and found[draw_date] != values:
             raise RuntimeError(f"Independent source has conflicting records for {draw_date}; archive not saved")
