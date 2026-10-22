@@ -92,7 +92,17 @@
       "content_hash": "b78ef32db776c940bf8dfebd2fcd6132e253a3435f1c186f8ccb9902ea5b7868",
       "source": "GENERAL/validation",
       "status": "unverified"
+    },
+    {
+      "id": 9,
+      "timestamp": "2026-10-22T23:54:05.682880+00:00",
+      "category": "agent_report",
+      "title": "validation report",
+      "content": "# Doğrulama Raporu — GENERAL (Hedef Farkında Veri Doğrulama)\n\n## 1. Data Guard Sonucu\n\n| Kontrol | Sonuç |\n|---|---|\n| Data Guard | **PASS** (sağlanan meta verilere göre) |\n| Hedef tarihi | 2026-10-22 (en son geçerli arşiv kaydından otomatik seçildiği bildirildi) |\n| Arşiv kayıt sayısı | 996 |\n| Eğitim kayıt sayısı | 995 |\n| Hedef kayıt arşivde mevcut | Evet (`target_present: true`) |\n| Modele gönderilen eğitim kaydı | 0 |\n| Modele gönderilen çekiliş numaraları | Hayır |\n\n## 2. Hedef İzolasyon ve Kronoloji\n\n- Sayım tutarlılığı: 996 − 995 = **1 kayıt hariç tutulmuş** — hedef tarihin (2026-10-22) eğitim setinden çıkarılmasıyla tutarlıdır.\n- Hedef ve sonraki tarihlerin eğitimden çıkarıldığı, yalnızca sağlanan toplu meta veriler üzerinden doğrulanabilir; bireysel kayıtlar bu oturuma gönderilmediği için kayıt bazında kronoloji taraması **yapılamadı**.\n- Hedef çekiliş sayıları bu raporda ve loglarda **açıklanmadı** (veri hiç iletilmedi).\n\n## 3. Yapılan / Yapılmayan Kontroller\n\n**Gerçekten yapılan (sağlanan meta veriler üzerinden):**\n- Data Guard sonucunun teyidi\n- Arşiv/eğitim sayım tutarlılığı kontrolü\n- Hedef kaydının arşivde mevcudiyetinin teyidi\n- Bu raporun oluşturulması\n\n**Yapılmayan (başarılı olarak gösterilmedi):**\n- Kayıt bazlı arşiv bütünlüğü taraması (eksik/tarih/sayı formatı kontrolü) — veri gönderilmedi\n- Bireysel kronoloji taraması — veri gönderilmedi\n- A→B→C analizi — **çalıştırılmadı**\n- A→T analizi — **çalıştırılmadı**\n- MOD5→T analizi — **çalıştırılmadı**\n- Walk-forward değerlendirme — **çalıştırılmadı**\n- Çapraz doğrulama — **çalıştırılmadı** (`statistical_methods_run` boş)\n\n## 4. Ortak Bellek\n\n- Mevcut bellek kayıtlarının tümü `unverified` durumundadır; bunlar kanıt değil, önceki ajan raporlarıdır.\n- Bu raporun ortak belleğe kaydedilme işlemi bu oturumda **tarafımca gerçekleştirilemedi**; kayıt altyapısı dışarıda bırakılmıştır. Kaydedilmesi gerekiyorsa ayrıca onay/talep gerekir.\n\n## 5. Sonuç\n\n- **Doğrulanabilir:** Data Guard PASS, sayım tutarlılığı (996/995/1 hariç tutulan), hedef kaydının mevcudiyeti.\n- **Doğrulanamayan:** Kayıt bazlı bütünlük ve kronoloji (veri gönderilmedi).\n- **Çalıştırılmayan:** A→B→C, A→T, MOD5→T, walk-forward, çapraz doğrulama.\n- **Tahmin üretilmedi.** Bağlayıcı kurallar değiştirilmedi. Piyango sonuçları belirsizdir; hiçbir tahmin vaadi yapılmaz.",
+      "content_hash": "f867bae6707a242c10a4220f7c484c52f3dad2b85d9a7c10585f7be14cc30187",
+      "source": "GENERAL/validation",
+      "status": "unverified"
     }
   ],
-  "updated_at": "2026-10-21T23:26:05.761780+00:00"
+  "updated_at": "2026-10-22T23:54:05.682902+00:00"
 }

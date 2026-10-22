@@ -7,13 +7,13 @@
     "independent_record_count": 156,
     "matching_dates_and_number_sets": 156,
     "result": "PASS",
-    "checked_at": "2026-10-22T15:49:15.190665+00:00",
+    "checked_at": "2026-10-22T23:53:28.164632+00:00",
     "pages_checked": [
       "https://loto.gen.tr/super-loto/arsiv/2025",
       "https://loto.gen.tr/super-loto/arsiv/2025?sayfa=2"
     ]
   },
-  "fetched_at": "2026-10-22T15:49:15.190846+00:00",
+  "fetched_at": "2026-10-22T23:53:28.164802+00:00",
   "corrections_applied": [
     {
       "removed_source_date": "2025-07-19",
@@ -10980,6 +10980,17 @@
         19,
         51,
         52
+      ]
+    },
+    {
+      "date": "2026-10-22",
+      "numbers": [
+        7,
+        8,
+        32,
+        35,
+        49,
+        51
       ]
     }
   ]
