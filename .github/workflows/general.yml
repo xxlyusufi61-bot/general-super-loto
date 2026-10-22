@@ -21,51 +21,148 @@ jobs:
           import os
           import urllib.request
           import urllib.parse
+          import urllib.error
 
-          token = os.environ["BOT_TOKEN"]
+          token = os.environ.get("BOT_TOKEN", "").strip()
+
+          if not token:
+              raise SystemExit(
+                  "HEARTBEAT FAILED: TELEGRAM_BOT_TOKEN secret is missing."
+              )
+
           base = "https://api.telegram.org/bot" + token
 
-          def request(url, data=None):
+          def request(method, data=None):
               encoded = None
+
               if data is not None:
-                  encoded = urllib.parse.urlencode(data).encode()
-              req = urllib.request.Request(url, data=encoded)
-              with urllib.request.urlopen(req, timeout=30) as response:
-                  return json.loads(response.read().decode())
+                  encoded = urllib.parse.urlencode(data).encode("utf-8")
 
-          updates = request(base + "/getUpdates")
-          if not updates.get("ok"):
-              raise RuntimeError("Telegram updates request failed")
+              req = urllib.request.Request(
+                  base + "/" + method,
+                  data=encoded,
+                  headers={"Accept": "application/json"},
+                  method="POST" if encoded is not None else "GET"
+              )
 
-          chats = []
-          for update in updates.get("result", []):
+              try:
+                  with urllib.request.urlopen(req, timeout=30) as response:
+                      payload = json.loads(
+                          response.read().decode("utf-8")
+                      )
+              except urllib.error.HTTPError as error:
+                  raise RuntimeError(
+                      method + " returned HTTP " + str(error.code)
+                  ) from None
+              except urllib.error.URLError as error:
+                  raise RuntimeError(
+                      method + " network error: "
+                      + type(error.reason).__name__
+                  ) from None
+              except json.JSONDecodeError:
+                  raise RuntimeError(
+                      method + " returned invalid JSON"
+                  ) from None
+
+              if not isinstance(payload, dict):
+                  raise RuntimeError(
+                      method + " returned an invalid response"
+                  )
+
+              if payload.get("ok") is not True:
+                  raise RuntimeError(
+                      method + " was not successful"
+                  )
+
+              return payload
+
+          # Verify that the token belongs to a working Telegram bot.
+          bot_info = request("getMe")
+          bot = bot_info.get("result")
+
+          if not isinstance(bot, dict) or not bot.get("is_bot"):
+              raise RuntimeError(
+                  "HEARTBEAT FAILED: Bot identity could not be verified."
+              )
+
+          # Identify the most recent chat in the available updates.
+          updates_data = request("getUpdates")
+          updates = updates_data.get("result", [])
+
+          if not isinstance(updates, list):
+              raise RuntimeError(
+                  "HEARTBEAT FAILED: Invalid Telegram updates response."
+              )
+
+          candidates = []
+
+          for update in updates:
+              if not isinstance(update, dict):
+                  continue
+
               message = (
                   update.get("message")
                   or update.get("edited_message")
-              )
-              if message and message.get("chat", {}).get("id") is not None:
-                  chats.append(message["chat"]["id"])
-
-          if not chats:
-              raise RuntimeError(
-                  "Chat not found. Open your bot in Telegram "
-                  "and send /start, then run this workflow again."
+                  or update.get("channel_post")
+                  or update.get("edited_channel_post")
               )
 
-          chat_id = chats[-1]
-          result = request(
-              base + "/sendMessage",
+              if not isinstance(message, dict):
+                  continue
+
+              chat = message.get("chat")
+
+              if not isinstance(chat, dict):
+                  continue
+
+              chat_id = chat.get("id")
+
+              if chat_id is None:
+                  continue
+
+              update_id = update.get("update_id", -1)
+
+              if not isinstance(update_id, int):
+                  update_id = -1
+
+              candidates.append((update_id, chat_id))
+
+          if not candidates:
+              raise SystemExit(
+                  "HEARTBEAT FAILED: No chat found in available updates. "
+                  "Open the bot in Telegram, send /start, "
+                  "then run the workflow again."
+              )
+
+          # Use the chat from the newest available update.
+          candidates.sort(key=lambda item: item[0])
+          chat_id = candidates[-1][1]
+
+          sent = request(
+              "sendMessage",
               {
                   "chat_id": chat_id,
                   "text": (
-                      "GENERAL: Telegram bağlantı testi başarılı. "
-                      "Otomatik çalışma görevi çalıştı."
+                      "GENERAL Heartbeat: Telegram bağlantısı başarılı. "
+                      "Bu test Telegram botunun yanıt verdiğini ve "
+                      "mesaj gönderilebildiğini doğruladı. "
+                      "GENERAL çekirdeği ve arşiv sağlığı bu testte "
+                      "doğrulanmadı."
                   )
               }
           )
 
-          if not result.get("ok"):
-              raise RuntimeError("Telegram message could not be sent")
+          result = sent.get("result")
 
-          print("GENERAL heartbeat test successful.")
+          if not isinstance(result, dict) or result.get("message_id") is None:
+              raise RuntimeError(
+                  "HEARTBEAT FAILED: Telegram message was not confirmed."
+              )
+
+          print("GENERAL HEARTBEAT: SUCCESS")
+          print("Telegram bot authentication: PASS")
+          print("Telegram message delivery: PASS")
+          print("GENERAL core health: NOT CHECKED")
+          print("Archive integrity: NOT CHECKED")
+          print("Target isolation: NOT CHECKED")
           PY
