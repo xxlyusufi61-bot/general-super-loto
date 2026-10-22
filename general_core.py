@@ -8,7 +8,7 @@ import urllib.error
 from pathlib import Path
 from datetime import datetime, date, timezone
 
-VERSION = "0.5.0"
+VERSION = "0.5.1"
 MODEL = "z-ai/glm-5.3-flash"
 BASE = Path(__file__).resolve().parent
 MEMORY = BASE / "general_memory.json"
@@ -210,6 +210,13 @@ def prepare_data(target):
 
     if not isinstance(target_present, bool):
         raise RuntimeError("Data Guard returned invalid target-presence status.")
+
+    # Historical hidden-target analysis requires the target draw to exist
+    # in the source archive; Data Guard has already validated unique dates.
+    if target_present is not True:
+        raise RuntimeError(
+            "Target date is missing from archive; analysis stopped."
+        )
 
     target_day = date.fromisoformat(target)
     training = []
