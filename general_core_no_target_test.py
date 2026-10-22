@@ -29,10 +29,10 @@ try:
         print("Request blocked:", type(exc).__name__, str(exc))
 
     if not blocked:
-        fail("A no-target archive-analysis request was not blocked.")
+        fail("No-target archive-analysis request was not blocked.")
 
     if captured["called"]:
-        fail("The model was called despite the missing target date.")
+        fail("The model was called without a target date.")
 
     print("Target date supplied: NO")
     print("No-target request blocked: YES")
