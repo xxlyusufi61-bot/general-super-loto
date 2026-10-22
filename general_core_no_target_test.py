@@ -1,48 +1,50 @@
 import os
 import general_core as core
 
-
 def fail(message):
-    raise AssertionError("NO-TARGET TEST FAILED: " + message)
-
+raise AssertionError("NO-TARGET TEST FAILED: " + message)
 
 def main():
-    captured = {"called": False}
+captured = {"called": False}
 
-    def fake_nvidia(messages):
-        captured["called"] = True
-        return "MOCK_RESPONSE"
+def fake_nvidia(messages):
+    captured["called"] = True
+    return "MOCK_RESPONSE"
 
-    # Gerçek API çağrısını engelle.
-    core.ask_nvidia = fake_nvidia
+core.ask_nvidia = fake_nvidia
 
-    # Hafızaya kayıt yapılmasını kapat.
-    old_save = os.environ.get("GENERAL_SAVE_MEMORY")
-    os.environ.pop("GENERAL_SAVE_MEMORY", None)
+old_save = os.environ.pop("GENERAL_SAVE_MEMORY", None)
+old_target = os.environ.pop("GENERAL_TARGET_DATE", None)
 
-    # Hedef tarihi ortam değişkeniyle verilmediğinden emin ol.
-    old_target = os.environ.get("GENERAL_TARGET_DATE")
-    os.environ.pop("GENERAL_TARGET_DATE", None)
+try:
+    blocked = False
 
     try:
         core.run_agent(
             "validation",
             "Check whether the archive was analyzed."
         )
-    except Exception as exc:
-        # Bu test, mevcut davranışı ölçer; tek başına güvenlik şartı koymaz.
-        print("NO-TARGET RUN RAISED ERROR:", type(exc).__name__)
-    finally:
-        if old_save is not None:
-            os.environ["GENERAL_SAVE_MEMORY"] = old_save
-        if old_target is not None:
-            os.environ["GENERAL_TARGET_DATE"] = old_target
+    except (ValueError, RuntimeError) as exc:
+        blocked = True
+        print("Request blocked:", type(exc).__name__, str(exc))
 
-    print("Real NVIDIA API called: NO")
-    print("Mock model called:", "YES" if captured["called"] else "NO")
+    if not blocked:
+        fail("A no-target archive-analysis request was not blocked.")
+
+    if captured["called"]:
+        fail("The model was called despite the missing target date.")
+
     print("Target date supplied: NO")
-    print("Test completed: YES")
+    print("No-target request blocked: YES")
+    print("Mock model called: NO")
+    print("Real NVIDIA API called: NO")
+    print("NO-TARGET TEST PASSED")
 
+finally:
+    if old_save is not None:
+        os.environ["GENERAL_SAVE_MEMORY"] = old_save
+    if old_target is not None:
+        os.environ["GENERAL_TARGET_DATE"] = old_target
 
-if __name__ == "__main__":
-    main()
+if name == "main":
+main()
