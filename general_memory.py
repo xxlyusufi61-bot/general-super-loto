@@ -23,6 +23,7 @@ PROJECT_RULES = [
     "Never silently change binding project rules.",
     "Ask the user before changing binding rules.",
     "Separate hypotheses from experimentally verified findings.",
+    "For mechanism/formula discovery and testing, evaluate both forward (2020 to latest pre-target) and reverse (latest pre-target/2026 toward 2020) chronology; reverse discovery is retrospective stress testing, not predictive evidence.",
     "Lottery outcomes are uncertain; never promise predictions."
 ]
 
