@@ -33,10 +33,12 @@ jobs:
                       "content": "Türkçe ve kısa cevap ver: GENERAL nedir?"
                   }
               ],
-              "max_tokens": 1600,
+              "max_tokens": 1024,
               "temperature": 0.2,
               "reasoning_effort": "low",
-              "clear_thinking": True,
+              "chat_template_kwargs": {
+                  "clear_thinking": True
+              },
               "stream": False
           }
 
@@ -111,7 +113,16 @@ jobs:
 
           except urllib.error.HTTPError as error:
               print("NVIDIA API HTTP status:", error.code)
-              print("Error response body omitted from logs.")
+              try:
+                  detail = error.read(1500).decode("utf-8", errors="replace")
+                  try:
+                      parsed = json.loads(detail)
+                      safe_error = parsed.get("detail", parsed.get("error", parsed))
+                      print("NVIDIA API error detail:", json.dumps(safe_error, ensure_ascii=False)[:1500])
+                  except Exception:
+                      print("NVIDIA API error detail:", detail[:1500])
+              except Exception:
+                  print("NVIDIA API error detail: unavailable")
               raise SystemExit(1)
 
           except urllib.error.URLError as error:
