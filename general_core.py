@@ -360,7 +360,9 @@ def ask_nvidia(messages):
         "max_tokens": 1600,
         "temperature": 0.2,
         "reasoning_effort": "low",
-        "clear_thinking": True,
+        "chat_template_kwargs": {
+            "clear_thinking": True
+        },
         "stream": False
     }).encode()
 
