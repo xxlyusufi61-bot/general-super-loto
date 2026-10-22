@@ -462,14 +462,32 @@ try:
             }
         }]
     }
+    captured_request = {}
+
+    def capture_final_request(request, *args, **kwargs):
+        captured_request["payload"] = json.loads(request.data.decode("utf-8"))
+        return _FakeResponse(final_and_reasoning)
+
     with patch(
         "general_core.urllib.request.urlopen",
-        return_value=_FakeResponse(final_and_reasoning)
+        side_effect=capture_final_request
     ):
         answer = core.ask_nvidia([{"role": "user", "content": "test"}])
     regression_check(
         answer == "FINAL_REPORT_ONLY",
         "Only the content field is returned as the final answer"
+    )
+    regression_check(
+        captured_request["payload"].get("reasoning_effort") == "low",
+        "GLM reasoning budget is explicitly reduced to leave room for final content"
+    )
+    regression_check(
+        captured_request["payload"].get("clear_thinking") is True,
+        "GLM request explicitly enables clear_thinking"
+    )
+    regression_check(
+        captured_request["payload"].get("stream") is False,
+        "GLM request explicitly uses non-streaming output"
     )
 finally:
     if old_api_key is None:
