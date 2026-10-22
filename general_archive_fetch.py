@@ -112,7 +112,7 @@ class TableParser(HTMLParser):
                 raise RuntimeError("Unexpected table cell without a row.")
 
             self.row.append(" ".join("".join(self.cell).split()))
-            self.cell = []
+            self.cell = None
 
         elif tag == "tr" and self.row is not None:
             if self.cell is not None:
