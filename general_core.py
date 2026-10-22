@@ -2,12 +2,13 @@ import os
 import sys
 import json
 import hashlib
+import re
 import urllib.request
 import urllib.error
 from pathlib import Path
 from datetime import datetime, date, timezone
 
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 MODEL = "z-ai/glm-5.3-flash"
 BASE = Path(__file__).resolve().parent
 MEMORY = BASE / "general_memory.json"
@@ -33,6 +34,18 @@ AGENTS = {
     "crossover": "Compare methods and test combinations without overfitting."
 }
 
+TARGET_REQUIRED_AGENTS = {"research", "crossover"}
+
+DATA_TASK_MARKERS = (
+    "super loto", "super-loto", "lottery", "çekiliş", "cekilis",
+    "draw", "archive", "arşiv", "arsiv", "prediction", "predict",
+    "tahmin", "frequency", "frekans", "cross-validation", "walk-forward",
+    "crossover", "mod5", "a->b->c", "a->t", "target isolation",
+    "target leakage", "hedef izolasyon", "hedef çekiliş", "hedef cekilis",
+    "veri sızıntı", "veri sizinti", "number pattern", "number distribution",
+    "istatistik", "statistics"
+)
+
 
 def now():
     return datetime.now(timezone.utc).isoformat()
@@ -40,8 +53,12 @@ def now():
 
 def load_memory():
     if not MEMORY.exists():
-        return {"schema_version": 1, "project": "GENERAL Super Loto",
-                "binding_rules": RULES, "entries": []}
+        return {
+            "schema_version": 1,
+            "project": "GENERAL Super Loto",
+            "binding_rules": RULES,
+            "entries": []
+        }
     with MEMORY.open(encoding="utf-8") as f:
         m = json.load(f)
     if not isinstance(m, dict) or not isinstance(m.get("entries"), list):
@@ -67,8 +84,10 @@ def add_memory(agent, content):
         if e.get("content_hash") == digest and e.get("source") == agent:
             print("Existing report already saved.")
             return
-    ids = [e.get("id", 0) for e in m["entries"]
-           if isinstance(e.get("id"), int)]
+    ids = [
+        e.get("id", 0) for e in m["entries"]
+        if isinstance(e.get("id"), int)
+    ]
     m["entries"].append({
         "id": max(ids or [0]) + 1,
         "timestamp": now(),
@@ -84,29 +103,58 @@ def add_memory(agent, content):
 
 
 def target_date_from(task):
-    import re
     matches = re.findall(
         r"(?i)(?:target_date|hedef_tarihi)\s*[:=]\s*(\d{4}-\d{2}-\d{2})",
         task
     )
     env_target = os.environ.get("GENERAL_TARGET_DATE", "").strip()
+
     if len(set(matches)) > 1:
         raise RuntimeError("Conflicting target dates.")
+
     task_target = matches[0] if matches else ""
+
     if env_target and task_target and env_target != task_target:
         raise RuntimeError("Conflicting target dates.")
+
     target = env_target or task_target
+
     if target:
         try:
             if date.fromisoformat(target).isoformat() != target:
                 raise ValueError()
         except ValueError:
             raise RuntimeError("Target date must be YYYY-MM-DD.") from None
+
     task = re.sub(
         r"(?i)(?:target_date|hedef_tarihi)\s*[:=]\s*\d{4}-\d{2}-\d{2}",
         " ", task
     )
     return target or None, " ".join(task.split())
+
+
+def task_mode_from(task):
+    matches = re.findall(
+        r"(?i)(?:^|\s)mode\s*[:=]\s*(data|code|system)(?=\s|$)",
+        task
+    )
+    normalized = {m.lower() for m in matches}
+
+    if len(normalized) > 1:
+        raise RuntimeError("Conflicting task modes.")
+
+    mode = next(iter(normalized)) if normalized else None
+
+    task = re.sub(
+        r"(?i)(?:^|\s)mode\s*[:=]\s*(?:data|code|system)(?=\s|$)",
+        " ", task
+    )
+    return mode, " ".join(task.split())
+
+
+def is_data_task(task):
+    normalized = task.casefold()
+    return any(marker in normalized for marker in DATA_TASK_MARKERS)
 
 
 def prepare_data(target):
@@ -122,7 +170,9 @@ def prepare_data(target):
         with ARCHIVE.open(encoding="utf-8") as f:
             payload = json.load(f)
     except (OSError, json.JSONDecodeError):
-        raise RuntimeError("Archive could not be read; analysis stopped.") from None
+        raise RuntimeError(
+            "Archive could not be read; analysis stopped."
+        ) from None
 
     if isinstance(payload, dict):
         if "draws" in payload and "records" in payload:
@@ -137,27 +187,94 @@ def prepare_data(target):
     try:
         checked = guard.validate_archive(rows)
         split = guard.isolate_target(rows, target)
-    except Exception as e:
-        raise RuntimeError("Data Guard rejected archive: " + str(e)) from None
+    except Exception:
+        raise RuntimeError(
+            "Data Guard rejected archive or target isolation."
+        ) from None
 
-    if not checked.get("valid") or not split.get("isolation_pass"):
-        raise RuntimeError("Data Guard did not pass.")
+    if not isinstance(checked, dict) or checked.get("valid") is not True:
+        raise RuntimeError("Data Guard archive validation failed.")
 
-    training = split.get("train", [])
+    if not isinstance(split, dict) or split.get("isolation_pass") is not True:
+        raise RuntimeError("Data Guard target isolation failed.")
+
+    training_raw = split.get("train")
+    excluded_dates = split.get("excluded_dates")
+    target_present = split.get("target_present_in_archive")
+
+    if not isinstance(training_raw, list):
+        raise RuntimeError("Data Guard returned invalid training records.")
+
+    if not isinstance(excluded_dates, list):
+        raise RuntimeError("Data Guard returned invalid excluded-date list.")
+
+    if not isinstance(target_present, bool):
+        raise RuntimeError("Data Guard returned invalid target-presence status.")
+
+    target_day = date.fromisoformat(target)
+    training = []
+
+    for row in training_raw:
+        if not isinstance(row, dict):
+            raise RuntimeError("Invalid training record.")
+
+        day = row.get("date")
+        if not isinstance(day, str):
+            raise RuntimeError("Training record has an invalid date.")
+
+        try:
+            parsed_day = date.fromisoformat(day)
+        except ValueError:
+            raise RuntimeError("Training record has an invalid date.") from None
+
+        if parsed_day.isoformat() != day or parsed_day >= target_day:
+            raise RuntimeError(
+                "SECURITY: target or future date found in training."
+            )
+
+        numbers = row.get("numbers")
+        if not isinstance(numbers, (list, tuple)) or len(numbers) != 6:
+            raise RuntimeError("Training record has invalid numbers.")
+
+        if any(
+            not isinstance(n, int)
+            or isinstance(n, bool)
+            or not 1 <= n <= 60
+            for n in numbers
+        ) or len(set(numbers)) != 6:
+            raise RuntimeError("Training record has invalid numbers.")
+
+        # Send only the expected fields to the model.
+        training.append({
+            "date": day,
+            "numbers": list(numbers)
+        })
+
+    for day in excluded_dates:
+        if not isinstance(day, str):
+            raise RuntimeError("Data Guard returned an invalid excluded date.")
+
+        try:
+            parsed_day = date.fromisoformat(day)
+        except ValueError:
+            raise RuntimeError(
+                "Data Guard returned an invalid excluded date."
+            ) from None
+
+        if parsed_day.isoformat() != day or parsed_day < target_day:
+            raise RuntimeError(
+                "SECURITY: pre-target date was incorrectly excluded."
+            )
+
     if not training:
         raise RuntimeError("No pre-target training records.")
 
-    for row in training:
-        if date.fromisoformat(row["date"]) >= date.fromisoformat(target):
-            raise RuntimeError("SECURITY: target leakage detected.")
-
-    # Only pre-target records are passed to the model.
     return {
         "guard": "PASS",
         "target_date": target,
-        "archive_count": checked["record_count"],
+        "archive_count": checked.get("record_count"),
         "training_count": len(training),
-        "target_present": split["target_present_in_archive"],
+        "target_present": target_present,
         "training_data": training
     }
 
@@ -168,8 +285,10 @@ def ask_nvidia(messages):
         raise RuntimeError("NVIDIA_API_KEY missing.")
 
     body = json.dumps({
-        "model": MODEL, "messages": messages,
-        "max_tokens": 1600, "temperature": 0.2
+        "model": MODEL,
+        "messages": messages,
+        "max_tokens": 1600,
+        "temperature": 0.2
     }).encode()
 
     req = urllib.request.Request(
@@ -181,21 +300,25 @@ def ask_nvidia(messages):
         },
         method="POST"
     )
+
     try:
         with urllib.request.urlopen(req, timeout=240) as r:
             result = json.loads(r.read().decode())
     except urllib.error.HTTPError as e:
         raise RuntimeError("NVIDIA HTTP error: " + str(e.code)) from None
-    except urllib.error.URLError as e:
+    except urllib.error.URLError:
         raise RuntimeError("NVIDIA connection error.") from None
 
     choices = result.get("choices", [])
     if not choices:
         raise RuntimeError("NVIDIA returned no choices.")
+
     message = choices[0].get("message") or {}
     answer = message.get("content") or message.get("reasoning_content")
+
     if not isinstance(answer, str) or not answer.strip():
         raise RuntimeError("Empty model response.")
+
     return answer.strip()
 
 
@@ -204,84 +327,160 @@ def run_agent(agent, task):
         raise RuntimeError("Unknown agent: " + agent)
 
     target, task = target_date_from(task)
+    mode, task = task_mode_from(task)
+
     if not task:
         raise RuntimeError("Task is empty.")
 
-    # Fail closed: validate and isolate before any AI request.
-    data = prepare_data(target) if target else None
+    if target and mode in {"code", "system"}:
+        raise RuntimeError(
+            "A target date conflicts with code/system-only mode."
+        )
 
-    memory = load_memory()
-    entries = memory["entries"]
+    if mode == "data" and not target:
+        raise RuntimeError(
+            "Data mode requires target_date=YYYY-MM-DD."
+        )
 
-    # For target-aware runs, exclude reports from the target day
-    # and all later dates. Unknown timestamps are excluded too.
     if target:
-        td = date.fromisoformat(target)
+        mode = "data"
+    elif mode is None:
+        if agent in TARGET_REQUIRED_AGENTS or is_data_task(task):
+            raise RuntimeError(
+                "Target date required for data-analysis tasks. "
+                "Add target_date=YYYY-MM-DD, or use mode=code for code-only "
+                "work / mode=system for system-only work."
+            )
+        mode = "code" if agent == "debug" else "system"
+
+    if mode == "data" and not target:
+        raise RuntimeError(
+            "Data analysis cannot run without a target date."
+        )
+
+    # Validate and isolate before any AI request.
+    data = prepare_data(target) if mode == "data" else None
+
+    # No-target sessions must not load potentially unfiltered project reports.
+    entries = load_memory()["entries"] if target else []
+
+    if target:
+        target_day = date.fromisoformat(target)
         eligible = []
-        for e in entries:
+
+        for entry in entries:
             try:
                 stamp = datetime.fromisoformat(
-                    str(e["timestamp"]).replace("Z", "+00:00")
+                    str(entry["timestamp"]).replace("Z", "+00:00")
                 )
+
                 if stamp.tzinfo is None:
                     stamp = stamp.replace(tzinfo=timezone.utc)
-                if stamp.astimezone(timezone.utc).date() < td:
-                    eligible.append(e)
+
+                if stamp.astimezone(timezone.utc).date() < target_day:
+                    eligible.append(entry)
+
             except (KeyError, ValueError, TypeError):
                 continue
+
         entries = eligible
 
     words = set(task.lower().split())
     ranked = []
-    for e in entries:
-        text = " ".join(str(e.get(k, "")) for k in
-                        ("title", "category", "content", "source")).lower()
-        score = sum(1 for w in words if len(w) >= 3 and w in text)
+
+    for entry in entries:
+        content = " ".join(
+            str(entry.get(key, ""))
+            for key in ("title", "category", "content", "source")
+        ).lower()
+
+        score = sum(
+            1 for word in words if len(word) >= 3 and word in content
+        )
+
         if score:
-            ranked.append((score, e))
-    ranked.sort(key=lambda x: (x[0], str(x[1].get("timestamp", ""))),
-                reverse=True)
+            ranked.append((score, entry))
+
+    ranked.sort(
+        key=lambda item: (
+            item[0],
+            str(item[1].get("timestamp", ""))
+        ),
+        reverse=True
+    )
 
     context = []
-    for _, e in ranked[:8]:
+
+    for _, entry in ranked[:8]:
         context.append({
-            "id": e.get("id"),
-            "source": e.get("source"),
-            "status": e.get("status"),
-            "title": e.get("title"),
-            "content": str(e.get("content", ""))[:1800]
+            "id": entry.get("id"),
+            "source": entry.get("source"),
+            "status": entry.get("status"),
+            "title": entry.get("title"),
+            "content": str(entry.get("content", ""))[:1800]
         })
+
+    if mode == "data":
+        role = AGENTS[agent]
+        safety_text = (
+            "MODE: TARGET-AWARE DATA ANALYSIS.\n"
+            "DATA GUARD PASS. Data Guard validated the archive and isolated "
+            "the target. Only records strictly before target_date are "
+            "supplied below. The target draw values and all target/future "
+            "records are not supplied. Do not claim to have inspected "
+            "excluded values.\n"
+        )
+
+        print("Data Guard: PASS")
+        print("Training records:", data["training_count"])
+        print("Target numbers exposed: NO")
+
+    else:
+        role = (
+            "Review code errors and propose reproducible fixes."
+            if mode == "code"
+            else "Review GENERAL project architecture and workflow only."
+        )
+
+        context = []
+        safety_text = (
+            "MODE: CODE/SYSTEM ONLY.\n"
+            "No archive was loaded or validated. No project memory reports "
+            "were provided. Do not analyze actual Super Loto draw data, "
+            "discover number patterns, make data-based predictions, or "
+            "claim archive validation. If the task requires draw/archive/"
+            "statistical analysis, state that target_date=YYYY-MM-DD must "
+            "be supplied.\n"
+        )
+
+        print("Data Guard: not run; no target date supplied.")
+        print("Archive loaded: NO")
+        print("Project memory included: NO")
 
     system = (
         "You are GENERAL Super Loto agent: " + agent + ".\n"
-        "Role: " + AGENTS[agent] + "\n"
+        "Role: " + role + "\n"
         "Binding rules:\n- " + "\n- ".join(RULES) + "\n"
-        "Memory reports are not proof. Distinguish hypotheses "
-        "from verified results. Never invent data or tests.\n"
-        "Memory context:\n" + json.dumps(context, ensure_ascii=False)
+        "Memory reports are not proof. Distinguish hypotheses from verified "
+        "results. Never invent data or tests.\n"
+        + safety_text
+        + "Memory context:\n"
+        + json.dumps(context, ensure_ascii=False, separators=(",", ":"))
     )
 
     if data:
         system += (
-            "\nDATA GUARD PASS. Only pre-target training records follow. "
-            "Never claim to have inspected excluded draw numbers.\n"
-            + json.dumps(data, ensure_ascii=False)
+            "\nGUARDED DATA JSON:\n"
+            + json.dumps(data, ensure_ascii=False, separators=(",", ":"))
         )
-        print("Data Guard: PASS")
-        print("Training records:", data["training_count"])
-        print("Target numbers exposed: NO")
-    else:
-        system += (
-            "\nNO TARGET-AWARE DATA SESSION. No archive was loaded "
-            "or validated. Do not claim archive analysis was performed."
-        )
-        print("Data Guard: not run; no target date supplied.")
 
     print("GENERAL Core", VERSION, "| Agent:", agent)
+
     answer = ask_nvidia([
         {"role": "system", "content": system},
         {"role": "user", "content": task}
     ])
+
     print("\n--- AGENT REPORT ---\n" + answer + "\n--- END ---")
 
     if os.environ.get("GENERAL_SAVE_MEMORY") == "1":
@@ -294,9 +493,17 @@ def run_agent(agent, task):
 def main():
     if len(sys.argv) < 3:
         print("GENERAL Core", VERSION)
-        print('Usage: python general_core.py research "Your task"')
+        print(
+            'Usage: python general_core.py validation '
+            '"target_date=YYYY-MM-DD Your task"'
+        )
         print("Agents:", ", ".join(AGENTS))
+        print(
+            "Use mode=code or mode=system for work that does not "
+            "analyze draw data."
+        )
         return
+
     try:
         run_agent(sys.argv[1].lower(), " ".join(sys.argv[2:]))
     except Exception as e:
