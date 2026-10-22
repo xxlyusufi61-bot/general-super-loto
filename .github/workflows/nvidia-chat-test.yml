@@ -30,10 +30,10 @@ jobs:
               "messages": [
                   {
                       "role": "user",
-                      "content": "Türkçe cevap ver: GENERAL nedir?"
+                      "content": "Türkçe ve kısa cevap ver: GENERAL nedir?"
                   }
               ],
-              "max_tokens": 200,
+              "max_tokens": 1000,
               "temperature": 0.2,
               "stream": False
           }
@@ -55,66 +55,71 @@ jobs:
               ) as response:
                   response_text = response.read().decode("utf-8")
 
-              data = json.loads(response_text)
+              try:
+                  data = json.loads(response_text)
+              except json.JSONDecodeError:
+                  raise RuntimeError("API response was not valid JSON")
 
               if not isinstance(data, dict):
-                  raise RuntimeError(
-                      "API response is not a JSON object"
-                  )
+                  raise RuntimeError("API response was not a JSON object")
 
               choices = data.get("choices")
 
               if not isinstance(choices, list) or not choices:
-                  raise RuntimeError(
-                      "API returned no choices"
-                  )
+                  raise RuntimeError("API returned no choices")
 
               choice = choices[0]
 
               if not isinstance(choice, dict):
-                  raise RuntimeError(
-                      "API returned an invalid choice"
-                  )
+                  raise RuntimeError("API returned an invalid choice")
 
               message = choice.get("message")
 
               if not isinstance(message, dict):
-                  raise RuntimeError(
-                      "API returned no valid message"
-                  )
+                  raise RuntimeError("API returned no valid message")
 
-              # Only the final user-facing content is accepted.
               answer = message.get("content")
+              finish_reason = choice.get("finish_reason")
 
               if not isinstance(answer, str) or not answer.strip():
-                  print("Final answer content is missing.")
+                  print("GENERAL AI CHAT TEST FAILURE")
+                  print("Final answer content is empty.")
+                  print("Finish reason:", finish_reason)
                   print("Available message fields:", sorted(message.keys()))
-                  print("Finish reason:", choice.get("finish_reason"))
+
+                  if finish_reason == "length":
+                      print(
+                          "The model reached its token limit "
+                          "before producing a final answer."
+                      )
+
                   raise SystemExit(1)
+
+              if finish_reason == "length":
+                  print(
+                      "WARNING: The answer may have been cut off "
+                      "by the token limit."
+                  )
 
               print("GENERAL AI CHAT TEST SUCCESS")
               print("Model:", data.get("model", "not specified"))
+              print("Finish reason:", finish_reason)
               print("Final answer received: YES")
               print("Answer:", answer.strip())
 
           except urllib.error.HTTPError as error:
               print("NVIDIA API HTTP status:", error.code)
-              print("Response body omitted from logs.")
-              raise SystemExit(1)
-
-          except json.JSONDecodeError:
-              print("Test failed: API response was not valid JSON.")
+              print("Error response body omitted from logs.")
               raise SystemExit(1)
 
           except urllib.error.URLError as error:
-              print("Test failed: Network request error.")
-              print("Error type:", type(error.reason).__name__)
+              print("Network request failed:", type(error.reason).__name__)
               raise SystemExit(1)
 
           except SystemExit:
               raise
 
           except Exception as error:
-              print("Test failed:", type(error).__name__)
+              print("Test failed:", type(error).__name__, str(error)[:200])
               raise SystemExit(1)
           PY
