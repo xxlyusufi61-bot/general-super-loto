@@ -33,8 +33,10 @@ jobs:
                       "content": "Türkçe ve kısa cevap ver: GENERAL nedir?"
                   }
               ],
-              "max_tokens": 1000,
+              "max_tokens": 1600,
               "temperature": 0.2,
+              "reasoning_effort": "low",
+              "clear_thinking": True,
               "stream": False
           }
 
