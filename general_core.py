@@ -17,13 +17,16 @@ ARCHIVE = BASE / os.environ.get(
 )
 
 RULES = [
-    "Target draw must remain hidden during training and discovery.",
+    "Target draw must remain hidden during discovery and training.",
     "Evaluation must be chronological and leakage-free.",
-    "Validate archive integrity before analysis.",
-    "Preserve A->B->C, A->T and MOD5->T research.",
+    "Archive integrity must be checked before analysis.",
+    "Preserve A->B->C, A->T and MOD5->T research methods.",
     "Use walk-forward evaluation and cross-validation.",
-    "Never invent data, tests or results.",
-    "Ask before changing binding rules.",
+    "Never invent data, experiments, or results.",
+    "Never silently change binding project rules.",
+    "Ask the user before changing binding rules.",
+    "Separate hypotheses from experimentally verified findings.",
+    "For mechanism/formula discovery and testing, evaluate both forward (2020 to latest pre-target) and reverse (latest pre-target/2026 toward 2020) chronology; reverse discovery is retrospective stress testing, not predictive evidence.",
     "Lottery outcomes are uncertain; never promise predictions."
 ]
 
@@ -80,8 +83,9 @@ def save_memory(m):
 def add_memory(agent, content):
     m = load_memory()
     digest = hashlib.sha256(content.encode()).hexdigest()
+    source = "GENERAL/" + agent
     for e in m["entries"]:
-        if e.get("content_hash") == digest and e.get("source") == agent:
+        if e.get("content_hash") == digest and e.get("source") == source:
             print("Existing report already saved.")
             return
     ids = [
@@ -95,7 +99,7 @@ def add_memory(agent, content):
         "title": agent + " report",
         "content": content,
         "content_hash": digest,
-        "source": "GENERAL/" + agent,
+        "source": source,
         "status": "unverified"
     })
     m["entries"] = m["entries"][-200:]
@@ -321,7 +325,9 @@ def ask_nvidia(messages):
         raise RuntimeError("NVIDIA returned no choices.")
 
     message = choices[0].get("message") or {}
-    answer = message.get("content") or message.get("reasoning_content")
+    # Only the final content field is eligible for display or memory.
+    # Reasoning fields must never be treated as a final report.
+    answer = message.get("content")
 
     if not isinstance(answer, str) or not answer.strip():
         raise RuntimeError("Empty model response.")
