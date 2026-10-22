@@ -200,26 +200,24 @@ try:
             "SECURITY TEST FAILED: Final-report-only instruction is missing."
         )
 
-    # Find the structured Data Guard object.
+    # Validation agent must receive aggregate metadata only.
     marker = system.rfind('{"guard":')
 
     if marker < 0:
         raise AssertionError(
-            "SECURITY TEST FAILED: Guarded data was not found."
+            "SECURITY TEST FAILED: Guarded data metadata was not found."
         )
 
     try:
-        data, _ = json.JSONDecoder().raw_decode(
-            system[marker:]
-        )
+        data, _ = json.JSONDecoder().raw_decode(system[marker:])
     except json.JSONDecodeError as exc:
         raise AssertionError(
-            "SECURITY TEST FAILED: Guarded data is invalid JSON."
+            "SECURITY TEST FAILED: Guarded metadata is invalid JSON."
         ) from exc
 
     if not isinstance(data, dict):
         raise AssertionError(
-            "SECURITY TEST FAILED: Guarded data is not an object."
+            "SECURITY TEST FAILED: Guarded metadata is not an object."
         )
 
     if data.get("guard") != "PASS":
@@ -237,83 +235,9 @@ try:
             "SECURITY TEST FAILED: Target presence was not confirmed."
         )
 
-    # Validate training data and ensure no target/future dates appear.
-    training = data.get("training_data")
-
-    if not isinstance(training, list) or not training:
+    if data.get("training_count") != len(archive) - 1:
         raise AssertionError(
-            "SECURITY TEST FAILED: Training data is missing or empty."
-        )
-
-    training_dates = []
-
-    for row in training:
-        if not isinstance(row, dict):
-            raise AssertionError(
-                "SECURITY TEST FAILED: Invalid training record."
-            )
-
-        day = row.get("date")
-
-        if not isinstance(day, str) or day >= target_date:
-            raise AssertionError(
-                "SECURITY TEST FAILED: Target/future date in training."
-            )
-
-        try:
-            date.fromisoformat(day)
-        except ValueError as exc:
-            raise AssertionError(
-                "SECURITY TEST FAILED: Invalid training date."
-            ) from exc
-
-        training_dates.append(day)
-
-        numbers = row.get("numbers")
-
-        if (
-            not isinstance(numbers, (list, tuple))
-            or len(numbers) != 6
-            or len(set(numbers)) != 6
-            or any(
-                not isinstance(number, int)
-                or isinstance(number, bool)
-                or not 1 <= number <= 60
-                for number in numbers
-            )
-        ):
-            raise AssertionError(
-                "SECURITY TEST FAILED: Invalid training numbers."
-            )
-
-    if training_dates != sorted(training_dates):
-        raise AssertionError(
-            "SECURITY TEST FAILED: Training data is not chronological."
-        )
-
-    if len(training_dates) != len(set(training_dates)):
-        raise AssertionError(
-            "SECURITY TEST FAILED: Duplicate training dates found."
-        )
-
-    # Validate exact Data Guard output structure.
-    allowed_keys = {
-        "guard",
-        "target_date",
-        "archive_count",
-        "training_count",
-        "target_present",
-        "training_data",
-    }
-
-    if set(data.keys()) != allowed_keys:
-        raise AssertionError(
-            "SECURITY TEST FAILED: Unexpected guarded-data fields."
-        )
-
-    if data.get("training_count") != len(training):
-        raise AssertionError(
-            "SECURITY TEST FAILED: Training count mismatch."
+            "SECURITY TEST FAILED: Training count metadata mismatch."
         )
 
     if data.get("archive_count") != len(archive):
@@ -321,13 +245,67 @@ try:
             "SECURITY TEST FAILED: Archive count mismatch."
         )
 
-    # Check that the exact JSON sequence of target numbers
-    # is not present in messages sent to the model.
-    serialized_messages = json.dumps(
-        messages,
-        ensure_ascii=False
-    )
+    if data.get("training_records_sent_to_model") != 0:
+        raise AssertionError(
+            "SECURITY TEST FAILED: Training records should not be sent to validation model."
+        )
 
+    if data.get("draw_numbers_sent_to_model") is not False:
+        raise AssertionError(
+            "SECURITY TEST FAILED: Draw-number transfer flag is not false."
+        )
+
+    if data.get("statistical_methods_run") != []:
+        raise AssertionError(
+            "SECURITY TEST FAILED: Statistical methods must not be claimed as run."
+        )
+
+    if "training_data" in data or "numbers" in json.dumps(data):
+        raise AssertionError(
+            "SECURITY TEST FAILED: Draw numbers or training rows found in model metadata."
+        )
+
+    # Independently inspect the locally guarded training split.
+    local_data = core.prepare_data(target_date)
+    training = local_data.get("training_data")
+
+    if not isinstance(training, list) or not training:
+        raise AssertionError(
+            "SECURITY TEST FAILED: Local training data is missing."
+        )
+
+    training_dates = []
+
+    for row in training:
+        if not isinstance(row, dict):
+            raise AssertionError(
+                "SECURITY TEST FAILED: Invalid local training record."
+            )
+        day = row.get("date")
+        if not isinstance(day, str) or day >= target_date:
+            raise AssertionError(
+                "SECURITY TEST FAILED: Target/future date in local training."
+            )
+        try:
+            date.fromisoformat(day)
+        except ValueError as exc:
+            raise AssertionError(
+                "SECURITY TEST FAILED: Invalid local training date."
+            ) from exc
+        training_dates.append(day)
+
+    if training_dates != sorted(training_dates):
+        raise AssertionError(
+            "SECURITY TEST FAILED: Local training data is not chronological."
+        )
+
+    if len(training_dates) != len(set(training_dates)):
+        raise AssertionError(
+            "SECURITY TEST FAILED: Duplicate local training dates found."
+        )
+
+    # Ensure the exact target-number sequence is not present in model messages.
+    serialized_messages = json.dumps(messages, ensure_ascii=False)
     target_sequence = json.dumps(target_numbers)
 
     if target_sequence in serialized_messages:
