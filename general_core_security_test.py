@@ -2,8 +2,11 @@ import os
 import json
 from datetime import date
 from pathlib import Path
+from unittest.mock import patch
+import tempfile
 
 import general_core as core
+import general_memory as memory_module
 
 
 # ==================================================
@@ -192,6 +195,11 @@ try:
             "SECURITY TEST FAILED: Data Guard confirmation is missing."
         )
 
+    if "Do not include internal deliberation" not in system:
+        raise AssertionError(
+            "SECURITY TEST FAILED: Final-report-only instruction is missing."
+        )
+
     # Find the structured Data Guard object.
     marker = system.rfind('{"guard":')
 
@@ -349,3 +357,123 @@ finally:
         os.environ.pop("GENERAL_TARGET_DATE", None)
     else:
         os.environ["GENERAL_TARGET_DATE"] = old_target
+
+
+# ==================================================
+# 6. REGRESSION TESTS: FINAL CONTENT, RULES, MEMORY DEDUPLICATION
+# ==================================================
+
+def regression_check(condition, message):
+    if not condition:
+        raise AssertionError("REGRESSION TEST FAILED: " + message)
+    print("PASS:", message)
+
+
+# Binding rules must be consistent in core, memory utility, and stored metadata.
+regression_check(
+    core.RULES == memory_module.PROJECT_RULES,
+    "Core and memory utility share the same binding rules"
+)
+
+stored_memory = json.loads(
+    Path("general_memory.json").read_text(encoding="utf-8")
+)
+regression_check(
+    stored_memory.get("binding_rules") == core.RULES,
+    "Stored memory metadata matches binding rules"
+)
+regression_check(
+    any("reverse" in rule.lower() and "retrospective stress testing" in rule.lower()
+        for rule in core.RULES),
+    "Two-way chronology rule is preserved"
+)
+
+
+# Repeated identical reports from one agent must be deduplicated.
+original_memory_path = core.MEMORY
+try:
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        core.MEMORY = Path(temporary_directory) / "test_memory.json"
+        core.add_memory("validation", "unique-memory-deduplication-test")
+        core.add_memory("validation", "unique-memory-deduplication-test")
+        core.add_memory("research", "unique-memory-deduplication-test")
+        test_memory = core.load_memory()
+        regression_check(
+            len(test_memory["entries"]) == 2,
+            "Duplicate report is suppressed for the same agent"
+        )
+        regression_check(
+            [e.get("source") for e in test_memory["entries"]]
+            == ["GENERAL/validation", "GENERAL/research"],
+            "Memory source labels remain consistent"
+        )
+finally:
+    core.MEMORY = original_memory_path
+
+
+# API response must never fall back to reasoning_content.
+class _FakeResponse:
+    def __init__(self, payload):
+        self.payload = json.dumps(payload).encode("utf-8")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        return False
+
+    def read(self):
+        return self.payload
+
+
+old_api_key = os.environ.get("NVIDIA_API_KEY")
+try:
+    os.environ["NVIDIA_API_KEY"] = "unit-test-key"
+    reasoning_only = {
+        "choices": [{
+            "message": {
+                "content": "",
+                "reasoning_content": "THIS MUST NOT BE ACCEPTED"
+            }
+        }]
+    }
+    with patch(
+        "general_core.urllib.request.urlopen",
+        return_value=_FakeResponse(reasoning_only)
+    ):
+        try:
+            core.ask_nvidia([{"role": "user", "content": "test"}])
+        except RuntimeError as error:
+            regression_check(
+                "final model content" in str(error).lower(),
+                "Reasoning-only response is rejected"
+            )
+        else:
+            raise AssertionError(
+                "REGRESSION TEST FAILED: reasoning_content was accepted."
+            )
+
+    final_and_reasoning = {
+        "choices": [{
+            "message": {
+                "content": "FINAL_REPORT_ONLY",
+                "reasoning_content": "NOT_THE_FINAL_REPORT"
+            }
+        }]
+    }
+    with patch(
+        "general_core.urllib.request.urlopen",
+        return_value=_FakeResponse(final_and_reasoning)
+    ):
+        answer = core.ask_nvidia([{"role": "user", "content": "test"}])
+    regression_check(
+        answer == "FINAL_REPORT_ONLY",
+        "Only the content field is returned as the final answer"
+    )
+finally:
+    if old_api_key is None:
+        os.environ.pop("NVIDIA_API_KEY", None)
+    else:
+        os.environ["NVIDIA_API_KEY"] = old_api_key
+
+print("RESULT: ALL GENERAL SECURITY AND MEMORY REGRESSION TESTS PASSED")
