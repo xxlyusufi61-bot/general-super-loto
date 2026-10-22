@@ -161,6 +161,65 @@ def is_data_task(task):
     return any(marker in normalized for marker in DATA_TASK_MARKERS)
 
 
+
+def latest_archive_target_date():
+    """Validate the current archive and select its latest valid draw date."""
+    try:
+        import general_data_guard as guard
+    except ImportError:
+        raise RuntimeError("Data Guard module missing.") from None
+
+    if not ARCHIVE.is_file():
+        raise RuntimeError("Archive missing; analysis stopped.")
+
+    try:
+        with ARCHIVE.open(encoding="utf-8") as f:
+            payload = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        raise RuntimeError(
+            "Archive could not be read; analysis stopped."
+        ) from None
+
+    if isinstance(payload, dict):
+        rows = payload.get("draws", payload.get("records"))
+    else:
+        rows = payload
+
+    if not isinstance(rows, list):
+        raise RuntimeError("Archive must contain a list of records.")
+
+    try:
+        checked = guard.validate_archive(rows)
+    except Exception:
+        raise RuntimeError(
+            "Data Guard rejected archive while selecting dynamic target."
+        ) from None
+
+    if not isinstance(checked, dict) or checked.get("valid") is not True:
+        raise RuntimeError(
+            "Data Guard archive validation failed; target not selected."
+        )
+
+    target = checked.get("last_date")
+    if not isinstance(target, str):
+        raise RuntimeError(
+            "Data Guard did not provide the latest valid archive date."
+        )
+
+    try:
+        parsed = date.fromisoformat(target)
+    except ValueError:
+        raise RuntimeError(
+            "Data Guard provided an invalid latest archive date."
+        ) from None
+
+    if parsed.isoformat() != target:
+        raise RuntimeError(
+            "Data Guard provided a non-canonical latest archive date."
+        )
+
+    return target
+
 def prepare_data(target):
     try:
         import general_data_guard as guard
@@ -350,9 +409,23 @@ def run_agent(agent, task):
             "A target date conflicts with code/system-only mode."
         )
 
+    needs_automatic_target = (
+        mode == "data"
+        or (
+            mode is None
+            and (
+                agent in TARGET_REQUIRED_AGENTS
+                or is_data_task(task)
+            )
+        )
+    )
+    if target is None and needs_automatic_target:
+        target = latest_archive_target_date()
+        print("Dynamic target selected from validated archive:", target)
+
     if mode == "data" and not target:
         raise RuntimeError(
-            "Data mode requires target_date=YYYY-MM-DD."
+            "Data mode requires a valid target date."
         )
 
     if target:
