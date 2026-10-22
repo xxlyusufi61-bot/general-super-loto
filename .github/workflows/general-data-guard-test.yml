@@ -32,17 +32,24 @@ jobs:
 
           path = Path("general_data_guard.py")
           if not path.is_file():
-              raise SystemExit("FAIL: general_data_guard.py bulunamadi.")
+              raise SystemExit(
+                  "FAIL: general_data_guard.py bulunamadi."
+              )
 
           spec = importlib.util.spec_from_file_location(
               "general_data_guard", path
           )
+          if spec is None or spec.loader is None:
+              raise SystemExit(
+                  "FAIL: Data Guard modulu yuklenemedi."
+              )
+
           guard = importlib.util.module_from_spec(spec)
           spec.loader.exec_module(guard)
 
           def check(condition, message):
               if not condition:
-                  raise AssertionError(message)
+                  raise AssertionError("FAIL: " + message)
               print("PASS:", message)
 
           archive = [
@@ -54,33 +61,96 @@ jobs:
 
           summary = guard.validate_archive(archive)
           check(summary["valid"], "Gecerli arsiv kabul edildi")
-          check(summary["record_count"] == 4, "Arsiv kayit sayisi dogru")
-
-          result = guard.isolate_target(archive, "2026-09-22")
-          check(result["isolation_pass"], "Hedef izolasyonu basarili")
-          check(result["training_record_count"] == 2, "Hedef oncesi iki kayit egitime alindi")
-          check(result["excluded_record_count"] == 2, "Hedef ve sonrasi dislandi")
           check(
-              all(row["date"] < "2026-09-22" for row in result["train"]),
-              "Hedef ve sonrasi egitim verisinde yok"
-          )
-          check(
-              all("numbers" not in row for row in result["excluded_dates"]),
-              "Dislanan kayitlarda sayilar yok"
-          )
-          check(
-              result["target_present_in_archive"],
-              "Hedef tarihinin arsivde oldugu belirlendi"
+              summary["record_count"] == 4,
+              "Arsiv kayit sayisi dogru"
           )
 
-          missing = guard.isolate_target(archive, "2026-09-23")
+          target_date = "2026-09-22"
+          result = guard.isolate_target(archive, target_date)
+
           check(
-              not missing["target_present_in_archive"],
+              result["isolation_pass"] is True,
+              "Hedef izolasyonu basarili"
+          )
+          check(
+              result["training_record_count"] == 2,
+              "Hedef oncesi iki kayit egitime alindi"
+          )
+          check(
+              result["excluded_record_count"] == 2,
+              "Hedef ve sonrasi dislandi"
+          )
+          check(
+              all(
+                  row["date"] < target_date
+                  for row in result["train"]
+              ),
+              "Egitim kayitlarinin tamami hedeften once"
+          )
+          check(
+              result["target_present_in_archive"] is True,
+              "Hedef tarihi arsivde mevcut"
+          )
+
+          expected_excluded_dates = [
+              row["date"]
+              for row in archive
+              if row["date"] >= target_date
+          ]
+
+          actual_excluded_dates = result["excluded_dates"]
+
+          check(
+              isinstance(actual_excluded_dates, list),
+              "Dislanan tarihler liste olarak donuyor"
+          )
+          check(
+              actual_excluded_dates == expected_excluded_dates,
+              "Dislanan tarihler hedef ve sonraki tum tarihlerle eslesiyor"
+          )
+          check(
+              len(actual_excluded_dates)
+              == result["excluded_record_count"],
+              "Dislanan tarih sayisi kayit sayisiyla uyumlu"
+          )
+
+          missing_target_date = "2026-09-23"
+          missing = guard.isolate_target(
+              archive, missing_target_date
+          )
+
+          check(
+              missing["target_present_in_archive"] is False,
               "Arsivde olmayan hedef dogru belirlendi"
           )
           check(
-              all(row["date"] < "2026-09-23" for row in missing["train"]),
+              missing["isolation_pass"] is True,
+              "Eksik hedef durumunda izolasyon sonucu gecerli"
+          )
+          check(
+              all(
+                  row["date"] < missing_target_date
+                  for row in missing["train"]
+              ),
               "Eksik hedefte sonraki kayitlar egitime sizmiyor"
+          )
+
+          expected_missing_excluded_dates = [
+              row["date"]
+              for row in archive
+              if row["date"] >= missing_target_date
+          ]
+
+          check(
+              missing["excluded_dates"]
+              == expected_missing_excluded_dates,
+              "Eksik hedefte dislanan tarihler dogru"
+          )
+          check(
+              missing["excluded_record_count"]
+              == len(expected_missing_excluded_dates),
+              "Eksik hedefte dislanan kayit sayisi dogru"
           )
 
           invalid_cases = [
