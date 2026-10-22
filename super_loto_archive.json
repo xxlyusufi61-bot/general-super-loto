@@ -1,27 +1,39 @@
 {
   "source": "https://lotoistatistik.com/super-loto/",
   "cross_check_source": "https://loto.gen.tr/super-loto/arsiv/2025",
-  "fetched_at": "2026-10-22T12:04:33.942673+00:00",
+  "cross_check_validation": {
+    "year": 2025,
+    "primary_record_count": 156,
+    "independent_record_count": 156,
+    "matching_dates_and_number_sets": 156,
+    "result": "PASS",
+    "checked_at": "2026-10-22T14:42:18.221833+00:00",
+    "pages_checked": [
+      "https://loto.gen.tr/super-loto/arsiv/2025",
+      "https://loto.gen.tr/super-loto/arsiv/2025?sayfa=2"
+    ]
+  },
+  "fetched_at": "2026-10-22T14:42:18.221993+00:00",
   "corrections_applied": [
     {
       "removed_source_date": "2025-07-19",
       "verified_actual_date": "2025-06-19",
-      "reason": "Known misdated duplicate in source archive"
+      "reason": "Misdated duplicate; verified against matching counterpart and independent source"
     },
     {
       "removed_source_date": "2025-07-17",
       "verified_actual_date": "2025-06-17",
-      "reason": "Known misdated duplicate in source archive"
+      "reason": "Misdated duplicate; verified against matching counterpart and independent source"
     },
     {
       "removed_source_date": "2025-07-15",
       "verified_actual_date": "2025-06-15",
-      "reason": "Known misdated duplicate in source archive"
+      "reason": "Misdated duplicate; verified against matching counterpart and independent source"
     },
     {
       "removed_source_date": "2025-07-12",
       "verified_actual_date": "2025-06-12",
-      "reason": "Known misdated duplicate in source archive"
+      "reason": "Misdated duplicate; verified against matching counterpart and independent source"
     }
   ],
   "draws": [
