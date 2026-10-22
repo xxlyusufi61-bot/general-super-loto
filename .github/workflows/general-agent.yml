@@ -113,18 +113,35 @@ jobs:
           if not isinstance(archive_check, dict) or archive_check.get("valid") is not True:
               raise SystemExit("ISOLATION TEST FAILED: archive validation failed")
 
-          target_matches = [row for row in rows if row.get("date") == target_date]
+          target_matches = [
+              row for row in rows
+              if isinstance(row, dict) and row.get("date") == target_date
+          ]
           if len(target_matches) != 1:
               raise SystemExit("ISOLATION TEST FAILED: target date must appear exactly once")
 
           result = guard.isolate_target(rows, target_date)
+
+          if not isinstance(result, dict):
+              raise SystemExit("ISOLATION TEST FAILED: unexpected Data Guard result")
+
+          if result.get("isolation_pass") is not True:
+              raise SystemExit("ISOLATION TEST FAILED: Data Guard did not confirm isolation")
+
+          if result.get("target_present_in_archive") is not True:
+              raise SystemExit("ISOLATION TEST FAILED: Data Guard did not confirm target presence")
+
           train = result.get("train")
           excluded_dates = result.get("excluded_dates")
 
           if not isinstance(train, list) or not isinstance(excluded_dates, list):
               raise SystemExit("ISOLATION TEST FAILED: unexpected Data Guard result")
 
-          train_dates = [row.get("date") for row in train]
+          train_dates = [row.get("date") for row in train if isinstance(row, dict)]
+
+          if len(train_dates) != len(train):
+              raise SystemExit("ISOLATION TEST FAILED: invalid training record")
+
           if target_date in train_dates:
               raise SystemExit("ISOLATION TEST FAILED: target date leaked into training")
 
@@ -134,11 +151,21 @@ jobs:
           if any(not isinstance(day, str) or day < target_date for day in excluded_dates):
               raise SystemExit("ISOLATION TEST FAILED: a pre-target date was incorrectly excluded")
 
+          expected_excluded_dates = [
+              row["date"] for row in rows
+              if row["date"] >= target_date
+          ]
+
+          if excluded_dates != expected_excluded_dates:
+              raise SystemExit("ISOLATION TEST FAILED: excluded dates do not match the archive")
+
           print("TARGET ISOLATION: PASS")
           print("Target date:", target_date)
           print("Training records strictly before target:", len(train))
           print("Target/future dates excluded:", len(excluded_dates))
           print("Target date present exactly once in source archive: YES")
+          print("Data Guard isolation flag: PASS")
+          print("Data Guard target-presence flag: PASS")
           print("Target numbers displayed: NO")
           PY
 
