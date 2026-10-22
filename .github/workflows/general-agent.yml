@@ -48,12 +48,16 @@ jobs:
             python3 general_memory.py init
           fi
 
-      - name: Download Super Loto archive
-        if: ${{ inputs.agent == 'archive' }}
-        run: python3 general_archive_fetch.py
+      - name: Download Super Loto archive (suppress parser details)
+        run: |
+          if python3 general_archive_fetch.py > archive_fetch_output.log 2>&1; then
+            echo "ARCHIVE FETCH: completed; detailed output suppressed."
+          else
+            echo "ARCHIVE FETCH FAILED; parser details suppressed to protect draw data."
+            exit 1
+          fi
 
-      - name: Validate downloaded archive with Data Guard
-        if: ${{ inputs.agent == 'archive' }}
+      - name: Validate refreshed archive with Data Guard
         run: |
           python3 - <<'PY'
           import json
@@ -84,18 +88,14 @@ jobs:
           print("Draw numbers exposed in summary: NO")
           PY
 
-      - name: Test target isolation with Data Guard
+      - name: Test latest-draw target isolation with Data Guard
         if: ${{ inputs.agent == 'isolation-test' }}
-        env:
-          TARGET_DATE: "2026-09-22"
         run: |
           python3 - <<'PY'
           import json
-          import os
           from pathlib import Path
           import general_data_guard as guard
 
-          target_date = os.environ["TARGET_DATE"]
           archive_path = Path("super_loto_archive.json")
 
           if not archive_path.is_file():
@@ -113,12 +113,16 @@ jobs:
           if not isinstance(archive_check, dict) or archive_check.get("valid") is not True:
               raise SystemExit("ISOLATION TEST FAILED: archive validation failed")
 
+          target_date = archive_check.get("last_date")
+          if not isinstance(target_date, str):
+              raise SystemExit("ISOLATION TEST FAILED: latest valid target date is missing")
+
           target_matches = [
               row for row in rows
               if isinstance(row, dict) and row.get("date") == target_date
           ]
           if len(target_matches) != 1:
-              raise SystemExit("ISOLATION TEST FAILED: target date must appear exactly once")
+              raise SystemExit("ISOLATION TEST FAILED: latest target date must appear exactly once")
 
           result = guard.isolate_target(rows, target_date)
 
@@ -160,6 +164,7 @@ jobs:
               raise SystemExit("ISOLATION TEST FAILED: excluded dates do not match the archive")
 
           print("TARGET ISOLATION: PASS")
+          print("Dynamic target equals latest valid archive date: YES")
           print("Target date:", target_date)
           print("Training records strictly before target:", len(train))
           print("Target/future dates excluded:", len(excluded_dates))
@@ -179,14 +184,16 @@ jobs:
         run: |
           python3 general_core.py "$AGENT_ID" "$TASK_TEXT"
 
-      - name: Save validated archive or updated memory
-        if: ${{ success() && inputs.agent != 'isolation-test' }}
+      - name: Save validated archive and any updated memory
+        if: ${{ success() }}
         env:
           AGENT_ID: ${{ inputs.agent }}
         run: |
-          if [ "$AGENT_ID" = "archive" ]; then
+          if [ -f super_loto_archive.json ]; then
             git add super_loto_archive.json
-          elif [ -f general_memory.json ]; then
+          fi
+
+          if [ "$AGENT_ID" != "archive" ] && [ "$AGENT_ID" != "isolation-test" ] && [ -f general_memory.json ]; then
             git add general_memory.json
           fi
 
