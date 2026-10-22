@@ -8,8 +8,9 @@ import urllib.error
 from pathlib import Path
 from datetime import datetime, date, timezone
 
-VERSION = "0.5.1"
+VERSION = "0.5.2"
 MODEL = "z-ai/glm-5.3-flash"
+NVIDIA_TIMEOUT_SECONDS = 240
 BASE = Path(__file__).resolve().parent
 MEMORY = BASE / "general_memory.json"
 ARCHIVE = BASE / os.environ.get(
@@ -357,7 +358,7 @@ def ask_nvidia(messages):
     body = json.dumps({
         "model": MODEL,
         "messages": messages,
-        "max_tokens": 1600,
+        "max_tokens": 1024,
         "temperature": 0.2,
         "reasoning_effort": "low",
         "chat_template_kwargs": {
@@ -377,11 +378,21 @@ def ask_nvidia(messages):
     )
 
     try:
-        with urllib.request.urlopen(req, timeout=240) as r:
+        with urllib.request.urlopen(req, timeout=NVIDIA_TIMEOUT_SECONDS) as r:
             result = json.loads(r.read().decode())
+    except TimeoutError:
+        raise RuntimeError(
+            "NVIDIA request timed out after "
+            + str(NVIDIA_TIMEOUT_SECONDS) + " seconds."
+        ) from None
     except urllib.error.HTTPError as e:
         raise RuntimeError("NVIDIA HTTP error: " + str(e.code)) from None
-    except urllib.error.URLError:
+    except urllib.error.URLError as e:
+        if isinstance(getattr(e, "reason", None), TimeoutError):
+            raise RuntimeError(
+                "NVIDIA request timed out after "
+                + str(NVIDIA_TIMEOUT_SECONDS) + " seconds."
+            ) from None
         raise RuntimeError("NVIDIA connection error.") from None
 
     choices = result.get("choices", [])
@@ -513,14 +524,27 @@ def run_agent(agent, task):
 
     if mode == "data":
         role = AGENTS[agent]
-        safety_text = (
-            "MODE: TARGET-AWARE DATA ANALYSIS.\n"
-            "DATA GUARD PASS. Data Guard validated the archive and isolated "
-            "the target. Only records strictly before target_date are "
-            "supplied below. The target draw values and all target/future "
-            "records are not supplied. Do not claim to have inspected "
-            "excluded values.\n"
-        )
+        if agent == "validation":
+            safety_text = (
+                "MODE: TARGET-AWARE DATA VALIDATION.\n"
+                "DATA GUARD PASS. The archive and target isolation were "
+                "validated locally before this request. Only aggregate "
+                "validation metadata is supplied below; individual draws "
+                "and all draw-number lists are omitted. The target draw "
+                "values and all target/future records are not supplied. "
+                "Do not claim to have inspected excluded values. Do not "
+                "claim statistical methods or cross-validation were run "
+                "unless the supplied metadata says so.\n"
+            )
+        else:
+            safety_text = (
+                "MODE: TARGET-AWARE DATA ANALYSIS.\n"
+                "DATA GUARD PASS. Data Guard validated the archive and isolated "
+                "the target. Only records strictly before target_date are "
+                "supplied below. The target draw values and all target/future "
+                "records are not supplied. Do not claim to have inspected "
+                "excluded values.\n"
+            )
 
         print("Data Guard: PASS")
         print("Training records:", data["training_count"])
@@ -562,9 +586,24 @@ def run_agent(agent, task):
     )
 
     if data:
+        model_data = data
+        if agent == "validation":
+            # Validation needs only metadata; transmitting every training draw
+            # adds latency and exposes unnecessary number data to the model.
+            model_data = {
+                "guard": data["guard"],
+                "target_date": data["target_date"],
+                "archive_count": data["archive_count"],
+                "training_count": data["training_count"],
+                "target_present": data["target_present"],
+                "validation_scope": "archive_integrity_and_target_isolation",
+                "training_records_sent_to_model": 0,
+                "draw_numbers_sent_to_model": False,
+                "statistical_methods_run": []
+            }
         system += (
             "\nGUARDED DATA JSON:\n"
-            + json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+            + json.dumps(model_data, ensure_ascii=False, separators=(",", ":"))
         )
 
     print("GENERAL Core", VERSION, "| Agent:", agent)
