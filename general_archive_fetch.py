@@ -7,7 +7,7 @@ from datetime import date, datetime, timezone
 from html.parser import HTMLParser
 from urllib.request import Request, urlopen
 
-# GENERAL Super Loto archive fetcher 3.3
+# GENERAL Super Loto archive fetcher 3.4
 BASE_URL = "https://lotoistatistik.com/super-loto/"
 CROSS_URLS = (
     "https://loto.gen.tr/super-loto/arsiv/2025",
@@ -66,6 +66,12 @@ class TableParser(HTMLParser):
         if tag in ("td", "th") and self.row is not None:
             self._finish_cell()
             self.cell = {"text": [], "attrs": []}
+            # IMPORTANT: capture attributes on the cell itself too.
+            # Some result sites render winning balls in td data-number
+            # or aria-label attributes instead of visible text.
+            for key, value in attrs:
+                if key.lower() in ATTR_KEYS and value:
+                    self.cell["attrs"].append(str(value))
             return
         if self.cell is not None:
             for key, value in attrs:
@@ -89,7 +95,7 @@ class TableParser(HTMLParser):
 
 
 def fetch_html(url, label):
-    req = Request(url, headers={"User-Agent": "GENERAL-Archive-Research/3.3"})
+    req = Request(url, headers={"User-Agent": "GENERAL-Archive-Research/3.4"})
     try:
         with urlopen(req, timeout=40) as response:
             text = response.read().decode("utf-8", "replace")
@@ -193,13 +199,17 @@ def parse_cross_rows(html):
         attr_cells = []
         for cell in cells[date_index + 1:]:
             t = cell["text"].strip()
-            if not t:
+            a = cell["attrs"].strip()
+
+            # Read attributes even when the cell has no visible text.
+            # Skip prize cells before collecting text or attributes.
+            if "₺" in t or re.search(r"\\b(?:TL|TRY)\\b", t, re.I):
                 continue
-            if "₺" in t or re.search(r"\b(?:TL|TRY)\b", t, re.I):
-                continue
-            number_cells.append(t)
-            if cell["attrs"]:
-                attr_cells.append(cell["attrs"])
+
+            if t:
+                number_cells.append(t)
+            if a:
+                attr_cells.append(a)
         nums = [int(x) for x in re.findall(r"(?<!\d)\d{1,2}(?!\d)", " ".join(number_cells))]
         if not _valid_six(nums):
             # If the source represents balls with attributes rather than text,
@@ -329,6 +339,16 @@ def self_test():
     assert n2 == 1
     assert rows2["2025-12-28"] == (6, 31, 35, 41, 44, 46)
 
+    # Some sites expose each number on a cell attribute instead of text.
+    html3 = '''<table><tr><td>#20250156</td><td>30 Aralık 2025</td>
+    <td data-number="6"></td><td data-number="34"></td>
+    <td data-number="35"></td><td data-number="36"></td>
+    <td data-number="56"></td><td data-number="57"></td>
+    <td>₺732.389.501</td></tr></table>'''
+    rows3, n3 = parse_cross_rows(html3)
+    assert n3 == 1
+    assert rows3["2025-12-30"] == (6, 34, 35, 36, 56, 57)
+
     bad_html = '''<table><tr><td>#20250154</td><td>25 Aralık 2025</td><td>2 7 19 21 23</td><td>₺732.389.501</td></tr></table>'''
     try:
         parse_cross_rows(bad_html)
@@ -366,4 +386,3 @@ if __name__ == "__main__":
     except Exception as exc:
         print("ARCHIVE FETCH FAILED:", exc)
         sys.exit(1)
-            
