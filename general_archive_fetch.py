@@ -80,7 +80,8 @@ class TableParser(HTMLParser):
 
     def handle_data(self, data):
         if self.cell is not None:
-            self.cell["text"].append(data)
+            # Preserve boundaries between adjacent nested elements (e.g. six balls in spans).
+            self.cell["text"].append(" " + data + " ")
 
     def handle_endtag(self, tag):
         if tag in ("td", "th"):
@@ -328,7 +329,7 @@ def self_test():
     # Representative fixture matching the visible second-source table:
     # draw ID, Turkish date, six numbers, prize.
     html = '''<table><tr><th>#</th><th>Tarih</th><th>Numaralar</th><th>İkramiye</th></tr>
-    <tr><td><a href="/x">#20250156</a></td><td>30 Aralık 2025</td><td><span>6</span> <span>34</span> <span>35</span> <span>36</span> <span>56</span> <span>57</span></td><td>₺732.389.501</td></tr></table>'''
+    <tr><td><a href="/x">#20250156</a></td><td>30 Aralık 2025</td><td><span>6</span><span>34</span><span>35</span><span>36</span><span>56</span><span>57</span></td><td>₺732.389.501</td></tr></table>'''
     rows, n = parse_cross_rows(html)
     assert n == 1
     assert rows["2025-12-30"] == (6, 34, 35, 36, 56, 57)
