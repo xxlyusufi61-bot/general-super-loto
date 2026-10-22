@@ -260,9 +260,36 @@ try:
             "SECURITY TEST FAILED: Statistical methods must not be claimed as run."
         )
 
-    if "training_data" in data or "numbers" in json.dumps(data):
+    expected_metadata_keys = {
+        "guard",
+        "target_date",
+        "archive_count",
+        "training_count",
+        "target_present",
+        "validation_scope",
+        "training_records_sent_to_model",
+        "draw_numbers_sent_to_model",
+        "statistical_methods_run",
+    }
+
+    if set(data.keys()) != expected_metadata_keys:
         raise AssertionError(
-            "SECURITY TEST FAILED: Draw numbers or training rows found in model metadata."
+            "SECURITY TEST FAILED: Unexpected validation metadata fields."
+        )
+
+    if "training_data" in data:
+        raise AssertionError(
+            "SECURITY TEST FAILED: Training rows found in model metadata."
+        )
+
+    if data.get("draw_numbers_sent_to_model") is not False:
+        raise AssertionError(
+            "SECURITY TEST FAILED: Draw-number transfer flag is not false."
+        )
+
+    if data.get("training_records_sent_to_model") != 0:
+        raise AssertionError(
+            "SECURITY TEST FAILED: Training records were sent to validation model."
         )
 
     # Independently inspect the locally guarded training split.
