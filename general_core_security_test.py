@@ -6,9 +6,9 @@ from pathlib import Path
 import general_core as core
 
 
-# --------------------------------------------------
-# 1. ARCHIVE INTEGRITY
-# --------------------------------------------------
+# ==================================================
+# 1. LOAD AND VALIDATE ARCHIVE STRUCTURE
+# ==================================================
 
 archive_path = Path("super_loto_archive.json")
 
@@ -18,49 +18,60 @@ if not archive_path.is_file():
     )
 
 try:
-    archive = json.loads(
+    archive_payload = json.loads(
         archive_path.read_text(encoding="utf-8")
     )
 except (OSError, json.JSONDecodeError) as exc:
     raise AssertionError(
-        "SECURITY TEST FAILED: Archive could not be read."
+        "SECURITY TEST FAILED: Archive JSON could not be read."
     ) from exc
+
+if not isinstance(archive_payload, dict):
+    raise AssertionError(
+        "SECURITY TEST FAILED: Archive root must be a JSON object."
+    )
+
+archive = archive_payload.get("draws")
 
 if not isinstance(archive, list) or not archive:
     raise AssertionError(
-        "SECURITY TEST FAILED: Archive must be a non-empty list."
+        "SECURITY TEST FAILED: Archive must contain a non-empty draws list."
     )
 
 
-# --------------------------------------------------
-# 2. VALIDATE ARCHIVE DATES AND RECORDS
-# --------------------------------------------------
+# ==================================================
+# 2. VALIDATE EVERY ARCHIVE RECORD
+# ==================================================
 
 dates = []
 
-for row in archive:
+for index, row in enumerate(archive):
     if not isinstance(row, dict):
         raise AssertionError(
-            "SECURITY TEST FAILED: Invalid archive record."
+            "SECURITY TEST FAILED: Invalid record at index "
+            + str(index)
         )
 
     day = row.get("date")
 
     if not isinstance(day, str):
         raise AssertionError(
-            "SECURITY TEST FAILED: Invalid archive date."
+            "SECURITY TEST FAILED: Invalid date at index "
+            + str(index)
         )
 
     try:
         parsed_day = date.fromisoformat(day)
     except ValueError as exc:
         raise AssertionError(
-            "SECURITY TEST FAILED: Invalid archive date."
+            "SECURITY TEST FAILED: Invalid ISO date at index "
+            + str(index)
         ) from exc
 
     if parsed_day.isoformat() != day:
         raise AssertionError(
-            "SECURITY TEST FAILED: Archive date is not ISO formatted."
+            "SECURITY TEST FAILED: Non-canonical date at index "
+            + str(index)
         )
 
     dates.append(day)
@@ -79,7 +90,8 @@ for row in archive:
         )
     ):
         raise AssertionError(
-            "SECURITY TEST FAILED: Invalid draw numbers."
+            "SECURITY TEST FAILED: Invalid draw numbers at index "
+            + str(index)
         )
 
 if dates != sorted(dates):
@@ -93,9 +105,9 @@ if len(dates) != len(set(dates)):
     )
 
 
-# --------------------------------------------------
-# 3. IDENTIFY THE DYNAMIC TARGET
-# --------------------------------------------------
+# ==================================================
+# 3. IDENTIFY THE LATEST DRAW AS THE TARGET
+# ==================================================
 
 target_date = dates[-1]
 
@@ -106,15 +118,15 @@ target_rows = [
 
 if len(target_rows) != 1:
     raise AssertionError(
-        "SECURITY TEST FAILED: Target must occur exactly once."
+        "SECURITY TEST FAILED: Latest target must occur exactly once."
     )
 
 target_numbers = target_rows[0]["numbers"]
 
 
-# --------------------------------------------------
-# 4. PREPARE A MOCK MODEL
-# --------------------------------------------------
+# ==================================================
+# 4. PREPARE MOCK MODEL AND SAVE ORIGINAL STATE
+# ==================================================
 
 captured = {}
 
@@ -129,9 +141,9 @@ def fake_nvidia(messages):
     return "MOCK_RESPONSE"
 
 
-# --------------------------------------------------
-# 5. RUN THE SECURITY CHECK
-# --------------------------------------------------
+# ==================================================
+# 5. RUN SECURITY TEST
+# ==================================================
 
 try:
     os.environ.pop("GENERAL_SAVE_MEMORY", None)
@@ -180,7 +192,7 @@ try:
             "SECURITY TEST FAILED: Data Guard confirmation is missing."
         )
 
-    # Locate the structured Data Guard object.
+    # Find the structured Data Guard object.
     marker = system.rfind('{"guard":')
 
     if marker < 0:
@@ -217,13 +229,15 @@ try:
             "SECURITY TEST FAILED: Target presence was not confirmed."
         )
 
-    # Validate training data.
+    # Validate training data and ensure no target/future dates appear.
     training = data.get("training_data")
 
     if not isinstance(training, list) or not training:
         raise AssertionError(
             "SECURITY TEST FAILED: Training data is missing or empty."
         )
+
+    training_dates = []
 
     for row in training:
         if not isinstance(row, dict):
@@ -237,6 +251,15 @@ try:
             raise AssertionError(
                 "SECURITY TEST FAILED: Target/future date in training."
             )
+
+        try:
+            date.fromisoformat(day)
+        except ValueError as exc:
+            raise AssertionError(
+                "SECURITY TEST FAILED: Invalid training date."
+            ) from exc
+
+        training_dates.append(day)
 
         numbers = row.get("numbers")
 
@@ -255,7 +278,17 @@ try:
                 "SECURITY TEST FAILED: Invalid training numbers."
             )
 
-    # Check the exact expected structure.
+    if training_dates != sorted(training_dates):
+        raise AssertionError(
+            "SECURITY TEST FAILED: Training data is not chronological."
+        )
+
+    if len(training_dates) != len(set(training_dates)):
+        raise AssertionError(
+            "SECURITY TEST FAILED: Duplicate training dates found."
+        )
+
+    # Validate exact Data Guard output structure.
     allowed_keys = {
         "guard",
         "target_date",
@@ -280,8 +313,8 @@ try:
             "SECURITY TEST FAILED: Archive count mismatch."
         )
 
-    # Check that the exact target-number sequence is not
-    # included in the messages sent to the model.
+    # Check that the exact JSON sequence of target numbers
+    # is not present in messages sent to the model.
     serialized_messages = json.dumps(
         messages,
         ensure_ascii=False
@@ -305,7 +338,6 @@ try:
     print("Exact target-number sequence in messages: NOT FOUND")
 
 finally:
-    # Restore the original model function and environment.
     core.ask_nvidia = original_ask_nvidia
 
     if old_save is None:
