@@ -1,16 +1,17 @@
 import os
 import general_core as core
 
-def main():
 captured = {"called": False}
 
 original_ask_nvidia = core.ask_nvidia
 old_save = os.environ.pop("GENERAL_SAVE_MEMORY", None)
 old_target = os.environ.pop("GENERAL_TARGET_DATE", None)
 
+
 def mock_ask_nvidia(messages):
     captured["called"] = True
     return "MOCK_RESPONSE"
+
 
 try:
     core.ask_nvidia = mock_ask_nvidia
@@ -37,15 +38,12 @@ try:
 
         if not target_related:
             raise AssertionError(
-                "NO-TARGET TEST FAILED: unrelated error: "
+                f"NO-TARGET TEST FAILED: unrelated error: "
                 f"{type(exc).__name__}: {message}"
             ) from exc
 
-        print(
-            "Request blocked for target/date requirement:",
-            type(exc).__name__,
-            message,
-        )
+        print("Request blocked:", type(exc).__name__, message)
+
     else:
         raise AssertionError(
             "NO-TARGET TEST FAILED: request was not blocked "
@@ -75,6 +73,3 @@ finally:
         os.environ.pop("GENERAL_TARGET_DATE", None)
     else:
         os.environ["GENERAL_TARGET_DATE"] = old_target
-
-if name == "main":
-main()
