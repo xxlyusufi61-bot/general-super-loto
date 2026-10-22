@@ -477,16 +477,22 @@ try:
         answer == "FINAL_REPORT_ONLY",
         "Only the content field is returned as the final answer"
     )
+    request_payload = captured_request["payload"]
+    template_kwargs = request_payload.get("chat_template_kwargs", {})
     regression_check(
-        captured_request["payload"].get("reasoning_effort") == "low",
+        request_payload.get("reasoning_effort") == "low",
         "GLM reasoning budget is explicitly reduced to leave room for final content"
     )
     regression_check(
-        captured_request["payload"].get("clear_thinking") is True,
-        "GLM request explicitly enables clear_thinking"
+        template_kwargs.get("clear_thinking") is True,
+        "GLM clear_thinking is sent as a chat-template argument"
     )
     regression_check(
-        captured_request["payload"].get("stream") is False,
+        "clear_thinking" not in request_payload,
+        "GLM chat-template argument is not sent as an unsupported top-level parameter"
+    )
+    regression_check(
+        request_payload.get("stream") is False,
         "GLM request explicitly uses non-streaming output"
     )
 finally:
