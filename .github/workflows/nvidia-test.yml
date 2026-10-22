@@ -21,32 +21,66 @@ jobs:
           import urllib.error
 
           key = os.environ.get("NVIDIA_API_KEY", "")
+
           if not key:
-              raise SystemExit("ERROR: NVIDIA_API_KEY secret is missing")
+              raise SystemExit(
+                  "ERROR: NVIDIA_API_KEY secret is missing"
+              )
 
           request = urllib.request.Request(
               "https://integrate.api.nvidia.com/v1/models",
               headers={
                   "Authorization": "Bearer " + key,
                   "Accept": "application/json"
-              }
+              },
+              method="GET"
           )
 
           try:
-              with urllib.request.urlopen(request, timeout=30) as response:
-                  data = json.loads(response.read().decode())
-                  models = data.get("data", [])
+              with urllib.request.urlopen(
+                  request, timeout=30
+              ) as response:
+                  response_text = response.read().decode("utf-8")
 
-                  print("NVIDIA API connection successful.")
-                  print("Available models returned:", len(models))
+              try:
+                  data = json.loads(response_text)
+              except json.JSONDecodeError:
+                  print("ERROR: API returned invalid JSON.")
+                  raise SystemExit(1)
 
-                  for model in models[:10]:
-                      print("-", model.get("id", "Unknown model"))
+              if not isinstance(data, dict):
+                  print("ERROR: API response is not a JSON object.")
+                  raise SystemExit(1)
+
+              models = data.get("data")
+
+              if not isinstance(models, list):
+                  print("ERROR: API response has no valid model list.")
+                  raise SystemExit(1)
+
+              print("NVIDIA API connection successful.")
+              print("Authentication: successful")
+              print("Available models returned:", len(models))
+
+              for model in models[:10]:
+                  if isinstance(model, dict):
+                      model_id = model.get("id")
+                      if isinstance(model_id, str):
+                          print("-", model_id)
+
+              print("NVIDIA API TEST SUCCESS")
 
           except urllib.error.HTTPError as error:
-              print("NVIDIA API returned HTTP status:", error.code)
-              print(error.read().decode()[:1000])
+              print("NVIDIA API HTTP status:", error.code)
+              print("Error response body omitted from logs.")
               raise SystemExit(1)
+
+          except urllib.error.URLError as error:
+              print("Connection failed:", type(error.reason).__name__)
+              raise SystemExit(1)
+
+          except SystemExit:
+              raise
 
           except Exception as error:
               print("Connection test failed:", type(error).__name__)
