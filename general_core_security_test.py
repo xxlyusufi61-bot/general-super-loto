@@ -200,6 +200,11 @@ try:
             "SECURITY TEST FAILED: Final-report-only instruction is missing."
         )
 
+    if "the workflow runner performs those actions after your response" not in system:
+        raise AssertionError(
+            "SECURITY TEST FAILED: Agent must not claim post-run memory-save status."
+        )
+
     # Validation agent must receive aggregate metadata only.
     marker = system.rfind('{"guard":')
 
