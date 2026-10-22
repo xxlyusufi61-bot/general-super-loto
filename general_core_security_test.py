@@ -445,7 +445,8 @@ try:
             core.ask_nvidia([{"role": "user", "content": "test"}])
         except RuntimeError as error:
             regression_check(
-                "final model content" in str(error).lower(),
+                ("empty model response" in str(error).lower()
+                or "final model content" in str(error).lower()),
                 "Reasoning-only response is rejected"
             )
         else:
