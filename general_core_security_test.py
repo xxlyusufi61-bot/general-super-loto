@@ -8,7 +8,7 @@ import general_core as core
 archive_path = Path("super_loto_archive.json")
 
 if not archive_path.is_file():
-raise AssertionError("SECURITY TEST FAILED: Archive file is missing.")
+    raise AssertionError("SECURITY TEST FAILED: Archive file is missing.")
 
 try:
 archive = json.loads(
