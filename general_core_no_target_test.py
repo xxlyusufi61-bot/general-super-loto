@@ -7,7 +7,7 @@ core.ask_nvidia = lambda messages: captured.update(called=True) or "MOCK_RESPONS
 old_save = os.environ.pop("GENERAL_SAVE_MEMORY", None)
 old_target = os.environ.pop("GENERAL_TARGET_DATE", None)
 
-exec("try:\n core.run_agent('validation', 'Check whether the archive was analyzed.')\n raise AssertionError('NO-TARGET TEST FAILED: request was not blocked')\nexcept (ValueError, RuntimeError) as exc:\n print('Request blocked:', type(exc).name, str(exc))")
+exec("try:\n core.run_agent('validation', 'Check whether the archive was analyzed.')\n raise AssertionError('NO-TARGET TEST FAILED: request was not blocked')\nexcept (ValueError, RuntimeError) as exc:\n print('Request blocked:', type(exc)._name_, str(exc))")
 
 assert not captured["called"], "NO-TARGET TEST FAILED: model was called"
 
