@@ -1,830 +1,369 @@
 import json
-import os
 import re
 import sys
+import os
 from pathlib import Path
 from datetime import date, datetime, timezone
-from urllib.request import Request, urlopen
 from html.parser import HTMLParser
+from urllib.request import Request, urlopen
 
-
-# ==========================================
-# GENERAL ARCHIVE FETCHER
-# Version: 3.2
-# ==========================================
-
+# GENERAL Super Loto archive fetcher 3.3
 BASE_URL = "https://lotoistatistik.com/super-loto/"
-CROSS_CHECK_BASE_URL = "https://loto.gen.tr/super-loto/arsiv/2025"
-
-CROSS_CHECK_PAGE_URLS = (
-    CROSS_CHECK_BASE_URL,
-    CROSS_CHECK_BASE_URL + "?sayfa=2",
+CROSS_URLS = (
+    "https://loto.gen.tr/super-loto/arsiv/2025",
+    "https://loto.gen.tr/super-loto/arsiv/2025?sayfa=2",
 )
-
-CROSS_CHECK_EXPECTED_2025 = 156
-OUTPUT = Path(__file__).resolve().parent / "super_loto_archive.json"
-
-EXPECTED = {
-    2020: 97,
-    2021: 154,
-    2022: 155,
-    2023: 150,
-    2024: 157,
-    2025: 156,
+OUT = Path(__file__).resolve().parent / "super_loto_archive.json"
+EXPECTED = {2020: 97, 2021: 154, 2022: 155, 2023: 150, 2024: 157, 2025: 156}
+CROSS_EXPECTED = 156
+MONTHS = {
+    "ocak": 1, "şubat": 2, "subat": 2, "mart": 3, "nisan": 4,
+    "mayıs": 5, "mayis": 5, "haziran": 6, "temmuz": 7,
+    "ağustos": 8, "agustos": 8, "eylül": 9, "eylul": 9,
+    "ekim": 10, "kasım": 11, "kasim": 11, "aralık": 12, "aralik": 12,
 }
+DATE_TR = re.compile(r"\b(\d{1,2})\s+([A-Za-zÇĞİÖŞÜçğıöşü]+)\s+(\d{4})\b")
+DATE_PRIMARY = re.compile(r"\b(\d{2})\.(\d{2})\.(\d{4})\b")
+ATTR_KEYS = {"alt", "title", "aria-label", "data-number", "data-value", "value"}
 
-TURKISH_MONTHS = {
-    "ocak": 1,
-    "şubat": 2,
-    "subat": 2,
-    "mart": 3,
-    "nisan": 4,
-    "mayıs": 5,
-    "mayis": 5,
-    "haziran": 6,
-    "temmuz": 7,
-    "ağustos": 8,
-    "agustos": 8,
-    "eylül": 9,
-    "eylul": 9,
-    "ekim": 10,
-    "kasım": 11,
-    "kasim": 11,
-    "aralık": 12,
-    "aralik": 12,
-}
-
-TURKISH_DATE_PATTERN = re.compile(
-    r"\b(\d{1,2})\s+"
-    r"([A-Za-zÇĞİÖŞÜçğıöşü]+)\s+"
-    r"(\d{4})\b"
+KNOWN_MISDATED = (
+    ("2025-07-19", "2025-06-19", (9, 25, 29, 31, 35, 46)),
+    ("2025-07-17", "2025-06-17", (11, 12, 21, 52, 53, 54)),
+    ("2025-07-15", "2025-06-15", (7, 22, 31, 39, 48, 56)),
+    ("2025-07-12", "2025-06-12", (16, 19, 25, 37, 43, 57)),
 )
-
-# Known misdated duplicates in the primary source.
-# Remove a wrong-date entry only if its correctly dated
-# counterpart is also present exactly once with the same numbers.
-KNOWN_MISDATED_ROWS = (
-    {
-        "wrong_date": "2025-07-19",
-        "actual_date": "2025-06-19",
-        "numbers": (9, 25, 29, 31, 35, 46),
-    },
-    {
-        "wrong_date": "2025-07-17",
-        "actual_date": "2025-06-17",
-        "numbers": (11, 12, 21, 52, 53, 54),
-    },
-    {
-        "wrong_date": "2025-07-15",
-        "actual_date": "2025-06-15",
-        "numbers": (7, 22, 31, 39, 48, 56),
-    },
-    {
-        "wrong_date": "2025-07-12",
-        "actual_date": "2025-06-12",
-        "numbers": (16, 19, 25, 37, 43, 57),
-    },
-)
-
 
 class TableParser(HTMLParser):
-    """Parse table cells for the primary archive."""
-
+    """Collect row/cell text plus useful accessible/data attributes."""
     def __init__(self):
-        super().__init__()
+        super().__init__(convert_charrefs=True)
         self.rows = []
         self.row = None
         self.cell = None
 
+    def _finish_cell(self):
+        if self.row is not None and self.cell is not None:
+            text = " ".join("".join(self.cell["text"]).split())
+            attrs = " ".join(" ".join(self.cell["attrs"]).split())
+            self.row.append({"text": text, "attrs": attrs})
+        self.cell = None
+
+    def _finish_row(self):
+        if self.row is not None:
+            self._finish_cell()
+            if self.row:
+                self.rows.append(self.row)
+        self.row = None
+
     def handle_starttag(self, tag, attrs):
+        attr_map = dict(attrs)
         if tag == "tr":
             if self.row is not None:
-                # Recover from a malformed row instead of
-                # stopping on harmless nested markup.
-                self.row = None
-                self.cell = None
-
+                self._finish_row()
             self.row = []
-
-        elif tag in ("td", "th") and self.row is not None:
-            if self.cell is not None:
-                self.row.append(
-                    " ".join("".join(self.cell).split())
-                )
-
-            self.cell = []
+            self.cell = None
+            return
+        if tag in ("td", "th") and self.row is not None:
+            self._finish_cell()
+            self.cell = {"text": [], "attrs": []}
+            return
+        if self.cell is not None:
+            for key, value in attrs:
+                if key.lower() in ATTR_KEYS and value:
+                    self.cell["attrs"].append(str(value))
 
     def handle_data(self, data):
         if self.cell is not None:
-            self.cell.append(data)
+            self.cell["text"].append(data)
 
     def handle_endtag(self, tag):
-        if tag in ("td", "th") and self.cell is not None:
-            if self.row is not None:
-                self.row.append(
-                    " ".join("".join(self.cell).split())
-                )
-
-            # A closed cell must be marked as closed.
-            self.cell = None
-
-        elif tag == "tr" and self.row is not None:
-            if self.cell is not None:
-                self.row.append(
-                    " ".join("".join(self.cell).split())
-                )
-
-            self.rows.append(self.row)
-            self.row = None
-            self.cell = None
-
-
-class RowTextParser(HTMLParser):
-    """
-    Collect all visible text inside each table row.
-
-    The independent source may put the date, numbers and
-    prize in different cells or nested elements. Therefore,
-    cross-source parsing must not depend on fixed cell indexes.
-    """
-
-    def __init__(self):
-        super().__init__()
-        self.rows = []
-        self.current_row = None
-
-    def finish_row(self):
-        if self.current_row is None:
-            return
-
-        row_text = " ".join(
-            "".join(self.current_row).split()
-        )
-
-        if row_text:
-            self.rows.append(row_text)
-
-        self.current_row = None
-
-    def handle_starttag(self, tag, attrs):
-        if tag == "tr":
-            if self.current_row is not None:
-                self.finish_row()
-
-            self.current_row = []
-            return
-
-        if self.current_row is not None:
-            self.current_row.append(" ")
-
-    def handle_data(self, data):
-        if self.current_row is not None:
-            self.current_row.append(data)
-
-    def handle_endtag(self, tag):
-        if self.current_row is None:
-            return
-
-        if tag == "tr":
-            self.finish_row()
-        else:
-            self.current_row.append(" ")
+        if tag in ("td", "th"):
+            self._finish_cell()
+        elif tag == "tr":
+            self._finish_row()
 
     def close(self):
         super().close()
-        # Some malformed HTML pages omit a closing </tr>.
-        self.finish_row()
+        if self.row is not None:
+            self._finish_row()
 
 
-def fetch_html(url, source_name):
-    request = Request(
-        url,
-        headers={
-            "User-Agent": "GENERAL-Archive-Research/3.2"
-        },
-    )
-
+def fetch_html(url, label):
+    req = Request(url, headers={"User-Agent": "GENERAL-Archive-Research/3.3"})
     try:
-        with urlopen(request, timeout=40) as response:
-            html = response.read().decode(
-                "utf-8",
-                "replace",
-            )
+        with urlopen(req, timeout=40) as response:
+            text = response.read().decode("utf-8", "replace")
     except Exception as exc:
-        raise RuntimeError(
-            f"{source_name} download failed; "
-            f"archive was not saved: {exc}"
-        ) from exc
-
-    if not html.strip():
-        raise RuntimeError(
-            f"{source_name} returned an empty page; "
-            "archive was not saved."
-        )
-
-    return html
+        raise RuntimeError(f"{label} download failed: {exc}; archive not saved") from exc
+    if not text.strip():
+        raise RuntimeError(f"{label} returned an empty page; archive not saved")
+    return text
 
 
-def parse_source_year(year):
-    url = (
-        BASE_URL
-        + f"super-loto-cekilis-arsivi-{year}/"
-    )
-
-    html = fetch_html(
-        url,
-        f"Primary source {year}",
-    )
-
+def parse_primary_year(year, html=None):
+    if html is None:
+        url = BASE_URL + f"super-loto-cekilis-arsivi-{year}/"
+        html = fetch_html(url, f"Primary source {year}")
     parser = TableParser()
     parser.feed(html)
     parser.close()
-
     results = []
-
     for cells in parser.rows:
         if len(cells) < 2:
             continue
-
-        match = re.search(
-            r"\b(\d{2})\.(\d{2})\.(\d{4})\b",
-            cells[0],
-        )
-
-        if not match:
+        first = cells[0]["text"]
+        m = DATE_PRIMARY.search(first)
+        if not m:
             continue
-
-        day, month, row_year = map(
-            int,
-            match.groups(),
-        )
-
+        day, month, row_year = map(int, m.groups())
         if row_year != year:
             continue
-
         try:
-            draw_date = date(
-                row_year,
-                month,
-                day,
-            ).isoformat()
+            draw_date = date(row_year, month, day).isoformat()
         except ValueError as exc:
-            raise RuntimeError(
-                f"Invalid source date: {cells[0]}"
-            ) from exc
-
-        numbers = [
-            int(value)
-            for value in re.findall(
-                r"\d+",
-                " ".join(cells[1:]),
-            )
-        ]
-
-        if len(numbers) != 6:
-            raise RuntimeError(
-                f"{draw_date}: expected exactly six numbers; "
-                f"found {len(numbers)}. Archive was not saved."
-            )
-
-        if (
-            len(set(numbers)) != 6
-            or any(
-                number < 1 or number > 60
-                for number in numbers
-            )
-        ):
-            raise RuntimeError(
-                f"{draw_date}: invalid number structure. "
-                "Archive was not saved."
-            )
-
-        results.append({
-            "date": draw_date,
-            "numbers": sorted(numbers),
-        })
-
+            raise RuntimeError(f"Invalid primary date: {first}") from exc
+        text_parts = [cell["text"] for cell in cells[1:]]
+        nums = [int(x) for x in re.findall(r"(?<!\d)\d{1,2}(?!\d)", " ".join(text_parts))]
+        if len(nums) != 6 or len(set(nums)) != 6 or any(n < 1 or n > 60 for n in nums):
+            # Attribute fallback for sites that render numbers as accessible labels.
+            attrs = [cell["attrs"] for cell in cells[1:]]
+            nums = [int(x) for x in re.findall(r"(?<!\d)\d{1,2}(?!\d)", " ".join(attrs))]
+        if len(nums) != 6 or len(set(nums)) != 6 or any(n < 1 or n > 60 for n in nums):
+            raise RuntimeError(f"{draw_date}: primary row did not yield six distinct numbers; archive not saved")
+        results.append({"date": draw_date, "numbers": sorted(nums)})
     if not results:
-        raise RuntimeError(
-            f"No results found for {year}; "
-            "source or page format may have changed. "
-            "Archive was not saved."
-        )
-
+        raise RuntimeError(f"No primary results found for {year}; archive not saved")
     return results
 
 
-def apply_known_source_corrections(year, rows):
+def apply_known_corrections(year, rows):
     if year != 2025:
         return rows
-
     remaining = list(rows)
-
-    for item in KNOWN_MISDATED_ROWS:
-        wrong_date = item["wrong_date"]
-        actual_date = item["actual_date"]
-        expected_numbers = list(item["numbers"])
-
-        bad_rows = [
-            row for row in remaining
-            if (
-                row["date"] == wrong_date
-                and row["numbers"] == expected_numbers
-            )
-        ]
-
-        counterpart_rows = [
-            row for row in remaining
-            if (
-                row["date"] == actual_date
-                and row["numbers"] == expected_numbers
-            )
-        ]
-
-        if (
-            len(bad_rows) != 1
-            or len(counterpart_rows) != 1
-        ):
-            raise RuntimeError(
-                "SOURCE ANOMALY CHECK FAILED: expected exactly "
-                f"one misdated record for {wrong_date} and one "
-                f"matching counterpart on {actual_date}; found "
-                f"{len(bad_rows)} and {len(counterpart_rows)}. "
-                "Archive was not saved."
-            )
-
-        remaining.remove(bad_rows[0])
-
-        print(
-            "EXCLUDED KNOWN SOURCE DUPLICATE:",
-            wrong_date,
-            "matches the verified record dated",
-            actual_date,
-        )
-
+    for wrong_date, actual_date, expected_nums in KNOWN_MISDATED:
+        bad = [r for r in remaining if r["date"] == wrong_date and r["numbers"] == list(expected_nums)]
+        counterpart = [r for r in remaining if r["date"] == actual_date and r["numbers"] == list(expected_nums)]
+        if len(bad) != 1 or len(counterpart) != 1:
+            raise RuntimeError(f"Known-source anomaly validation failed for {wrong_date}/{actual_date}; archive not saved")
+        remaining.remove(bad[0])
+        print(f"EXCLUDED VERIFIED MISDATED DUPLICATE: {wrong_date} -> {actual_date}")
     return remaining
 
 
-def download_year(year):
-    rows = parse_source_year(year)
-    rows = apply_known_source_corrections(
-        year,
-        rows,
-    )
-
-    by_date = {}
-
-    for row in rows:
-        draw_date = row["date"]
-
-        if draw_date in by_date:
-            conflict = (
-                by_date[draw_date]["numbers"]
-                != row["numbers"]
-            )
-
-            raise RuntimeError(
-                "DUPLICATE DATE AFTER CORRECTIONS: "
-                f"{draw_date}; conflicting numbers={conflict}. "
-                "Archive was not saved."
-            )
-
-        by_date[draw_date] = row
-
-    results = sorted(
-        by_date.values(),
-        key=lambda row: row["date"],
-    )
-
-    if (
-        year in EXPECTED
-        and len(results) != EXPECTED[year]
-    ):
-        raise RuntimeError(
-            f"{year}: expected {EXPECTED[year]} unique dates, "
-            f"received {len(results)}. Archive was not saved."
-        )
-
-    print(
-        f"{year}: {len(results)} unique dates checked"
-    )
-
-    return results
-
-
-def parse_turkish_date(text):
-    match = TURKISH_DATE_PATTERN.search(text)
-
-    if not match:
+def get_turkish_date(text):
+    m = DATE_TR.search(text)
+    if not m:
         return None
-
-    day = int(match.group(1))
-    month_name = match.group(2).lower()
-    year = int(match.group(3))
-
-    month = TURKISH_MONTHS.get(month_name)
-
+    day, month_name, year = int(m.group(1)), m.group(2).lower(), int(m.group(3))
+    month = MONTHS.get(month_name)
     if month is None:
-        raise RuntimeError(
-            f"Unrecognized Turkish month '{month_name}'; "
-            "source format may have changed. "
-            "Archive was not saved."
-        )
-
+        raise RuntimeError(f"Unrecognized month '{month_name}' in cross-check; archive not saved")
     try:
-        return date(
-            year,
-            month,
-            day,
-        ).isoformat()
+        return date(year, month, day).isoformat()
     except ValueError as exc:
-        raise RuntimeError(
-            "Invalid date in independent source. "
-            "Archive was not saved."
-        ) from exc
+        raise RuntimeError(f"Invalid cross-check date: {m.group(0)}") from exc
 
 
-def extract_independent_row(row_text):
-    """
-    Parse one complete independent-source row.
-
-    Return (date, sorted_numbers), or None for non-result rows.
-    The row-wide method avoids assumptions about table-cell indexes.
-    """
-
-    # Recognize the draw identifier wherever it appears.
-    identifier = re.search(
-        r"(?<!\d)2025\d{4}(?!\d)",
-        row_text,
-    )
-
-    if identifier is None:
-        return None
-
-    date_match = TURKISH_DATE_PATTERN.search(row_text)
-
-    if date_match is None:
-        return None
-
-    draw_date = parse_turkish_date(
-        date_match.group(0)
-    )
-
-    if (
-        draw_date is None
-        or not draw_date.startswith("2025-")
-    ):
-        return None
-
-    # Remove the draw ID and the date before extracting numbers.
-    cleaned = re.sub(
-        r"(?<!\d)#?\s*2025\d{4}(?!\d)",
-        " ",
-        row_text,
-    )
-
-    cleaned = TURKISH_DATE_PATTERN.sub(
-        " ",
-        cleaned,
-        count=1,
-    )
-
-    # Exclude prize amounts to prevent their digits from
-    # being misread as draw numbers.
-    cleaned = re.sub(
-        r"₺\s*[\d.,]+|[\d.,]+\s*(?:TL|TRY)\b",
-        " ",
-        cleaned,
-        flags=re.IGNORECASE,
-    )
-
-    # The winning numbers are integer tokens with one or two digits.
-    number_tokens = re.findall(
-        r"(?<!\d)\d{1,2}(?!\d)",
-        cleaned,
-    )
-
-    numbers = [
-        int(value)
-        for value in number_tokens
-    ]
-
-    if len(numbers) != 6:
-        raise RuntimeError(
-            "Independent source row did not contain exactly "
-            f"six numbers for {draw_date}; found "
-            f"{len(numbers)} number tokens. "
-            "Source format may have changed; "
-            "archive was not saved."
-        )
-
-    if (
-        len(set(numbers)) != 6
-        or any(
-            number < 1 or number > 60
-            for number in numbers
-        )
-    ):
-        raise RuntimeError(
-            "Independent source contains an invalid number set "
-            f"for {draw_date}. Archive was not saved."
-        )
-
-    return draw_date, tuple(sorted(numbers))
+def _valid_six(nums):
+    return len(nums) == 6 and len(set(nums)) == 6 and all(1 <= n <= 60 for n in nums)
 
 
-def parse_cross_check_page(url):
-    html = fetch_html(
-        url,
-        "Independent 2025 cross-check source",
-    )
-
-    parser = RowTextParser()
+def parse_cross_rows(html):
+    parser = TableParser()
     parser.feed(html)
     parser.close()
-
-    results = {}
+    found = {}
     parsed_rows = 0
-
-    for row_text in parser.rows:
-        parsed = extract_independent_row(row_text)
-
-        if parsed is None:
+    for cells in parser.rows:
+        all_text = " ".join(cell["text"] for cell in cells)
+        all_attrs = " ".join(cell["attrs"] for cell in cells)
+        if not re.search(r"(?<!\d)#?\s*2025\d{4}(?!\d)", all_text + " " + all_attrs):
             continue
-
-        draw_date, numbers = parsed
-
-        if (
-            draw_date in results
-            and results[draw_date] != numbers
-        ):
-            raise RuntimeError(
-                "Independent source has conflicting records for "
-                f"{draw_date}; archive was not saved."
-            )
-
-        results[draw_date] = numbers
+        date_index = None
+        draw_date = None
+        for i, cell in enumerate(cells):
+            d = get_turkish_date(cell["text"])
+            if d is not None:
+                date_index, draw_date = i, d
+                break
+        if draw_date is None or not draw_date.startswith("2025-"):
+            continue
+        # Use cell text after the date, ignoring prize/money cells.
+        number_cells = []
+        attr_cells = []
+        for cell in cells[date_index + 1:]:
+            t = cell["text"].strip()
+            if not t:
+                continue
+            if "₺" in t or re.search(r"\b(?:TL|TRY)\b", t, re.I):
+                continue
+            number_cells.append(t)
+            if cell["attrs"]:
+                attr_cells.append(cell["attrs"])
+        nums = [int(x) for x in re.findall(r"(?<!\d)\d{1,2}(?!\d)", " ".join(number_cells))]
+        if not _valid_six(nums):
+            # If the source represents balls with attributes rather than text,
+            # try those attributes; do not combine both paths and double-count.
+            nums = [int(x) for x in re.findall(r"(?<!\d)\d{1,2}(?!\d)", " ".join(attr_cells))]
+        if not _valid_six(nums):
+            raise RuntimeError(f"Cross-check row {draw_date}: expected six distinct numbers but parsed {nums}; archive not saved")
+        values = tuple(sorted(nums))
+        if draw_date in found and found[draw_date] != values:
+            raise RuntimeError(f"Independent source has conflicting records for {draw_date}; archive not saved")
+        found[draw_date] = values
         parsed_rows += 1
-
-    if not results:
-        raise RuntimeError(
-            "Independent source page yielded no recognizable "
-            "draw rows; archive was not saved."
-        )
-
-    page_label = (
-        url.split("?")[-1]
-        if "?" in url
-        else "page 1"
-    )
-
-    print(
-        "Independent source page checked:",
-        page_label,
-        "unique dates:",
-        len(results),
-        "parsed rows:",
-        parsed_rows,
-    )
-
-    return results
+    if not found:
+        raise RuntimeError("Independent source yielded no recognizable 2025 draws; archive not saved")
+    return found, parsed_rows
 
 
-def fetch_independent_2025_archive():
+def fetch_independent_2025(html_pages=None):
     independent = {}
-
-    for url in CROSS_CHECK_PAGE_URLS:
-        page_rows = parse_cross_check_page(url)
-
-        for draw_date, numbers in page_rows.items():
-            if (
-                draw_date in independent
-                and independent[draw_date] != numbers
-            ):
-                raise RuntimeError(
-                    "Independent source pages disagree for "
-                    f"{draw_date}; archive was not saved."
-                )
-
-            independent[draw_date] = numbers
-
-    if len(independent) != CROSS_CHECK_EXPECTED_2025:
-        raise RuntimeError(
-            "Independent source completeness check failed: "
-            f"expected {CROSS_CHECK_EXPECTED_2025} unique "
-            f"2025 dates, received {len(independent)}. "
-            "Archive was not saved."
-        )
-
-    if any(
-        not draw_date.startswith("2025-")
-        for draw_date in independent
-    ):
-        raise RuntimeError(
-            "Independent source returned a date outside 2025; "
-            "archive was not saved."
-        )
-
+    for i, url in enumerate(CROSS_URLS):
+        html = html_pages[i] if html_pages is not None else fetch_html(url, "Independent 2025 source")
+        page_rows, parsed = parse_cross_rows(html)
+        print(f"Cross-check page {i + 1}: {len(page_rows)} unique dates; {parsed} rows")
+        for d, nums in page_rows.items():
+            if d in independent and independent[d] != nums:
+                raise RuntimeError(f"Independent source pages disagree for {d}; archive not saved")
+            independent[d] = nums
+    if len(independent) != CROSS_EXPECTED:
+        raise RuntimeError(f"Independent source expected {CROSS_EXPECTED} dates, got {len(independent)}; archive not saved")
     return independent
 
 
-def compare_2025_sources(
-    primary_rows,
-    independent_rows,
-):
-    primary = {
-        row["date"]: tuple(row["numbers"])
-        for row in primary_rows
-    }
-
-    primary_dates = set(primary)
-    independent_dates = set(independent_rows)
-
-    missing_from_independent = sorted(
-        primary_dates - independent_dates
-    )
-
-    missing_from_primary = sorted(
-        independent_dates - primary_dates
-    )
-
-    mismatched_numbers = sorted(
-        draw_date
-        for draw_date in primary_dates & independent_dates
-        if primary[draw_date] != independent_rows[draw_date]
-    )
-
-    if (
-        missing_from_independent
-        or missing_from_primary
-        or mismatched_numbers
-    ):
-        details = []
-
-        if missing_from_independent:
-            details.append(
-                "dates absent from independent source: "
-                + ", ".join(
-                    missing_from_independent[:10]
-                )
-            )
-
-        if missing_from_primary:
-            details.append(
-                "dates absent from primary source: "
-                + ", ".join(
-                    missing_from_primary[:10]
-                )
-            )
-
-        if mismatched_numbers:
-            details.append(
-                "number mismatches on dates: "
-                + ", ".join(mismatched_numbers[:10])
-            )
-
-        raise RuntimeError(
-            "CROSS-SOURCE CHECK FAILED for 2025: "
-            + "; ".join(details)
-            + ". Archive was not saved."
-        )
-
-    if len(primary) != CROSS_CHECK_EXPECTED_2025:
-        raise RuntimeError(
-            "Primary 2025 count does not match the independent "
-            "check; archive was not saved."
-        )
-
-    print("CROSS-SOURCE CHECK: PASS")
-    print("Year compared: 2025")
-    print(
-        "Matching dates and number sets:",
-        len(primary),
-    )
-    print("Draw numbers exposed in summary: NO")
-
-    return {
-        "year": 2025,
-        "primary_record_count": len(primary),
-        "independent_record_count": len(independent_rows),
-        "matching_dates_and_number_sets": len(primary),
-        "result": "PASS",
-        "checked_at": datetime.now(
-            timezone.utc
-        ).isoformat(),
-        "pages_checked": list(
-            CROSS_CHECK_PAGE_URLS
-        ),
-    }
+def compare_2025(primary_rows, independent):
+    primary = {r["date"]: tuple(r["numbers"]) for r in primary_rows}
+    pd, idates = set(primary), set(independent)
+    missing_other = sorted(pd - idates)
+    missing_primary = sorted(idates - pd)
+    mismatches = sorted(d for d in pd & idates if primary[d] != independent[d])
+    if missing_other or missing_primary or mismatches:
+        bits = []
+        if missing_other:
+            bits.append("missing from independent source: " + ", ".join(missing_other[:8]))
+        if missing_primary:
+            bits.append("missing from primary source: " + ", ".join(missing_primary[:8]))
+        if mismatches:
+            bits.append("number mismatches: " + ", ".join(mismatches[:8]))
+        raise RuntimeError("2025 CROSS-SOURCE CHECK FAILED: " + "; ".join(bits) + "; archive not saved")
+    if len(primary) != CROSS_EXPECTED:
+        raise RuntimeError(f"Primary 2025 count expected {CROSS_EXPECTED}, got {len(primary)}; archive not saved")
+    print("CROSS-SOURCE CHECK: PASS (156 dates and number sets)")
+    return {"year": 2025, "primary_record_count": len(primary), "independent_record_count": len(independent), "matching_dates_and_number_sets": len(primary), "result": "PASS", "checked_at": datetime.now(timezone.utc).isoformat(), "pages_checked": list(CROSS_URLS)}
 
 
-def main():
-    current_year = datetime.now(
-        timezone.utc
-    ).year
-
+def build_archive(year_rows, independent_html_pages=None):
     all_rows = []
-    cross_check_validation = None
-
-    for year in range(2020, current_year + 1):
-        year_rows = download_year(year)
-
+    check = None
+    for year in sorted(year_rows):
+        rows = year_rows[year]
         if year == 2025:
-            independent_2025 = (
-                fetch_independent_2025_archive()
-            )
-
-            cross_check_validation = (
-                compare_2025_sources(
-                    year_rows,
-                    independent_2025,
-                )
-            )
-
-        all_rows.extend(year_rows)
-
-    all_rows.sort(
-        key=lambda row: row["date"]
-    )
-
-    dates = [
-        row["date"]
-        for row in all_rows
-    ]
-
-    if len(dates) != len(set(dates)):
-        raise RuntimeError(
-            "Duplicate dates remain after all source corrections; "
-            "archive was not saved."
-        )
-
-    if not all_rows:
-        raise RuntimeError(
-            "Archive is empty; archive was not saved."
-        )
-
-    if cross_check_validation is None:
-        raise RuntimeError(
-            "Required 2025 independent cross-check did not run; "
-            "archive was not saved."
-        )
-
+            rows = apply_known_corrections(year, rows)
+            if len({r["date"] for r in rows}) != len(rows):
+                raise RuntimeError("Duplicate dates remain in primary 2025 archive; archive not saved")
+            independent = fetch_independent_2025(independent_html_pages)
+            check = compare_2025(rows, independent)
+        if year in EXPECTED and len({r["date"] for r in rows}) != EXPECTED[year]:
+            raise RuntimeError(f"{year}: unexpected number of unique dates; archive not saved")
+        all_rows.extend(rows)
+    all_rows.sort(key=lambda r: r["date"])
+    dates = [r["date"] for r in all_rows]
+    if not all_rows or len(dates) != len(set(dates)):
+        raise RuntimeError("Archive empty or contains duplicate dates; archive not saved")
+    if check is None:
+        raise RuntimeError("Required independent 2025 check did not run; archive not saved")
     payload = {
         "source": BASE_URL,
-        "cross_check_source": CROSS_CHECK_BASE_URL,
-        "cross_check_validation": cross_check_validation,
-        "fetched_at": datetime.now(
-            timezone.utc
-        ).isoformat(),
+        "cross_check_source": CROSS_URLS[0],
+        "cross_check_validation": check,
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
         "corrections_applied": [
-            {
-                "removed_source_date": item["wrong_date"],
-                "verified_actual_date": item["actual_date"],
-                "reason": (
-                    "Known misdated duplicate in source archive"
-                ),
-            }
-            for item in KNOWN_MISDATED_ROWS
+            {"removed_source_date": wrong, "verified_actual_date": actual, "reason": "Misdated duplicate; verified against matching counterpart and independent source"}
+            for wrong, actual, _ in KNOWN_MISDATED
         ],
         "draws": all_rows,
     }
+    return payload
 
-    # Keep the existing archive untouched until all checks pass.
-    temp = OUTPUT.with_suffix(".tmp")
 
+def main():
+    now_year = datetime.now(timezone.utc).year
+    year_rows = {}
+    for year in range(2020, now_year + 1):
+        rows = parse_primary_year(year)
+        print(f"{year}: {len(rows)} raw rows read")
+        year_rows[year] = rows
+    payload = build_archive(year_rows)
+    tmp = OUT.with_suffix(".tmp")
     try:
-        with temp.open(
-            "w",
-            encoding="utf-8",
-        ) as file:
-            json.dump(
-                payload,
-                file,
-                ensure_ascii=False,
-                indent=2,
-            )
-            file.write("\n")
-
-        os.replace(temp, OUTPUT)
-
+        with tmp.open("w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+            f.write("\n")
+        os.replace(tmp, OUT)
     finally:
-        if temp.exists():
+        if tmp.exists():
             try:
-                temp.unlink()
+                tmp.unlink()
             except OSError:
                 pass
-
-    print("Archive saved:", OUTPUT.name)
-    print("Total verified rows:", len(all_rows))
-    print("First date:", all_rows[0]["date"])
-    print("Last date:", all_rows[-1]["date"])
+    print("Archive saved:", OUT.name)
+    print("Total verified rows:", len(payload["draws"]))
+    print("First date:", payload["draws"][0]["date"])
+    print("Last date:", payload["draws"][-1]["date"])
     print("Archive integrity checks: PASS")
-    print("Independent 2025 cross-check: PASS")
 
+
+def self_test():
+    # Representative fixture matching the visible second-source table:
+    # draw ID, Turkish date, six numbers, prize.
+    html = '''<table><tr><th>#</th><th>Tarih</th><th>Numaralar</th><th>İkramiye</th></tr>
+    <tr><td><a href="/x">#20250156</a></td><td>30 Aralık 2025</td><td><span>6</span> <span>34</span> <span>35</span> <span>36</span> <span>56</span> <span>57</span></td><td>₺732.389.501</td></tr></table>'''
+    rows, n = parse_cross_rows(html)
+    assert n == 1
+    assert rows["2025-12-30"] == (6, 34, 35, 36, 56, 57)
+
+    # Numbers split over separate cells must also work.
+    html2 = '''<table><tr><td>#20250155</td><td>28 Aralık 2025</td><td>6</td><td>31</td><td>35</td><td>41</td><td>44</td><td>46</td><td>₺732.389.501</td></tr></table>'''
+    rows2, n2 = parse_cross_rows(html2)
+    assert n2 == 1
+    assert rows2["2025-12-28"] == (6, 31, 35, 41, 44, 46)
+
+    bad_html = '''<table><tr><td>#20250154</td><td>25 Aralık 2025</td><td>2 7 19 21 23</td><td>₺732.389.501</td></tr></table>'''
+    try:
+        parse_cross_rows(bad_html)
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("Parser accepted a row with only five numbers")
+
+    primary_html = '''<table><tr><td>30.12.2025</td><td>6 34 35 36 56 57</td></tr></table>'''
+    primary = parse_primary_year(2025, html=primary_html)
+    assert primary == [{"date": "2025-12-30", "numbers": [6, 34, 35, 36, 56, 57]}]
+
+    # Misdated rows are removable only when the matching counterpart exists.
+    sample = [
+        {"date": "2025-06-19", "numbers": [9, 25, 29, 31, 35, 46]},
+        {"date": "2025-07-19", "numbers": [9, 25, 29, 31, 35, 46]},
+    ]
+    corrected = apply_known_corrections(2025, sample + [
+        {"date": "2025-06-17", "numbers": [11, 12, 21, 52, 53, 54]},
+        {"date": "2025-07-17", "numbers": [11, 12, 21, 52, 53, 54]},
+        {"date": "2025-06-15", "numbers": [7, 22, 31, 39, 48, 56]},
+        {"date": "2025-07-15", "numbers": [7, 22, 31, 39, 48, 56]},
+        {"date": "2025-06-12", "numbers": [16, 19, 25, 37, 43, 57]},
+        {"date": "2025-07-12", "numbers": [16, 19, 25, 37, 43, 57]},
+    ])
+    assert len(corrected) == 4
+    print("SELF-TEST PASS: syntax, primary parser, cross-source parser, and correction checks")
 
 if __name__ == "__main__":
     try:
-        main()
-    except Exception as error:
-        print("ARCHIVE FETCH FAILED:", error)
-            sys.exit(1)
+        if "--self-test" in sys.argv:
+            self_test()
+        else:
+            main()
+    except Exception as exc:
+        print("ARCHIVE FETCH FAILED:", exc)
+        sys.exit(1)
+            
