@@ -8,7 +8,7 @@ import urllib.error
 from pathlib import Path
 from datetime import datetime, date, timezone
 
-VERSION = "0.5.2"
+VERSION = "0.5.3"
 MODEL = "z-ai/glm-5.3-flash"
 NVIDIA_TIMEOUT_SECONDS = 240
 BASE = Path(__file__).resolve().parent
@@ -578,6 +578,9 @@ def run_agent(agent, task):
         "Binding rules:\n- " + "\n- ".join(RULES) + "\n"
         "Memory reports are not proof. Distinguish hypotheses from verified "
         "results. Never invent data or tests.\n"
+        "Do not claim whether this report was saved to shared memory or committed: "
+        "the workflow runner performs those actions after your response, outside "
+        "the agent's control. Report only the checks performed in this model call.\n"
         "Output only a final report. Do not include internal deliberation, scratchpad, "
         "or private step-by-step reasoning. State what was actually checked and what remains unknown.\n"
         + safety_text
