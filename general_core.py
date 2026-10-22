@@ -358,7 +358,10 @@ def ask_nvidia(messages):
         "model": MODEL,
         "messages": messages,
         "max_tokens": 1600,
-        "temperature": 0.2
+        "temperature": 0.2,
+        "reasoning_effort": "low",
+        "clear_thinking": True,
+        "stream": False
     }).encode()
 
     req = urllib.request.Request(
