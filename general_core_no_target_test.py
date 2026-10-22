@@ -2,7 +2,8 @@ import os
 import general_core as core
 
 def fail(message):
-raise AssertionError("NO-TARGET TEST FAILED: " + message)
+    raise 
+AssertionError("NO-TARGET TEST FAILED: " + message)
 
 def main():
 captured = {"called": False}
