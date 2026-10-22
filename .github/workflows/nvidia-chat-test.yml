@@ -21,6 +21,7 @@ jobs:
           import urllib.error
 
           key = os.environ.get("NVIDIA_API_KEY", "")
+
           if not key:
               raise SystemExit("NVIDIA_API_KEY secret is missing")
 
@@ -49,40 +50,71 @@ jobs:
           )
 
           try:
-              with urllib.request.urlopen(request, timeout=240) as response:
-                  data = json.loads(response.read().decode("utf-8"))
+              with urllib.request.urlopen(
+                  request, timeout=240
+              ) as response:
+                  response_text = response.read().decode("utf-8")
 
-              print("API RESPONSE:")
-              print(json.dumps(data, ensure_ascii=False)[:5000])
+              data = json.loads(response_text)
 
-              choices = data.get("choices", [])
-              if not choices:
-                  raise RuntimeError("API returned no choices")
+              if not isinstance(data, dict):
+                  raise RuntimeError(
+                      "API response is not a JSON object"
+                  )
 
-              message = choices[0].get("message") or {}
+              choices = data.get("choices")
+
+              if not isinstance(choices, list) or not choices:
+                  raise RuntimeError(
+                      "API returned no choices"
+                  )
+
+              choice = choices[0]
+
+              if not isinstance(choice, dict):
+                  raise RuntimeError(
+                      "API returned an invalid choice"
+                  )
+
+              message = choice.get("message")
+
+              if not isinstance(message, dict):
+                  raise RuntimeError(
+                      "API returned no valid message"
+                  )
+
+              # Only the final user-facing content is accepted.
               answer = message.get("content")
 
-              if not answer:
-                  answer = message.get("reasoning_content")
-
-              if not answer:
-                  answer = message.get("reasoning")
-
-              if answer:
-                  print("GENERAL AI CHAT TEST SUCCESS")
-                  print("Model:", data.get("model"))
-                  print("Answer:", answer)
-              else:
-                  print("No text answer found.")
-                  print("Message fields:", list(message.keys()))
-                  print("Finish reason:", choices[0].get("finish_reason"))
+              if not isinstance(answer, str) or not answer.strip():
+                  print("Final answer content is missing.")
+                  print("Available message fields:", sorted(message.keys()))
+                  print("Finish reason:", choice.get("finish_reason"))
                   raise SystemExit(1)
+
+              print("GENERAL AI CHAT TEST SUCCESS")
+              print("Model:", data.get("model", "not specified"))
+              print("Final answer received: YES")
+              print("Answer:", answer.strip())
 
           except urllib.error.HTTPError as error:
               print("NVIDIA API HTTP status:", error.code)
-              print(error.read().decode("utf-8")[:1500])
+              print("Response body omitted from logs.")
               raise SystemExit(1)
+
+          except json.JSONDecodeError:
+              print("Test failed: API response was not valid JSON.")
+              raise SystemExit(1)
+
+          except urllib.error.URLError as error:
+              print("Test failed: Network request error.")
+              print("Error type:", type(error.reason).__name__)
+              raise SystemExit(1)
+
+          except SystemExit:
+              raise
+
           except Exception as error:
-              print("Test failed:", type(error).__name__, str(error)[:500])
+              print("Test failed:", type(error).__name__)
               raise SystemExit(1)
           PY
