@@ -24,27 +24,32 @@ try:
         message = str(exc)
         normalized = message.lower()
 
-        if not any(
+        target_related = any(
             word in normalized
-            for word in ("target", "date", "isolation", "hedef", "tarih")
-        ):
+            for word in (
+                "target",
+                "date",
+                "isolation",
+                "hedef",
+                "tarih",
+            )
+        )
+
+        if not target_related:
             raise AssertionError(
-                "NO-TARGET TEST FAILED: request failed for an "
-                "unrelated reason: "
-                + type(exc).__name__
-                + ": "
-                + message
+                "NO-TARGET TEST FAILED: unrelated error: "
+                f"{type(exc).__name__}: {message}"
             ) from exc
 
         print(
             "Request blocked for target/date requirement:",
             type(exc).__name__,
-            message
+            message,
         )
     else:
         raise AssertionError(
             "NO-TARGET TEST FAILED: request was not blocked "
-            "when GENERAL_TARGET_DATE was absent"
+            "without GENERAL_TARGET_DATE"
         )
 
     if captured["called"]:
