@@ -2,6 +2,13 @@ name: GENERAL Security Test
 
 'on':
   workflow_dispatch:
+  push:
+    paths:
+      - "general_core.py"
+      - "general_memory.py"
+      - "general_memory.json"
+      - "general_core_security_test.py"
+      - ".github/workflows/general-security-test.yml"
 
 permissions:
   contents: read
