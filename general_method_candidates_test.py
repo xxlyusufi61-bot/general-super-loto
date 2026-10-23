@@ -69,7 +69,7 @@ class MethodCandidateTests(unittest.TestCase):
         rows = synthetic_rows()
         target_date = (date.fromisoformat(rows[-1]["date"]) + timedelta(days=1)).isoformat()
         report = engine.evaluate_rows(iter(rows), target_date, min_train=6, folds=5)
-        self.assertEqual(report["pre_target_history_records"], len(rows))
+        self.assertEqual(report["pre_target_history_records_before_regime_filter"], len(rows))
 
     def test_random_null_reproducible_and_uses_same_test_draws(self):
         rows = synthetic_rows(30)
