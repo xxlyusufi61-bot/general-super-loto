@@ -1,0 +1,29 @@
+name: Official Super Loto Source Endpoint Probe
+
+on:
+  pull_request:
+    paths:
+      - 'official_source_endpoint_probe.py'
+      - '.github/workflows/official-source-endpoint-probe.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: official-source-endpoint-probe
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Probe official result pages and discover public endpoint candidates
+        run: python3 official_source_endpoint_probe.py
