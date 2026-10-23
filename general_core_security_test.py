@@ -265,6 +265,24 @@ try:
             "SECURITY TEST FAILED: Statistical methods must not be claimed as run."
         )
 
+    row_level_fields = {
+        "row_level_audit_pass": True,
+        "archive_dates_chronological": True,
+        "archive_dates_unique": True,
+        "target_occurs_once": True,
+        "target_is_latest_archive_date": True,
+        "training_strictly_before_target": True,
+        "training_chronological": True,
+        "excluded_dates_match_archive": True,
+        "training_dates_match_archive": True,
+        "partition_counts_match": True,
+    }
+    for field, expected in row_level_fields.items():
+        if data.get(field) is not expected:
+            raise AssertionError(
+                "SECURITY TEST FAILED: Row-level audit failed: " + field
+            )
+
     expected_metadata_keys = {
         "guard",
         "target_date",
@@ -272,6 +290,16 @@ try:
         "training_count",
         "target_present",
         "validation_scope",
+        "row_level_audit_pass",
+        "archive_dates_chronological",
+        "archive_dates_unique",
+        "target_occurs_once",
+        "target_is_latest_archive_date",
+        "training_strictly_before_target",
+        "training_chronological",
+        "excluded_dates_match_archive",
+        "training_dates_match_archive",
+        "partition_counts_match",
         "training_records_sent_to_model",
         "draw_numbers_sent_to_model",
         "statistical_methods_run",
@@ -334,6 +362,16 @@ try:
     if len(training_dates) != len(set(training_dates)):
         raise AssertionError(
             "SECURITY TEST FAILED: Duplicate local training dates found."
+        )
+
+    if local_data.get("row_level_audit_pass") is not True:
+        raise AssertionError(
+            "SECURITY TEST FAILED: Independent row-level audit did not pass."
+        )
+
+    if local_data.get("target_is_latest_archive_date") is not True:
+        raise AssertionError(
+            "SECURITY TEST FAILED: Dynamic target is not latest archive date."
         )
 
     # Ensure the exact target-number sequence is not present in model messages.
