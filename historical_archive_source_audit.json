@@ -1,0 +1,400 @@
+{
+  "schema_version": 1,
+  "audit_id": "super_loto_historical_supplements_20261023",
+  "reviewed_on": "2026-10-23",
+  "purpose": "Secondary-source cross-publication audit for the ten historical records added to the proposed canonical archive in PR #9.",
+  "official_source_directly_checked": false,
+  "official_site_required": false,
+  "evidence_policy": "Use non-official public archives and contemporaneous media reports. Compare exact date and all six distinct numbers. Record source discrepancies instead of silently resolving them. A matching result across publishers is cross-publication corroboration; it does not prove that publishers have fully independent upstream data feeds.",
+  "records": [
+    {
+      "date": "2021-01-31",
+      "numbers": [
+        1,
+        7,
+        36,
+        44,
+        46,
+        59
+      ],
+      "status": "CORROBORATED_WITH_DATE_DISCREPANCY_RECORDED",
+      "confirmation_sources": [
+        {
+          "publisher": "loto.gen.tr",
+          "title": "2021 archive, page 2",
+          "url": "https://loto.gen.tr/super-loto/arsiv/2021?sayfa=2",
+          "supports_record": true
+        },
+        {
+          "publisher": "Aydınlık",
+          "title": "31 January 2021 draw-specific result",
+          "url": "https://www.aydinlik.com.tr/sans-oyunlari/super-loto-sonuclari/31-01-2021-super-loto-sonucu-13",
+          "supports_record": true
+        },
+        {
+          "publisher": "Sözcü",
+          "title": "31 January 2021 result report",
+          "url": "https://www.sozcu.com.tr/son-dakika-super-loto-sonuclari-aciklandi-wp6237426",
+          "supports_record": false,
+          "notes": "The article identifies 31 January and the same set, but a nearby sentence inconsistently refers to 28 January; treated as supplementary, not decisive."
+        }
+      ],
+      "discrepancy_sources": [
+        {
+          "publisher": "LotoBil",
+          "url": "https://www.lotobil.com/super-loto-butun-sonuc-listesi",
+          "observed_date": "2021-01-30",
+          "observed_numbers": [
+            1,
+            7,
+            36,
+            44,
+            46,
+            59
+          ],
+          "issue": "Same six-number set is assigned to 30 January instead of 31 January; not counted as date corroboration."
+        }
+      ],
+      "notes": "The exact date and set are supported by loto.gen.tr and Aydınlık. The LotoBil one-day date mismatch is retained rather than silently normalized."
+    },
+    {
+      "date": "2021-11-30",
+      "numbers": [
+        24,
+        27,
+        43,
+        45,
+        51,
+        53
+      ],
+      "status": "CORROBORATED",
+      "confirmation_sources": [
+        {
+          "publisher": "LotoBil",
+          "title": "Full Super Loto archive",
+          "url": "https://www.lotobil.com/super-loto-butun-sonuc-listesi",
+          "supports_record": true
+        },
+        {
+          "publisher": "Haberler.com",
+          "title": "Contemporaneous 30 November 2021 result report",
+          "url": "https://www.haberler.com/soguk-haber/super-loto-sonuclari-30-kasim-sali-super-loto-14566828-haberi/",
+          "supports_record": true
+        },
+        {
+          "publisher": "loto.gen.tr",
+          "title": "2021 archive",
+          "url": "https://loto.gen.tr/super-loto/arsiv/2021",
+          "supports_record": true
+        }
+      ],
+      "discrepancy_sources": [],
+      "notes": "The six-number set matches the LotoBil archive and the contemporaneous Haberler.com report."
+    },
+    {
+      "date": "2022-01-02",
+      "numbers": [
+        41,
+        43,
+        46,
+        47,
+        48,
+        51
+      ],
+      "status": "CORROBORATED",
+      "confirmation_sources": [
+        {
+          "publisher": "loto.gen.tr",
+          "title": "2022 archive, page 2",
+          "url": "https://loto.gen.tr/super-loto/arsiv/2022?sayfa=2",
+          "supports_record": true
+        },
+        {
+          "publisher": "LotoBil",
+          "title": "Full Super Loto archive",
+          "url": "https://www.lotobil.com/super-loto-butun-sonuc-listesi",
+          "supports_record": true
+        },
+        {
+          "publisher": "LotoTürkiye",
+          "title": "2 January 2022 draw-specific result",
+          "url": "https://lototurkiye.com/SUPER-LOTO-SISAL/CEKILIS-SONUCLARI/12/223/02/01/2022/02-OCAK-2022-SUPER-LOTO-SISAL-CEKILIS-SONUCLARI",
+          "supports_record": true
+        }
+      ],
+      "discrepancy_sources": [],
+      "notes": "Three public source pages list the same date and set."
+    },
+    {
+      "date": "2023-08-17",
+      "numbers": [
+        5,
+        10,
+        19,
+        25,
+        33,
+        35
+      ],
+      "status": "CORROBORATED",
+      "confirmation_sources": [
+        {
+          "publisher": "loto.gen.tr",
+          "title": "2023 archive",
+          "url": "https://loto.gen.tr/super-loto/arsiv/2023",
+          "supports_record": true
+        },
+        {
+          "publisher": "LotoBil",
+          "title": "Full Super Loto archive",
+          "url": "https://www.lotobil.com/super-loto-butun-sonuc-listesi",
+          "supports_record": true
+        },
+        {
+          "publisher": "LotoTürkiye",
+          "title": "17 August 2023 draw-specific result",
+          "url": "https://lototurkiye.com/SUPER-LOTO-SISAL/CEKILIS-SONUCLARI/12/477",
+          "supports_record": true
+        }
+      ],
+      "discrepancy_sources": [],
+      "notes": "The three archive records agree on the date and six numbers."
+    },
+    {
+      "date": "2023-08-20",
+      "numbers": [
+        12,
+        18,
+        39,
+        48,
+        54,
+        59
+      ],
+      "status": "CORROBORATED",
+      "confirmation_sources": [
+        {
+          "publisher": "loto.gen.tr",
+          "title": "2023 archive",
+          "url": "https://loto.gen.tr/super-loto/arsiv/2023",
+          "supports_record": true
+        },
+        {
+          "publisher": "LotoBil",
+          "title": "Full Super Loto archive",
+          "url": "https://www.lotobil.com/super-loto-butun-sonuc-listesi",
+          "supports_record": true
+        },
+        {
+          "publisher": "LotoTürkiye",
+          "title": "20 August 2023 draw-specific result",
+          "url": "https://lototurkiye.com/SUPER-LOTO-SISAL/CEKILIS-SONUCLARI/12/478",
+          "supports_record": true
+        },
+        {
+          "publisher": "Habertürk",
+          "title": "Contemporaneous 20 August 2023 result report",
+          "url": "https://www.haberturk.com/super-loto-sonuclari-aciklandi-iste-20-agustos-pazar-2023-super-loto-sonuclari-ve-sonuc-sayfasi-3615449",
+          "supports_record": true
+        }
+      ],
+      "discrepancy_sources": [],
+      "notes": "Three archive records and a contemporaneous media report agree."
+    },
+    {
+      "date": "2023-10-22",
+      "numbers": [
+        6,
+        7,
+        14,
+        37,
+        49,
+        57
+      ],
+      "status": "CORROBORATED",
+      "confirmation_sources": [
+        {
+          "publisher": "loto.gen.tr",
+          "title": "2023 archive",
+          "url": "https://loto.gen.tr/super-loto/arsiv/2023",
+          "supports_record": true
+        },
+        {
+          "publisher": "LotoBil",
+          "title": "Full Super Loto archive",
+          "url": "https://www.lotobil.com/super-loto-butun-sonuc-listesi",
+          "supports_record": true
+        },
+        {
+          "publisher": "Aydınlık",
+          "title": "October 2023 monthly Super Loto archive",
+          "url": "https://www.aydinlik.com.tr/sans-oyunlari/super-loto-sonuclari?ay=10&yil=2023",
+          "supports_record": true
+        }
+      ],
+      "discrepancy_sources": [],
+      "notes": "The public archive and October monthly result listings agree."
+    },
+    {
+      "date": "2023-10-24",
+      "numbers": [
+        7,
+        10,
+        23,
+        27,
+        46,
+        58
+      ],
+      "status": "CORROBORATED",
+      "confirmation_sources": [
+        {
+          "publisher": "loto.gen.tr",
+          "title": "2023 archive",
+          "url": "https://loto.gen.tr/super-loto/arsiv/2023",
+          "supports_record": true
+        },
+        {
+          "publisher": "LotoBil",
+          "title": "Full Super Loto archive",
+          "url": "https://www.lotobil.com/super-loto-butun-sonuc-listesi",
+          "supports_record": true
+        },
+        {
+          "publisher": "Aydınlık",
+          "title": "October 2023 monthly Super Loto archive",
+          "url": "https://www.aydinlik.com.tr/sans-oyunlari/super-loto-sonuclari?ay=10&yil=2023",
+          "supports_record": true
+        },
+        {
+          "publisher": "Habertürk",
+          "title": "Contemporaneous 24 October 2023 result report",
+          "url": "https://www.haberturk.com/super-loto-sonuclari-aciklandi-24-ekim-2023-super-loto-cekilisi-sonucu-sorgulama-ekrani-3632085",
+          "supports_record": true
+        }
+      ],
+      "discrepancy_sources": [],
+      "notes": "Three archives and a contemporaneous media report agree."
+    },
+    {
+      "date": "2023-10-26",
+      "numbers": [
+        1,
+        31,
+        40,
+        42,
+        45,
+        56
+      ],
+      "status": "CORROBORATED",
+      "confirmation_sources": [
+        {
+          "publisher": "loto.gen.tr",
+          "title": "2023 archive",
+          "url": "https://loto.gen.tr/super-loto/arsiv/2023",
+          "supports_record": true
+        },
+        {
+          "publisher": "LotoBil",
+          "title": "Full Super Loto archive",
+          "url": "https://www.lotobil.com/super-loto-butun-sonuc-listesi",
+          "supports_record": true
+        },
+        {
+          "publisher": "Aydınlık",
+          "title": "October 2023 monthly Super Loto archive",
+          "url": "https://www.aydinlik.com.tr/sans-oyunlari/super-loto-sonuclari?ay=10&yil=2023",
+          "supports_record": true
+        },
+        {
+          "publisher": "Habertürk",
+          "title": "Contemporaneous 26 October 2023 result report",
+          "url": "https://www.haberturk.com/super-loto-sonuclari-aciklandi-26-ekim-2023-super-loto-cekilisi-sonucu-sorgulama-ekrani-3632712",
+          "supports_record": true
+        }
+      ],
+      "discrepancy_sources": [],
+      "notes": "Three archives and a contemporaneous media report agree."
+    },
+    {
+      "date": "2023-10-29",
+      "numbers": [
+        7,
+        12,
+        20,
+        25,
+        47,
+        48
+      ],
+      "status": "CORROBORATED_WITH_INVALID_LOTOBIL_ROW_RECORDED",
+      "confirmation_sources": [
+        {
+          "publisher": "loto.gen.tr",
+          "title": "2023 archive",
+          "url": "https://loto.gen.tr/super-loto/arsiv/2023",
+          "supports_record": true
+        },
+        {
+          "publisher": "Aydınlık",
+          "title": "October 2023 monthly Super Loto archive",
+          "url": "https://www.aydinlik.com.tr/sans-oyunlari/super-loto-sonuclari?ay=10&yil=2023",
+          "supports_record": true
+        },
+        {
+          "publisher": "Habertürk",
+          "title": "Contemporaneous 29 October 2023 result report",
+          "url": "https://www.haberturk.com/super-loto-sonuclari-belli-oldu-29-ekim-2023-super-loto-sonuc-sorgulama-sayfasi-tikla-ve-ogren-3633330",
+          "supports_record": true
+        }
+      ],
+      "discrepancy_sources": [
+        {
+          "publisher": "LotoBil",
+          "url": "https://www.lotobil.com/super-loto-butun-sonuc-listesi",
+          "observed_date": "2023-10-29",
+          "observed_numbers": [
+            7,
+            12,
+            20,
+            25,
+            48,
+            48
+          ],
+          "issue": "The row duplicates 48 and omits 47, so it is not a valid six-distinct-number result and is excluded as corroboration."
+        }
+      ],
+      "notes": "loto.gen.tr, Aydınlık and Habertürk agree on six distinct numbers. LotoBil's duplicate-number row is explicitly flagged and not counted as supporting evidence."
+    },
+    {
+      "date": "2023-11-05",
+      "numbers": [
+        6,
+        13,
+        26,
+        50,
+        55,
+        60
+      ],
+      "status": "CORROBORATED",
+      "confirmation_sources": [
+        {
+          "publisher": "loto.gen.tr",
+          "title": "2023 archive",
+          "url": "https://loto.gen.tr/super-loto/arsiv/2023",
+          "supports_record": true
+        },
+        {
+          "publisher": "LotoBil",
+          "title": "Full Super Loto archive",
+          "url": "https://www.lotobil.com/super-loto-butun-sonuc-listesi",
+          "supports_record": true
+        },
+        {
+          "publisher": "Aydınlık",
+          "title": "Contemporaneous 5 November 2023 result report",
+          "url": "https://www.aydinlik.com.tr/haber/super-loto-sonuclari-aciklandi-5-kasim-pazar-super-loto-sonuclari-431533",
+          "supports_record": true
+        }
+      ],
+      "discrepancy_sources": [],
+      "notes": "Two archives and a contemporaneous media report agree."
+    }
+  ]
+}
