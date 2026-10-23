@@ -6,6 +6,9 @@ on:
       - "general_method_registry.json"
       - "formula_evidence_catalog.json"
       - "formula_evidence_catalog_test.py"
+      - "legacy_sources/Super_Loto_NEAR_STATE_Yapi_Dogrulama_Motoru_v5_0.py"
+      - "legacy_sources/Super_Loto_Sifre_Kesif_Motoru_v1.py"
+      - "legacy_sources/Super_Loto_V8_6_Donusum_Kesif.py"
       - "general_method_registry_test.py"
       - "general_core.py"
       - "general_core_registry_test.py"
@@ -36,7 +39,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Compile registry and evidence tests
-        run: python -m py_compile general_method_registry_test.py general_core_registry_test.py formula_evidence_catalog_test.py general_core.py
+        run: python -m py_compile general_method_registry_test.py general_core_registry_test.py formula_evidence_catalog_test.py general_core.py legacy_sources/Super_Loto_V8_6_Donusum_Kesif.py legacy_sources/Super_Loto_Sifre_Kesif_Motoru_v1.py legacy_sources/Super_Loto_NEAR_STATE_Yapi_Dogrulama_Motoru_v5_0.py
       - name: Verify method registry schema (no archive loaded)
         run: python -m unittest -v general_method_registry_test
       - name: Verify target-safe registry integration (no archive loaded)
