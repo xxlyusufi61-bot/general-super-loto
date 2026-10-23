@@ -196,7 +196,7 @@ def main():
 
     # Probe the official draw-detail API inferred from the result-page JavaScript.
     api_probe_rows = []
-    api_base = "https://digital-info.millipiyangoonline.com/"
+    api_base = "https://lotteryservice.millipiyangoonline.com/api/"
     caller_suffixes = [
         "?caller=web-portal",
         "?caller=web-portal&method=GET",
