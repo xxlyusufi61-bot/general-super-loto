@@ -17,6 +17,88 @@ ARCHIVE = BASE / os.environ.get(
     "GENERAL_ARCHIVE_FILE", "super_loto_archive.json"
 )
 
+METHOD_REGISTRY = BASE / "general_method_registry.json"
+
+
+def load_method_registry_context(target=None):
+    """Load method history without exposing post-target discoveries to data runs."""
+    if not METHOD_REGISTRY.is_file():
+        raise RuntimeError("Method registry missing; agent run stopped.")
+
+    try:
+        with METHOD_REGISTRY.open(encoding="utf-8") as f:
+            registry = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        raise RuntimeError("Method registry is unreadable; agent run stopped.") from None
+
+    if (
+        not isinstance(registry, dict)
+        or registry.get("schema_version") != 1
+        or not isinstance(registry.get("methods"), dict)
+        or not isinstance(registry.get("historical_results"), dict)
+        or not isinstance(registry.get("promotion_requirements"), list)
+    ):
+        raise RuntimeError("Method registry schema invalid; agent run stopped.")
+
+    if target is None:
+        return registry
+
+    try:
+        target_day = date.fromisoformat(target)
+    except (TypeError, ValueError):
+        raise RuntimeError("Method registry target date is invalid.") from None
+
+    def available_before_target(item):
+        if not isinstance(item, dict):
+            return False
+        available = item.get("available_from")
+        if not isinstance(available, str):
+            return False
+        try:
+            parsed = date.fromisoformat(available)
+        except ValueError:
+            return False
+        return parsed.isoformat() == available and parsed < target_day
+
+    visible_methods = {}
+    withheld_methods = []
+    for name, method in registry["methods"].items():
+        if not isinstance(method, dict):
+            raise RuntimeError("Method registry contains an invalid method entry.")
+        if available_before_target(method):
+            visible_methods[name] = method
+        else:
+            withheld_methods.append(name)
+
+    visible_results = {}
+    withheld_results = []
+    for name, result in registry["historical_results"].items():
+        if not isinstance(result, dict):
+            raise RuntimeError("Method registry contains an invalid historical result.")
+        if available_before_target(result):
+            visible_results[name] = result
+        else:
+            withheld_results.append(name)
+
+    return {
+        "schema_version": registry["schema_version"],
+        "project": registry.get("project"),
+        "registry_mode": "target_date_filtered",
+        "target_date": target,
+        "binding_rules_changed": registry.get("binding_rules_changed"),
+        "methods": visible_methods,
+        "historical_results": visible_results,
+        "withheld_post_target_or_undated_methods": withheld_methods,
+        "withheld_post_target_or_undated_results": withheld_results,
+        "promotion_requirements": registry["promotion_requirements"],
+        "note": (
+            "Only entries with a valid available_from date strictly before "
+            "the isolated target are visible. Missing provenance is withheld, "
+            "not assumed to be historical."
+        )
+    }
+
+
 RULES = [
     "Target draw must remain hidden during discovery and training.",
     "Evaluation must be chronological and leakage-free.",
@@ -650,7 +732,13 @@ def run_agent(agent, task):
         "Output only a final report. Do not include internal deliberation, scratchpad, "
         "or private step-by-step reasoning. State what was actually checked and what remains unknown.\n"
         + safety_text
-        + "Memory context:\n"
+        + "Method registry context:\n"
+        + json.dumps(
+            load_method_registry_context(target if mode == "data" else None),
+            ensure_ascii=False,
+            separators=(",", ":")
+        )
+        + "\nMemory context:\n"
         + json.dumps(context, ensure_ascii=False, separators=(",", ":"))
     )
 
