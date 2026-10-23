@@ -42,5 +42,11 @@ jobs:
           assert r["protocol"]["target_numbers_passed_to_predictor"] is False
           assert r["binding_rules_changed"] is False
           assert r["official_source_verification_required"] is False
-          print("Real-archive report isolation contract: PASS")
+          stats = r["statistical_comparison"]
+          assert stats["candidates_selected_using_validation_only"] is True
+          assert stats["final_interval_used_for_candidate_selection"] is False
+          assert len(stats["model_block_bootstrap_uncertainty"]["mean_hits_ci"]) == 2
+          assert 0.0 <= stats["matched_random_null"]["one_sided_random_pick_tail_probability_mc"] <= 1.0
+          assert stats["holdout_reuse_policy"]
+          print("Real-archive isolation and statistical comparison contract: PASS")
           PY
