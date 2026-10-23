@@ -112,7 +112,17 @@
       "content_hash": "ff18f57784ca73e8f2a7914057b67d4d62933373ce12bab8ba7e9a8bfdf357f4",
       "source": "GENERAL/validation",
       "status": "unverified"
+    },
+    {
+      "id": 11,
+      "timestamp": "2026-10-23T00:07:12.066946+00:00",
+      "category": "agent_report",
+      "title": "validation report",
+      "content": "# Doğrulama Raporu — GENERAL / Super Loto (Hedef: 2026-10-22)\n\n## Veri Koruma (Data Guard)\n- **Durum:** PASS\n- Arşiv ve hedef izolasyonu bu istekten önce yerel olarak doğrulandı; bana yalnızca toplu doğrulama meta verisi iletildi. Bireysel çekiliş kayıtları, çekiliş numaraları ve hedef değerleri bu oturuma **iletilmedi**; bu değerleri incelediğim iddia edilemez.\n\n## Satır Düzeyi Denetim Sonuçları (tek tek)\n\n| # | Kontrol | Sonuç |\n|---|---------|-------|\n| 1 | Arşiv kronolojisi (`archive_dates_chronological`) | ✅ Geçti — tarihler kronolojik |\n| 2 | Benzersiz tarihler (`archive_dates_unique`) | ✅ Geçti — yinelenen tarih yok |\n| 3 | Hedefin tekliği (`target_occurs_once`) | ✅ Geçti — hedef tarih arşivde tam bir kez geçiyor |\n| 4 | Hedefin son arşiv kaydı olması (`target_is_latest_archive_date`) | ✅ Geçti — hedef (2026-10-22) en son geçerli arşiv tarihidir |\n| 5 | Eğitim kayıtlarının hedeften önce olması (`training_strictly_before_target`) | ✅ Geçti — tüm eğitim kayıtları hedef tarihinden önce |\n| 6 | Eğitim kronolojisi (`training_chronological`) | ✅ Geçti |\n| 7 | Bölümleme tutarlılığı (`excluded_dates_match_archive`, `training_dates_match_archive`, `partition_counts_match`) | ✅ Geçti — dışlanan ve eğitim tarihleri arşivle eşleşiyor; bölüm sayıları tutarlı |\n\n- `row_level_audit_pass: true` — yerel satır düzeyi kronoloji ve hedef izolasyon kontrolleri geçti.\n- Kayıt sayıları: arşiv 996, eğitim 995, hedef mevcut (`target_present: true`); fark 1, hedefin tek dışlanan kayıtla uyumlu.\n- Sızıntı kontrolü: modele **0 eğitim kaydı** ve **hiçbir çekiliş numarası** iletilmedi (`training_records_sent_to_model: 0`, `draw_numbers_sent_to_model: false`).\n\n## Çalıştırılmayan Testler (başarılı olarak gösterilmedi)\n- **A→B→C, A→T, MOD5→T yöntemleri:** Çalıştırılmadı (`statistical_methods_run: []`).\n- **Walk-forward değerlendirme:** Çalıştırılmadı.\n- **Çapraz doğrulama:** Çalıştırılmadı.\n- Hiçbir istatistiksel yöntem bu oturumda uygulanmadı; bunlar \"geçti\" olarak raporlanmaz.\n\n## Bellek Kaydı Durumu\n- Ortak belleğe kaydetme/commit işlemi bu ajanın kontrolü dışındadır; iş akışı çalıştırıcısı bu yanıttan sonra gerçekleştirir. Bu oturumda kaydetme yapıp yapmadığına dair iddiada bulunmam.\n\n## Sonuç\n- Arşiv bütünlüğü, kronoloji ve hedef izolasyonu doğrulaması **geçti**; hedef çekiliş değerleri rapora veya loglara yazılmadı.\n- Analitik yöntemler (A→B→C, A→T, MOD5→T, walk-forward, çapraz doğrulama) çalıştırılmadığı için açıkça bildirildi.\n- Tahmin üretilmedi; çekiliş sonuçları belirsizdir ve hiçbir tahmin vaat edilemez.",
+      "content_hash": "90b74ad104440b4f6553f66592d3b72ef04b2b0379da76eeb06a76cce3423484",
+      "source": "GENERAL/validation",
+      "status": "unverified"
     }
   ],
-  "updated_at": "2026-10-23T00:00:39.726352+00:00"
+  "updated_at": "2026-10-23T00:07:12.066966+00:00"
 }
