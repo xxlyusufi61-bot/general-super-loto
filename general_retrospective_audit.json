@@ -2,7 +2,7 @@
   "schema_version": 1,
   "title": "GENERAL Super Loto retrospective audit",
   "audit_timestamp": "2026-10-23",
-  "status": "PARTIAL_AUDIT_WITH_CONFIRMED_FIXES_AND_OPEN_ITEMS",
+  "status": "2025_COUNT_RECONCILED_R60_REGIME_ENFORCED_HISTORICAL_V17_V19_SOURCE_NOT_FOUND",
   "scope": [
     "Current repository source files and unit tests",
     "Shared general_memory.json historical reports",
@@ -48,10 +48,10 @@
   ],
   "confirmed_current_tests": {
     "synthetic_candidate_tests": {
-      "run_id": 39879894666,
+      "run_id": 39880780817,
       "conclusion": "success",
-      "tests_passed": 8,
-      "link": "https://github.com/xxlyusufi61-bot/general-super-loto/actions/runs/39879894666"
+      "tests_passed": 10,
+      "link": "https://github.com/xxlyusufi61-bot/general-super-loto/actions/runs/39880780817"
     },
     "real_archive_candidate_evaluation": {
       "run_id": 39879877288,
@@ -107,36 +107,71 @@
   "open_items_not_to_hide": [
     {
       "id": "OPEN-01",
-      "issue": "Prior project memory reports 2025 archive counts of 160 in some versions, while the current archive fetcher and current cross-source validation report 156 records for 2025.",
-      "required_action": "Reconcile by inspecting exact date sets and source records for every disputed version before treating either count as canonical.",
+      "issue": "Exact V17/V19 source artifacts and original formula definitions were not found among accessible Library artifacts; available historical source code artifacts include v1, v1.2, v1.3, V8.5 FAST, and V8.6 transformation discovery. These do not prove the V17/V19 canonical formulas.",
+      "required_action": "Locate exact V17/V19 source files or commits before claiming exact reproduction. Keep candidate definitions experimental.",
       "status": "open"
     },
     {
       "id": "OPEN-02",
-      "issue": "Independent cross-source verification is currently recorded only for 2025; other years including 2026 have structural Data Guard validation but are not independently cross-verified by the current fetcher.",
-      "required_action": "Add independent source checks for all years or clearly label the scope in reports.",
+      "issue": "Current archive generator cross-source validation explicitly covers 2025 only. Other years are structurally validated but not all independently cross-verified against a second source.",
+      "required_action": "Add independent source checks for all years or label their verification scope precisely.",
       "status": "open"
     },
     {
       "id": "OPEN-03",
-      "issue": "The three method candidates are not canonical definitions from the historical V17/V19 implementation; their results must not be represented as reproduction of those versions.",
-      "required_action": "Trace the original formulas and versioned code artifacts, then compare them before promotion.",
-      "status": "open"
-    },
-    {
-      "id": "OPEN-04",
-      "issue": "No nested time-series model-selection protocol or multiple-hypothesis correction has been implemented.",
-      "required_action": "If model/feature tuning begins, introduce nested chronological validation and adjust for hypothesis search.",
-      "status": "open"
-    },
-    {
-      "id": "OPEN-05",
-      "issue": "The historical archive is treated as the source dataset after structural checks; this audit did not independently verify every draw against an official source.",
-      "required_action": "Do not claim complete real-world archive correctness until independent year-by-year reconciliation is complete.",
+      "issue": "The current candidate module does not implement full nested time-series cross-validation or multiple-hypothesis correction.",
+      "required_action": "If model/feature tuning begins, implement nested chronological validation and multiple-hypothesis control before claiming a selected winner.",
       "status": "open"
     }
   ],
   "binding_rules_changed": false,
   "current_target_numbers_disclosed": false,
-  "next_step_blocked_until": "Resolve 2025 record-count discrepancy and source provenance for canonical method definitions before presenting candidates as reproductions or advancing to model tuning."
+  "next_step_blocked_until": "Find exact V17/V19 source artifacts and expand independent archive verification beyond 2025 before calling candidate implementations canonical or proceeding to broad model tuning.",
+  "resolved_findings": [
+    {
+      "id": "RES-01",
+      "finding": "2025 count discrepancy: 160 in some earlier memory/version notes vs 156 in current archive.",
+      "evidence": "Current archive contains 156 2025 rows. The embedded 2025 draw sequences in accessible legacy v1 and v1.2 scripts each contain 156 records and match current archive's 2025 number sets row-by-row in chronological order (156/156). The prior 155 count came from a line-anchored extraction that missed the first record because it shared the ARCHIVE declaration line. The 160 value is unsupported by the available row-level evidence and is erroneous for the current verified archive.",
+      "status": "resolved_for_current_archive"
+    },
+    {
+      "id": "RES-02",
+      "finding": "R54 and R60 number-pool regimes were not being separated in the experimental candidate evaluation.",
+      "evidence": "Current archive has 31 records before 2020-08-02 and 66 records from that date onward in 2020; pre-boundary records have maximum number 54 and post-boundary records include numbers up to 60. Candidate engine now rejects pre-R60 target dates and filters all pre-2020-08-02 records out of R60 analysis.",
+      "status": "code_updated_and_tests_passed"
+    }
+  ],
+  "current_candidate_evaluation_after_regime_fix": {
+    "run_id": 39880697185,
+    "conclusion": "success",
+    "link": "https://github.com/xxlyusufi61-bot/general-super-loto/actions/runs/39880697185",
+    "archive_records": 996,
+    "pre_target_records_before_regime_filter": 995,
+    "target_date": "2026-10-22",
+    "r60_start_date": "2020-08-02",
+    "excluded_prior_r54_records": 31,
+    "r60_history_records": 964,
+    "historical_test_draws_per_method": 864,
+    "random_baseline_replications": 1000,
+    "methods": {
+      "abc_transition_to_c": {
+        "observed_mean_hits": 0.590278,
+        "simulated_random_mean": 0.599882,
+        "one_sided_random_pick_tail_probability": 0.65035
+      },
+      "a_to_t_pair_counts": {
+        "observed_mean_hits": 0.59838,
+        "simulated_random_mean": 0.600279,
+        "one_sided_random_pick_tail_probability": 0.525475
+      },
+      "mod5_state_to_t": {
+        "observed_mean_hits": 0.578704,
+        "simulated_random_mean": 0.60008,
+        "one_sided_random_pick_tail_probability": 0.821179
+      }
+    },
+    "target_numbers_exposed": false,
+    "mixed_r54_r60_training_used": false,
+    "interpretation": "No candidate demonstrates clear advantage in this descriptive comparison; tail probabilities are not adjusted for multiple hypotheses."
+  }
 }
