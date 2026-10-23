@@ -27,7 +27,7 @@ class ArchiveCrossSourceAuditTests(unittest.TestCase):
         result = audit._compare(rows, source)
         self.assertEqual(result["status"], "MISMATCH")
         self.assertEqual(result["number_mismatch_count"], 1)
-        self.assertNotIn("numbers", str(result))
+        self.assertNotIn("1, 2, 3, 4, 5, 7", str(result))
 
     def test_compare_distinguishes_source_lag_from_mismatch(self):
         rows = [
@@ -63,7 +63,7 @@ class ArchiveCrossSourceAuditTests(unittest.TestCase):
         source = {"2025-01-03": (2, 3, 4, 5, 6, 7)}
         result = audit._compare(rows, source)
         self.assertFalse(result["draw_numbers_in_report"])
-        self.assertNotIn("numbers", str(result))
+        self.assertNotIn("1, 2, 3, 4, 5, 6", str(result))
         self.assertNotIn("2, 3, 4, 5, 6, 7", str(result))
 
 
