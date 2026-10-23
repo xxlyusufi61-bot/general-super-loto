@@ -1,0 +1,29 @@
+name: GENERAL Method Candidate Unit Tests
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "general_method_candidates.py"
+      - "general_method_candidates_test.py"
+      - "general_data_guard.py"
+      - ".github/workflows/method-candidate-test.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  candidate-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile candidate module and tests
+        run: python -m py_compile general_method_candidates.py general_method_candidates_test.py general_data_guard.py
+      - name: Run synthetic candidate tests only
+        run: python -m unittest -v general_method_candidates_test
