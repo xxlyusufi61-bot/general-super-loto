@@ -2,7 +2,7 @@
   "schema_version": 1,
   "title": "GENERAL Super Loto retrospective audit",
   "audit_timestamp": "2026-10-23",
-  "status": "2025_COUNT_RECONCILED_R60_REGIME_ENFORCED_HISTORICAL_V17_V19_SOURCE_NOT_FOUND",
+  "status": "MULTIYEAR_AUDIT_TOOL_ADDED_TESTED_LIVE_SOURCE_RECONCILIATION_PENDING",
   "scope": [
     "Current repository source files and unit tests",
     "Shared general_memory.json historical reports",
@@ -126,7 +126,7 @@
   ],
   "binding_rules_changed": false,
   "current_target_numbers_disclosed": false,
-  "next_step_blocked_until": "Find exact V17/V19 source artifacts and expand independent archive verification beyond 2025 before calling candidate implementations canonical or proceeding to broad model tuning.",
+  "next_step_blocked_until": "Run the new read-only cross-source audit against live sources, inspect parse/coverage warnings, and locate exact V17/V19 artifacts before any canonical method claim or tuning.",
   "resolved_findings": [
     {
       "id": "RES-01",
@@ -173,5 +173,36 @@
     "target_numbers_exposed": false,
     "mixed_r54_r60_training_used": false,
     "interpretation": "No candidate demonstrates clear advantage in this descriptive comparison; tail probabilities are not adjusted for multiple hypotheses."
+  },
+  "new_audit_tool": {
+    "path": "general_archive_cross_source_audit.py",
+    "test_path": "general_archive_cross_source_audit_test.py",
+    "workflow_path": ".github/workflows/archive-cross-source-audit-test.yml",
+    "commit": "9d7fcbb00b3613c00dbc029f170bf52e690d1825",
+    "test_run_id": 39881493632,
+    "test_conclusion": "success",
+    "tests_passed": 6,
+    "test_url": "https://github.com/xxlyusufi61-bot/general-super-loto/actions/runs/39881493632",
+    "capabilities": [
+      "Read-only archive audit; never overwrites super_loto_archive.json",
+      "Compares dates and six-number sets internally but does not output number sets",
+      "Reports yearly Loto.gen.tr comparisons, R54-era comparison, R60 comparison, parse failures, source lag and mismatches",
+      "Does not invoke candidate analysis or include the isolated target's numbers in model requests"
+    ],
+    "live_source_audit_executed": false,
+    "caution": "Parser and comparison unit tests passed. The new tool has not yet been run against live external sources; its real-world parsing and source coverage remain unverified."
+  },
+  "v17_v19_search": {
+    "github_code_search_terms": [
+      "V17",
+      "V19",
+      "1.171946",
+      "DECADE_T",
+      "Super_Loto_V17",
+      "Super_Loto_V19"
+    ],
+    "repository_results": 0,
+    "conclusion": "Exact V17/V19 source artifacts were not found in the accessible repository code search. This is not proof that no copies exist in other branches, prior chats, or user files.",
+    "status": "OPEN"
   }
 }
