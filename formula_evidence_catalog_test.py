@@ -62,6 +62,15 @@ class FormulaEvidenceCatalogTests(unittest.TestCase):
         self.assertIn("target-B leakage", " ".join(entry["known_defects"]))
         self.assertIn("Do not run", entry["run_policy"])
 
+    def test_audit_candidate_is_not_canonical_or_archive_tested(self):
+        entry = self.catalog["source_inventory"]["v86_leakage_safe_evaluator.py"]
+        self.assertEqual(entry["canonical_status"], "NOT_CANONICAL_NOT_APPROVED")
+        self.assertIn("REAL_ARCHIVE_NOT_RUN", entry["evaluation_status"])
+        self.assertEqual(
+            self.catalog["evaluation_status"]["leakage_safe_v86_audit_candidate"],
+            "SYNTHETIC_TESTS_PASSING_ON_REVIEW_BRANCH; REAL_ARCHIVE_NOT_RUN; NOT_CANONICAL"
+        )
+
     def test_old_weights_remain_unverified(self):
         for name in ("V19_best_stable_ABC_weight", "V0_3_1_crossover_weights"):
             with self.subTest(result=name):

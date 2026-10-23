@@ -9,9 +9,13 @@ on:
       - "legacy_sources/Super_Loto_NEAR_STATE_Yapi_Dogrulama_Motoru_v5_0.py"
       - "legacy_sources/Super_Loto_Sifre_Kesif_Motoru_v1.py"
       - "legacy_sources/Super_Loto_V8_6_Donusum_Kesif.py"
+      - "v86_leakage_safe_evaluator.py"
+      - "v86_leakage_safe_evaluator_test.py"
       - "general_method_registry_test.py"
       - "general_core.py"
       - "general_core_registry_test.py"
+      - "v86_leakage_safe_evaluator.py"
+      - "v86_leakage_safe_evaluator_test.py"
       - ".github/workflows/method-registry-test.yml"
   workflow_dispatch:
   push:
@@ -22,6 +26,11 @@ on:
       - "general_method_registry_test.py"
       - "general_core.py"
       - "general_core_registry_test.py"
+      - "v86_leakage_safe_evaluator.py"
+      - "v86_leakage_safe_evaluator_test.py"
+      - "legacy_sources/Super_Loto_NEAR_STATE_Yapi_Dogrulama_Motoru_v5_0.py"
+      - "legacy_sources/Super_Loto_Sifre_Kesif_Motoru_v1.py"
+      - "legacy_sources/Super_Loto_V8_6_Donusum_Kesif.py"
       - ".github/workflows/method-registry-test.yml"
 
 permissions:
@@ -39,10 +48,12 @@ jobs:
         with:
           python-version: "3.12"
       - name: Compile registry and evidence tests
-        run: python -m py_compile general_method_registry_test.py general_core_registry_test.py formula_evidence_catalog_test.py general_core.py legacy_sources/Super_Loto_V8_6_Donusum_Kesif.py legacy_sources/Super_Loto_Sifre_Kesif_Motoru_v1.py legacy_sources/Super_Loto_NEAR_STATE_Yapi_Dogrulama_Motoru_v5_0.py
+        run: python -m py_compile general_method_registry_test.py general_core_registry_test.py formula_evidence_catalog_test.py general_core.py legacy_sources/Super_Loto_V8_6_Donusum_Kesif.py legacy_sources/Super_Loto_Sifre_Kesif_Motoru_v1.py legacy_sources/Super_Loto_NEAR_STATE_Yapi_Dogrulama_Motoru_v5_0.py v86_leakage_safe_evaluator.py v86_leakage_safe_evaluator_test.py
       - name: Verify method registry schema (no archive loaded)
         run: python -m unittest -v general_method_registry_test
       - name: Verify target-safe registry integration (no archive loaded)
         run: python -m unittest -v general_core_registry_test
       - name: Verify formula evidence catalog (no archive loaded)
         run: python -m unittest -v formula_evidence_catalog_test
+      - name: Verify leakage-safe V8.6 evaluator (synthetic fixtures only)
+        run: python -m unittest -v v86_leakage_safe_evaluator_test

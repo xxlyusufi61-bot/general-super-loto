@@ -55,6 +55,21 @@
       "recovery_status": "EXACT_SOURCE_PRESERVED; AUDIT_REQUIRED",
       "known_limit": "Prior source summary describes its evaluation windows, but its results and split chronology have not yet been independently reconstructed.",
       "run_policy": "Preserve as evidence only; do not treat old metrics as verified until archive boundaries, target isolation, and walk-forward logic are audited."
+    },
+    "v86_leakage_safe_evaluator.py": {
+      "availability": "PRESENT_ON_REVIEW_BRANCH",
+      "version": "AUDIT_CANDIDATE_0.1",
+      "role": "Separate target-safe evaluator based on legacy V8.6 feature vocabulary",
+      "canonical_status": "NOT_CANONICAL_NOT_APPROVED",
+      "design_guards": [
+        "Prediction receives only history strictly before the target draw.",
+        "Query feature is computed from the latest two known draws; target draw is never an argument.",
+        "Matched historical A->B->C triples must finish before the query A draw.",
+        "Model selection is validation-only; frozen final evaluation is separate.",
+        "Reverse-time run is labelled retrospective stress testing, not predictive evidence.",
+        "Locked dates are excluded from returned history."
+      ],
+      "evaluation_status": "SYNTHETIC_TESTS_ONLY; REAL_ARCHIVE_NOT_RUN"
     }
   },
   "methods": {
@@ -170,9 +185,11 @@
     "chronological_fold_summaries": "IMPLEMENTED; same walk-forward predictions summarized in contiguous folds",
     "nested_time_series_cross_validation": "NOT_IMPLEMENTED",
     "random_prediction_null": "MONTE_CARLO_REFERENCE_IMPLEMENTED; not a permutation test and no multiple-hypothesis adjustment",
-    "real_archive_run_in_this_step": false
+    "real_archive_run_in_this_step": false,
+    "leakage_safe_v86_audit_candidate": "SYNTHETIC_TESTS_PASSING_ON_REVIEW_BRANCH; REAL_ARCHIVE_NOT_RUN; NOT_CANONICAL"
   },
   "next_recovery_actions": [
+    "Review and approve or request changes to the separate leakage-safe V8.6 audit candidate before any real-archive evaluation.",
     "Audit the exact recovered V8.6 source for target-B leakage and the null-evaluation bug before any execution.",
     "Compare the recovered v1 source with the earlier tuple/int bug fix and audit its embedded archive separately from the canonical archive.",
     "Audit the recovered NEAR_STATE v5.0 source for chronology, archive boundaries, and target isolation.",
