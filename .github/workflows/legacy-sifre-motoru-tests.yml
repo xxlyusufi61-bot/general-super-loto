@@ -4,6 +4,7 @@ name: Legacy Sifre Motoru Synthetic Audit Tests
   pull_request:
     paths:
       - 'legacy_sources/Super_Loto_Sifre_Kesif_Motoru_v1_2.py'
+      - 'legacy_sources/Super_Loto_Sifre_Kesif_Motoru_v1_2_audit.py'
       - 'test_legacy_sifre_motoru_v1_2_audit.py'
       - '.github/workflows/legacy-sifre-motoru-tests.yml'
   push:
@@ -11,6 +12,7 @@ name: Legacy Sifre Motoru Synthetic Audit Tests
       - main
     paths:
       - 'legacy_sources/Super_Loto_Sifre_Kesif_Motoru_v1_2.py'
+      - 'legacy_sources/Super_Loto_Sifre_Kesif_Motoru_v1_2_audit.py'
       - 'test_legacy_sifre_motoru_v1_2_audit.py'
       - '.github/workflows/legacy-sifre-motoru-tests.yml'
   workflow_dispatch:
@@ -25,15 +27,12 @@ jobs:
     steps:
       - name: Checkout source
         uses: actions/checkout@v7
-
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
           python-version: '3.12'
-
-      - name: Compile without running the legacy search
+      - name: Compile audit files without running formula search
         run: |
-          python -m py_compile legacy_sources/Super_Loto_Sifre_Kesif_Motoru_v1_2.py test_legacy_sifre_motoru_v1_2_audit.py
-
+          python -m py_compile legacy_sources/Super_Loto_Sifre_Kesif_Motoru_v1_2.py legacy_sources/Super_Loto_Sifre_Kesif_Motoru_v1_2_audit.py test_legacy_sifre_motoru_v1_2_audit.py
       - name: Run synthetic-only audit tests
         run: python -m unittest -v test_legacy_sifre_motoru_v1_2_audit.py
