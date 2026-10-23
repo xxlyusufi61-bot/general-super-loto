@@ -19,7 +19,8 @@ from statistics import mean
 from typing import Sequence
 
 from v86_leakage_safe_evaluator import (
-    Draw, FEATURES, TRANSFORMS, validate_history, predict_from_known_pair, hits
+    Draw, FEATURES, TRANSFORMS, state_features, transform, distance,
+    validate_history, predict_from_known_pair, hits
 )
 
 ROOT = Path(__file__).resolve().parent
