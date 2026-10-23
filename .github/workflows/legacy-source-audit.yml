@@ -1,0 +1,30 @@
+name: GENERAL Legacy Source Audit
+
+on:
+  pull_request:
+    paths:
+      - "legacy_source_audit.json"
+      - "legacy_source_audit_test.py"
+      - ".github/workflows/legacy-source-audit.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile audit test
+        run: python -m py_compile legacy_source_audit_test.py
+      - name: Test legacy source audit claims
+        run: python -m unittest -v legacy_source_audit_test
+      - name: Re-run existing leakage-safe evaluator synthetic tests
+        run: python -m unittest -v v86_leakage_safe_evaluator_test
