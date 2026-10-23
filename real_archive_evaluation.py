@@ -138,8 +138,91 @@ def select_candidate(rows: Sequence[Draw], candidates, start: int, end: int):
 
 def random_baseline_mean_hits(n_targets: int) -> float:
     # Exact expectation for independent uniform 6-of-60 vs actual 6-of-60.
-    # E[intersection] = 6 * 6 / 60 = 0.6; no simulated target sets needed.
     return 0.6 if n_targets > 0 else 0.0
+
+
+def quantile(values: Sequence[float], probability: float) -> float:
+    if not values:
+        raise ValueError("Cannot calculate quantile from empty input.")
+    ordered = sorted(values)
+    position = (len(ordered) - 1) * probability
+    low = int(position)
+    high = min(low + 1, len(ordered) - 1)
+    fraction = position - low
+    return ordered[low] * (1.0 - fraction) + ordered[high] * fraction
+
+
+def block_bootstrap_mean_ci(
+    values: Sequence[int],
+    replications: int = 5000,
+    block_length: int = 10,
+    seed: int = RNG_SEED + 1,
+) -> dict:
+    """Circular moving-block bootstrap for a hit-rate interval, preserving local order."""
+    vals = tuple(values)
+    if not vals:
+        raise ValueError("No final-test scores available for bootstrap.")
+    if replications < 1000 or block_length < 1:
+        raise ValueError("Invalid bootstrap settings.")
+    rng = random.Random(seed)
+    n = len(vals)
+    means = []
+    for _ in range(replications):
+        sample = []
+        while len(sample) < n:
+            start = rng.randrange(n)
+            take = min(block_length, n - len(sample))
+            sample.extend(vals[(start + offset) % n] for offset in range(take))
+        means.append(mean(sample))
+    return {
+        "method": "circular_moving_block_bootstrap",
+        "replications": replications,
+        "block_length_draws": block_length,
+        "confidence_level": 0.95,
+        "mean_hits_ci": [
+            round(quantile(means, 0.025), 6),
+            round(quantile(means, 0.975), 6),
+        ],
+        "seed": seed,
+    }
+
+
+def matched_random_null(
+    final_rows: Sequence[Draw],
+    observed_mean: float,
+    replications: int = 10000,
+    seed: int = RNG_SEED + 2,
+) -> dict:
+    """Compare the frozen model with independent random 6-of-60 picks on identical test dates."""
+    if not final_rows or replications < 1000:
+        raise ValueError("Insufficient final rows or random-null replications.")
+    rng = random.Random(seed)
+    pool = tuple(range(1, 61))
+    null_means = []
+    for _ in range(replications):
+        total = 0
+        for draw in final_rows:
+            random_pick = set(rng.sample(pool, 6))
+            total += len(random_pick.intersection(draw.numbers))
+        null_means.append(total / len(final_rows))
+    p_upper = (1 + sum(value >= observed_mean for value in null_means)) / (replications + 1)
+    simulated_mean = mean(null_means)
+    return {
+        "protocol": "independent random 6-of-60 picks scored on exactly the frozen model's final test dates",
+        "replications": replications,
+        "seed": seed,
+        "theoretical_expected_mean_hits": random_baseline_mean_hits(len(final_rows)),
+        "simulated_random_mean_hits": round(simulated_mean, 6),
+        "random_mean_95pct_interval": [
+            round(quantile(null_means, 0.025), 6),
+            round(quantile(null_means, 0.975), 6),
+        ],
+        "one_sided_random_pick_tail_probability_mc": round(p_upper, 6),
+        "monte_carlo_standard_error_of_tail_probability": round(
+            (p_upper * (1.0 - p_upper) / (replications + 1)) ** 0.5, 6
+        ),
+        "interpretation": "Descriptive null comparison; the model was frozen before final evaluation. This does not prove a mechanism.",
+    }
 
 
 def main():
@@ -170,6 +253,13 @@ def main():
     )
     signature_cache = precompute_signatures(r60)
     final_hits = score_window(r60, final_start, final_end, chosen, signature_cache)
+    final_rows = r60[final_start:final_end]
+    if len(final_rows) != len(final_hits):
+        raise ValueError("Final score and target-row counts do not match.")
+    observed_final_mean = mean(final_hits) if final_hits else 0.0
+    random_null = matched_random_null(final_rows, observed_final_mean)
+    model_uncertainty = block_bootstrap_mean_ci(final_hits)
+    model_ci = model_uncertainty["mean_hits_ci"]
     reversed_r60 = tuple(reversed(r60))
     reverse_hits = score_window(reversed_r60, MIN_HISTORY, max(MIN_HISTORY, n - final_start), chosen)
 
@@ -224,11 +314,31 @@ def main():
         },
         "frozen_final_test": {
             "target_count": len(final_hits),
-            "mean_hits": round(mean(final_hits), 6) if final_hits else None,
+            "mean_hits": round(observed_final_mean, 6) if final_hits else None,
             "median_hits": sorted(final_hits)[len(final_hits) // 2] if final_hits else None,
             "random_baseline_expected_mean_hits": random_baseline_mean_hits(len(final_hits)),
-            "beats_random_expected_mean": bool(final_hits and mean(final_hits) > 0.6),
+            "delta_vs_random_expected_mean": round(observed_final_mean - 0.6, 6) if final_hits else None,
+            "beats_random_expected_mean": bool(final_hits and observed_final_mean > 0.6),
             "per_target_actual_or_predicted_numbers_in_report": False,
+        },
+        "statistical_comparison": {
+            "model_block_bootstrap_uncertainty": model_uncertainty,
+            "delta_vs_random_expected_mean_95pct_interval": [
+                round(model_ci[0] - 0.6, 6),
+                round(model_ci[1] - 0.6, 6),
+            ],
+            "matched_random_null": random_null,
+            "candidates_selected_using_validation_only": True,
+            "candidate_count_considered_on_validation": len(candidates),
+            "frozen_candidates_scored_on_final_interval": 1,
+            "final_interval_used_for_candidate_selection": False,
+            "holdout_reuse_policy": "Treat this final interval as spent; do not tune variants against it. Use a new later holdout or nested chronological evaluation for the next model iteration.",
+            "decision_rule": (
+                "NO_CLEAR_EVIDENCE_OF_ADVANTAGE_OVER_RANDOM"
+                if random_null["one_sided_random_pick_tail_probability_mc"] >= 0.05
+                or model_ci[0] <= 0.6
+                else "PRELIMINARY_SIGNAL_REQUIRES_INDEPENDENT_REPLICATION"
+            ),
         },
         "chronological_validation_folds": folds,
         "reverse_stress_test": {
@@ -239,9 +349,10 @@ def main():
         "limitations": [
             "This evaluates only legacy transition features; it does not define or promote canonical A->B->C, A->T, or MOD5->T.",
             "The selected candidate was chosen from many candidates; this single holdout is exploratory and does not establish a predictive mechanism.",
-            "No uncertainty interval or multiple-hypothesis correction is applied in this initial benchmark.",
+            "The final interval was not used for candidate selection; one frozen candidate was compared with random 6-of-60 picks on identical dates.",
+            "The final interval is now considered spent and must not be reused for tuning further candidate variants.",
             "The isolated latest draw is excluded completely from all calculations and its numbers are never written to the report.",
-            "R60 regime start is inferred from the first draw containing a number above 54; archive integrity checks do not establish official-source truth."
+            "Archive integrity checks do not establish official-source truth."
         ]
     }
     REPORT_PATH.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -258,7 +369,11 @@ def main():
         "selected_transform": chosen.mode,
         "selected_k": chosen.k,
         "final_mean_hits": report["frozen_final_test"]["mean_hits"],
+        "delta_vs_random_expected_mean": report["frozen_final_test"]["delta_vs_random_expected_mean"],
         "random_baseline_expected_mean_hits": 0.6,
+        "random_null_tail_probability_mc": report["statistical_comparison"]["matched_random_null"]["one_sided_random_pick_tail_probability_mc"],
+        "model_bootstrap_95pct_interval": report["statistical_comparison"]["model_block_bootstrap_uncertainty"]["mean_hits_ci"],
+        "decision_rule": report["statistical_comparison"]["decision_rule"],
         "reverse_stress_label": report["reverse_stress_test"]["label"],
         "report_path": str(REPORT_PATH.name),
     }, ensure_ascii=False, indent=2))
