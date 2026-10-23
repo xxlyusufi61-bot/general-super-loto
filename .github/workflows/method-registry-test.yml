@@ -1,10 +1,21 @@
 name: GENERAL Method Registry Tests
 
 on:
+  pull_request:
+    paths:
+      - "general_method_registry.json"
+      - "formula_evidence_catalog.json"
+      - "formula_evidence_catalog_test.py"
+      - "general_method_registry_test.py"
+      - "general_core.py"
+      - "general_core_registry_test.py"
+      - ".github/workflows/method-registry-test.yml"
   workflow_dispatch:
   push:
     paths:
       - "general_method_registry.json"
+      - "formula_evidence_catalog.json"
+      - "formula_evidence_catalog_test.py"
       - "general_method_registry_test.py"
       - "general_core.py"
       - "general_core_registry_test.py"
@@ -24,9 +35,11 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Compile registry integration tests
-        run: python -m py_compile general_method_registry_test.py general_core_registry_test.py general_core.py
+      - name: Compile registry and evidence tests
+        run: python -m py_compile general_method_registry_test.py general_core_registry_test.py formula_evidence_catalog_test.py general_core.py
       - name: Verify method registry schema (no archive loaded)
         run: python -m unittest -v general_method_registry_test
       - name: Verify target-safe registry integration (no archive loaded)
         run: python -m unittest -v general_core_registry_test
+      - name: Verify formula evidence catalog (no archive loaded)
+        run: python -m unittest -v formula_evidence_catalog_test
