@@ -112,6 +112,7 @@ class CanonicalArchiveTargetIsolationTests(unittest.TestCase):
         self.assertIs(result.get("isolation_pass"), True)
         self.assertIs(result.get("target_present_in_archive"), True)
         self.assertIs(result.get("target_numbers_exposed"), False)
+        self.assertIs(result.get("training_rows_match_archive"), True)
 
         train = result.get("train")
         excluded_dates = result.get("excluded_dates")
@@ -123,6 +124,11 @@ class CanonicalArchiveTargetIsolationTests(unittest.TestCase):
             row["date"] for row in self.rows
             if row["date"] < self.target_date
         ]
+        expected_training_rows = [
+            {"date": row["date"], "numbers": row["numbers"]}
+            for row in self.rows
+            if row["date"] < self.target_date
+        ]
         expected_excluded_dates = [
             row["date"] for row in self.rows
             if row["date"] >= self.target_date
@@ -130,6 +136,7 @@ class CanonicalArchiveTargetIsolationTests(unittest.TestCase):
 
         # Compare dates/counts only; do not place draw numbers in logs.
         self.assertEqual(training_dates, expected_training_dates)
+        self.assertEqual(train, expected_training_rows)
         self.assertEqual(excluded_dates, expected_excluded_dates)
         self.assertNotIn(self.target_date, training_dates)
         self.assertTrue(all(day < self.target_date for day in training_dates))
