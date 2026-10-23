@@ -312,7 +312,8 @@ def main():
             ("createHeaders", re.compile(r"createHeaders", re.I), 3),
             ("Authorization", re.compile(r"Authorization|api-key|x-api-key", re.I), 3),
             ("getSecretKey", re.compile(r"getSecretKey|getEpdSecretKey|getInternalKey", re.I), 3),
-        ]        for label, pattern, per_term_limit in exact_terms:
+        ]
+        for label, pattern, per_term_limit in exact_terms:
             matches_for_term = 0
             for match in pattern.finditer(source):
                 if matches_for_term >= per_term_limit or len(js_contexts) >= 120:
