@@ -7,6 +7,7 @@ name: Canonical Archive Rebuild Verification
       - 'super_loto_archive.json'
       - 'general_data_guard.py'
       - 'test_general_archive_target_isolation.py'
+      - 'historical_archive_source_audit.json'
       - '.github/workflows/archive-rebuild-verification.yml'
   workflow_dispatch:
 
@@ -114,6 +115,7 @@ jobs:
 
           rows = payload["draws"]
           summary = guard.validate_archive(rows)
+          rows_by_date = {row["date"]: row["numbers"] for row in rows}
           expected = {
               "2020": 97,
               "2021": 156,
@@ -180,6 +182,69 @@ jobs:
               if not any(f"/{year}" in url for url in pages if isinstance(url, str)):
                   raise SystemExit(f"HISTORICAL SOURCE AUDIT FAILED: wrong source year for {draw_date}")
           print("HISTORICAL SOURCE AUDIT: PASS (10/10 dates reconciled across source archives)")
+
+          # Validate the human-readable source manifest separately from the live fetcher's
+          # reconciliation metadata. This checks that the claimed public sources support
+          # exactly the dates and number sets currently present in the rebuilt archive.
+          manifest_path = Path("historical_archive_source_audit.json")
+          try:
+              manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+          except (OSError, json.JSONDecodeError):
+              raise SystemExit("SOURCE MANIFEST FAILED: file missing or invalid JSON") from None
+          if not isinstance(manifest, dict) or manifest.get("schema_version") != 1:
+              raise SystemExit("SOURCE MANIFEST FAILED: invalid schema")
+          if manifest.get("official_source_directly_checked") is not False:
+              raise SystemExit("SOURCE MANIFEST FAILED: official-source status is misrepresented")
+          if manifest.get("official_site_required") is not False:
+              raise SystemExit("SOURCE MANIFEST FAILED: unsupported official-source requirement claim")
+          manifest_records = manifest.get("records")
+          if not isinstance(manifest_records, list):
+              raise SystemExit("SOURCE MANIFEST FAILED: records list missing")
+          manifest_by_date = {}
+          for item in manifest_records:
+              if not isinstance(item, dict) or not isinstance(item.get("date"), str):
+                  raise SystemExit("SOURCE MANIFEST FAILED: malformed record")
+              day = item["date"]
+              if day in manifest_by_date:
+                  raise SystemExit("SOURCE MANIFEST FAILED: duplicate date")
+              nums = item.get("numbers")
+              if (
+                  not isinstance(nums, list)
+                  or len(nums) != 6
+                  or len(set(nums)) != 6
+                  or any(type(n) is not int or n < 1 or n > 60 for n in nums)
+              ):
+                  raise SystemExit(f"SOURCE MANIFEST FAILED: invalid six-number set for {day}")
+              if rows_by_date.get(day) != nums:
+                  raise SystemExit(f"SOURCE MANIFEST FAILED: archive number set mismatch for {day}")
+              supporting = [
+                  source for source in item.get("confirmation_sources", [])
+                  if isinstance(source, dict)
+                  and source.get("supports_record") is True
+                  and isinstance(source.get("url"), str)
+                  and source["url"].startswith("https://")
+                  and isinstance(source.get("publisher"), str)
+              ]
+              if len({source["publisher"] for source in supporting}) < 2:
+                  raise SystemExit(f"SOURCE MANIFEST FAILED: fewer than two public supporting publishers for {day}")
+              if not isinstance(item.get("status"), str) or not item["status"].startswith("CORROBORATED"):
+                  raise SystemExit(f"SOURCE MANIFEST FAILED: missing corroboration status for {day}")
+              manifest_by_date[day] = item
+
+          if set(manifest_by_date) != set(expected_flat):
+              raise SystemExit("SOURCE MANIFEST FAILED: audited date list mismatch")
+          required_discrepancy_dates = {"2021-01-31", "2023-10-29"}
+          for day, item in manifest_by_date.items():
+              discrepancies = item.get("discrepancy_sources", [])
+              if not isinstance(discrepancies, list):
+                  raise SystemExit(f"SOURCE MANIFEST FAILED: malformed discrepancy list for {day}")
+              if day in required_discrepancy_dates and not discrepancies:
+                  raise SystemExit(f"SOURCE MANIFEST FAILED: known source discrepancy omitted for {day}")
+              for source in discrepancies:
+                  if not isinstance(source, dict) or not isinstance(source.get("url"), str) or not source["url"].startswith("https://"):
+                      raise SystemExit(f"SOURCE MANIFEST FAILED: malformed discrepancy source for {day}")
+
+          print("SOURCE MANIFEST: PASS (10 dates match archive; at least two public publishers each; discrepancies retained)")
 
           target_date = summary["last_date"]
           isolated = guard.isolate_target(rows, target_date)
