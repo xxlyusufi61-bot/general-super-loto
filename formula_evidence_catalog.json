@@ -1,0 +1,154 @@
+{
+  "schema_version": 1,
+  "project": "GENERAL Super Loto",
+  "purpose": "Evidence inventory for recovering and auditing historical formulas. This catalog distinguishes current experimental implementations from missing legacy source artifacts and unverified reported weights.",
+  "binding_rules_changed": false,
+  "recovery_status": "PARTIAL_SOURCE_EVIDENCE_ONLY",
+  "rules": [
+    "Do not claim an experimental candidate is identical to a missing legacy formula.",
+    "Do not promote methods to canonical without explicit user approval.",
+    "Keep target draw numbers hidden and use only strictly pre-target history.",
+    "Preserve the R54 and R60 archive regimes separately.",
+    "Forward walk-forward, reverse retrospective stress testing, and chronological fold summaries are distinct protocols.",
+    "Reverse-time results are retrospective stress tests, not predictive evidence."
+  ],
+  "source_inventory": {
+    "general_method_candidates.py": {
+      "availability": "PRESENT_IN_REPOSITORY",
+      "version": "0.1.0",
+      "role": "Current experimental candidate implementations",
+      "canonical_status": "EXPERIMENTAL_CANDIDATES_NOT_CANONICAL"
+    },
+    "Super_Loto_V8_6_Donusum_Kesif.py": {
+      "availability": "NOT_FOUND_IN_CURRENT_MAIN_FILE_TREE",
+      "role": "Reported legacy source for transition features and transformation matching",
+      "recovery_status": "SOURCE_CONTENT_NOT_RECONSTRUCTED"
+    },
+    "Super_Loto_Sifre_Kesif_Motoru_v1.py": {
+      "availability": "NOT_FOUND_IN_CURRENT_MAIN_FILE_TREE",
+      "role": "Reported legacy source for gen_pair_relation",
+      "recovery_status": "SOURCE_CONTENT_NOT_RECONSTRUCTED"
+    }
+  },
+  "methods": {
+    "A->B->C": {
+      "status": "OPEN_DEFINITION",
+      "current_candidate": {
+        "function": "predict_abc_transition_to_c",
+        "source_file": "general_method_candidates.py",
+        "source_version": "0.1.0",
+        "definition": "Build a transition signature from the latest known A->B pair using the selected feature (default mod5diff) and transform (default sign); compare with older transition signatures; vote on the following historical draw for the closest k matches using weight 1/(1+distance); return the six highest-scoring numbers with deterministic numeric tie-break.",
+        "defaults": {
+          "feature": "mod5diff",
+          "mode": "sign",
+          "k": 5
+        },
+        "leakage_guard": "Only the supplied history is used; current target draw is not an argument. Candidate transitions are restricted so their following draw is already historical and older than the current A/B pair.",
+        "known_limit": "This is the present candidate implementation, not a verified reconstruction of the legacy V8.6 formula. Legacy registry notes describe the older evaluator as scoring B for a target transition, not establishing a canonical A->B to following C method."
+      },
+      "legacy_source": {
+        "file": "Super_Loto_V8_6_Donusum_Kesif.py",
+        "reported_functions": [
+          "state_features",
+          "all_transitions",
+          "similarity_rank",
+          "predict_next_from_transitions",
+          "evaluate_model"
+        ],
+        "reported_features": [
+          "positional",
+          "gap",
+          "parity",
+          "band",
+          "modulo-3/5/7",
+          "sum",
+          "span",
+          "shape",
+          "signed-core changes"
+        ],
+        "status": "UNVERIFIED_SUMMARY_ONLY"
+      }
+    },
+    "A->T": {
+      "status": "OPEN_DEFINITION",
+      "current_candidate": {
+        "function": "predict_a_to_t_pair_counts",
+        "source_file": "general_method_candidates.py",
+        "source_version": "0.1.0",
+        "definition": "For every adjacent historical source/target draw pair, count each source number's co-occurrence with all numbers in the immediately following draw. For the latest known source draw, sum historical target-number counts associated with each of its six numbers and return the six highest-scoring numbers.",
+        "leakage_guard": "Uses only complete adjacent pairs contained in supplied pre-target history.",
+        "known_limit": "Current explicit candidate, not proven identical to the old gen_pair_relation implementation or an approved canonical A->T definition."
+      },
+      "legacy_source": {
+        "file": "Super_Loto_Sifre_Kesif_Motoru_v1.py",
+        "reported_function": "gen_pair_relation",
+        "reported_behavior": "Empirical source-number to immediately-following-draw-number co-occurrence counts.",
+        "status": "UNVERIFIED_SUMMARY_ONLY"
+      }
+    },
+    "MOD5->T": {
+      "status": "OPEN_DEFINITION",
+      "current_candidate": {
+        "function": "predict_mod5_state_to_t",
+        "source_file": "general_method_candidates.py",
+        "source_version": "0.1.0",
+        "definition": "Represent each historical draw as the six-position tuple of number modulo 5. Compare the latest known draw's residue tuple with earlier draw residue tuples using Hamming distance; the k closest historical states vote for their already-known following draws, weighted by 1/(1+distance); return the six highest-scoring numbers.",
+        "defaults": {
+          "k": 5
+        },
+        "leakage_guard": "Each source state votes only for its following draw already present in the supplied history; the isolated target draw is not passed to this function.",
+        "known_limit": "The legacy registry describes mod5diff as one transition feature; that feature alone does not reconstruct an approved MOD5-to-target mapping."
+      },
+      "legacy_source": {
+        "file": "Super_Loto_V8_6_Donusum_Kesif.py",
+        "reported_feature": "state_features['mod5diff']",
+        "reported_behavior": "Per-position residue-change values (B[i] % 5) - (A[i] % 5).",
+        "status": "UNVERIFIED_SUMMARY_ONLY"
+      }
+    }
+  },
+  "historical_results": {
+    "V19_best_stable_ABC_weight": {
+      "value": 1.171946,
+      "status": "UNVERIFIED_CONTEXT_ONLY",
+      "source": "Existing general_method_registry.json",
+      "missing_evidence": [
+        "exact formula definition",
+        "exact evaluation protocol",
+        "run log",
+        "target isolation proof"
+      ]
+    },
+    "V0_3_1_crossover_weights": {
+      "values": {
+        "DECADE_T": 0.106117,
+        "ABC": 0.102668,
+        "NUMBER_T": 0.10094,
+        "ODD_EVEN_T": 0.099944
+      },
+      "status": "UNVERIFIED_CONTEXT_ONLY",
+      "source": "Existing general_method_registry.json",
+      "missing_evidence": [
+        "component definitions",
+        "weight optimization procedure",
+        "chronological validation results",
+        "run log",
+        "target isolation proof"
+      ]
+    }
+  },
+  "evaluation_status": {
+    "forward_walk_forward": "IMPLEMENTED_IN_CANDIDATE_ENGINE; historical results not reconstructed by this catalog step",
+    "reverse_retrospective_stress_test": "IMPLEMENTED_IN_CANDIDATE_ENGINE; not predictive evidence",
+    "chronological_fold_summaries": "IMPLEMENTED; same walk-forward predictions summarized in contiguous folds",
+    "nested_time_series_cross_validation": "NOT_IMPLEMENTED",
+    "random_prediction_null": "MONTE_CARLO_REFERENCE_IMPLEMENTED; not a permutation test and no multiple-hypothesis adjustment",
+    "real_archive_run_in_this_step": false
+  },
+  "next_recovery_actions": [
+    "Search accessible prior conversation/library artifacts for the two legacy source files and version-specific reports.",
+    "If a source file is recovered, preserve its exact bytes and source version before interpreting it.",
+    "Reconstruct definitions and test behavior against synthetic fixtures before real archive execution.",
+    "Do not change OPEN_DEFINITION statuses until the user approves the canonical definitions."
+  ]
+}
