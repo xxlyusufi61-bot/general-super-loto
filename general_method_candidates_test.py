@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 from datetime import date, timedelta
 
 import general_method_candidates as engine
@@ -63,6 +64,38 @@ class MethodCandidateTests(unittest.TestCase):
         draws = [tuple(row["numbers"]) for row in synthetic_rows(10)]
         with self.assertRaises(ValueError):
             engine.predict_mod5_state_to_t(draws, k=0)
+
+    def test_generator_rows_are_materialized_before_validation(self):
+        rows = synthetic_rows()
+        target_date = (date.fromisoformat(rows[-1]["date"]) + timedelta(days=1)).isoformat()
+        report = engine.evaluate_rows(iter(rows), target_date, min_train=6, folds=5)
+        self.assertEqual(report["pre_target_history_records"], len(rows))
+
+    def test_random_null_reproducible_and_uses_same_test_draws(self):
+        rows = synthetic_rows(30)
+        draws = [tuple(row["numbers"]) for row in rows]
+        forward, records = engine._evaluate_forward(draws, 6)
+        usable = [record for record in records if record["scores"]]
+        score_sets = {
+            name: [record["scores"][name] for record in usable if name in record["scores"]]
+            for name in engine.METHODS
+        }
+        a = engine._random_prediction_null(draws, usable, score_sets, replications=100, seed=123)
+        b = engine._random_prediction_null(draws, usable, score_sets, replications=100, seed=123)
+        self.assertEqual(a, b)
+        self.assertEqual(a["replications"], 100)
+        self.assertFalse(a["current_isolated_target_used"])
+        self.assertEqual(a["methods"]["abc_transition_to_c"]["evaluated_draws"], len(score_sets["abc_transition_to_c"]))
+        self.assertIn("random_mean_95pct_interval", a["methods"]["abc_transition_to_c"])
+
+    def test_chronological_fold_summaries_are_not_claimed_as_nested_cv(self):
+        rows = synthetic_rows(30)
+        draws = [tuple(row["numbers"]) for row in rows]
+        _, records = engine._evaluate_forward(draws, 6)
+        usable = [record for record in records if record["scores"]]
+        result = engine._walk_forward_fold_summaries(usable, 5)
+        self.assertFalse(result["independent_fold_model_selection"])
+        self.assertIn("not nested CV", result["protocol"])
 
 
 if __name__ == "__main__":
