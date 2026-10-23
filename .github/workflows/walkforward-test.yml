@@ -1,0 +1,29 @@
+name: GENERAL Walk-Forward Unit Tests
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "general_walkforward.py"
+      - "general_walkforward_test.py"
+      - "general_data_guard.py"
+      - ".github/workflows/walkforward-test.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile modules
+        run: python -m py_compile general_walkforward.py general_walkforward_test.py general_data_guard.py
+      - name: Run synthetic unit tests (no real archive or target draw)
+        run: python -m unittest -v general_walkforward_test
