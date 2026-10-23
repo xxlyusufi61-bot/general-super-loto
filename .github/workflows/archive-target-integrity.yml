@@ -1,0 +1,37 @@
+name: Canonical Archive and Target Isolation Audit
+
+'on':
+  pull_request:
+    paths:
+      - 'general_data_guard.py'
+      - 'super_loto_archive.json'
+      - 'test_general_archive_target_isolation.py'
+      - '.github/workflows/archive-target-integrity.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'general_data_guard.py'
+      - 'super_loto_archive.json'
+      - 'test_general_archive_target_isolation.py'
+      - '.github/workflows/archive-target-integrity.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  archive-target-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Compile guard and test
+        run: python -m py_compile general_data_guard.py test_general_archive_target_isolation.py
+      - name: Validate committed canonical archive and isolate latest target
+        run: python -m unittest -v test_general_archive_target_isolation.py
