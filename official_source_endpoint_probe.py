@@ -293,25 +293,31 @@ def main():
             continue
         source = response["body"]
         discovered.update(endpoint_candidates(source))
-        # Match the API configuration first; limit generic result-data matches.
-        per_asset = 0
-        for pattern_index, pattern in enumerate(context_patterns):
-            limit = 16 if pattern_index == 0 else (8 if pattern_index == 1 else 4)
-            matches_for_pattern = 0
+        # Capture exact source contexts needed to reconstruct the public request.
+        exact_terms = [
+            ("prepareRequestApiGatewayParams", re.compile(r"prepareRequestApiGatewayParams", re.I), 3),
+            ("CLIENTS", re.compile(r"CLIENTS\\s*[:=]", re.I), 3),
+            ("GET_METHOD", re.compile(r"GET_METHOD\\s*[:=]", re.I), 3),
+            ("caller", re.compile(r"caller\\s*[:=]", re.I), 3),
+            ("DrawBlockResultCommand", re.compile(r"DrawBlockResultCommand", re.I), 3),
+            ("draw-detail", re.compile(r"draw-detail", re.I), 3),
+            ("HeaderHelper", re.compile(r"HeaderHelper\\.prepareHeaders", re.I), 2),
+        ]
+        for label, pattern, per_term_limit in exact_terms:
+            matches_for_term = 0
             for match in pattern.finditer(source):
-                if matches_for_pattern >= limit or len(js_contexts) >= 100:
+                if matches_for_term >= per_term_limit or len(js_contexts) >= 120:
                     break
-                left = max(0, match.start() - 320)
-                right = min(len(source), match.end() + 480)
+                left = max(0, match.start() - 900)
+                right = min(len(source), match.end() + 1700)
                 snippet = re.sub(r"\\s+", " ", source[left:right]).strip()
                 js_contexts.append({
                     "asset": url,
-                    "term": match.group(0)[:50],
-                    "context": snippet[:900],
+                    "term": label,
+                    "context": snippet[:2200],
                 })
-                matches_for_pattern += 1
-            per_asset += matches_for_pattern
-            if len(js_contexts) >= 100:
+                matches_for_term += 1
+            if len(js_contexts) >= 120:
                 break
     for body in page_cache.values():
         discovered.update(endpoint_candidates(body))
@@ -367,9 +373,9 @@ def main():
     print("JavaScript asset URLs:")
     for asset in scripts_checked:
         print("JS_ASSET", asset["http_status"], asset["url"])
-    print("Endpoint context snippets:", len(report["javascript_endpoint_contexts"]))
+    print("Targeted JavaScript request contexts:", len(report["javascript_endpoint_contexts"]))
     for entry in report["javascript_endpoint_contexts"]:
-        print("JS_CONTEXT", entry["asset"], entry["context"])
+        print("JS_CONTEXT_TERM", entry["term"], entry["asset"], entry["context"])
     print("Endpoint candidates found:", len(report["endpoint_candidates"]))
     for candidate in report["endpoint_candidates"]:
         print("CANDIDATE", candidate)
