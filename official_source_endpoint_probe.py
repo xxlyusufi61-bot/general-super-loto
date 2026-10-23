@@ -194,6 +194,71 @@ def main():
                 row["parser_error"] = "HTML_PARSE_ERROR"
         result_rows.append(row)
 
+    # Probe the official draw-detail API inferred from the result-page JavaScript.
+    api_probe_rows = []
+    api_bases = [
+        "https://lotteryservice.millipiyangoonline.com/api/",
+        "https://digital-info.millipiyangoonline.com/",
+    ]
+
+    def collect_six_number_arrays(value, found):
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if isinstance(child, list) and re.search(r"number|result|winner|table", str(key), re.I):
+                    nums = [int(x) for x in child if isinstance(x, (int, str)) and str(x).isdigit()]
+                    if len(nums) == 6 and all(1 <= x <= 60 for x in nums):
+                        found.append(sorted(nums))
+                collect_six_number_arrays(child, found)
+        elif isinstance(value, list):
+            nums = [int(x) for x in value if isinstance(x, (int, str)) and str(x).isdigit()]
+            if len(nums) == 6 and all(1 <= x <= 60 for x in nums):
+                found.append(sorted(nums))
+            for child in value:
+                if isinstance(child, (dict, list)):
+                    collect_six_number_arrays(child, found)
+
+    for item in RECORDS:
+        for base in api_bases:
+            api_url = (
+                base + "super-loto/v1/draw-detail/"
+                + str(item["draw_no_candidate"]) + "/" + str(item["year"])
+            )
+            response = fetch(api_url)
+            api_row = {
+                "date": item["date"],
+                "url": api_url,
+                "http_status": response["status"],
+                "fetch_error": response["error"],
+                "date_visible": False,
+                "expected_numbers_found": False,
+                "matched_number_arrays": [],
+                "json_parse_error": False,
+                "status": "UNRESOLVED",
+            }
+            if response["body"]:
+                try:
+                    payload = json.loads(response["body"])
+                    serialized = json.dumps(payload, ensure_ascii=False)
+                    api_row["date_visible"] = item["date"] in serialized or item["date"].replace("-", "/") in serialized
+                    arrays = []
+                    collect_six_number_arrays(payload, arrays)
+                    arrays = sorted({tuple(a) for a in arrays})
+                    expected = tuple(sorted(item["numbers"]))
+                    api_row["matched_number_arrays"] = [list(a) for a in arrays[:20]]
+                    api_row["expected_numbers_found"] = expected in arrays
+                    if api_row["date_visible"] and api_row["expected_numbers_found"]:
+                        api_row["status"] = "DATE_AND_NUMBERS_MATCH"
+                    elif api_row["expected_numbers_found"]:
+                        api_row["status"] = "NUMBERS_MATCH_DATE_UNCONFIRMED"
+                    elif api_row["date_visible"]:
+                        api_row["status"] = "DATE_MATCH_NUMBERS_UNCONFIRMED"
+                    else:
+                        api_row["status"] = "JSON_RECEIVED_CONTEXT_UNRESOLVED"
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    api_row["json_parse_error"] = True
+                    api_row["status"] = "NON_JSON_OR_UNPARSEABLE"
+            api_probe_rows.append(api_row)
+
     # Search a bounded number of shared JavaScript assets for the public result API.
     scripts_checked = []
     discovered = set()
@@ -259,6 +324,9 @@ def main():
             1 for row in result_rows if row["http_status"] == 200
         ),
         "records": result_rows,
+        "api_probe_rows": api_probe_rows,
+        "api_urls_tested": len(api_probe_rows),
+        "api_date_and_number_matches": sum(1 for row in api_probe_rows if row["status"] == "DATE_AND_NUMBERS_MATCH"),
         "relevant_meta_tags": sorted(
             {json.dumps(meta, ensure_ascii=False, sort_keys=True)
              for row in result_rows for meta in row["relevant_meta_tags"]}
@@ -285,6 +353,14 @@ def main():
             f"numbers_visible={row['number_set_visible_in_page']} "
             f"status={row['status']}"
         )
+    print("Draw-detail API URLs tested:", report["api_urls_tested"])
+    for api_row in api_probe_rows:
+        print(
+            f"API_RESULT date={api_row['date']} http={api_row['http_status']} "
+            f"status={api_row['status']} date_match={api_row['date_visible']} "
+            f"numbers_match={api_row['expected_numbers_found']} url={api_row['url']}"
+        )
+    print("Exact date+number API matches:", report["api_date_and_number_matches"])
     print("Relevant official-page meta tags:", len(report["relevant_meta_tags"]))
     for meta_json in report["relevant_meta_tags"]:
         print("META_API", meta_json)
