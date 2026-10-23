@@ -223,6 +223,22 @@ def isolate_target(
         if current_date == parsed_target:
             target_present = True
 
+    # Compare complete training rows against the source archive, not just dates.
+    # This prevents a correct date partition from hiding altered number sets.
+    expected_training_rows = [
+        {
+            "date": parse_date(row["date"]).isoformat(),
+            "numbers": validate_numbers(row["numbers"]),
+        }
+        for row in records
+        if parse_date(row["date"]) < parsed_target
+    ]
+    training_rows_match_archive = train == expected_training_rows
+    if not training_rows_match_archive:
+        raise DataGuardError(
+            "IZOLASYON HATASI: Egitim satirlari kaynak arsivle eslesmiyor."
+        )
+
     # Savunmaci kontroller: ihlal varsa islem durur.
     for row in train:
         if parse_date(row["date"]) >= parsed_target:
@@ -258,6 +274,7 @@ def isolate_target(
             excluded_dates[0] if excluded_dates else None
         ),
         "target_numbers_exposed": False,
+        "training_rows_match_archive": training_rows_match_archive,
         "train": train,
         "excluded_dates": excluded_dates,
     }
