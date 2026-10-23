@@ -67,6 +67,31 @@ class RealArchiveEvaluationTests(unittest.TestCase):
         self.assertEqual(exp.random_baseline_mean_hits(10), 0.6)
         self.assertEqual(exp.random_baseline_mean_hits(0), 0.0)
 
+    def test_block_bootstrap_is_reproducible_and_returns_ordered_interval(self):
+        scores = [0, 1, 2, 0, 1, 0, 1, 2, 0, 1, 0, 1]
+        first = exp.block_bootstrap_mean_ci(scores, replications=1000, block_length=3, seed=99)
+        second = exp.block_bootstrap_mean_ci(scores, replications=1000, block_length=3, seed=99)
+        self.assertEqual(first, second)
+        low, high = first["mean_hits_ci"]
+        self.assertLessEqual(low, high)
+        self.assertEqual(first["replications"], 1000)
+
+    def test_matched_random_null_is_reproducible_and_bounded(self):
+        rows = fake_rows(30)
+        first = exp.matched_random_null(rows, 0.6, replications=1000, seed=101)
+        second = exp.matched_random_null(rows, 0.6, replications=1000, seed=101)
+        self.assertEqual(first, second)
+        self.assertGreaterEqual(first["one_sided_random_pick_tail_probability_mc"], 0.0)
+        self.assertLessEqual(first["one_sided_random_pick_tail_probability_mc"], 1.0)
+        self.assertEqual(first["theoretical_expected_mean_hits"], 0.6)
+
+    def test_report_statistical_comparison_does_not_reuse_holdout_for_tuning(self):
+        source = Path(exp.__file__).read_text(encoding="utf-8")
+        self.assertIn('"final_interval_used_for_candidate_selection": False', source)
+        self.assertIn('"holdout_reuse_policy":', source)
+        self.assertIn('"matched_random_null": random_null', source)
+        self.assertIn('"model_block_bootstrap_uncertainty": model_uncertainty', source)
+
     def test_report_contract_does_not_write_actual_or_predicted_number_sets(self):
         source = Path(exp.__file__).read_text(encoding="utf-8")
         self.assertIn('"isolated_target_numbers_written_to_report": False', source)
