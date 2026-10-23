@@ -16,6 +16,7 @@ CROSS_URLS = (
 OUT = Path(__file__).resolve().parent / "super_loto_archive.json"
 EXPECTED = {2020: 97, 2021: 156, 2022: 156, 2023: 157, 2024: 157, 2025: 156}
 CROSS_EXPECTED = 156
+MAX_CURRENT_YEAR_PRIMARY_ONLY_TAIL = 6
 INDEPENDENT_BASE = "https://loto.gen.tr/super-loto/arsiv/"
 R60_START = "2020-08-02"
 MONTHS = {
@@ -226,7 +227,7 @@ def parse_cross_rows(html, year=2025):
         found[draw_date] = values
         parsed_rows += 1
     if not found:
-        raise RuntimeError("Independent source yielded no recognizable 2025 draws; archive not saved")
+        raise RuntimeError(f"Independent source yielded no recognizable {year} draws; archive not saved")
     return found, parsed_rows
 
 
@@ -341,6 +342,16 @@ def reconcile_year(primary_rows, independent, year, pages_checked):
     primary_only_tail = [
         draw_date for draw_date in primary_only if draw_date > latest_independent
     ]
+    if (
+        year == datetime.now(timezone.utc).year
+        and len(primary_only_tail) > MAX_CURRENT_YEAR_PRIMARY_ONLY_TAIL
+    ):
+        raise RuntimeError(
+            f"{year} CROSS-SOURCE CHECK FAILED: {len(primary_only_tail)} primary-only "
+            f"tail draws exceed the maximum allowed {MAX_CURRENT_YEAR_PRIMARY_ONLY_TAIL}; "
+            "archive not saved"
+        )
+
     unexplained_primary_only = [
         draw_date for draw_date in primary_only if draw_date <= latest_independent
     ]
@@ -526,6 +537,37 @@ def self_test():
         "2026-01-01", "2026-01-02", "2026-01-03"
     ]
     assert audit_fixture["supplemented_dates"] == ["2026-01-02"]
+
+    # A current-year independent source that is stale by too many draws must
+    # fail closed instead of treating a long missing tail as acceptable.
+    current_year = datetime.now(timezone.utc).year
+    from datetime import timedelta
+    first_day = date(current_year, 1, 1)
+    current_primary = [
+        {"date": first_day.isoformat(), "numbers": [1, 2, 3, 4, 5, 6]}
+    ]
+    current_primary.extend(
+        {
+            "date": (first_day + timedelta(days=offset)).isoformat(),
+            "numbers": [2, 3, 4, 5, 6, 7],
+        }
+        for offset in range(1, MAX_CURRENT_YEAR_PRIMARY_ONLY_TAIL + 2)
+    )
+    current_independent = {
+        first_day.isoformat(): (1, 2, 3, 4, 5, 6)
+    }
+    try:
+        reconcile_year(
+            current_primary,
+            current_independent,
+            current_year,
+            ["stale-current-year-source-fixture"],
+        )
+    except RuntimeError as exc:
+        assert "primary-only tail" in str(exc)
+    else:
+        raise AssertionError("Reconciliation accepted an overly stale current-year source")
+
     try:
         reconcile_year(
             [{"date": "2026-01-01", "numbers": [1, 2, 3, 4, 5, 6]}],
