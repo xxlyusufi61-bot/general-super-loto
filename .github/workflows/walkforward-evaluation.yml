@@ -1,0 +1,81 @@
+name: GENERAL Walk-Forward Evaluation
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "general_walkforward.py"
+      - "general_archive_fetch.py"
+      - "general_data_guard.py"
+      - ".github/workflows/walkforward-evaluation.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Refresh archive without printing draw details
+        run: |
+          if python3 general_archive_fetch.py > archive_fetch_output.log 2>&1; then
+            echo "ARCHIVE FETCH: completed; parser details suppressed."
+          else
+            echo "ARCHIVE FETCH FAILED; detailed output suppressed."
+            exit 1
+          fi
+
+      - name: Validate archive and target isolation
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          import general_data_guard as guard
+
+          path = Path("super_loto_archive.json")
+          if not path.is_file():
+              raise SystemExit("ARCHIVE CHECK FAILED: archive missing")
+
+          payload = json.loads(path.read_text(encoding="utf-8"))
+          if not isinstance(payload, dict) or not isinstance(payload.get("draws"), list):
+              raise SystemExit("ARCHIVE CHECK FAILED: unexpected archive structure")
+
+          rows = payload["draws"]
+          checked = guard.validate_archive(rows)
+          target_date = checked.get("last_date")
+          if not isinstance(target_date, str):
+              raise SystemExit("ISOLATION CHECK FAILED: latest target date missing")
+
+          split = guard.isolate_target(rows, target_date)
+          if split.get("isolation_pass") is not True:
+              raise SystemExit("ISOLATION CHECK FAILED: Data Guard did not pass")
+          if split.get("target_present_in_archive") is not True:
+              raise SystemExit("ISOLATION CHECK FAILED: latest target missing")
+          if split.get("excluded_dates") != [target_date]:
+              raise SystemExit("ISOLATION CHECK FAILED: target exclusion mismatch")
+          train = split.get("train")
+          if not isinstance(train, list) or len(train) != len(rows) - 1:
+              raise SystemExit("ISOLATION CHECK FAILED: training count mismatch")
+          if any(row["date"] >= target_date for row in train):
+              raise SystemExit("ISOLATION CHECK FAILED: target/future date in training")
+
+          print("DATA GUARD: PASS")
+          print("TARGET ISOLATION: PASS")
+          print("Archive records:", checked["record_count"])
+          print("Pre-target training records:", len(train))
+          print("Dynamic target date:", target_date)
+          print("Target numbers logged: NO")
+          PY
+
+      - name: Run leakage-aware walk-forward and chronological CV
+        run: |
+          python3 general_walkforward.py --archive super_loto_archive.json --min-train 100 --folds 5
