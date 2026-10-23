@@ -1237,6 +1237,17 @@
       ]
     },
     {
+      "date": "2021-01-31",
+      "numbers": [
+        1,
+        7,
+        36,
+        44,
+        46,
+        59
+      ]
+    },
+    {
       "date": "2021-02-02",
       "numbers": [
         1,
@@ -2656,6 +2667,17 @@
       ]
     },
     {
+      "date": "2021-11-30",
+      "numbers": [
+        24,
+        27,
+        43,
+        45,
+        51,
+        53
+      ]
+    },
+    {
       "date": "2021-12-02",
       "numbers": [
         12,
@@ -2796,6 +2818,17 @@
         35,
         47,
         58
+      ]
+    },
+    {
+      "date": "2022-01-02",
+      "numbers": [
+        41,
+        43,
+        46,
+        47,
+        48,
+        51
       ]
     },
     {
@@ -5582,6 +5615,28 @@
       ]
     },
     {
+      "date": "2023-08-17",
+      "numbers": [
+        5,
+        10,
+        19,
+        25,
+        33,
+        35
+      ]
+    },
+    {
+      "date": "2023-08-20",
+      "numbers": [
+        12,
+        18,
+        39,
+        48,
+        54,
+        59
+      ]
+    },
+    {
       "date": "2023-08-22",
       "numbers": [
         4,
@@ -5868,6 +5923,50 @@
       ]
     },
     {
+      "date": "2023-10-22",
+      "numbers": [
+        6,
+        7,
+        14,
+        37,
+        49,
+        57
+      ]
+    },
+    {
+      "date": "2023-10-24",
+      "numbers": [
+        7,
+        10,
+        23,
+        27,
+        46,
+        58
+      ]
+    },
+    {
+      "date": "2023-10-26",
+      "numbers": [
+        1,
+        31,
+        40,
+        42,
+        45,
+        56
+      ]
+    },
+    {
+      "date": "2023-10-29",
+      "numbers": [
+        7,
+        12,
+        20,
+        25,
+        47,
+        48
+      ]
+    },
+    {
       "date": "2023-10-31",
       "numbers": [
         8,
@@ -5887,6 +5986,17 @@
         56,
         58,
         59
+      ]
+    },
+    {
+      "date": "2023-11-05",
+      "numbers": [
+        6,
+        13,
+        26,
+        50,
+        55,
+        60
       ]
     },
     {
@@ -10993,5 +11103,63 @@
         51
       ]
     }
-  ]
+  ],
+  "historical_supplementation": {
+    "checked_at": "2026-10-23T13:19:31.971Z",
+    "source": "https://loto.gen.tr/super-loto/arsiv/",
+    "secondary_source": "https://www.lotobil.com/super-loto-butun-sonuc-listesi",
+    "records_added": [
+      {
+        "date": "2021-01-31",
+        "source": "loto.gen.tr; corroboration reviewed where available"
+      },
+      {
+        "date": "2021-11-30",
+        "source": "loto.gen.tr; corroboration reviewed where available"
+      },
+      {
+        "date": "2022-01-02",
+        "source": "loto.gen.tr; corroboration reviewed where available"
+      },
+      {
+        "date": "2023-08-17",
+        "source": "loto.gen.tr; corroboration reviewed where available"
+      },
+      {
+        "date": "2023-08-20",
+        "source": "loto.gen.tr; corroboration reviewed where available"
+      },
+      {
+        "date": "2023-10-22",
+        "source": "loto.gen.tr; corroboration reviewed where available"
+      },
+      {
+        "date": "2023-10-24",
+        "source": "loto.gen.tr; corroboration reviewed where available"
+      },
+      {
+        "date": "2023-10-26",
+        "source": "loto.gen.tr; corroboration reviewed where available"
+      },
+      {
+        "date": "2023-10-29",
+        "source": "loto.gen.tr; corroboration reviewed where available"
+      },
+      {
+        "date": "2023-11-05",
+        "source": "loto.gen.tr; corroboration reviewed where available"
+      }
+    ],
+    "year_counts_before": {
+      "2021": 154,
+      "2022": 155,
+      "2023": 150
+    },
+    "year_counts_after": {
+      "2021": 156,
+      "2022": 156,
+      "2023": 157
+    },
+    "note": "Historical date gaps were supplemented after date/number-set reconciliation. The 2023-10-29 record uses the valid six-number set shown by loto.gen.tr and corroborated by Loto Türkiye; the LOTObil row had a duplicate-number defect. The canonical archive was not auto-repaired by this audit."
+  }
 }
