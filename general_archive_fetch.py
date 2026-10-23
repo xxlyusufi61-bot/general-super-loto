@@ -16,6 +16,14 @@ CROSS_URLS = (
 OUT = Path(__file__).resolve().parent / "super_loto_archive.json"
 EXPECTED = {2020: 97, 2021: 156, 2022: 156, 2023: 157, 2024: 157, 2025: 156}
 CROSS_EXPECTED = 156
+KNOWN_HISTORICAL_SUPPLEMENTS = {
+    2021: ("2021-01-31", "2021-11-30"),
+    2022: ("2022-01-02",),
+    2023: (
+        "2023-08-17", "2023-08-20", "2023-10-22", "2023-10-24",
+        "2023-10-26", "2023-10-29", "2023-11-05",
+    ),
+}
 MAX_CURRENT_YEAR_PRIMARY_ONLY_TAIL = 6
 INDEPENDENT_BASE = "https://loto.gen.tr/super-loto/arsiv/"
 R60_START = "2020-08-02"
@@ -384,6 +392,7 @@ def reconcile_year(primary_rows, independent, year, pages_checked):
         "primary_record_count": len(primary_rows),
         "independent_record_count": len(independent),
         "matching_dates_and_number_sets": len(common_dates),
+        "matched_dates": sorted(common_dates),
         "supplemented_from_independent_count": len(independent_only),
         "supplemented_dates": independent_only,
         "primary_only_tail_count": len(primary_only_tail),
@@ -426,11 +435,42 @@ def build_archive(year_rows, independent_html_pages=None):
     if check_2025 is None:
         raise RuntimeError("Required independent 2025 check did not run; archive not saved")
 
+    validation_by_year = {int(item["year"]): item for item in validations}
+    historical_supplementation_audit = []
+    for year, required_dates in sorted(KNOWN_HISTORICAL_SUPPLEMENTS.items()):
+        validation = validation_by_year.get(year)
+        if not isinstance(validation, dict):
+            raise RuntimeError(
+                f"Historical source audit missing year {year}; archive not saved"
+            )
+        matched_dates = set(validation.get("matched_dates", []))
+        supplemented_dates = set(validation.get("supplemented_dates", []))
+        for draw_date in required_dates:
+            if draw_date in supplemented_dates:
+                evidence = "INDEPENDENT_SOURCE_SUPPLEMENTED_MISSING_PRIMARY_DATE"
+            elif draw_date in matched_dates:
+                evidence = "SAME_DATE_AND_NUMBERS_IN_BOTH_SOURCES"
+            else:
+                raise RuntimeError(
+                    f"Historical repair date {draw_date} is not accounted for "
+                    "by both-source reconciliation; archive not saved"
+                )
+            historical_supplementation_audit.append({
+                "date": draw_date,
+                "year": year,
+                "result": "PASS",
+                "evidence": evidence,
+                "primary_source": BASE_URL,
+                "independent_source_pages": list(validation["pages_checked"]),
+                "checked_at": validation["checked_at"],
+            })
+
     payload = {
         "source": BASE_URL,
         "cross_check_source": CROSS_URLS[0],
         "cross_check_validation": check_2025,
         "cross_source_validation_by_year": validations,
+        "historical_supplementation_audit": historical_supplementation_audit,
         "fetched_at": datetime.now(timezone.utc).isoformat(),
         "corrections_applied": [
             {"removed_source_date": wrong, "verified_actual_date": actual, "reason": "Misdated duplicate; verified against matching counterpart and independent source"}
