@@ -306,7 +306,8 @@ def main():
             ("draw-detail", re.compile(r"draw-detail", re.I), 3),
             ("HeaderHelper", re.compile(r"HeaderHelper\.prepareHeaders", re.I), 2),
             ("getSecretKey", re.compile(r"getSecretKey|getEpdSecretKey", re.I), 2),
-        ]        for label, pattern, per_term_limit in exact_terms:
+        ]
+        for label, pattern, per_term_limit in exact_terms:
             matches_for_term = 0
             for match in pattern.finditer(source):
                 if matches_for_term >= per_term_limit or len(js_contexts) >= 120:
