@@ -88,6 +88,35 @@ class MethodCandidateTests(unittest.TestCase):
         self.assertEqual(a["methods"]["abc_transition_to_c"]["evaluated_draws"], len(score_sets["abc_transition_to_c"]))
         self.assertIn("random_mean_95pct_interval", a["methods"]["abc_transition_to_c"])
 
+    def test_r54_records_are_excluded_from_r60_evaluation(self):
+        rows = synthetic_rows(35)
+        rows[0]["date"] = "2020-07-30"
+        rows[0]["numbers"] = [1, 2, 3, 4, 5, 54]
+        rows = sorted(rows, key=lambda row: row["date"])
+        target_date = (date.fromisoformat(rows[-1]["date"]) + timedelta(days=1)).isoformat()
+        report = engine.evaluate_rows(rows, target_date, min_train=6, folds=5)
+        self.assertEqual(report["active_regime"], "R60")
+        self.assertFalse(report["mixed_R54_R60_training_used"])
+        self.assertEqual(report["excluded_prior_R54_regime_records"], 1)
+        self.assertEqual(report["active_regime_history_records"], len(rows) - 1)
+
+    def test_r54_target_date_is_rejected_until_r54_model_exists(self):
+        rows = synthetic_rows(35)
+        with self.assertRaises(ValueError):
+            engine.evaluate_rows(rows, "2020-07-30", min_train=6, folds=5)
+
+    def test_r54_records_are_excluded_from_r60_evaluation(self):
+        rows = synthetic_rows(35)
+        rows[0]["date"] = "2020-07-30"
+        rows[0]["numbers"] = [1, 2, 3, 4, 5, 54]
+        rows = sorted(rows, key=lambda row: row["date"])
+        target_date = (date.fromisoformat(rows[-1]["date"]) + timedelta(days=1)).isoformat()
+        report = engine.evaluate_rows(rows, target_date, min_train=6, folds=5)
+        self.assertEqual(report["active_regime"], "R60")
+        self.assertFalse(report["mixed_R54_R60_training_used"])
+        self.assertEqual(report["excluded_prior_R54_regime_records"], 1)
+        self.assertEqual(report["active_regime_history_records"], len(rows) - 1)
+
     def test_chronological_fold_summaries_are_not_claimed_as_nested_cv(self):
         rows = synthetic_rows(30)
         draws = [tuple(row["numbers"]) for row in rows]
