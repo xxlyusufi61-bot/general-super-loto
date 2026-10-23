@@ -1,0 +1,86 @@
+name: GENERAL Method Candidate Evaluation
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "general_method_candidates.py"
+      - "general_archive_fetch.py"
+      - "general_data_guard.py"
+      - ".github/workflows/method-candidate-evaluation.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  evaluate-candidates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Refresh archive (suppress draw-level output)
+        run: |
+          if python3 general_archive_fetch.py > archive_fetch_output.log 2>&1; then
+            echo "ARCHIVE FETCH: completed; draw-level details suppressed."
+          else
+            echo "ARCHIVE FETCH FAILED; details suppressed to avoid leaking draw data."
+            exit 1
+          fi
+
+      - name: Validate archive and materialize only pre-target history
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          import general_data_guard as guard
+
+          source = Path("super_loto_archive.json")
+          if not source.is_file():
+              raise SystemExit("ARCHIVE CHECK FAILED: archive missing")
+          payload = json.loads(source.read_text(encoding="utf-8"))
+          if not isinstance(payload, dict) or not isinstance(payload.get("draws"), list):
+              raise SystemExit("ARCHIVE CHECK FAILED: archive structure mismatch")
+          rows = payload["draws"]
+          summary = guard.validate_archive(rows)
+          target_date = summary["last_date"]
+          split = guard.isolate_target(rows, target_date)
+          if split.get("isolation_pass") is not True:
+              raise SystemExit("TARGET ISOLATION FAILED")
+          if split.get("target_present_in_archive") is not True:
+              raise SystemExit("TARGET ISOLATION FAILED")
+          if split.get("excluded_dates") != [target_date]:
+              raise SystemExit("TARGET EXCLUSION FAILED")
+          history = split.get("train")
+          if not isinstance(history, list) or len(history) != len(rows) - 1:
+              raise SystemExit("TRAINING PARTITION FAILED")
+          if any(row["date"] >= target_date for row in history):
+              raise SystemExit("CHRONOLOGY CHECK FAILED")
+          Path("pre_target_history.json").write_text(
+              json.dumps(history, separators=(",", ":")) + "\n",
+              encoding="utf-8",
+          )
+          Path("isolated_target_date.txt").write_text(target_date + "\n", encoding="utf-8")
+          print("DATA GUARD: PASS")
+          print("TARGET ISOLATION: PASS")
+          print("Archive records:", len(rows))
+          print("Pre-target history records:", len(history))
+          print("Dynamic target date:", target_date)
+          print("Target numbers copied to history file: NO")
+          print("Target numbers printed to logs: NO")
+          PY
+
+      - name: Evaluate experimental candidates on pre-target history only
+        run: |
+          target_date="$(cat isolated_target_date.txt)"
+          python3 general_method_candidates.py \
+            --history pre_target_history.json \
+            --target-date "$target_date" \
+            --min-train 100 \
+            --folds 5
