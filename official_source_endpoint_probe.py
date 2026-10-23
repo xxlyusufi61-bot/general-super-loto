@@ -196,9 +196,11 @@ def main():
 
     # Probe the official draw-detail API inferred from the result-page JavaScript.
     api_probe_rows = []
-    api_bases = [
-        "https://lotteryservice.millipiyangoonline.com/api/",
-        "https://digital-info.millipiyangoonline.com/",
+    api_base = "https://digital-info.millipiyangoonline.com/"
+    caller_suffixes = [
+        "?caller=web-portal",
+        "?caller=web-portal&method=GET",
+        "?caller=web-portal&method=get",
     ]
 
     def collect_six_number_arrays(value, found):
@@ -218,10 +220,10 @@ def main():
                     collect_six_number_arrays(child, found)
 
     for item in RECORDS:
-        for base in api_bases:
+        for suffix in caller_suffixes:
             api_url = (
-                base + "super-loto/v1/draw-detail/"
-                + str(item["draw_no_candidate"]) + "/" + str(item["year"])
+                api_base + "super-loto/v1/draw-detail/"
+                + str(item["draw_no_candidate"]) + "/" + str(item["year"]) + suffix
             )
             response = fetch(api_url)
             api_row = {
