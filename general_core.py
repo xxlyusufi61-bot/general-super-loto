@@ -8,7 +8,7 @@ import urllib.error
 from pathlib import Path
 from datetime import datetime, date, timezone
 
-VERSION = "0.5.3"
+VERSION = "0.5.4"
 MODEL = "z-ai/glm-5.3-flash"
 NVIDIA_TIMEOUT_SECONDS = 240
 BASE = Path(__file__).resolve().parent
@@ -340,12 +340,74 @@ def prepare_data(target):
     if not training:
         raise RuntimeError("No pre-target training records.")
 
+    # Independently audit the actual row-level date partition. Only boolean
+    # results and counts are exposed to the validation model; draw numbers
+    # remain local and are never included in this audit summary.
+    source_dates = [row["date"] for row in rows]
+    training_dates = [row["date"] for row in training]
+    target_matches = sum(1 for day in source_dates if day == target)
+    expected_training_dates = [
+        day for day in source_dates if day < target
+    ]
+    expected_excluded_dates = [
+        day for day in source_dates if day >= target
+    ]
+
+    archive_dates_chronological = source_dates == sorted(source_dates)
+    archive_dates_unique = len(source_dates) == len(set(source_dates))
+    target_occurs_once = target_matches == 1
+    target_is_latest_archive_date = bool(source_dates) and source_dates[-1] == target
+    training_strictly_before_target = all(
+        day < target for day in training_dates
+    )
+    training_chronological = (
+        training_dates == sorted(training_dates)
+        and len(training_dates) == len(set(training_dates))
+    )
+    excluded_dates_match_archive = (
+        excluded_dates == expected_excluded_dates
+    )
+    training_dates_match_archive = (
+        training_dates == expected_training_dates
+    )
+    partition_counts_match = (
+        len(training) + len(excluded_dates) == len(source_dates)
+        and len(training) == len(expected_training_dates)
+        and len(excluded_dates) == len(expected_excluded_dates)
+    )
+
+    row_level_audit_pass = all((
+        archive_dates_chronological,
+        archive_dates_unique,
+        target_occurs_once,
+        training_strictly_before_target,
+        training_chronological,
+        excluded_dates_match_archive,
+        training_dates_match_archive,
+        partition_counts_match,
+    ))
+
+    if not row_level_audit_pass:
+        raise RuntimeError(
+            "SECURITY: row-level chronology or target-isolation audit failed."
+        )
+
     return {
         "guard": "PASS",
         "target_date": target,
         "archive_count": checked.get("record_count"),
         "training_count": len(training),
         "target_present": target_present,
+        "row_level_audit_pass": row_level_audit_pass,
+        "archive_dates_chronological": archive_dates_chronological,
+        "archive_dates_unique": archive_dates_unique,
+        "target_occurs_once": target_occurs_once,
+        "target_is_latest_archive_date": target_is_latest_archive_date,
+        "training_strictly_before_target": training_strictly_before_target,
+        "training_chronological": training_chronological,
+        "excluded_dates_match_archive": excluded_dates_match_archive,
+        "training_dates_match_archive": training_dates_match_archive,
+        "partition_counts_match": partition_counts_match,
         "training_data": training
     }
 
@@ -581,6 +643,10 @@ def run_agent(agent, task):
         "Do not claim whether this report was saved to shared memory or committed: "
         "the workflow runner performs those actions after your response, outside "
         "the agent's control. Report only the checks performed in this model call.\n"
+        "For validation reports, use the supplied row-level audit fields exactly. "
+        "If row_level_audit_pass is true, state that local row-level chronology and target-isolation "
+        "checks passed; do not call this metadata-only. State whether the target is the latest "
+        "archive date using target_is_latest_archive_date.\n"
         "Output only a final report. Do not include internal deliberation, scratchpad, "
         "or private step-by-step reasoning. State what was actually checked and what remains unknown.\n"
         + safety_text
@@ -599,7 +665,17 @@ def run_agent(agent, task):
                 "archive_count": data["archive_count"],
                 "training_count": data["training_count"],
                 "target_present": data["target_present"],
-                "validation_scope": "archive_integrity_and_target_isolation",
+                "validation_scope": "row_level_archive_integrity_and_target_isolation",
+                "row_level_audit_pass": data["row_level_audit_pass"],
+                "archive_dates_chronological": data["archive_dates_chronological"],
+                "archive_dates_unique": data["archive_dates_unique"],
+                "target_occurs_once": data["target_occurs_once"],
+                "target_is_latest_archive_date": data["target_is_latest_archive_date"],
+                "training_strictly_before_target": data["training_strictly_before_target"],
+                "training_chronological": data["training_chronological"],
+                "excluded_dates_match_archive": data["excluded_dates_match_archive"],
+                "training_dates_match_archive": data["training_dates_match_archive"],
+                "partition_counts_match": data["partition_counts_match"],
                 "training_records_sent_to_model": 0,
                 "draw_numbers_sent_to_model": False,
                 "statistical_methods_run": []
