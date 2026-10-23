@@ -108,7 +108,9 @@ def predict_abc_transition_to_c(
     transitions. Only cases where their C_i is already inside history are
     eligible; the current target draw is not an argument to this function.
     """
-    if len(history) < 6 or k < 1:
+    if k < 1:
+        raise ValueError("k must be at least 1.")
+    if len(history) < 6:
         return None
     if feature not in _transition_features(history[0], history[1]):
         raise ValueError("Unknown transition feature.")
@@ -163,7 +165,9 @@ def predict_mod5_state_to_t(
     source draw -> its already-known next draw. Closest residue states vote
     for their subsequent draws. This is a candidate definition, not canonical.
     """
-    if len(history) < 3 or k < 1:
+    if k < 1:
+        raise ValueError("k must be at least 1.")
+    if len(history) < 3:
         return None
     current_state = tuple(n % 5 for n in history[-1])
     examples = []
