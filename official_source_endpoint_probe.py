@@ -227,8 +227,11 @@ def main():
             f"numbers_visible={row['number_set_visible_in_page']} "
             f"status={row['status']}"
         )
+    print("JavaScript asset URLs:")
+    for asset in scripts_checked:
+        print("JS_ASSET", asset["http_status"], asset["url"])
     print("Endpoint candidates found:", len(report["endpoint_candidates"]))
-    for candidate in report["endpoint_candidates"][:30]:
+    for candidate in report["endpoint_candidates"]:
         print("CANDIDATE", candidate)
     print("Official numbers verified: NO")
     print("Report:", OUT.name)
