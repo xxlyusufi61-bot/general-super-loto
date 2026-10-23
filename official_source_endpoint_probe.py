@@ -297,11 +297,15 @@ def main():
         exact_terms = [
             ("prepareRequestApiGatewayParams", re.compile(r"prepareRequestApiGatewayParams", re.I), 3),
             ("CLIENTS", re.compile(r"CLIENTS\\s*[:=]", re.I), 3),
-            ("GET_METHOD", re.compile(r"GET_METHOD\\s*[:=]", re.I), 3),
-            ("caller", re.compile(r"caller\\s*[:=]", re.I), 3),
+            ("standard_caller_config", re.compile(r"standard\\s*:\\s*\\{\\s*caller", re.I), 4),
+            ("epd_caller_config", re.compile(r"epd\\s*:\\s*\\{\\s*caller", re.I), 2),
+            ("GET_METHOD", re.compile(r"GET_METHOD\\s*[:=]", re.I), 4),
+            ("GET_METHOD_usage", re.compile(r"GET_METHOD", re.I), 3),
+            ("caller", re.compile(r"caller\\s*[:=]", re.I), 4),
             ("DrawBlockResultCommand", re.compile(r"DrawBlockResultCommand", re.I), 3),
             ("draw-detail", re.compile(r"draw-detail", re.I), 3),
             ("HeaderHelper", re.compile(r"HeaderHelper\\.prepareHeaders", re.I), 2),
+            ("getSecretKey", re.compile(r"getSecretKey|getEpdSecretKey", re.I), 2),
         ]
         for label, pattern, per_term_limit in exact_terms:
             matches_for_term = 0
