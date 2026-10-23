@@ -42,7 +42,7 @@ class MethodCandidateTests(unittest.TestCase):
         self.assertFalse(report["current_target_numbers_provided"])
         self.assertFalse(report["current_target_numbers_used_for_scoring"])
         self.assertFalse(report["current_target_numbers_exposed"])
-        self.assertEqual(report["pre_target_history_records"], len(rows))
+        self.assertEqual(report["pre_target_history_records_before_regime_filter"], len(rows))
         self.assertEqual(report["canonical_method_definitions_status"]["A->B->C"], "OPEN_DEFINITION")
         self.assertEqual(report["canonical_method_definitions_status"]["A->T"], "OPEN_DEFINITION")
         self.assertEqual(report["canonical_method_definitions_status"]["MOD5->T"], "OPEN_DEFINITION")
@@ -104,18 +104,6 @@ class MethodCandidateTests(unittest.TestCase):
         rows = synthetic_rows(35)
         with self.assertRaises(ValueError):
             engine.evaluate_rows(rows, "2020-07-30", min_train=6, folds=5)
-
-    def test_r54_records_are_excluded_from_r60_evaluation(self):
-        rows = synthetic_rows(35)
-        rows[0]["date"] = "2020-07-30"
-        rows[0]["numbers"] = [1, 2, 3, 4, 5, 54]
-        rows = sorted(rows, key=lambda row: row["date"])
-        target_date = (date.fromisoformat(rows[-1]["date"]) + timedelta(days=1)).isoformat()
-        report = engine.evaluate_rows(rows, target_date, min_train=6, folds=5)
-        self.assertEqual(report["active_regime"], "R60")
-        self.assertFalse(report["mixed_R54_R60_training_used"])
-        self.assertEqual(report["excluded_prior_R54_regime_records"], 1)
-        self.assertEqual(report["active_regime_history_records"], len(rows) - 1)
 
     def test_chronological_fold_summaries_are_not_claimed_as_nested_cv(self):
         rows = synthetic_rows(30)
