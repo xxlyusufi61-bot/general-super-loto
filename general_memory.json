@@ -102,7 +102,17 @@
       "content_hash": "f867bae6707a242c10a4220f7c484c52f3dad2b85d9a7c10585f7be14cc30187",
       "source": "GENERAL/validation",
       "status": "unverified"
+    },
+    {
+      "id": 10,
+      "timestamp": "2026-10-23T00:00:39.726331+00:00",
+      "category": "agent_report",
+      "title": "validation report",
+      "content": "# Doğrulama Raporu — GENERAL (Hedef Farkında Veri Doğrulama)\n\n## 1. Bu Oturumda Gerçekten Yapılan Kontroller\n\nSağlanan Data Guard meta verisi üzerinden yalnızca şu kontroller yapılabildi:\n\n| Kontrol | Sonuç |\n|---|---|\n| Data Guard durumu | **PASS** (sağlanan meta veriye göre) |\n| Hedef tarihi | 2026-10-22 (hedef değerleri bana **iletildi değil**; yalnızca tarih biliniyor) |\n| Arşiv kayıt sayısı | 996 |\n| Eğitim kayıt sayısı | 995 |\n| Hedef kaydın arşivde mevcut olduğu işareti | `target_present: true` |\n| Kayıt sayısı tutarlılığı | 996 − 995 = **1 kayıt hariç tutulmuş** — hedef tarihi tek kayıt olarak tutarlı (hedef sonrası ek kayıt bildirilmedi) |\n| Modele gönderilen çekiliş sayıları | **Hayır** (`draw_numbers_sent_to_model: false`) — hedef izolasyonu bu düzeyde korunuyor |\n| Modele gönderilen eğitim kayıtları | 0 (`training_records_sent_to_model: 0`) |\n\n## 2. Yapılamayan / Çalıştırılmayan Kontroller (açık beyan)\n\n- **Arşiv bütünlüğü satır düzeyinde doğrulaması:** Yapılmadı. Bireysel çekiliş kayıtları ve numara listeleri gönderilmedi; yinelenen kayıt, eksik alan, geçersiz numara aralığı (1–60, 6 sayı) kontrolü **çalıştırılamadı**.\n- **Kronoloji doğrulaması:** Yapılmadı. Eğitim kayıtlarının son tarihinin hedef tarihinden önce olduğu satır düzeyinde **doğrulanamadı**; yalnızca guard meta verisine güvenildi.\n- **A→B→C, A→T, MOD5→T:** **Çalıştırılmadı** (`statistical_methods_run: []`).\n- **Walk-forward değerlendirme:** **Çalıştırılmadı.**\n- **Çapraz doğrulama:** **Çalıştırılmadı.**\n- **Tahmin üretimi:** **Üretilmedi** (kural gereği ve talep gereği).\n\n## 3. Ayrı Ayrı Durum Bildirimi\n\n| Öğe | Durum |\n|---|---|\n| Data Guard kontrolleri | ✅ Yapıldı (yalnızca meta veri düzeyinde; yukarıdaki tablo) |\n| Kullanılan eğitim kayıtları | Bu oturumda model eğitimi **yapılmadı**; guard, 995 eğitim kaydı bildiriyor ancak bana hiçbiri gönderilmedi |\n| Raporun oluşturulması | ✅ Yapıldı (bu rapor) |\n| Ortak belleğe kaydetme | ❌ **Bildiremiyorum / iddia etmiyorum** — kaydetme iş akışı çalıştırıcısı tarafından bu yanıtın ardından yapılır; benim kontrolüm dışında |\n\n## 4. Kanıt Ayrımı\n\n- Paylaşılan bellekteki tüm kayıtlar `unverified` durumundadır; bunlar **kanıt değil**, önceki ajan raporlarıdır.\n- Bu rapordaki bulgular yalnızca sağlanan guard meta verisine dayanır; bağımsız veri doğrulaması içermez.\n\n## 5. Sonuç\n\nGuard meta verisi hedef izolasyonuyla **tutarlı** (hedef hariç tutulmuş, sayı farkı 1, çekiliş numaraları iletilmemiş). Ancak satır düzeyi arşiv bütünlüğü, kronoloji ve sızıntı doğrulaması **henüz yapılmamıştır**; bunun için eğitim kayıtlarının (hedef hariç) doğrulama oturumuna iletilmesi gerekir. Bağlayıcı kurallar değiştirilmedi. Tahmin vaadi yoktur.",
+      "content_hash": "ff18f57784ca73e8f2a7914057b67d4d62933373ce12bab8ba7e9a8bfdf357f4",
+      "source": "GENERAL/validation",
+      "status": "unverified"
     }
   ],
-  "updated_at": "2026-10-22T23:54:05.682902+00:00"
+  "updated_at": "2026-10-23T00:00:39.726352+00:00"
 }
