@@ -1,0 +1,117 @@
+name: Canonical Archive Rebuild Verification
+
+'on':
+  pull_request:
+    paths:
+      - 'general_archive_fetch.py'
+      - 'super_loto_archive.json'
+      - 'general_data_guard.py'
+      - 'test_general_archive_target_isolation.py'
+      - '.github/workflows/archive-rebuild-verification.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: canonical-archive-rebuild-verification
+  cancel-in-progress: false
+
+jobs:
+  verify-rebuild:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Compile tools and run synthetic self-tests
+        run: |
+          python3 -m py_compile general_archive_fetch.py general_data_guard.py test_general_archive_target_isolation.py
+          python3 general_archive_fetch.py --self-test
+
+      - name: Rebuild archive using primary and independent sources
+        run: |
+          if python3 general_archive_fetch.py > archive_rebuild_output.log 2>&1; then
+            echo "ARCHIVE REBUILD AND MULTI-YEAR SOURCE RECONCILIATION: PASS"
+          else
+            echo "ARCHIVE REBUILD FAILED. Source details are suppressed; inspect the tool's controlled error status."
+            exit 1
+          fi
+
+      - name: Validate rebuilt archive counts and target isolation
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          import general_data_guard as guard
+
+          path = Path("super_loto_archive.json")
+          if not path.is_file():
+              raise SystemExit("ARCHIVE CHECK FAILED: rebuilt archive is missing")
+          try:
+              payload = json.loads(path.read_text(encoding="utf-8"))
+          except (OSError, json.JSONDecodeError):
+              raise SystemExit("ARCHIVE CHECK FAILED: rebuilt archive is unreadable") from None
+          if not isinstance(payload, dict) or not isinstance(payload.get("draws"), list):
+              raise SystemExit("ARCHIVE CHECK FAILED: archive structure is invalid")
+
+          rows = payload["draws"]
+          summary = guard.validate_archive(rows)
+          expected = {
+              "2020": 97,
+              "2021": 156,
+              "2022": 156,
+              "2023": 157,
+              "2024": 157,
+              "2025": 156,
+          }
+          counts = {}
+          for row in rows:
+              year = row["date"][:4]
+              counts[year] = counts.get(year, 0) + 1
+          for year, count in expected.items():
+              if counts.get(year) != count:
+                  raise SystemExit(f"ARCHIVE YEAR COUNT FAILED: {year}")
+          if counts.get("2026", 0) <= 0:
+              raise SystemExit("ARCHIVE YEAR COUNT FAILED: current-year records missing")
+
+          checks = payload.get("cross_source_validation_by_year")
+          if not isinstance(checks, list):
+              raise SystemExit("SOURCE PROVENANCE FAILED: per-year reconciliation metadata is missing")
+          checks_by_year = {str(item.get("year")): item for item in checks if isinstance(item, dict)}
+          for year in ("2021", "2022", "2023", "2024", "2025"):
+              if checks_by_year.get(year, {}).get("result") != "PASS":
+                  raise SystemExit(f"SOURCE RECONCILIATION FAILED: {year}")
+
+          target_date = summary["last_date"]
+          isolated = guard.isolate_target(rows, target_date)
+          if isolated.get("isolation_pass") is not True:
+              raise SystemExit("TARGET ISOLATION FAILED")
+          if isolated.get("target_present_in_archive") is not True:
+              raise SystemExit("TARGET PRESENCE CHECK FAILED")
+          if isolated.get("target_numbers_exposed") is not False:
+              raise SystemExit("TARGET EXPOSURE CHECK FAILED")
+          if target_date in [row["date"] for row in isolated["train"]]:
+              raise SystemExit("TARGET LEAKAGE DETECTED")
+          if isolated["excluded_dates"] != [target_date]:
+              raise SystemExit("TARGET/FUTURE EXCLUSION CHECK FAILED")
+
+          print("DATA GUARD: PASS")
+          print("Record count:", summary["record_count"])
+          print("First date:", summary["first_date"])
+          print("Latest target date:", target_date)
+          for year in sorted(counts):
+              print(f"Year {year}: {counts[year]} records")
+          print("Latest target number set printed: NO")
+          print("Target excluded from training: YES")
+          print("Independent source reconciliation metadata: PASS")
+          PY
+
+      - name: Run archive integrity and target-isolation unit tests
+        run: python3 -m unittest -v test_general_archive_target_isolation.py
