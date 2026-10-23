@@ -21,6 +21,8 @@ import general_data_guard as guard
 
 VERSION = "0.1.0"
 RANDOM_EXPECTED_HITS = 0.6
+R60_START_DATE = "2020-08-02"
+R54_MAX_NUMBER = 54
 METHODS = ("abc_transition_to_c", "a_to_t_pair_counts", "mod5_state_to_t")
 
 
@@ -350,6 +352,9 @@ def evaluate_rows(
     if folds < 2:
         raise ValueError("folds must be at least 2.")
     target_day = guard.parse_date(isolated_target_date)
+    r60_start = guard.parse_date(R60_START_DATE)
+    if target_day < r60_start:
+        raise ValueError("R54 evaluation is not implemented in this candidate engine; evaluation stopped.")
     # Materialize once: validate_archive consumes general iterables, so doing
     # this in the opposite order can silently empty a generator input.
     clean_rows = list(rows)
@@ -358,7 +363,18 @@ def evaluate_rows(
         raise guard.DataGuardError("Candidate engine received target-date or future data.")
     if guard.parse_date(summary["last_date"]) >= target_day:
         raise guard.DataGuardError("Candidate engine history must end strictly before isolated target.")
-    draws = [_norm(row["numbers"]) for row in clean_rows]
+
+    # Binding project rule: R54 and R60 regimes must never be pooled.
+    r54_rows = [row for row in clean_rows if guard.parse_date(row["date"]) < r60_start]
+    if any(any(number > R54_MAX_NUMBER for number in row["numbers"]) for row in r54_rows):
+        raise guard.DataGuardError("Pre-R60 record exceeds the R54 number pool; regime audit failed.")
+    r60_rows = [row for row in clean_rows if guard.parse_date(row["date"]) >= r60_start]
+    if len(r60_rows) <= min_train:
+        raise ValueError("Insufficient R60-only history for candidate evaluation.")
+    r60_summary = guard.validate_archive(r60_rows)
+    if guard.parse_date(r60_summary["last_date"]) >= target_day:
+        raise guard.DataGuardError("R60 evaluation history must end strictly before target.")
+    draws = [_norm(row["numbers"]) for row in r60_rows]
     forward_summary, forward_records = _evaluate_forward(draws, min_train)
     usable_records = [record for record in forward_records if record["scores"]]
     random_null = _random_prediction_null(
@@ -378,7 +394,12 @@ def evaluate_rows(
         "current_target_numbers_provided": False,
         "current_target_numbers_used_for_scoring": False,
         "current_target_numbers_exposed": False,
-        "pre_target_history_records": len(draws),
+        "pre_target_history_records_before_regime_filter": len(clean_rows),
+        "active_regime": "R60",
+        "active_regime_start_date": R60_START_DATE,
+        "active_regime_history_records": len(draws),
+        "excluded_prior_R54_regime_records": len(r54_rows),
+        "mixed_R54_R60_training_used": False,
         "minimum_training_draws": min_train,
         "forward_walk_forward": {
             "protocol": "expanding-window; every historical test draw uses only earlier draws",
@@ -395,6 +416,7 @@ def evaluate_rows(
         },
         "interpretation_limits": [
             "These are explicit experimental candidate definitions, not approved canonical formulas.",
+            "R54 records before 2020-08-02 are excluded; only the R60 regime is analyzed.",
             "The current isolated target's number set is not passed to the candidate functions or scored.",
             "A Monte Carlo random-prediction reference was computed against the same historical target draws; it is not a permutation test.",
             "Chronological fold summaries group the same walk-forward predictions; no per-fold parameter selection or nested cross-validation was performed.",
