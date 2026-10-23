@@ -12,9 +12,9 @@ ARCHIVE_PATH = ROOT / "super_loto_archive.json"
 R54_TO_R60_CUTOFF = "2020-08-02"
 EXPECTED_HISTORICAL_YEAR_COUNTS = {
     2020: 97,
-    2021: 154,
-    2022: 155,
-    2023: 150,
+    2021: 156,
+    2022: 156,
+    2023: 157,
     2024: 157,
     2025: 156,
 }
