@@ -1,0 +1,28 @@
+name: GENERAL Method Registry Tests
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "general_method_registry.json"
+      - "general_method_registry_test.py"
+      - ".github/workflows/method-registry-test.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  registry-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile test
+        run: python -m py_compile general_method_registry_test.py
+      - name: Verify method registry (no archive loaded)
+        run: python -m unittest -v general_method_registry_test
