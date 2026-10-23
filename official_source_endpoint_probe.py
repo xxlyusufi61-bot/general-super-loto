@@ -186,6 +186,11 @@ def main():
     # Search a bounded number of shared JavaScript assets for the public result API.
     scripts_checked = []
     discovered = set()
+    js_contexts = []
+    context_terms = re.compile(
+        r"lotteryservice|draws?results?|singledraw|winningnumbers?|/api/",
+        re.I,
+    )
     for url in js_to_fetch[:MAX_JS_FILES]:
         response = fetch(url)
         scripts_checked.append({
@@ -194,7 +199,19 @@ def main():
             "fetch_error": response["error"],
         })
         if response["body"]:
-            discovered.update(endpoint_candidates(response["body"]))
+            source = response["body"]
+            discovered.update(endpoint_candidates(source))
+            for match in context_terms.finditer(source):
+                if len(js_contexts) >= 40:
+                    break
+                left = max(0, match.start() - 180)
+                right = min(len(source), match.end() + 260)
+                snippet = re.sub(r"\\s+", " ", source[left:right]).strip()
+                js_contexts.append({
+                    "asset": url,
+                    "term": match.group(0)[:50],
+                    "context": snippet[:500],
+                })
     for body in page_cache.values():
         discovered.update(endpoint_candidates(body))
 
@@ -208,6 +225,7 @@ def main():
         "records": result_rows,
         "javascript_assets_considered": min(len(js_to_fetch), MAX_JS_FILES),
         "javascript_assets": scripts_checked,
+        "javascript_endpoint_contexts": js_contexts,
         "endpoint_candidates": sorted(discovered)[:80],
         "official_numbers_verified": False,
         "notes": [
@@ -230,6 +248,9 @@ def main():
     print("JavaScript asset URLs:")
     for asset in scripts_checked:
         print("JS_ASSET", asset["http_status"], asset["url"])
+    print("Endpoint context snippets:", len(report["javascript_endpoint_contexts"]))
+    for entry in report["javascript_endpoint_contexts"]:
+        print("JS_CONTEXT", entry["asset"], entry["context"])
     print("Endpoint candidates found:", len(report["endpoint_candidates"]))
     for candidate in report["endpoint_candidates"]:
         print("CANDIDATE", candidate)
