@@ -140,6 +140,47 @@ jobs:
               if checks_by_year.get(year, {}).get("result") != "PASS":
                   raise SystemExit(f"SOURCE RECONCILIATION FAILED: {year}")
 
+          expected_historical_dates = {
+              "2021": ("2021-01-31", "2021-11-30"),
+              "2022": ("2022-01-02",),
+              "2023": (
+                  "2023-08-17", "2023-08-20", "2023-10-22", "2023-10-24",
+                  "2023-10-26", "2023-10-29", "2023-11-05",
+              ),
+          }
+          audit = payload.get("historical_supplementation_audit")
+          if not isinstance(audit, list):
+              raise SystemExit("HISTORICAL SOURCE AUDIT FAILED: per-date evidence is missing")
+          audit_by_date = {}
+          for item in audit:
+              if not isinstance(item, dict) or not isinstance(item.get("date"), str):
+                  raise SystemExit("HISTORICAL SOURCE AUDIT FAILED: malformed audit row")
+              if item["date"] in audit_by_date:
+                  raise SystemExit("HISTORICAL SOURCE AUDIT FAILED: duplicate audit date")
+              audit_by_date[item["date"]] = item
+          expected_flat = {
+              draw_date: year
+              for year, dates in expected_historical_dates.items()
+              for draw_date in dates
+          }
+          if set(audit_by_date) != set(expected_flat):
+              raise SystemExit("HISTORICAL SOURCE AUDIT FAILED: audited date list mismatch")
+          for draw_date, year in expected_flat.items():
+              item = audit_by_date[draw_date]
+              if item.get("year") != int(year) or item.get("result") != "PASS":
+                  raise SystemExit(f"HISTORICAL SOURCE AUDIT FAILED: {draw_date}")
+              if item.get("evidence") not in (
+                  "INDEPENDENT_SOURCE_SUPPLEMENTED_MISSING_PRIMARY_DATE",
+                  "SAME_DATE_AND_NUMBERS_IN_BOTH_SOURCES",
+              ):
+                  raise SystemExit(f"HISTORICAL SOURCE AUDIT FAILED: {draw_date}")
+              pages = item.get("independent_source_pages")
+              if not isinstance(pages, list) or not pages:
+                  raise SystemExit(f"HISTORICAL SOURCE AUDIT FAILED: source URL missing for {draw_date}")
+              if not any(f"/{year}" in url for url in pages if isinstance(url, str)):
+                  raise SystemExit(f"HISTORICAL SOURCE AUDIT FAILED: wrong source year for {draw_date}")
+          print("HISTORICAL SOURCE AUDIT: PASS (10/10 dates reconciled across source archives)")
+
           target_date = summary["last_date"]
           isolated = guard.isolate_target(rows, target_date)
           if isolated.get("isolation_pass") is not True:
