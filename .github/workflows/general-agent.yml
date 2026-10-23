@@ -135,6 +135,12 @@ jobs:
           if result.get("target_present_in_archive") is not True:
               raise SystemExit("ISOLATION TEST FAILED: Data Guard did not confirm target presence")
 
+          if result.get("target_numbers_exposed") is not False:
+              raise SystemExit("ISOLATION TEST FAILED: target-number exposure guard failed")
+
+          if result.get("training_rows_match_archive") is not True:
+              raise SystemExit("ISOLATION TEST FAILED: training rows differ from source archive")
+
           train = result.get("train")
           excluded_dates = result.get("excluded_dates")
 
@@ -145,6 +151,13 @@ jobs:
 
           if len(train_dates) != len(train):
               raise SystemExit("ISOLATION TEST FAILED: invalid training record")
+
+          expected_training_rows = [
+              {"date": row["date"], "numbers": row["numbers"]}
+              for row in rows if row["date"] < target_date
+          ]
+          if train != expected_training_rows:
+              raise SystemExit("ISOLATION TEST FAILED: training rows do not exactly match source archive")
 
           if target_date in train_dates:
               raise SystemExit("ISOLATION TEST FAILED: target date leaked into training")
@@ -171,6 +184,7 @@ jobs:
           print("Target date present exactly once in source archive: YES")
           print("Data Guard isolation flag: PASS")
           print("Data Guard target-presence flag: PASS")
+          print("Training rows and number sets match archive: YES")
           print("Target numbers displayed: NO")
           PY
 

@@ -14,8 +14,19 @@ CROSS_URLS = (
     "https://loto.gen.tr/super-loto/arsiv/2025?sayfa=2",
 )
 OUT = Path(__file__).resolve().parent / "super_loto_archive.json"
-EXPECTED = {2020: 97, 2021: 154, 2022: 155, 2023: 150, 2024: 157, 2025: 156}
+EXPECTED = {2020: 97, 2021: 156, 2022: 156, 2023: 157, 2024: 157, 2025: 156}
 CROSS_EXPECTED = 156
+KNOWN_HISTORICAL_SUPPLEMENTS = {
+    2021: ("2021-01-31", "2021-11-30"),
+    2022: ("2022-01-02",),
+    2023: (
+        "2023-08-17", "2023-08-20", "2023-10-22", "2023-10-24",
+        "2023-10-26", "2023-10-29", "2023-11-05",
+    ),
+}
+MAX_CURRENT_YEAR_PRIMARY_ONLY_TAIL = 6
+INDEPENDENT_BASE = "https://loto.gen.tr/super-loto/arsiv/"
+R60_START = "2020-08-02"
 MONTHS = {
     "ocak": 1, "şubat": 2, "subat": 2, "mart": 3, "nisan": 4,
     "mayıs": 5, "mayis": 5, "haziran": 6, "temmuz": 7,
@@ -175,7 +186,7 @@ def _valid_six(nums):
     return len(nums) == 6 and len(set(nums)) == 6 and all(1 <= n <= 60 for n in nums)
 
 
-def parse_cross_rows(html):
+def parse_cross_rows(html, year=2025):
     parser = TableParser()
     parser.feed(html)
     parser.close()
@@ -184,7 +195,7 @@ def parse_cross_rows(html):
     for cells in parser.rows:
         all_text = " ".join(cell["text"] for cell in cells)
         all_attrs = " ".join(cell["attrs"] for cell in cells)
-        if not re.search(r"(?<!\d)#?\s*2025\d{4}(?!\d)", all_text + " " + all_attrs):
+        if not re.search(rf"(?<!\d)#?\s*{year}\d{{4}}(?!\d)", all_text + " " + all_attrs):
             continue
         date_index = None
         draw_date = None
@@ -193,7 +204,7 @@ def parse_cross_rows(html):
             if d is not None:
                 date_index, draw_date = i, d
                 break
-        if draw_date is None or not draw_date.startswith("2025-"):
+        if draw_date is None or not draw_date.startswith(f"{year}-"):
             continue
         # Use cell text after the date, ignoring prize/money cells.
         number_cells = []
@@ -224,27 +235,68 @@ def parse_cross_rows(html):
         found[draw_date] = values
         parsed_rows += 1
     if not found:
-        raise RuntimeError("Independent source yielded no recognizable 2025 draws; archive not saved")
+        raise RuntimeError(f"Independent source yielded no recognizable {year} draws; archive not saved")
     return found, parsed_rows
 
 
-def fetch_independent_2025(html_pages=None):
+def independent_urls_for_year(year):
+    urls = [f"{INDEPENDENT_BASE}{year}"]
+    if year >= 2021:
+        urls.append(f"{INDEPENDENT_BASE}{year}?sayfa=2")
+    return urls
+
+
+def fetch_independent_year(year, html_pages=None):
+    urls = independent_urls_for_year(year)
+    if html_pages is not None and len(html_pages) != len(urls):
+        raise RuntimeError(f"Independent {year} source fixture has the wrong page count")
     independent = {}
-    for i, url in enumerate(CROSS_URLS):
-        html = html_pages[i] if html_pages is not None else fetch_html(url, "Independent 2025 source")
-        page_rows, parsed = parse_cross_rows(html)
-        print(f"Cross-check page {i + 1}: {len(page_rows)} unique dates; {parsed} rows")
-        for d, nums in page_rows.items():
-            if d in independent and independent[d] != nums:
-                raise RuntimeError(f"Independent source pages disagree for {d}; archive not saved")
-            independent[d] = nums
+    for i, url in enumerate(urls):
+        html = html_pages[i] if html_pages is not None else fetch_html(
+            url, f"Independent {year} source"
+        )
+        page_rows, parsed = parse_cross_rows(html, year=year)
+        print(f"Independent {year} page {i + 1}: {len(page_rows)} unique dates; {parsed} rows")
+        for draw_date, numbers in page_rows.items():
+            if draw_date in independent and independent[draw_date] != numbers:
+                raise RuntimeError(
+                    f"Independent source pages disagree for {draw_date}; archive not saved"
+                )
+            independent[draw_date] = numbers
+
+    # loto.gen.tr covers the 6/60 regime for 2020; keep the 6/54 era from
+    # the primary source, and compare the independent source only from R60_START.
+    if year == 2020:
+        independent = {
+            draw_date: numbers
+            for draw_date, numbers in independent.items()
+            if draw_date >= R60_START
+        }
+        if len(independent) != 66:
+            raise RuntimeError(
+                f"Independent 2020 R60 range expected 66 dates, got {len(independent)}; archive not saved"
+            )
+    elif year in EXPECTED and len(independent) != EXPECTED[year]:
+        raise RuntimeError(
+            f"Independent {year} source expected {EXPECTED[year]} dates, got {len(independent)}; archive not saved"
+        )
+
+    if not independent:
+        raise RuntimeError(f"Independent {year} source yielded no draws; archive not saved")
+    return independent, urls
+
+
+def fetch_independent_2025(html_pages=None):
+    independent, _ = fetch_independent_year(2025, html_pages)
     if len(independent) != CROSS_EXPECTED:
-        raise RuntimeError(f"Independent source expected {CROSS_EXPECTED} dates, got {len(independent)}; archive not saved")
+        raise RuntimeError(
+            f"Independent 2025 source expected {CROSS_EXPECTED} dates, got {len(independent)}; archive not saved"
+        )
     return independent
 
 
 def compare_2025(primary_rows, independent):
-    primary = {r["date"]: tuple(r["numbers"]) for r in primary_rows}
+    primary = {r["date"]: tuple(sorted(r["numbers"])) for r in primary_rows}
     pd, idates = set(primary), set(independent)
     missing_other = sorted(pd - idates)
     missing_primary = sorted(idates - pd)
@@ -264,30 +316,161 @@ def compare_2025(primary_rows, independent):
     return {"year": 2025, "primary_record_count": len(primary), "independent_record_count": len(independent), "matching_dates_and_number_sets": len(primary), "result": "PASS", "checked_at": datetime.now(timezone.utc).isoformat(), "pages_checked": list(CROSS_URLS)}
 
 
+def reconcile_year(primary_rows, independent, year, pages_checked):
+    primary = {}
+    for row in primary_rows:
+        draw_date = row["date"]
+        numbers = tuple(sorted(row["numbers"]))
+        if draw_date in primary:
+            raise RuntimeError(
+                f"Primary source has duplicate date {draw_date}; archive not saved"
+            )
+        primary[draw_date] = numbers
+
+    compare_primary = {
+        draw_date: numbers
+        for draw_date, numbers in primary.items()
+        if year != 2020 or draw_date >= R60_START
+    }
+    common_dates = set(compare_primary) & set(independent)
+    mismatches = sorted(
+        draw_date
+        for draw_date in common_dates
+        if compare_primary[draw_date] != independent[draw_date]
+    )
+    if mismatches:
+        raise RuntimeError(
+            f"{year} CROSS-SOURCE CHECK FAILED: number sets disagree for "
+            + ", ".join(mismatches[:8])
+            + "; archive not saved"
+        )
+
+    primary_only = sorted(set(compare_primary) - set(independent))
+    latest_independent = max(independent)
+    primary_only_tail = [
+        draw_date for draw_date in primary_only if draw_date > latest_independent
+    ]
+    if (
+        year == datetime.now(timezone.utc).year
+        and len(primary_only_tail) > MAX_CURRENT_YEAR_PRIMARY_ONLY_TAIL
+    ):
+        raise RuntimeError(
+            f"{year} CROSS-SOURCE CHECK FAILED: {len(primary_only_tail)} primary-only "
+            f"tail draws exceed the maximum allowed {MAX_CURRENT_YEAR_PRIMARY_ONLY_TAIL}; "
+            "archive not saved"
+        )
+
+    unexplained_primary_only = [
+        draw_date for draw_date in primary_only if draw_date <= latest_independent
+    ]
+    if unexplained_primary_only:
+        raise RuntimeError(
+            f"{year} CROSS-SOURCE CHECK FAILED: primary dates missing from the independent source "
+            + ", ".join(unexplained_primary_only[:8])
+            + "; archive not saved"
+        )
+
+    independent_only = sorted(set(independent) - set(compare_primary))
+    merged = dict(primary)
+    for draw_date, numbers in independent.items():
+        if draw_date not in merged:
+            merged[draw_date] = numbers
+
+    merged_rows = [
+        {"date": draw_date, "numbers": list(merged[draw_date])}
+        for draw_date in sorted(merged)
+    ]
+    expected_count = EXPECTED.get(year)
+    if expected_count is not None and len(merged_rows) != expected_count:
+        raise RuntimeError(
+            f"{year}: reconciled archive expected {expected_count} dates, "
+            f"got {len(merged_rows)}; archive not saved"
+        )
+
+    validation = {
+        "year": year,
+        "primary_record_count": len(primary_rows),
+        "independent_record_count": len(independent),
+        "matching_dates_and_number_sets": len(common_dates),
+        "matched_dates": sorted(common_dates),
+        "supplemented_from_independent_count": len(independent_only),
+        "supplemented_dates": independent_only,
+        "primary_only_tail_count": len(primary_only_tail),
+        "primary_only_tail_dates": primary_only_tail,
+        "comparison_scope": "R60-only" if year == 2020 else "full-year",
+        "result": "PASS",
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+        "pages_checked": list(pages_checked),
+    }
+    return merged_rows, validation
+
+
 def build_archive(year_rows, independent_html_pages=None):
     all_rows = []
-    check = None
+    validations = []
+    check_2025 = None
     for year in sorted(year_rows):
         rows = year_rows[year]
         if year == 2025:
             rows = apply_known_corrections(year, rows)
-            if len({r["date"] for r in rows}) != len(rows):
-                raise RuntimeError("Duplicate dates remain in primary 2025 archive; archive not saved")
-            independent = fetch_independent_2025(independent_html_pages)
-            check = compare_2025(rows, independent)
-        if year in EXPECTED and len({r["date"] for r in rows}) != EXPECTED[year]:
-            raise RuntimeError(f"{year}: unexpected number of unique dates; archive not saved")
-        all_rows.extend(rows)
-    all_rows.sort(key=lambda r: r["date"])
-    dates = [r["date"] for r in all_rows]
+        if len({row["date"] for row in rows}) != len(rows):
+            raise RuntimeError(
+                f"{year}: duplicate primary dates remain after known corrections; archive not saved"
+            )
+
+        fixture_pages = independent_html_pages if year == 2025 else None
+        independent, pages_checked = fetch_independent_year(year, fixture_pages)
+        merged_rows, validation = reconcile_year(
+            rows, independent, year, pages_checked
+        )
+        if year == 2025:
+            check_2025 = compare_2025(rows, independent)
+        validations.append(validation)
+        all_rows.extend(merged_rows)
+
+    all_rows.sort(key=lambda row: row["date"])
+    dates = [row["date"] for row in all_rows]
     if not all_rows or len(dates) != len(set(dates)):
         raise RuntimeError("Archive empty or contains duplicate dates; archive not saved")
-    if check is None:
+    if check_2025 is None:
         raise RuntimeError("Required independent 2025 check did not run; archive not saved")
+
+    validation_by_year = {int(item["year"]): item for item in validations}
+    historical_supplementation_audit = []
+    for year, required_dates in sorted(KNOWN_HISTORICAL_SUPPLEMENTS.items()):
+        validation = validation_by_year.get(year)
+        if not isinstance(validation, dict):
+            raise RuntimeError(
+                f"Historical source audit missing year {year}; archive not saved"
+            )
+        matched_dates = set(validation.get("matched_dates", []))
+        supplemented_dates = set(validation.get("supplemented_dates", []))
+        for draw_date in required_dates:
+            if draw_date in supplemented_dates:
+                evidence = "INDEPENDENT_SOURCE_SUPPLEMENTED_MISSING_PRIMARY_DATE"
+            elif draw_date in matched_dates:
+                evidence = "SAME_DATE_AND_NUMBERS_IN_BOTH_SOURCES"
+            else:
+                raise RuntimeError(
+                    f"Historical repair date {draw_date} is not accounted for "
+                    "by both-source reconciliation; archive not saved"
+                )
+            historical_supplementation_audit.append({
+                "date": draw_date,
+                "year": year,
+                "result": "PASS",
+                "evidence": evidence,
+                "primary_source": BASE_URL,
+                "independent_source_pages": list(validation["pages_checked"]),
+                "checked_at": validation["checked_at"],
+            })
+
     payload = {
         "source": BASE_URL,
         "cross_check_source": CROSS_URLS[0],
-        "cross_check_validation": check,
+        "cross_check_validation": check_2025,
+        "cross_source_validation_by_year": validations,
+        "historical_supplementation_audit": historical_supplementation_audit,
         "fetched_at": datetime.now(timezone.utc).isoformat(),
         "corrections_applied": [
             {"removed_source_date": wrong, "verified_actual_date": actual, "reason": "Misdated duplicate; verified against matching counterpart and independent source"}
@@ -376,7 +559,73 @@ def self_test():
         {"date": "2025-07-12", "numbers": [16, 19, 25, 37, 43, 57]},
     ])
     assert len(corrected) == 4
-    print("SELF-TEST PASS: syntax, primary parser, cross-source parser, and correction checks")
+
+    # Reconciliation supplements missing historical dates but rejects a
+    # conflicting number set for any shared date.
+    primary_fixture = [
+        {"date": "2026-01-01", "numbers": [1, 2, 3, 4, 5, 6]},
+        {"date": "2026-01-03", "numbers": [2, 3, 4, 5, 6, 7]},
+    ]
+    independent_fixture = {
+        "2026-01-01": (1, 2, 3, 4, 5, 6),
+        "2026-01-02": (10, 11, 12, 13, 14, 15),
+    }
+    merged_fixture, audit_fixture = reconcile_year(
+        primary_fixture, independent_fixture, 2026, ["synthetic-source-fixture"]
+    )
+    assert [row["date"] for row in merged_fixture] == [
+        "2026-01-01", "2026-01-02", "2026-01-03"
+    ]
+    assert audit_fixture["supplemented_dates"] == ["2026-01-02"]
+
+    # A current-year independent source that is stale by too many draws must
+    # fail closed instead of treating a long missing tail as acceptable.
+    current_year = datetime.now(timezone.utc).year
+    from datetime import timedelta
+    first_day = date(current_year, 1, 1)
+    current_primary = [
+        {"date": first_day.isoformat(), "numbers": [1, 2, 3, 4, 5, 6]}
+    ]
+    current_primary.extend(
+        {
+            "date": (first_day + timedelta(days=offset)).isoformat(),
+            "numbers": [2, 3, 4, 5, 6, 7],
+        }
+        for offset in range(1, MAX_CURRENT_YEAR_PRIMARY_ONLY_TAIL + 2)
+    )
+    current_independent = {
+        first_day.isoformat(): (1, 2, 3, 4, 5, 6)
+    }
+    try:
+        reconcile_year(
+            current_primary,
+            current_independent,
+            current_year,
+            ["stale-current-year-source-fixture"],
+        )
+    except RuntimeError as exc:
+        assert "primary-only tail" in str(exc)
+    else:
+        raise AssertionError("Reconciliation accepted an overly stale current-year source")
+
+    try:
+        reconcile_year(
+            [{"date": "2026-01-01", "numbers": [1, 2, 3, 4, 5, 6]}],
+            {"2026-01-01": (7, 8, 9, 10, 11, 12)},
+            2026,
+            ["conflicting-source-fixture"],
+        )
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("Reconciliation accepted conflicting number sets")
+
+    # The general parser also accepts older year IDs.
+    html_2023 = '''<table><tr><td>#20230099</td><td>17 Ağustos 2023</td><td>5 10 19 25 33 35</td><td>₺1</td></tr></table>'''
+    rows_2023, n_2023 = parse_cross_rows(html_2023, year=2023)
+    assert n_2023 == 1
+    assert rows_2023["2023-08-17"] == (5, 10, 19, 25, 33, 35)
+    print("SELF-TEST PASS: generic parser, reconciliation, source conflict guard, and known corrections")
 
 if __name__ == "__main__":
     try:
