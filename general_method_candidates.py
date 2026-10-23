@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import random
 from collections import Counter
 from datetime import date
 from pathlib import Path
@@ -244,11 +245,86 @@ def _evaluate_reverse(draws: list[tuple[int, ...]], min_train: int) -> dict[str,
     }
 
 
-def _blocked_cv(records: list[dict[str, Any]], folds: int) -> dict[str, Any]:
+def _quantile(values: list[float], probability: float) -> float:
+    if not values:
+        raise ValueError("Cannot compute a quantile for empty values.")
+    ordered = sorted(values)
+    position = (len(ordered) - 1) * probability
+    lower = int(position)
+    upper = min(lower + 1, len(ordered) - 1)
+    fraction = position - lower
+    return ordered[lower] * (1.0 - fraction) + ordered[upper] * fraction
+
+
+def _random_prediction_null(
+    draws: list[tuple[int, ...]],
+    records: list[dict[str, Any]],
+    score_sets: dict[str, list[int]],
+    replications: int = 1000,
+    seed: int = 20261023,
+) -> dict[str, Any]:
+    """Compare fixed historical model scores with random 6-of-60 selections.
+
+    Only historical targets from the pre-current-target history are used here.
+    This is a Monte Carlo random-prediction reference, not a permutation test
+    and not a proof of independence between historical draws.
+    """
+    if replications < 100:
+        raise ValueError("At least 100 random-baseline replications are required.")
+
+    pool = tuple(range(1, 61))
+    rng = random.Random(seed)
+    methods = {}
+    for method in METHODS:
+        test_actuals = [
+            draws[record["target_index"]]
+            for record in records
+            if method in record["scores"]
+        ]
+        observed_scores = score_sets[method]
+        if len(test_actuals) != len(observed_scores) or not test_actuals:
+            raise ValueError("Random baseline and method score lengths do not match.")
+
+        null_means = []
+        for _ in range(replications):
+            total = 0
+            for actual in test_actuals:
+                random_pick = set(rng.sample(pool, 6))
+                total += len(random_pick.intersection(actual))
+            null_means.append(total / len(test_actuals))
+
+        observed_mean = mean(observed_scores)
+        simulated_mean = mean(null_means)
+        p_upper = (1 + sum(value >= observed_mean for value in null_means)) / (replications + 1)
+        methods[method] = {
+            "evaluated_draws": len(test_actuals),
+            "observed_mean_hits_out_of_6": round(observed_mean, 6),
+            "simulated_random_mean_hits_out_of_6": round(simulated_mean, 6),
+            "delta_vs_simulated_random_mean": round(observed_mean - simulated_mean, 6),
+            "random_mean_95pct_interval": [
+                round(_quantile(null_means, 0.025), 6),
+                round(_quantile(null_means, 0.975), 6),
+            ],
+            "one_sided_random_pick_tail_probability": round(p_upper, 6),
+            "p_value_adjusted_for_multiple_methods": False,
+        }
+
+    return {
+        "protocol": "Monte Carlo: independent random 6-of-60 picks scored against the exact same historical target draws",
+        "replications": replications,
+        "seed": seed,
+        "theoretical_expected_mean_hits_out_of_6": RANDOM_EXPECTED_HITS,
+        "current_isolated_target_used": False,
+        "interpretation_limit": "Descriptive comparison only; not a formal proof, and the tail probabilities are not adjusted for trying multiple hypotheses.",
+        "methods": methods,
+    }
+
+
+def _walk_forward_fold_summaries(records: list[dict[str, Any]], folds: int) -> dict[str, Any]:
     if folds < 2:
         raise ValueError("folds must be at least 2.")
     if not records:
-        return {"folds": folds, "protocol": "blocked chronological folds; no shuffling", "fold_summaries": []}
+        return {"folds": folds, "protocol": "descriptive summaries of expanding-window walk-forward scores; not nested CV or per-fold model selection", "fold_summaries": [], "independent_fold_model_selection": False}
     fold_summaries = []
     for fold in range(folds):
         start = len(records) * fold // folds
@@ -259,7 +335,7 @@ def _blocked_cv(records: list[dict[str, Any]], folds: int) -> dict[str, Any]:
             scores = [r["scores"][method] for r in chunk if method in r["scores"]]
             row["methods"][method] = _stats(scores)
         fold_summaries.append(row)
-    return {"folds": folds, "protocol": "blocked chronological folds; no shuffling", "fold_summaries": fold_summaries}
+    return {"folds": folds, "protocol": "contiguous chronological summaries of the same expanding-window walk-forward predictions; not nested CV and no per-fold parameter tuning", "fold_summaries": fold_summaries, "independent_fold_model_selection": False}
 
 
 def evaluate_rows(
@@ -274,8 +350,10 @@ def evaluate_rows(
     if folds < 2:
         raise ValueError("folds must be at least 2.")
     target_day = guard.parse_date(isolated_target_date)
-    summary = guard.validate_archive(rows)
+    # Materialize once: validate_archive consumes general iterables, so doing
+    # this in the opposite order can silently empty a generator input.
     clean_rows = list(rows)
+    summary = guard.validate_archive(clean_rows)
     if any(guard.parse_date(row["date"]) >= target_day for row in clean_rows):
         raise guard.DataGuardError("Candidate engine received target-date or future data.")
     if guard.parse_date(summary["last_date"]) >= target_day:
@@ -283,6 +361,16 @@ def evaluate_rows(
     draws = [_norm(row["numbers"]) for row in clean_rows]
     forward_summary, forward_records = _evaluate_forward(draws, min_train)
     usable_records = [record for record in forward_records if record["scores"]]
+    random_null = _random_prediction_null(
+        draws, usable_records, {
+            name: [
+                record["scores"][name]
+                for record in usable_records
+                if name in record["scores"]
+            ]
+            for name in METHODS
+        }
+    )
     return {
         "engine_version": VERSION,
         "method_status": "EXPERIMENTAL_CANDIDATES_NOT_CANONICAL",
@@ -297,7 +385,9 @@ def evaluate_rows(
             "baselines": forward_summary,
         },
         "reverse_retrospective_stress_test": _evaluate_reverse(draws, min_train),
-        "time_ordered_cross_validation": _blocked_cv(usable_records, folds),
+        "random_prediction_null": random_null,
+        "chronological_fold_summaries": _walk_forward_fold_summaries(usable_records, folds),
+        "full_nested_time_series_cross_validation_implemented": False,
         "canonical_method_definitions_status": {
             "A->B->C": "OPEN_DEFINITION",
             "A->T": "OPEN_DEFINITION",
@@ -306,7 +396,8 @@ def evaluate_rows(
         "interpretation_limits": [
             "These are explicit experimental candidate definitions, not approved canonical formulas.",
             "The current isolated target's number set is not passed to the candidate functions or scored.",
-            "The theoretical 0.6 mean is a random 6-of-60 overlap benchmark, not an observed experiment.",
+            "A Monte Carlo random-prediction reference was computed against the same historical target draws; it is not a permutation test.",
+            "Chronological fold summaries group the same walk-forward predictions; no per-fold parameter selection or nested cross-validation was performed.",
             "Reverse-time results are retrospective stress tests, not predictive evidence.",
             "Average historical overlap does not prove a predictive mechanism.",
         ],
