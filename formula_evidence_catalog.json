@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
   "project": "GENERAL Super Loto",
-  "purpose": "Evidence inventory for recovering and auditing historical formulas. This catalog distinguishes current experimental implementations from missing legacy source artifacts and unverified reported weights.",
+  "purpose": "Evidence inventory for recovering and auditing historical formulas. Exact recovered legacy source files are preserved separately from current experimental implementations; known defects and unverified historical metrics remain explicitly flagged.",
   "binding_rules_changed": false,
-  "recovery_status": "PARTIAL_SOURCE_EVIDENCE_ONLY",
+  "recovery_status": "LEGACY_SOURCE_FILES_RECOVERED_PENDING_AUDIT",
   "rules": [
     "Do not claim an experimental candidate is identical to a missing legacy formula.",
     "Do not promote methods to canonical without explicit user approval.",
@@ -20,14 +20,41 @@
       "canonical_status": "EXPERIMENTAL_CANDIDATES_NOT_CANONICAL"
     },
     "Super_Loto_V8_6_Donusum_Kesif.py": {
-      "availability": "NOT_FOUND_IN_CURRENT_MAIN_FILE_TREE",
-      "role": "Reported legacy source for transition features and transformation matching",
-      "recovery_status": "SOURCE_CONTENT_NOT_RECONSTRUCTED"
+      "availability": "RECOVERED_FROM_CHATGPT_LIBRARY",
+      "source_created_at": "2026-09-13T01:29:47.585264Z",
+      "preserved_path": "legacy_sources/Super_Loto_V8_6_Donusum_Kesif.py",
+      "source_bytes": 14003,
+      "role": "Legacy A->B transformation discovery and similarity matching engine",
+      "recovery_status": "EXACT_SOURCE_PRESERVED; AUDIT_REQUIRED",
+      "known_defects": [
+        "Prior review identified target-B leakage in transformation matching; reported FINAL 0.797 and Delta +0.103 are invalid and must not be treated as valid evidence.",
+        "Prior review identified a null-evaluation unpacking bug that used ALL rather than FINAL."
+      ],
+      "run_policy": "Do not run as a trusted evaluator or use its reported scores until the leakage and null bugs are fixed in a separate reviewed version."
     },
     "Super_Loto_Sifre_Kesif_Motoru_v1.py": {
-      "availability": "NOT_FOUND_IN_CURRENT_MAIN_FILE_TREE",
-      "role": "Reported legacy source for gen_pair_relation",
-      "recovery_status": "SOURCE_CONTENT_NOT_RECONSTRUCTED"
+      "availability": "RECOVERED_FROM_CHATGPT_LIBRARY",
+      "source_created_at": "2026-09-09T11:40:08.118939Z",
+      "preserved_path": "legacy_sources/Super_Loto_Sifre_Kesif_Motoru_v1.py",
+      "source_bytes": 23575,
+      "role": "Legacy automatic rule-family discovery, recipe crossover/mutation, and holdout evaluation engine",
+      "recovery_status": "EXACT_SOURCE_PRESERVED; AUDIT_REQUIRED",
+      "archive_scope": "Embedded archive covers 2025 and 2026 through draw #107; it is historical and must not replace the current canonical archive.",
+      "reported_result_status": "UNVERIFIED_CONTEXT_ONLY",
+      "known_defects": [
+        "An earlier run hit a tuple/int comparison TypeError; a fix was reported in the conversation, but the preserved source must be checked against that exact fix before execution."
+      ],
+      "run_policy": "Do not use embedded archive as current training data; audit code and archive integrity before any evaluation."
+    },
+    "Super_Loto_NEAR_STATE_Yapi_Dogrulama_Motoru_v5_0.py": {
+      "availability": "RECOVERED_FROM_CHATGPT_LIBRARY",
+      "source_created_at": "2026-09-10T21:50:23.924578Z",
+      "preserved_path": "legacy_sources/Super_Loto_NEAR_STATE_Yapi_Dogrulama_Motoru_v5_0.py",
+      "source_bytes": 20907,
+      "role": "Legacy near-state feature recurrence and validation engine",
+      "recovery_status": "EXACT_SOURCE_PRESERVED; AUDIT_REQUIRED",
+      "known_limit": "Prior source summary describes its evaluation windows, but its results and split chronology have not yet been independently reconstructed.",
+      "run_policy": "Preserve as evidence only; do not treat old metrics as verified until archive boundaries, target isolation, and walk-forward logic are audited."
     }
   },
   "methods": {
@@ -146,9 +173,10 @@
     "real_archive_run_in_this_step": false
   },
   "next_recovery_actions": [
-    "Search accessible prior conversation/library artifacts for the two legacy source files and version-specific reports.",
-    "If a source file is recovered, preserve its exact bytes and source version before interpreting it.",
-    "Reconstruct definitions and test behavior against synthetic fixtures before real archive execution.",
-    "Do not change OPEN_DEFINITION statuses until the user approves the canonical definitions."
+    "Audit the exact recovered V8.6 source for target-B leakage and the null-evaluation bug before any execution.",
+    "Compare the recovered v1 source with the earlier tuple/int bug fix and audit its embedded archive separately from the canonical archive.",
+    "Audit the recovered NEAR_STATE v5.0 source for chronology, archive boundaries, and target isolation.",
+    "Recover version-specific logs for V19 and V0.3.1 weights; keep those weights unverified until definitions and run logs are available.",
+    "Do not change OPEN_DEFINITION statuses until the user approves canonical definitions."
   ]
 }
