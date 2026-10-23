@@ -35,16 +35,7 @@ jobs:
           python3 -m py_compile general_archive_fetch.py general_data_guard.py test_general_archive_target_isolation.py
           python3 general_archive_fetch.py --self-test
 
-      - name: Rebuild archive using primary and independent sources
-        run: |
-          if python3 general_archive_fetch.py > archive_rebuild_output.log 2>&1; then
-            echo "ARCHIVE REBUILD AND MULTI-YEAR SOURCE RECONCILIATION: PASS"
-          else
-            echo "ARCHIVE REBUILD FAILED. Source details are suppressed; inspect the tool's controlled error status."
-            exit 1
-          fi
-
-      - name: Preserve proposed archive snapshot
+      - name: Preserve proposed archive snapshot before live rebuild
         run: cp super_loto_archive.json committed_super_loto_archive.json
 
       - name: Rebuild archive using primary and independent sources
@@ -56,7 +47,7 @@ jobs:
             exit 1
           fi
 
-      - name: Compare proposed archive against the live source rebuild
+      - name: Compare committed proposal against independently rebuilt live archive
         run: |
           python3 - <<'PY'
           import json
@@ -92,14 +83,14 @@ jobs:
           )
           if missing or extra or wrong_sets:
               print("ARCHIVE MATCH CHECK: FAILED")
-              print("Dates missing from proposed archive:", missing[:20])
-              print("Unexpected dates in proposed archive:", extra[:20])
+              print("Dates missing from committed proposal:", missing[:20])
+              print("Unexpected dates in committed proposal:", extra[:20])
               print("Dates with number-set mismatches:", wrong_sets[:20])
               print("Draw-number sets printed: NO")
               raise SystemExit(1)
 
           print("ARCHIVE MATCH CHECK: PASS")
-          print("Proposed archive matches all live-rebuilt dates and number sets.")
+          print("Committed proposal matches all independently rebuilt live dates and number sets.")
           print("Matched records:", len(proposed))
           print("Draw-number sets printed: NO")
           PY
