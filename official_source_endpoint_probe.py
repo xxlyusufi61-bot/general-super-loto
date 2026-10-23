@@ -54,11 +54,17 @@ class PageParser(HTMLParser):
         self.text_parts = []
         self.script_urls = []
         self.inline_scripts = []
+        self.meta_tags = []
         self.in_script = False
         self.script_parts = []
 
     def handle_starttag(self, tag, attrs):
         attr = dict(attrs)
+        if tag.lower() == "meta" and attr.get("property") and attr.get("content"):
+            self.meta_tags.append({
+                "property": str(attr["property"])[:120],
+                "content": str(attr["content"])[:500],
+            })
         if tag.lower() == "title":
             self.in_title = True
         if tag.lower() == "script":
@@ -160,6 +166,7 @@ def main():
                 response["body"], item["numbers"]),
             "title": "",
             "script_count": 0,
+            "relevant_meta_tags": [],
             "status": "UNRESOLVED_DYNAMIC_SOURCE",
         }
         if response["body"]:
@@ -168,6 +175,10 @@ def main():
                 parser.feed(response["body"])
                 row["title"] = " ".join("".join(parser.title_parts).split())[:180]
                 row["script_count"] = len(parser.script_urls)
+                row["relevant_meta_tags"] = [
+                    item for item in parser.meta_tags
+                    if re.search(r"gntn|winning|draw|result|api|polaris", item["property"] + " " + item["content"], re.I)
+                ]
                 for src in parser.script_urls:
                     full = urljoin(response["final_url"], src)
                     parsed = urlparse(full)
@@ -187,31 +198,56 @@ def main():
     scripts_checked = []
     discovered = set()
     js_contexts = []
-    context_terms = re.compile(
-        r"lotteryservice|draws?results?|singledraw|winningnumbers?|/api/",
-        re.I,
-    )
-    for url in js_to_fetch[:MAX_JS_FILES]:
+    # Prioritize the bundles that render individual draw results and call APIs.
+    def asset_priority(url):
+        low = url.lower()
+        if "clientlib-singledrawsresult" in low:
+            return 0
+        if "clientlib-lotterycommon" in low:
+            return 1
+        if "clientlib-global" in low:
+            return 2
+        if "clientlib-datalayer" in low:
+            return 3
+        return 10
+
+    prioritized_js = sorted(js_to_fetch, key=asset_priority)
+    context_patterns = [
+        re.compile(r"GNTN_ENDPOINT|GNTN_LOTTERY_URL|gntn:endpoint|gntnBaseJsonApi", re.I),
+        re.compile(r"winningNumbers|drawId|drawDate|drawNumber|drawNumber", re.I),
+        re.compile(r"fetch\\(|axios|XMLHttpRequest|\\.get\\(", re.I),
+    ]
+    for url in prioritized_js[:MAX_JS_FILES]:
         response = fetch(url)
         scripts_checked.append({
             "url": url, "http_status": response["status"],
             "bytes": len(response["body"]), "truncated": response["truncated"],
             "fetch_error": response["error"],
         })
-        if response["body"]:
-            source = response["body"]
-            discovered.update(endpoint_candidates(source))
-            for match in context_terms.finditer(source):
-                if len(js_contexts) >= 40:
+        if not response["body"]:
+            continue
+        source = response["body"]
+        discovered.update(endpoint_candidates(source))
+        # Match the API configuration first; limit generic result-data matches.
+        per_asset = 0
+        for pattern_index, pattern in enumerate(context_patterns):
+            limit = 16 if pattern_index == 0 else (8 if pattern_index == 1 else 4)
+            matches_for_pattern = 0
+            for match in pattern.finditer(source):
+                if matches_for_pattern >= limit or len(js_contexts) >= 100:
                     break
-                left = max(0, match.start() - 180)
-                right = min(len(source), match.end() + 260)
+                left = max(0, match.start() - 320)
+                right = min(len(source), match.end() + 480)
                 snippet = re.sub(r"\\s+", " ", source[left:right]).strip()
                 js_contexts.append({
                     "asset": url,
                     "term": match.group(0)[:50],
-                    "context": snippet[:500],
+                    "context": snippet[:900],
                 })
+                matches_for_pattern += 1
+            per_asset += matches_for_pattern
+            if len(js_contexts) >= 100:
+                break
     for body in page_cache.values():
         discovered.update(endpoint_candidates(body))
 
@@ -223,6 +259,10 @@ def main():
             1 for row in result_rows if row["http_status"] == 200
         ),
         "records": result_rows,
+        "relevant_meta_tags": sorted(
+            {json.dumps(meta, ensure_ascii=False, sort_keys=True)
+             for row in result_rows for meta in row["relevant_meta_tags"]}
+        ),
         "javascript_assets_considered": min(len(js_to_fetch), MAX_JS_FILES),
         "javascript_assets": scripts_checked,
         "javascript_endpoint_contexts": js_contexts,
@@ -245,6 +285,9 @@ def main():
             f"numbers_visible={row['number_set_visible_in_page']} "
             f"status={row['status']}"
         )
+    print("Relevant official-page meta tags:", len(report["relevant_meta_tags"]))
+    for meta_json in report["relevant_meta_tags"]:
+        print("META_API", meta_json)
     print("JavaScript asset URLs:")
     for asset in scripts_checked:
         print("JS_ASSET", asset["http_status"], asset["url"])
