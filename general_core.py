@@ -344,6 +344,9 @@ def prepare_data(target):
     if not isinstance(split, dict) or split.get("isolation_pass") is not True:
         raise RuntimeError("Data Guard target isolation failed.")
 
+    if split.get("training_rows_match_archive") is not True:
+        raise RuntimeError("Data Guard training rows do not match source archive.")
+
     training_raw = split.get("train")
     excluded_dates = split.get("excluded_dates")
     target_present = split.get("target_present_in_archive")
@@ -427,6 +430,12 @@ def prepare_data(target):
     # remain local and are never included in this audit summary.
     source_dates = [row["date"] for row in rows]
     training_dates = [row["date"] for row in training]
+    expected_training_rows = [
+        {"date": row["date"], "numbers": list(row["numbers"])}
+        for row in rows
+        if row["date"] < target
+    ]
+    training_rows_match_archive = training == expected_training_rows
     target_matches = sum(1 for day in source_dates if day == target)
     expected_training_dates = [
         day for day in source_dates if day < target
@@ -466,6 +475,7 @@ def prepare_data(target):
         training_chronological,
         excluded_dates_match_archive,
         training_dates_match_archive,
+        training_rows_match_archive,
         partition_counts_match,
     ))
 
@@ -489,6 +499,7 @@ def prepare_data(target):
         "training_chronological": training_chronological,
         "excluded_dates_match_archive": excluded_dates_match_archive,
         "training_dates_match_archive": training_dates_match_archive,
+        "training_rows_match_archive": training_rows_match_archive,
         "partition_counts_match": partition_counts_match,
         "training_data": training
     }
@@ -763,6 +774,7 @@ def run_agent(agent, task):
                 "training_chronological": data["training_chronological"],
                 "excluded_dates_match_archive": data["excluded_dates_match_archive"],
                 "training_dates_match_archive": data["training_dates_match_archive"],
+                "training_rows_match_archive": data["training_rows_match_archive"],
                 "partition_counts_match": data["partition_counts_match"],
                 "training_records_sent_to_model": 0,
                 "draw_numbers_sent_to_model": False,
