@@ -254,12 +254,21 @@ jobs:
               raise SystemExit("TARGET PRESENCE CHECK FAILED")
           if isolated.get("target_numbers_exposed") is not False:
               raise SystemExit("TARGET EXPOSURE CHECK FAILED")
+          if isolated.get("training_rows_match_archive") is not True:
+              raise SystemExit("TRAINING ROW MATCH CHECK FAILED")
+          expected_training_rows = [
+              {"date": row["date"], "numbers": row["numbers"]}
+              for row in rows if row["date"] < target_date
+          ]
+          if isolated.get("train") != expected_training_rows:
+              raise SystemExit("TRAINING ROW CONTENT CHECK FAILED")
           if target_date in [row["date"] for row in isolated["train"]]:
               raise SystemExit("TARGET LEAKAGE DETECTED")
           if isolated["excluded_dates"] != [target_date]:
               raise SystemExit("TARGET/FUTURE EXCLUSION CHECK FAILED")
 
           print("DATA GUARD: PASS")
+          print("Training row and number-set equality: PASS")
           print("Record count:", summary["record_count"])
           print("First date:", summary["first_date"])
           print("Latest target date:", target_date)
