@@ -1,0 +1,30 @@
+name: GENERAL Multi-Year Archive Cross-Source Audit Tests
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "general_archive_cross_source_audit.py"
+      - "general_archive_cross_source_audit_test.py"
+      - "general_archive_fetch.py"
+      - "general_data_guard.py"
+      - ".github/workflows/archive-cross-source-audit-test.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  archive-audit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile audit and tests
+        run: python -m py_compile general_archive_cross_source_audit.py general_archive_cross_source_audit_test.py general_archive_fetch.py general_data_guard.py
+      - name: Run deterministic parser and comparison tests
+        run: python -m unittest -v general_archive_cross_source_audit_test
