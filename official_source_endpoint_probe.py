@@ -215,7 +215,7 @@ def main():
     context_patterns = [
         re.compile(r"GNTN_ENDPOINT|GNTN_LOTTERY_URL|gntn:endpoint|gntnBaseJsonApi", re.I),
         re.compile(r"winningNumbers|drawId|drawDate|drawNumber|drawNumber", re.I),
-        re.compile(r"fetch\\(|axios|XMLHttpRequest|\\.get\\(", re.I),
+        re.compile(r"fetch\(|axios|XMLHttpRequest|\.get\(", re.I),
     ]
     for url in prioritized_js[:MAX_JS_FILES]:
         response = fetch(url)
