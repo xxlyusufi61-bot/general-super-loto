@@ -1,0 +1,158 @@
+name: Independent Super Loto Archive Cross-Source Audit
+
+'on':
+  schedule:
+    - cron: "41 0 * * *"
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "super_loto_archive.json"
+      - "general_archive_fetch.py"
+      - "general_data_guard.py"
+      - "general_archive_cross_source_audit.py"
+      - ".github/workflows/archive-cross-source-audit.yml"
+  pull_request:
+    paths:
+      - "super_loto_archive.json"
+      - "general_archive_fetch.py"
+      - "general_data_guard.py"
+      - "general_archive_cross_source_audit.py"
+      - ".github/workflows/archive-cross-source-audit.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: super-loto-cross-source-audit
+  cancel-in-progress: false
+
+jobs:
+  cross-source-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Compile audit tools and run parser self-tests
+        run: |
+          python3 -m py_compile general_archive_fetch.py general_data_guard.py general_archive_cross_source_audit.py
+          python3 general_archive_fetch.py --self-test
+
+      - name: Run read-only cross-source audit
+        run: |
+          if python3 general_archive_cross_source_audit.py > cross_source_audit.log 2>&1; then
+            cat cross_source_audit.log
+          else
+            cat cross_source_audit.log
+            echo "Cross-source audit execution failed; draw-level details are suppressed by the audit tool."
+            exit 1
+          fi
+
+      - name: Enforce audit-report safety and summarize source status
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          report_path = Path("archive_cross_source_audit_report.json")
+          if not report_path.is_file():
+              raise SystemExit("AUDIT REPORT FAILED: report file is missing")
+
+          try:
+              report = json.loads(report_path.read_text(encoding="utf-8"))
+          except (OSError, json.JSONDecodeError):
+              raise SystemExit("AUDIT REPORT FAILED: report is unreadable") from None
+
+          if not isinstance(report, dict):
+              raise SystemExit("AUDIT REPORT FAILED: report root is invalid")
+          if report.get("archive_modified") is not False:
+              raise SystemExit("AUDIT SAFETY FAILED: the audit must not modify the archive")
+          if report.get("active_target_numbers_exposed") is not False:
+              raise SystemExit("AUDIT SAFETY FAILED: target-number exposure flag is invalid")
+
+          comparisons = []
+          hard_issues = []
+          usable_comparisons = 0
+
+          by_year = report.get("loto_gen_by_year")
+          if not isinstance(by_year, dict) or not by_year:
+              raise SystemExit("AUDIT REPORT FAILED: yearly source comparison is missing")
+
+          for year, details in sorted(by_year.items()):
+              result = details.get("loto_gen", {}) if isinstance(details, dict) else {}
+              status = result.get("status", "INVALID_REPORT")
+              common = result.get("common_date_count", 0)
+              usable_comparisons += int(isinstance(common, int) and common > 0)
+              print(
+                  f"LOTO_GEN {year}: {status}; "
+                  f"overlap={result.get('common_date_count', 0)}; "
+                  f"archive_only={result.get('archive_only_count', 0)}; "
+                  f"source_only={result.get('independent_only_count', 0)}; "
+                  f"number_mismatches={result.get('number_mismatch_count', 0)}; "
+                  f"parse_errors={result.get('source_parse_error_count', 0)}"
+              )
+              if status not in ("MATCH", "SOURCE_LAG_AT_TAIL"):
+                  hard_issues.append(f"loto.gen.tr/{year}:{status}")
+              if result.get("number_mismatch_count", 0) or result.get("source_parse_error_count", 0):
+                  hard_issues.append(f"loto.gen.tr/{year}:number_or_parse_issue")
+
+          for label, key in (
+              ("LOTObil R54", "lotobil_R54_comparison"),
+              ("LOTObil R60", "lotobil_R60_comparison"),
+          ):
+              result = report.get(key, {})
+              status = result.get("status", "INVALID_REPORT")
+              if status != "FETCH_FAILED":
+                  common = result.get("common_date_count", 0)
+                  usable_comparisons += int(isinstance(common, int) and common > 0)
+              print(
+                  f"{label}: {status}; "
+                  f"overlap={result.get('common_date_count', 0)}; "
+                  f"archive_only={result.get('archive_only_count', 0)}; "
+                  f"source_only={result.get('independent_only_count', 0)}; "
+                  f"number_mismatches={result.get('number_mismatch_count', 0)}; "
+                  f"parse_errors={result.get('source_parse_error_count', 0)}"
+              )
+              if status not in ("MATCH", "SOURCE_LAG_AT_TAIL", "FETCH_FAILED"):
+                  hard_issues.append(f"{label}:{status}")
+              if result.get("number_mismatch_count", 0) or result.get("source_parse_error_count", 0):
+                  hard_issues.append(f"{label}:number_or_parse_issue")
+
+          failures = report.get("fetch_failures", [])
+          if not isinstance(failures, list):
+              raise SystemExit("AUDIT REPORT FAILED: source fetch-failure list is invalid")
+
+          print("Archive records:", report.get("archive_records"))
+          print("Archive range:", report.get("archive_first_date"), "to", report.get("archive_last_date"))
+          print("Independent source page fetch failures:", len(failures))
+          print("Target numbers exposed: NO")
+          print("Archive modified: NO")
+
+          if usable_comparisons == 0:
+              hard_issues.append("No independent source produced an overlapping comparison")
+
+          if hard_issues:
+              print("CROSS-SOURCE AUDIT STATUS: REVIEW REQUIRED")
+              print("Issue labels:", "; ".join(sorted(set(hard_issues))))
+              raise SystemExit(1)
+
+          print("CROSS-SOURCE AUDIT STATUS: NO MISMATCH DETECTED")
+          print("Note: SOURCE_LAG_AT_TAIL is a warning that an independent source may be behind, not proof of an archive error.")
+          PY
+
+      - name: Preserve read-only audit report
+        if: always() && hashFiles('archive_cross_source_audit_report.json') != ''
+        uses: actions/upload-artifact@v6
+        with:
+          name: super-loto-cross-source-audit-report
+          path: archive_cross_source_audit_report.json
+          if-no-files-found: warn
+          retention-days: 7
