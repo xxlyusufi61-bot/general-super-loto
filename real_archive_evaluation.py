@@ -70,24 +70,65 @@ def candidate_grid() -> tuple[Candidate, ...]:
     return tuple(Candidate(f, m, k) for f in FEATURES for m in TRANSFORMS for k in K_VALUES)
 
 
-def predict_at(rows: Sequence[Draw], target_index: int, candidate: Candidate):
+def precompute_signatures(rows: Sequence[Draw]):
+    """Compute each adjacent-draw feature once; reuse it across all candidates."""
+    result = {(feature, mode): [] for feature in FEATURES for mode in TRANSFORMS}
+    for left, right in zip(rows[:-1], rows[1:]):
+        raw_features = state_features(left.numbers, right.numbers)
+        for feature in FEATURES:
+            values = raw_features[feature]
+            for mode in TRANSFORMS:
+                result[(feature, mode)].append(transform(values, mode))
+    return {key: tuple(values) for key, values in result.items()}
+
+
+def predict_at(rows: Sequence[Draw], target_index: int, candidate: Candidate, signature_cache=None):
     # The target row is intentionally not passed to the predictor.
     history = tuple(rows[:target_index])
-    return predict_from_known_pair(history, candidate.feature, candidate.mode, candidate.k)
+    if signature_cache is None:
+        return predict_from_known_pair(history, candidate.feature, candidate.mode, candidate.k)
+
+    # Match the legacy-safe evaluator's exact query/triple geometry:
+    # query is transition rows[target_index-2] -> rows[target_index-1];
+    # candidate A->B->C triples must finish strictly before query A.
+    if target_index < MIN_HISTORY:
+        return None
+    query_transition_index = target_index - 2
+    key = (candidate.feature, candidate.mode)
+    signatures = signature_cache[key]
+    query_signature = signatures[query_transition_index]
+    ranked = []
+    for j in range(0, target_index - 4):
+        d = distance(query_signature, signatures[j], candidate.mode)
+        ranked.append((d, j))
+    ranked.sort(key=lambda pair: (pair[0], pair[1]))
+    chosen = ranked[:candidate.k]
+    votes = Counter()
+    for d, j in chosen:
+        weight = 1.0 / (1.0 + d)
+        for number in rows[j + 2].numbers:
+            votes[number] += weight
+    if len(votes) < 6:
+        return None
+    winners = sorted(votes.items(), key=lambda pair: (-pair[1], pair[0]))[:6]
+    return tuple(sorted(number for number, _ in winners))
 
 
-def score_window(rows: Sequence[Draw], start: int, end: int, candidate: Candidate):
+def score_window(rows: Sequence[Draw], start: int, end: int, candidate: Candidate, signature_cache=None):
+    if signature_cache is None:
+        signature_cache = precompute_signatures(rows)
     values = []
     for idx in range(max(start, MIN_HISTORY), min(end, len(rows))):
-        pred = predict_at(rows, idx, candidate)
+        pred = predict_at(rows, idx, candidate, signature_cache)
         values.append(hits(pred, rows[idx].numbers))
     return values
 
 
 def select_candidate(rows: Sequence[Draw], candidates, start: int, end: int):
     scored = []
+    signature_cache = precompute_signatures(rows)
     for c in candidates:
-        values = score_window(rows, start, end, c)
+        values = score_window(rows, start, end, c, signature_cache)
         scored.append((mean(values) if values else 0.0, c, len(values)))
     # Deterministic tie break; final interval is never read here.
     scored.sort(key=lambda x: (-x[0], x[1].feature, x[1].mode, x[1].k))
@@ -106,11 +147,12 @@ def main():
     isolated_target_date = all_rows[-1].day
     pre_target = tuple(r for r in all_rows[:-1] if r.day not in LOCKED_DATES)
 
-    # Detect the transition to the 60-number regime from the first historical
-    # draw containing a number above 54; no hard-coded transition date.
-    r60_start = next((r.day for r in pre_target if max(r.numbers) > 54), None)
-    if r60_start is None:
-        raise ValueError("Cannot identify R60 regime in the pre-target archive.")
+    # Binding project cutoff: keep R54 and R60 regimes separate at 2020-08-02.
+    # Do not infer the regime boundary from the first draw containing a 55+ number.
+    r60_start = date(2020, 8, 2)
+    r54 = tuple(r for r in pre_target if r.day < r60_start)
+    if any(max(r.numbers) > 54 for r in r54):
+        raise ValueError("R54 regime contains a number above 54.")
     r60 = tuple(r for r in pre_target if r.day >= r60_start)
     if len(r60) < 100:
         raise ValueError("Insufficient R60 history for chronological evaluation.")
@@ -125,14 +167,16 @@ def main():
     (best_val, chosen, n_validation), _ = select_candidate(
         r60, candidates, validation_start, final_start
     )
-    final_hits = score_window(r60, final_start, final_end, chosen)
-    reverse_hits = score_window(tuple(reversed(r60)), MIN_HISTORY, max(MIN_HISTORY, n - final_start), chosen)
+    signature_cache = precompute_signatures(r60)
+    final_hits = score_window(r60, final_start, final_end, chosen, signature_cache)
+    reversed_r60 = tuple(reversed(r60))
+    reverse_hits = score_window(reversed_r60, MIN_HISTORY, max(MIN_HISTORY, n - final_start), chosen)
 
     # Chronological fold summaries use the selected validation-only candidate.
     fold_edges = [validation_start + (final_start - validation_start) * i // 4 for i in range(5)]
     folds = []
     for i in range(4):
-        vals = score_window(r60, fold_edges[i], fold_edges[i + 1], chosen)
+        vals = score_window(r60, fold_edges[i], fold_edges[i + 1], chosen, signature_cache)
         folds.append({
             "fold": i + 1,
             "target_count": len(vals),
@@ -153,7 +197,9 @@ def main():
             "isolated_target_excluded_from_training_and_scoring": True,
             "isolated_target_numbers_written_to_report": False,
             "locked_dates_excluded": True,
-            "r60_start_date_inferred_from_archive": r60_start.isoformat(),
+            "r54_row_count_before_target": len(r54),
+            "r60_start_date_rule": "binding cutoff 2020-08-02",
+            "r60_start_date": r60_start.isoformat(),
             "r60_row_count_before_target": len(r60),
         },
         "protocol": {
