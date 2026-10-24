@@ -14,8 +14,20 @@ CROSS_URLS = (
     "https://loto.gen.tr/super-loto/arsiv/2025?sayfa=2",
 )
 OUT = Path(__file__).resolve().parent / "super_loto_archive.json"
+# Raw primary-site counts. These checks remain intentionally separate from
+# the final archive counts: older source pages omit records found in Loto.gen.
 EXPECTED = {2020: 97, 2021: 154, 2022: 155, 2023: 150, 2024: 157, 2025: 156}
 CROSS_EXPECTED = 156
+VERIFIED_ARCHIVE_EXPECTED = {
+    2020: 97,
+    2021: 156,
+    2022: 156,
+    2023: 157,
+    2024: 157,
+    2025: 156,
+}
+LOTO_GEN_BASE = "https://loto.gen.tr/super-loto/arsiv"
+R60_START = "2020-08-02"
 MONTHS = {
     "ocak": 1, "şubat": 2, "subat": 2, "mart": 3, "nisan": 4,
     "mayıs": 5, "mayis": 5, "haziran": 6, "temmuz": 7,
@@ -264,7 +276,168 @@ def compare_2025(primary_rows, independent):
     return {"year": 2025, "primary_record_count": len(primary), "independent_record_count": len(independent), "matching_dates_and_number_sets": len(primary), "result": "PASS", "checked_at": datetime.now(timezone.utc).isoformat(), "pages_checked": list(CROSS_URLS)}
 
 
-def build_archive(year_rows, independent_html_pages=None):
+def reconcile_year_with_loto_gen(year, primary_rows, independent_rows, source_parse_errors=None):
+    """Merge only independently verified missing rows; reject conflicts."""
+    source_parse_errors = list(source_parse_errors or [])
+    if year == 2020:
+        source_parse_errors = [
+            day for day in source_parse_errors if day >= R60_START
+        ]
+        primary_scope = [
+            row for row in primary_rows if row["date"] >= R60_START
+        ]
+        independent_scope = {
+            day: values for day, values in independent_rows.items()
+            if day >= R60_START
+        }
+    else:
+        primary_scope = list(primary_rows)
+        independent_scope = dict(independent_rows)
+
+    if source_parse_errors:
+        raise RuntimeError(
+            f"{year}: independent archive contains "
+            f"{len(set(source_parse_errors))} unparsed row(s); archive not saved"
+        )
+
+    primary_map = {}
+    for row in primary_scope:
+        if row["date"] in primary_map:
+            raise RuntimeError(
+                f"{year}: primary archive has duplicate dates; archive not saved"
+            )
+        primary_map[row["date"]] = tuple(sorted(row["numbers"]))
+
+    shared = set(primary_map) & set(independent_scope)
+    number_mismatches = sorted(
+        day for day in shared
+        if primary_map[day] != tuple(sorted(independent_scope[day]))
+    )
+    primary_only = sorted(set(primary_map) - set(independent_scope))
+    if number_mismatches or primary_only:
+        raise RuntimeError(
+            f"{year}: independent-source verification failed "
+            f"({len(primary_only)} archive-only date(s), "
+            f"{len(number_mismatches)} number-set mismatch date(s)); "
+            "archive not saved"
+        )
+
+    independent_only = sorted(set(independent_scope) - set(primary_map))
+    additions = [
+        {"date": day, "numbers": list(sorted(independent_scope[day]))}
+        for day in independent_only
+    ]
+    merged = list(primary_rows) + additions
+    final_dates = {
+        row["date"]: tuple(sorted(row["numbers"]))
+        for row in merged
+        if year != 2020 or row["date"] >= R60_START
+    }
+    if (
+        set(final_dates) != set(independent_scope)
+        or any(final_dates[day] != tuple(sorted(independent_scope[day]))
+               for day in independent_scope)
+    ):
+        raise RuntimeError(
+            f"{year}: post-merge verification failed; archive not saved"
+        )
+
+    return merged, {
+        "result": "PASS",
+        "archive_compared_count_before_merge": len(primary_map),
+        "independent_source_count": len(independent_scope),
+        "records_added_from_independent_source": len(additions),
+        "matching_dates_and_number_sets_after_merge": len(independent_scope),
+        "draw_numbers_in_report": False,
+    }
+
+
+def reconcile_archive_with_loto_gen(
+    rows,
+    html_pages_by_year=None,
+    start_year=2020,
+    through_year=None,
+):
+    """Verify every year against Loto.gen before an archive can be saved."""
+    from general_archive_cross_source_audit import (
+        fetch_html as fetch_audit_html,
+        parse_loto_gen_year_page,
+    )
+
+    through_year = through_year or datetime.now(timezone.utc).year
+    html_pages_by_year = html_pages_by_year or {}
+    reconciled = list(rows)
+    reports = {}
+
+    for year in range(start_year, through_year + 1):
+        urls = [f"{LOTO_GEN_BASE}/{year}"]
+        if year >= 2021:
+            urls.append(f"{LOTO_GEN_BASE}/{year}?sayfa=2")
+
+        supplied_pages = html_pages_by_year.get(year)
+        if supplied_pages is not None and len(supplied_pages) != len(urls):
+            raise RuntimeError(
+                f"{year}: wrong number of independent-source fixture pages; "
+                "archive not saved"
+            )
+
+        independent = {}
+        parse_errors = []
+        for index, url in enumerate(urls):
+            html = (
+                supplied_pages[index]
+                if supplied_pages is not None
+                else fetch_audit_html(url)
+            )
+            page_rows, page_errors = parse_loto_gen_year_page(html, year)
+            parse_errors.extend(page_errors)
+            for day, numbers in page_rows.items():
+                if day in independent and independent[day] != numbers:
+                    parse_errors.append(day)
+                    independent.pop(day, None)
+                elif day not in independent:
+                    independent[day] = numbers
+
+        verified_rows = [
+            row for row in reconciled
+            if row["date"].startswith(str(year))
+        ]
+        merged_year, verification = reconcile_year_with_loto_gen(
+            year,
+            verified_rows,
+            independent,
+            parse_errors,
+        )
+        other_years = [
+            row for row in reconciled
+            if not row["date"].startswith(str(year))
+        ]
+        reconciled = other_years + merged_year
+        verification["source"] = "loto.gen.tr"
+        verification["pages_checked"] = urls
+        verification["checked_at"] = datetime.now(timezone.utc).isoformat()
+        reports[str(year)] = verification
+
+    reconciled.sort(key=lambda row: row["date"])
+    final_counts = {}
+    for row in reconciled:
+        year = int(row["date"][:4])
+        final_counts[year] = final_counts.get(year, 0) + 1
+    for year, expected in VERIFIED_ARCHIVE_EXPECTED.items():
+        if start_year <= year <= through_year and final_counts.get(year, 0) != expected:
+            raise RuntimeError(
+                f"{year}: verified archive count is not {expected}; "
+                "archive not saved"
+            )
+    return reconciled, reports
+
+
+def build_archive(
+    year_rows,
+    independent_html_pages=None,
+    independent_year_html_pages=None,
+    through_year=None,
+):
     all_rows = []
     check = None
     for year in sorted(year_rows):
@@ -276,18 +449,26 @@ def build_archive(year_rows, independent_html_pages=None):
             independent = fetch_independent_2025(independent_html_pages)
             check = compare_2025(rows, independent)
         if year in EXPECTED and len({r["date"] for r in rows}) != EXPECTED[year]:
-            raise RuntimeError(f"{year}: unexpected number of unique dates; archive not saved")
+            raise RuntimeError(f"{year}: unexpected number of unique primary-source dates; archive not saved")
         all_rows.extend(rows)
-    all_rows.sort(key=lambda r: r["date"])
+
+    if check is None:
+        raise RuntimeError("Required independent 2025 check did not run; archive not saved")
+
+    all_rows, multi_year_check = reconcile_archive_with_loto_gen(
+        all_rows,
+        html_pages_by_year=independent_year_html_pages,
+        through_year=through_year,
+    )
     dates = [r["date"] for r in all_rows]
     if not all_rows or len(dates) != len(set(dates)):
         raise RuntimeError("Archive empty or contains duplicate dates; archive not saved")
-    if check is None:
-        raise RuntimeError("Required independent 2025 check did not run; archive not saved")
+
     payload = {
         "source": BASE_URL,
         "cross_check_source": CROSS_URLS[0],
         "cross_check_validation": check,
+        "multi_year_cross_source_validation": multi_year_check,
         "fetched_at": datetime.now(timezone.utc).isoformat(),
         "corrections_applied": [
             {"removed_source_date": wrong, "verified_actual_date": actual, "reason": "Misdated duplicate; verified against matching counterpart and independent source"}

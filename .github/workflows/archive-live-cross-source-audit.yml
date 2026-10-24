@@ -1,0 +1,256 @@
+name: GENERAL Live Multi-Year Archive Cross-Source Audit
+
+'on':
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "general_archive_cross_source_audit.py"
+      - "general_archive_cross_source_audit_test.py"
+      - "general_archive_fetch.py"
+      - "general_archive_fetch_test.py"
+      - "general_data_guard.py"
+      - "super_loto_archive.json"
+      - ".github/workflows/archive-live-cross-source-audit.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  deterministic-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile audit components
+        run: >-
+          python -m py_compile
+          general_archive_cross_source_audit.py
+          general_archive_cross_source_audit_test.py
+          general_archive_fetch.py
+          general_archive_fetch_test.py
+          general_data_guard.py
+
+      - name: Run deterministic parser and comparison tests
+        run: python -m unittest -v general_archive_cross_source_audit_test general_archive_fetch_test
+
+  live-cross-source-audit:
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request'
+    needs: deterministic-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run read-only live cross-source audit
+        run: python -B general_archive_cross_source_audit.py
+
+      - name: Enforce strict archive verification gate
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          report_path = Path("archive_cross_source_audit_report.json")
+          if not report_path.is_file():
+              raise SystemExit(
+                  "AUDIT GATE: BLOCKED; report was not produced."
+              )
+
+          report = json.loads(
+              report_path.read_text(encoding="utf-8")
+          )
+
+          if not isinstance(report, dict):
+              raise SystemExit(
+                  "AUDIT GATE: BLOCKED; report schema is invalid."
+              )
+
+          if report.get("archive_modified") is not False:
+              raise SystemExit(
+                  "AUDIT GATE: BLOCKED; archive-modification invariant failed."
+              )
+
+          if report.get("active_target_numbers_exposed") is not False:
+              raise SystemExit(
+                  "AUDIT GATE: BLOCKED; target-exposure invariant failed."
+              )
+
+          if report.get("draw_numbers_in_report") is not False:
+              raise SystemExit(
+                  "AUDIT GATE: BLOCKED; report must not contain draw-number sets."
+              )
+
+          def contains_number_sets(value):
+              if isinstance(value, dict):
+                  for key, item in value.items():
+                      if str(key).lower() in {
+                          "numbers",
+                          "number_sets",
+                          "draw_numbers",
+                      }:
+                          return True
+                      if contains_number_sets(item):
+                          return True
+
+              elif isinstance(value, list):
+                  return any(
+                      contains_number_sets(item) for item in value
+                  )
+
+              return False
+
+          if contains_number_sets(report):
+              raise SystemExit(
+                  "AUDIT GATE: BLOCKED; number-set field found in report."
+              )
+
+          expected_years = {
+              str(year) for year in range(2020, 2027)
+          }
+
+          year_results = report.get("loto_gen_by_year")
+
+          if (
+              not isinstance(year_results, dict)
+              or set(year_results) != expected_years
+          ):
+              raise SystemExit(
+                  "AUDIT GATE: BLOCKED; one or more required source years are missing."
+              )
+
+          statuses = {}
+
+          for year in sorted(expected_years):
+              details = year_results.get(year)
+
+              result = (
+                  details.get("loto_gen", {})
+                  if isinstance(details, dict)
+                  else {}
+              )
+
+              statuses[f"loto.gen.tr {year}"] = result.get(
+                  "status",
+                  "MISSING_STATUS",
+              )
+
+          statuses["Lotobil R54"] = report.get(
+              "lotobil_R54_comparison", {}
+          ).get("status", "MISSING_STATUS")
+
+          statuses["Lotobil R60"] = report.get(
+              "lotobil_R60_comparison", {}
+          ).get("status", "MISSING_STATUS")
+
+          summary_lines = [
+              "## GENERAL live archive cross-source audit",
+              "",
+              "No draw-number sets are included in this summary.",
+              "",
+              "| Source scope | Status |",
+              "|---|---|",
+          ]
+
+          for scope, status in statuses.items():
+              print(f"{scope}: {status}")
+              summary_lines.append(
+                  f"| {scope} | {status} |"
+              )
+
+          fetch_failures = report.get("fetch_failures", [])
+
+          if not isinstance(fetch_failures, list):
+              raise SystemExit(
+                  "AUDIT GATE: BLOCKED; source-fetch audit field is invalid."
+              )
+
+          lotobil_r60 = report.get("lotobil_R60_comparison", {})
+          normalized_lotobil_pass = (
+              isinstance(lotobil_r60, dict)
+              and lotobil_r60.get("status")
+                  == "MATCH_AFTER_DOCUMENTED_SOURCE_NORMALIZATION"
+              and lotobil_r60.get("normalized_match") is True
+              and lotobil_r60.get("anomaly_registry_version")
+                  == report.get("lotobil_anomaly_registry_version")
+              and lotobil_r60.get("archive_count")
+                  == lotobil_r60.get("independent_count")
+                  == lotobil_r60.get("common_date_count")
+              and lotobil_r60.get("archive_only_count") == 0
+              and lotobil_r60.get("independent_only_count") == 0
+              and lotobil_r60.get("number_mismatch_count") == 0
+              and lotobil_r60.get("source_parse_error_count") == 0
+              and lotobil_r60.get("raw_source_parse_error_count") == 0
+              and lotobil_r60.get("unresolved_index_gap_count") == 0
+              and isinstance(
+                  lotobil_r60.get("documented_source_anomalies"), list
+              )
+          )
+
+          blocking = {
+              scope: status
+              for scope, status in statuses.items()
+              if status != "MATCH"
+              and not (scope == "Lotobil R60" and normalized_lotobil_pass)
+          }
+
+          if fetch_failures:
+              print(
+                  "Independent-source fetch failures:",
+                  len(fetch_failures),
+              )
+
+              summary_lines.extend([
+                  "",
+                  f"Independent-source fetch failures: {len(fetch_failures)}",
+              ])
+
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+
+          if summary_path:
+              with open(
+                  summary_path,
+                  "a",
+                  encoding="utf-8",
+              ) as handle:
+                  handle.write(
+                      "\n".join(summary_lines) + "\n"
+                  )
+
+          if blocking or fetch_failures:
+              print(
+                  "AUDIT GATE: BLOCKED. Review the number-free "
+                  "report artifact; do not use the archive for formula "
+                  "discovery until discrepancies or source-coverage "
+                  "gaps are resolved."
+              )
+              raise SystemExit(1)
+
+          print(
+              "AUDIT GATE: PASS. Every compared scope matched, "
+              "independent-source coverage is complete, and the "
+              "archive was not modified."
+          )
+          PY
+
+      - name: Upload number-free audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: archive-cross-source-audit-report
+          path: archive_cross_source_audit_report.json
+          if-no-files-found: ignore
+          retention-days: 7

@@ -25,6 +25,69 @@ LOTObil_URL = "https://www.lotobil.com/super-loto-butun-sonuc-listesi"
 R60_START = "2020-08-02"
 YEAR_RANGE = range(2020, 2027)
 TIMEOUT_SECONDS = 25
+LOTObil_ANOMALY_REGISTRY_VERSION = "1.0.0"
+
+# Explicit date-label errors confirmed against the archive's draw index and
+# the independent Loto.gen chronology. Corrections are applied only when all
+# three fields (year, draw index, observed date) match exactly.
+LOTObil_DATE_CORRECTIONS = {
+    (2020, 17, "2020-08-08"): ("2020-09-08", "The row sits between 10/09 and 06/09; draw index 17 confirms 08/09."),
+    (2020, 51, "2020-11-16"): ("2020-11-26", "Draw index 51 and a separate result page confirm 26/11, not 16/11."),
+    (2021, 13, "2021-01-30"): ("2021-01-31", "Draw index 13 is dated 31/01 by Loto.gen and Aydinlik; Lotobil says 30/01."),
+    (2021, 108, "2021-09-10"): ("2021-09-09", "Draw index 108 confirms the Thursday 09/09 draw; Lotobil labels it 10/09."),
+    (2021, 120, "2021-09-07"): ("2021-10-07", "Draw index 120 sits between 10/10 and 05/10; the correct date is 07/10."),
+    (2023, 62, "2023-05-13"): ("2023-05-23", "Draw index 62 sits between indices 63 (25/05) and 61 (21/05)."),
+    (2025, 140, "2025-11-25"): ("2025-11-23", "Draw index 140 is 23/11; index 141 is the separate 25/11 draw."),
+    (2025, 146, "2025-12-01"): ("2025-12-07", "Draw index 146 is 07/12 between indices 147 (09/12) and 145 (04/12)."),
+    (2026, 27, "2026-01-03"): ("2026-03-03", "Draw index 27 sits between 05/03 and 01/03; the source date has a month typo."),
+}
+
+# These source rows are omitted only if the observed date, draw index, and
+# exact bad values all match. The values remain internal and are never reported.
+LOTObil_EXCLUDED_ROWS = {
+    (2021, 21, "2021-02-17"): {
+        "raw_values": (5, 17, 36, 39, 49, 53),
+        "kind": "EXTRA_DUPLICATE_DRAW_ROW",
+        "reason": "Lotobil repeats draw index 21 on a non-draw date; the valid draw-index-21 row is dated 18/02 and agrees with the archive.",
+        "verified_by": ["loto.gen.tr", "lotoistatistik.com"],
+    },
+    (2023, 130, "2023-10-29"): {
+        "raw_values": (7, 12, 20, 25, 48, 48),
+        "kind": "INVALID_DUPLICATE_BALL_ROW",
+        "reason": "Lotobil's row has a repeated ball value; the draw-specific Loto.gen page and the primary archive confirm the valid result.",
+        "verified_by": ["loto.gen.tr", "lotoistatistik.com"],
+    },
+}
+
+LOTObil_WRONG_NUMBER_ROWS = {
+    (2023, 5, "2023-01-10"): {
+        "raw_values": (15, 24, 29, 30, 44, 49),
+        "kind": "CONFIRMED_SOURCE_NUMBER_TYPO",
+        "reason": "Lotobil differs from both Loto.gen and lotoistatistik for draw index 5; exclude the Lotobil row from comparison.",
+        "verified_by": ["loto.gen.tr", "lotoistatistik.com"],
+    },
+    (2023, 31, "2023-03-12"): {
+        "raw_values": (2, 31, 34, 35, 45, 60),
+        "kind": "CONFIRMED_SOURCE_NUMBER_TYPO",
+        "reason": "Lotobil differs from both Loto.gen and lotoistatistik for draw index 31; exclude the Lotobil row from comparison.",
+        "verified_by": ["loto.gen.tr", "lotoistatistik.com"],
+    },
+}
+
+# Lotobil omits 2022 draw index 21. Treat this as a coverage exception only
+# if indices 20 and 22 are present at the documented dates and the archive has
+# the missing draw. Any other internal index gap remains blocking.
+LOTObil_MISSING_INDEX_EXCEPTIONS = {
+    (2022, 21): {
+        "date": "2022-02-17",
+        "previous_index": 20,
+        "previous_date": "2022-02-15",
+        "next_index": 22,
+        "next_date": "2022-02-20",
+        "reason": "Lotobil jumps from draw index 20 (15/02) to 22 (20/02); the missing 17/02 record is present in both Loto.gen and the archive.",
+        "verified_by": ["loto.gen.tr", "lotoistatistik.com"],
+    },
+}
 
 
 class AuditSourceError(RuntimeError):
@@ -43,12 +106,16 @@ def fetch_html(url: str) -> str:
     return data
 
 
+def _raw_number_values(cells: list[dict[str, str]], use_attrs: bool = False) -> list[int]:
+    field = "attrs" if use_attrs else "text"
+    text = " ".join(cell.get(field, "") for cell in cells)
+    return [int(x) for x in re.findall(r"(?<!\d)\d{1,2}(?!\d)", text)]
+
+
 def _six_numbers(cells: list[dict[str, str]]) -> tuple[int, ...] | None:
-    text = " ".join(cell.get("text", "") for cell in cells)
-    nums = [int(x) for x in re.findall(r"(?<!\d)\d{1,2}(?!\d)", text)]
+    nums = _raw_number_values(cells)
     if len(nums) != 6 or len(set(nums)) != 6 or any(n < 1 or n > 60 for n in nums):
-        attrs = " ".join(cell.get("attrs", "") for cell in cells)
-        nums = [int(x) for x in re.findall(r"(?<!\d)\d{1,2}(?!\d)", attrs)]
+        nums = _raw_number_values(cells, use_attrs=True)
     if len(nums) != 6 or len(set(nums)) != 6 or any(n < 1 or n > 60 for n in nums):
         return None
     return tuple(sorted(nums))
@@ -104,30 +171,52 @@ def parse_loto_gen_year_page(html: str, year: int) -> tuple[dict[str, tuple[int,
     return found, sorted(set(errors))
 
 
-def parse_lotobil_archive(html: str) -> tuple[dict[str, tuple[int, ...]], list[str]]:
-    """Parse date-first Lotobil rows; skip the draw-index column after date."""
+def parse_lotobil_archive_detailed(
+    html: str,
+) -> tuple[
+    dict[str, tuple[int, ...]],
+    list[str],
+    list[dict[str, Any]],
+    dict[int, set[int]],
+    set[tuple[int, int, str]],
+]:
+    """Parse Lotobil rows and register only exactly identified source anomalies."""
     parser = TableParser()
     parser.feed(html)
     parser.close()
     found: dict[str, tuple[int, ...]] = {}
     errors: list[str] = []
+    anomalies: list[dict[str, Any]] = []
+    indices_by_year: dict[int, set[int]] = defaultdict(set)
+    index_date_rows: set[tuple[int, int, str]] = set()
     date_pattern = re.compile(r"\b(\d{1,2})/(\d{1,2})/(\d{4})\b")
 
     for cells in parser.rows:
         date_index = None
-        draw_date = None
+        observed_date = None
         for index, cell in enumerate(cells):
             match = date_pattern.search(cell.get("text", ""))
             if match:
                 day, month, year = map(int, match.groups())
                 try:
-                    draw_date = date(year, month, day).isoformat()
+                    observed_date = date(year, month, day).isoformat()
                 except ValueError:
-                    draw_date = None
+                    observed_date = None
                 date_index = index
                 break
-        if date_index is None or draw_date is None or len(cells) < date_index + 8:
+        if (
+            date_index is None
+            or observed_date is None
+            or len(cells) < date_index + 8
+        ):
             continue
+
+        draw_index = None
+        if date_index + 1 < len(cells):
+            index_text = cells[date_index + 1].get("text", "").strip()
+            index_match = re.fullmatch(r"(\d{1,3})", index_text)
+            if index_match:
+                draw_index = int(index_match.group(1))
 
         number_cells = []
         for cell in cells[date_index + 2:]:
@@ -135,6 +224,60 @@ def parse_lotobil_archive(html: str) -> tuple[dict[str, tuple[int, ...]], list[s
             if not text or "₺" in text or re.search(r"\b(?:TL|TRY)\b", text, re.I):
                 continue
             number_cells.append(cell)
+
+        raw_values = _raw_number_values(number_cells)
+        if len(raw_values) != 6 or any(n < 1 or n > 60 for n in raw_values):
+            raw_values = _raw_number_values(number_cells, use_attrs=True)
+        raw_signature = tuple(sorted(raw_values))
+        year = int(observed_date[:4])
+        registry_key = (year, draw_index, observed_date) if draw_index is not None else None
+
+        if draw_index is not None and observed_date >= R60_START:
+            indices_by_year[year].add(draw_index)
+            index_date_rows.add((year, draw_index, observed_date))
+
+        # Recognize a known bad row only when its complete observed signature
+        # matches. An updated/corrected source row is parsed normally instead.
+        if registry_key in LOTObil_EXCLUDED_ROWS:
+            known = LOTObil_EXCLUDED_ROWS[registry_key]
+            if raw_signature == known["raw_values"]:
+                anomalies.append({
+                    "source": "lotobil",
+                    "kind": known["kind"],
+                    "draw_date": observed_date,
+                    "draw_index": draw_index,
+                    "reason": known["reason"],
+                    "verified_by": known["verified_by"],
+                })
+                continue
+
+        if registry_key in LOTObil_WRONG_NUMBER_ROWS:
+            known = LOTObil_WRONG_NUMBER_ROWS[registry_key]
+            if raw_signature == known["raw_values"]:
+                anomalies.append({
+                    "source": "lotobil",
+                    "kind": known["kind"],
+                    "draw_date": observed_date,
+                    "draw_index": draw_index,
+                    "reason": known["reason"],
+                    "verified_by": known["verified_by"],
+                })
+                continue
+
+        draw_date = observed_date
+        if registry_key in LOTObil_DATE_CORRECTIONS:
+            normalized_date, reason = LOTObil_DATE_CORRECTIONS[registry_key]
+            draw_date = normalized_date
+            anomalies.append({
+                "source": "lotobil",
+                "kind": "CONFIRMED_DATE_LABEL_CORRECTION",
+                "observed_date": observed_date,
+                "draw_date": normalized_date,
+                "draw_index": draw_index,
+                "reason": reason,
+                "verified_by": ["loto.gen.tr", "lotoistatistik.com"],
+            })
+
         numbers = _six_numbers(number_cells)
         if numbers is None:
             errors.append(draw_date)
@@ -144,7 +287,28 @@ def parse_lotobil_archive(html: str) -> tuple[dict[str, tuple[int, ...]], list[s
             found.pop(draw_date, None)
             continue
         found[draw_date] = numbers
-    return found, sorted(set(errors))
+
+    return found, sorted(set(errors)), anomalies, dict(indices_by_year), index_date_rows
+
+
+def parse_lotobil_archive(
+    html: str,
+) -> tuple[dict[str, tuple[int, ...]], list[str]]:
+    """Backward-compatible parser interface used by simple deterministic tests."""
+    found, errors, _anomalies, _indices, _index_dates = parse_lotobil_archive_detailed(html)
+    return found, errors
+
+
+def _find_missing_indices(indices_by_year: dict[int, set[int]]) -> dict[int, list[int]]:
+    """Return internal gaps in each year's source draw-index sequence."""
+    gaps: dict[int, list[int]] = {}
+    for year, indices in indices_by_year.items():
+        if not indices:
+            continue
+        missing = sorted(set(range(1, max(indices) + 1)) - indices)
+        if missing:
+            gaps[year] = missing
+    return gaps
 
 
 def _compare(
@@ -203,6 +367,18 @@ def _compare(
         "source_parse_error_dates_sample": (source_parse_errors or [])[:20],
         "draw_numbers_in_report": False,
     }
+
+
+def _within_date_scope(
+    draw_date: str,
+    start_inclusive: str,
+    end_exclusive: str | None = None,
+) -> bool:
+    """Return whether an ISO date falls within a half-open date interval."""
+    return (
+        draw_date >= start_inclusive
+        and (end_exclusive is None or draw_date < end_exclusive)
+    )
 
 
 def run_audit(archive_path: Path = ARCHIVE_PATH) -> dict[str, Any]:
@@ -266,52 +442,181 @@ def run_audit(archive_path: Path = ARCHIVE_PATH) -> dict[str, Any]:
             "page_fetch_failure_count": sum(x.startswith(f"loto.gen.tr:{year}:") for x in fetch_failures),
         }
 
-    # Independently check the R54-era archive with a source that retains the
-    # pre-August-2020 draw list as well as the newer game.
+    # Independently check Lotobil, but distinguish its documented historical
+    # data-entry errors from any new discrepancy. Every correction is keyed by
+    # observed date and draw index; values are still compared against the
+    # archive after normalization, and unregistered errors remain blocking.
+    source_anomalies: list[dict[str, Any]] = []
+    lotobil_indices_by_year: dict[int, set[int]] = {}
+    lotobil_index_date_rows: set[tuple[int, int, str]] = set()
+    lotobil_rows: dict[str, tuple[int, ...]] = {}
+    lotobil_errors: list[str] = []
+    r54_fetch_status = "FETCH_FAILED"
     try:
         lotobil_html = fetch_html(LOTObil_URL)
-        lotobil_rows, lotobil_errors = parse_lotobil_archive(lotobil_html)
+        (
+            lotobil_rows,
+            lotobil_errors,
+            source_anomalies,
+            lotobil_indices_by_year,
+            lotobil_index_date_rows,
+        ) = parse_lotobil_archive_detailed(lotobil_html)
         r54_archive = [row for row in archive_rows if row["date"] < R60_START]
+        r54_start_date = min(
+            (row["date"] for row in r54_archive),
+            default=R60_START,
+        )
         r54_source = {
             draw_date: nums for draw_date, nums in lotobil_rows.items()
-            if draw_date < R60_START
+            if _within_date_scope(draw_date, r54_start_date, R60_START)
         }
-        r54_report = _compare(r54_archive, r54_source, lotobil_errors)
+        r54_errors = [
+            draw_date for draw_date in lotobil_errors
+            if _within_date_scope(draw_date, r54_start_date, R60_START)
+        ]
+        r54_report = _compare(r54_archive, r54_source, r54_errors)
         r54_fetch_status = "FETCHED"
     except AuditSourceError:
         r54_report = {"status": "FETCH_FAILED", "draw_numbers_in_report": False}
-        r54_fetch_status = "FETCH_FAILED"
 
-    # Full-period Lotobil comparison is reported separately; it is not used
-    # to overwrite or repair the archive.
     if r54_fetch_status == "FETCHED":
-        lotobil_all = {
+        r60_source = {
             draw_date: nums for draw_date, nums in lotobil_rows.items()
             if draw_date >= R60_START
         }
-        primary_r60 = [row for row in archive_rows if row["date"] >= R60_START]
-        lotobil_r60_report = _compare(primary_r60, lotobil_all, lotobil_errors)
+        r60_archive = [row for row in archive_rows if row["date"] >= R60_START]
+        r60_errors = [
+            draw_date for draw_date in lotobil_errors
+            if _within_date_scope(draw_date, R60_START)
+        ]
+
+        # Draw index 21 is missing from the 2022 Lotobil sequence. This is
+        # accepted only when neighbouring index/date pairs and the archive
+        # agree with the documented source-coverage gap.
+        missing_source_dates: set[str] = set()
+        expected_missing = LOTObil_MISSING_INDEX_EXCEPTIONS[(2022, 21)]
+        has_gap = 21 not in lotobil_indices_by_year.get(2022, set())
+        has_neighbours = (
+            (2022, 20, expected_missing["previous_date"]) in lotobil_index_date_rows
+            and (2022, 22, expected_missing["next_date"]) in lotobil_index_date_rows
+        )
+        archive_has_gap_date = any(
+            row["date"] == expected_missing["date"] for row in r60_archive
+        )
+        if has_gap and has_neighbours and archive_has_gap_date:
+            missing_source_dates.add(expected_missing["date"])
+            source_anomalies.append({
+                "source": "lotobil",
+                "kind": "CONFIRMED_MISSING_SOURCE_ROW",
+                "draw_date": expected_missing["date"],
+                "draw_index": 21,
+                "reason": expected_missing["reason"],
+                "verified_by": expected_missing["verified_by"],
+            })
+
+        missing_indices = _find_missing_indices(lotobil_indices_by_year)
+        unresolved_index_gaps: dict[str, list[int]] = {}
+        for gap_year, gaps in missing_indices.items():
+            unrecognized = [
+                index for index in gaps
+                if not (
+                    gap_year == 2022
+                    and index == 21
+                    and expected_missing["date"] in missing_source_dates
+                )
+            ]
+            if unrecognized:
+                unresolved_index_gaps[str(gap_year)] = unrecognized
+
+        # Rows whose exact source error is independently verified are excluded
+        # from both sides of the Lotobil-only comparison, never from the
+        # canonical archive or the year-by-year Loto.gen check.
+        excluded_comparison_dates = {
+            anomaly.get("draw_date")
+            for anomaly in source_anomalies
+            if anomaly.get("kind") in {
+                "CONFIRMED_SOURCE_NUMBER_TYPO",
+                "INVALID_DUPLICATE_BALL_ROW",
+            }
+        }
+        excluded_comparison_dates.update(missing_source_dates)
+
+        comparable_archive = [
+            row for row in r60_archive
+            if row["date"] not in excluded_comparison_dates
+        ]
+        comparable_source = {
+            draw_date: nums for draw_date, nums in r60_source.items()
+            if draw_date not in excluded_comparison_dates
+        }
+        comparable_errors = [
+            draw_date for draw_date in r60_errors
+            if draw_date not in excluded_comparison_dates
+        ]
+
+        lotobil_r60_report = _compare(
+            comparable_archive,
+            comparable_source,
+            comparable_errors,
+        )
+        lotobil_r60_report["raw_source_parse_error_count"] = len(r60_errors)
+        lotobil_r60_report["documented_source_anomaly_count"] = len(source_anomalies)
+        lotobil_r60_report["source_date_correction_count"] = sum(
+            1 for item in source_anomalies
+            if item.get("kind") == "CONFIRMED_DATE_LABEL_CORRECTION"
+        )
+        lotobil_r60_report["excluded_confirmed_bad_row_count"] = sum(
+            1 for item in source_anomalies
+            if item.get("kind") in {
+                "EXTRA_DUPLICATE_DRAW_ROW",
+                "INVALID_DUPLICATE_BALL_ROW",
+                "CONFIRMED_SOURCE_NUMBER_TYPO",
+            }
+        )
+        lotobil_r60_report["excluded_confirmed_missing_row_count"] = len(missing_source_dates)
+        lotobil_r60_report["unresolved_index_gap_count"] = sum(
+            len(values) for values in unresolved_index_gaps.values()
+        )
+        lotobil_r60_report["unresolved_index_gaps_by_year"] = unresolved_index_gaps
+        lotobil_r60_report["documented_source_anomalies"] = source_anomalies
+        lotobil_r60_report["anomaly_registry_version"] = LOTObil_ANOMALY_REGISTRY_VERSION
+
+        # The normalized status is allowed only when all remaining dates and
+        # number sets match and no new parse/index gaps remain.
+        if (
+            lotobil_r60_report["status"] == "MATCH"
+            and not unresolved_index_gaps
+        ):
+            if source_anomalies:
+                lotobil_r60_report["status"] = "MATCH_AFTER_DOCUMENTED_SOURCE_NORMALIZATION"
+            lotobil_r60_report["normalized_match"] = True
+        else:
+            lotobil_r60_report["normalized_match"] = False
     else:
         lotobil_r60_report = {"status": "FETCH_FAILED", "draw_numbers_in_report": False}
 
+
     return {
-        "audit_version": "1.0.0",
+        "audit_version": "1.1.0",
         "archive_guard_version": summary["guard_version"],
         "archive_records": summary["record_count"],
         "archive_first_date": summary["first_date"],
         "archive_last_date": summary["last_date"],
         "active_target_numbers_exposed": False,
         "archive_modified": False,
+        "draw_numbers_in_report": False,
         "primary_source_cross_check_scope_in_existing_fetcher": "2025 only",
         "regime_rule": {"R54_end_date": "2020-07-30", "R60_start_date": R60_START},
         "loto_gen_by_year": year_status,
         "lotobil_R54_comparison": r54_report,
         "lotobil_R60_comparison": lotobil_r60_report,
         "fetch_failures": fetch_failures,
+        "lotobil_anomaly_registry_version": LOTObil_ANOMALY_REGISTRY_VERSION,
         "interpretation": [
             "MATCH means dates and number sets agree within the compared scope.",
-            "SOURCE_LAG_AT_TAIL means archive-only dates are later than that source's latest date and do not by themselves prove an archive error.",
-            "ARCHIVE_BEHIND_SOURCE means the independent source contains later dates not present in the working archive.",
+            "MATCH_AFTER_DOCUMENTED_SOURCE_NORMALIZATION means the compared rows match after only exact, independently verified Lotobil date-label corrections and explicitly registered bad/missing source rows are excluded.",
+            "Unregistered parse errors, date gaps, and number-set mismatches remain blocking.",
+            "The Lotobil-only exclusions never alter the canonical archive or relax the per-year Loto.gen comparison.",
             "This audit does not modify the archive or run statistical discovery.",
             "No draw-number sets are included in this report."
         ]

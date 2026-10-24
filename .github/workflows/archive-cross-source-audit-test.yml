@@ -7,6 +7,7 @@ on:
       - "general_archive_cross_source_audit.py"
       - "general_archive_cross_source_audit_test.py"
       - "general_archive_fetch.py"
+      - "general_archive_fetch_test.py"
       - "general_data_guard.py"
       - ".github/workflows/archive-cross-source-audit-test.yml"
 
@@ -25,6 +26,6 @@ jobs:
         with:
           python-version: "3.12"
       - name: Compile audit and tests
-        run: python -m py_compile general_archive_cross_source_audit.py general_archive_cross_source_audit_test.py general_archive_fetch.py general_data_guard.py
+        run: python -m py_compile general_archive_cross_source_audit.py general_archive_cross_source_audit_test.py general_archive_fetch.py general_archive_fetch_test.py general_data_guard.py
       - name: Run deterministic parser and comparison tests
-        run: python -m unittest -v general_archive_cross_source_audit_test
+        run: python -m unittest -v general_archive_cross_source_audit_test general_archive_fetch_test

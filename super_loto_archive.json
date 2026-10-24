@@ -34,6 +34,86 @@
       "removed_source_date": "2025-07-12",
       "verified_actual_date": "2025-06-12",
       "reason": "Misdated duplicate; verified against matching counterpart and independent source"
+    },
+    {
+      "added_verified_date": "2021-01-31",
+      "independent_sources": [
+        "https://loto.gen.tr/super-loto/arsiv/2021?sayfa=2",
+        "https://www.aydinlik.com.tr/sans-oyunlari/super-loto-sonuclari?ay=1&yil=2021"
+      ],
+      "reason": "Added missing historical draw after two-source verification. A third source labels the same result one calendar day earlier; the verified date from the first two sources was retained."
+    },
+    {
+      "added_verified_date": "2021-11-30",
+      "independent_sources": [
+        "https://www.lotobil.com/Super-Loto-Butun-Sonuc-Listesi",
+        "https://www.aydinlik.com.tr/sans-oyunlari/super-loto-sonuclari?ay=11&yil=2021"
+      ],
+      "reason": "Added missing historical draw after independent-source date and result agreement."
+    },
+    {
+      "added_verified_date": "2022-01-02",
+      "independent_sources": [
+        "https://loto.gen.tr/super-loto/arsiv/2022",
+        "https://www.lotobil.com/Super-Loto-Butun-Sonuc-Listesi"
+      ],
+      "reason": "Added missing historical draw after independent-source date and result agreement."
+    },
+    {
+      "added_verified_date": "2023-08-17",
+      "independent_sources": [
+        "https://loto.gen.tr/super-loto/arsiv/2023",
+        "https://www.lotobil.com/Super-Loto-Butun-Sonuc-Listesi"
+      ],
+      "reason": "Added missing historical draw after independent-source date and result agreement."
+    },
+    {
+      "added_verified_date": "2023-08-20",
+      "independent_sources": [
+        "https://loto.gen.tr/super-loto/arsiv/2023",
+        "https://www.lotobil.com/Super-Loto-Butun-Sonuc-Listesi"
+      ],
+      "reason": "Added missing historical draw after independent-source date and result agreement."
+    },
+    {
+      "added_verified_date": "2023-10-22",
+      "independent_sources": [
+        "https://loto.gen.tr/super-loto/arsiv/2023",
+        "https://www.lotobil.com/Super-Loto-Butun-Sonuc-Listesi"
+      ],
+      "reason": "Added missing historical draw after independent-source date and result agreement."
+    },
+    {
+      "added_verified_date": "2023-10-24",
+      "independent_sources": [
+        "https://loto.gen.tr/super-loto/arsiv/2023",
+        "https://www.lotobil.com/Super-Loto-Butun-Sonuc-Listesi"
+      ],
+      "reason": "Added missing historical draw after independent-source date and result agreement."
+    },
+    {
+      "added_verified_date": "2023-10-26",
+      "independent_sources": [
+        "https://loto.gen.tr/super-loto/arsiv/2023",
+        "https://www.lotobil.com/Super-Loto-Butun-Sonuc-Listesi"
+      ],
+      "reason": "Added missing historical draw after independent-source date and result agreement."
+    },
+    {
+      "added_verified_date": "2023-10-29",
+      "independent_sources": [
+        "https://loto.gen.tr/super-loto/cekilis/20230130",
+        "https://www.haberturk.com/super-loto-sonuclari-belli-oldu-29-ekim-2023-super-loto-sonuc-sorgulama-sayfasi-tikla-ve-ogren-3633330"
+      ],
+      "reason": "Added missing historical draw after agreement from the draw-specific results page and a separate news report; another archive has an invalid duplicate-number row for this date and was not used to determine the result."
+    },
+    {
+      "added_verified_date": "2023-11-05",
+      "independent_sources": [
+        "https://loto.gen.tr/super-loto/arsiv/2023",
+        "https://www.lotobil.com/Super-Loto-Butun-Sonuc-Listesi"
+      ],
+      "reason": "Added missing historical draw after independent-source date and result agreement."
     }
   ],
   "draws": [
@@ -1234,6 +1314,17 @@
         38,
         45,
         53
+      ]
+    },
+    {
+      "date": "2021-01-31",
+      "numbers": [
+        1,
+        7,
+        36,
+        44,
+        46,
+        59
       ]
     },
     {
@@ -2656,6 +2747,17 @@
       ]
     },
     {
+      "date": "2021-11-30",
+      "numbers": [
+        24,
+        27,
+        43,
+        45,
+        51,
+        53
+      ]
+    },
+    {
       "date": "2021-12-02",
       "numbers": [
         12,
@@ -2796,6 +2898,17 @@
         35,
         47,
         58
+      ]
+    },
+    {
+      "date": "2022-01-02",
+      "numbers": [
+        41,
+        43,
+        46,
+        47,
+        48,
+        51
       ]
     },
     {
@@ -5582,6 +5695,28 @@
       ]
     },
     {
+      "date": "2023-08-17",
+      "numbers": [
+        5,
+        10,
+        19,
+        25,
+        33,
+        35
+      ]
+    },
+    {
+      "date": "2023-08-20",
+      "numbers": [
+        12,
+        18,
+        39,
+        48,
+        54,
+        59
+      ]
+    },
+    {
       "date": "2023-08-22",
       "numbers": [
         4,
@@ -5868,6 +6003,50 @@
       ]
     },
     {
+      "date": "2023-10-22",
+      "numbers": [
+        6,
+        7,
+        14,
+        37,
+        49,
+        57
+      ]
+    },
+    {
+      "date": "2023-10-24",
+      "numbers": [
+        7,
+        10,
+        23,
+        27,
+        46,
+        58
+      ]
+    },
+    {
+      "date": "2023-10-26",
+      "numbers": [
+        1,
+        31,
+        40,
+        42,
+        45,
+        56
+      ]
+    },
+    {
+      "date": "2023-10-29",
+      "numbers": [
+        7,
+        12,
+        20,
+        25,
+        47,
+        48
+      ]
+    },
+    {
       "date": "2023-10-31",
       "numbers": [
         8,
@@ -5887,6 +6066,17 @@
         56,
         58,
         59
+      ]
+    },
+    {
+      "date": "2023-11-05",
+      "numbers": [
+        6,
+        13,
+        26,
+        50,
+        55,
+        60
       ]
     },
     {
