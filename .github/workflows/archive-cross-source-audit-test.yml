@@ -7,6 +7,7 @@ on:
       - "general_archive_cross_source_audit.py"
       - "general_archive_cross_source_audit_test.py"
       - "general_archive_fetch.py"
+      - "general_archive_fetch_test.py"
       - "general_data_guard.py"
       - ".github/workflows/archive-cross-source-audit-test.yml"
 
