@@ -178,10 +178,33 @@ jobs:
                   "AUDIT GATE: BLOCKED; source-fetch audit field is invalid."
               )
 
+          lotobil_r60 = report.get("lotobil_R60_comparison", {})
+          normalized_lotobil_pass = (
+              isinstance(lotobil_r60, dict)
+              and lotobil_r60.get("status")
+                  == "MATCH_AFTER_DOCUMENTED_SOURCE_NORMALIZATION"
+              and lotobil_r60.get("normalized_match") is True
+              and lotobil_r60.get("anomaly_registry_version")
+                  == report.get("lotobil_anomaly_registry_version")
+              and lotobil_r60.get("archive_count")
+                  == lotobil_r60.get("independent_count")
+                  == lotobil_r60.get("common_date_count")
+              and lotobil_r60.get("archive_only_count") == 0
+              and lotobil_r60.get("independent_only_count") == 0
+              and lotobil_r60.get("number_mismatch_count") == 0
+              and lotobil_r60.get("source_parse_error_count") == 0
+              and lotobil_r60.get("raw_source_parse_error_count") == 0
+              and lotobil_r60.get("unresolved_index_gap_count") == 0
+              and isinstance(
+                  lotobil_r60.get("documented_source_anomalies"), list
+              )
+          )
+
           blocking = {
               scope: status
               for scope, status in statuses.items()
               if status != "MATCH"
+              and not (scope == "Lotobil R60" and normalized_lotobil_pass)
           }
 
           if fetch_failures:
