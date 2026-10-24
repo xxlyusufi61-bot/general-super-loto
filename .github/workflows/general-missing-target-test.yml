@@ -1,7 +1,13 @@
 name: GENERAL Missing Target Test
 
-"on":
+'on':
   workflow_dispatch:
+  pull_request:
+    paths:
+      - "general_core.py"
+      - "general_data_guard.py"
+      - "general_core_missing_target_test.py"
+      - ".github/workflows/general-missing-target-test.yml"
   push:
     paths:
       - "general_core.py"
