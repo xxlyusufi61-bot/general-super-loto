@@ -67,6 +67,20 @@ class ArchiveCrossSourceAuditTests(unittest.TestCase):
         self.assertNotIn("2, 3, 4, 5, 6, 7", str(result))
 
 
+    def test_date_scope_uses_start_inclusive_end_exclusive_boundaries(self):
+        self.assertFalse(
+            audit._within_date_scope("2019-12-31", "2020-01-02", "2020-08-02")
+        )
+        self.assertTrue(
+            audit._within_date_scope("2020-01-02", "2020-01-02", "2020-08-02")
+        )
+        self.assertFalse(
+            audit._within_date_scope("2020-08-02", "2020-01-02", "2020-08-02")
+        )
+        self.assertTrue(
+            audit._within_date_scope("2026-10-22", "2020-08-02")
+        )
+
     def test_run_audit_declares_top_level_report_is_number_free(self):
         import json
         from unittest.mock import patch
