@@ -109,5 +109,53 @@ class ArchiveCrossSourceAuditTests(unittest.TestCase):
         self.assertIs(report.get("active_target_numbers_exposed"), False)
 
 
+    def test_lotobil_known_date_typo_is_normalized_only_by_exact_index_date(self):
+        html = """
+        <table><tr><td>08/08/2020</td><td>17</td>
+        <td>1</td><td>8</td><td>14</td><td>27</td><td>33</td><td>59</td>
+        </tr></table>
+        """
+        rows, errors, anomalies, _indices, _index_dates = (
+            audit.parse_lotobil_archive_detailed(html)
+        )
+        self.assertEqual(errors, [])
+        self.assertIn("2020-09-08", rows)
+        self.assertNotIn("2020-08-08", rows)
+        self.assertEqual(len(anomalies), 1)
+        self.assertEqual(
+            anomalies[0]["kind"], "CONFIRMED_DATE_LABEL_CORRECTION"
+        )
+        self.assertFalse(any("numbers" in key for key in anomalies[0]))
+
+    def test_lotobil_known_duplicate_ball_row_is_excluded_exactly(self):
+        html = """
+        <table><tr><td>29/10/2023</td><td>130</td>
+        <td>7</td><td>12</td><td>20</td><td>25</td><td>48</td><td>48</td>
+        </tr></table>
+        """
+        rows, errors, anomalies, _indices, _index_dates = (
+            audit.parse_lotobil_archive_detailed(html)
+        )
+        self.assertEqual(errors, [])
+        self.assertNotIn("2023-10-29", rows)
+        self.assertEqual(len(anomalies), 1)
+        self.assertEqual(
+            anomalies[0]["kind"], "INVALID_DUPLICATE_BALL_ROW"
+        )
+
+    def test_lotobil_unregistered_invalid_row_remains_a_parse_error(self):
+        html = """
+        <table><tr><td>29/10/2023</td><td>130</td>
+        <td>7</td><td>12</td><td>20</td><td>25</td><td>48</td><td>49</td>
+        </tr></table>
+        """
+        rows, errors, anomalies, _indices, _index_dates = (
+            audit.parse_lotobil_archive_detailed(html)
+        )
+        self.assertEqual(rows, {})
+        self.assertEqual(errors, ["2023-10-29"])
+        self.assertEqual(anomalies, [])
+
+
 if __name__ == "__main__":
     unittest.main()
