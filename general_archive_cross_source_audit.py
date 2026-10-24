@@ -205,6 +205,18 @@ def _compare(
     }
 
 
+def _within_date_scope(
+    draw_date: str,
+    start_inclusive: str,
+    end_exclusive: str | None = None,
+) -> bool:
+    """Return whether an ISO date falls within a half-open date interval."""
+    return (
+        draw_date >= start_inclusive
+        and (end_exclusive is None or draw_date < end_exclusive)
+    )
+
+
 def run_audit(archive_path: Path = ARCHIVE_PATH) -> dict[str, Any]:
     try:
         payload = json.loads(archive_path.read_text(encoding="utf-8"))
@@ -272,11 +284,21 @@ def run_audit(archive_path: Path = ARCHIVE_PATH) -> dict[str, Any]:
         lotobil_html = fetch_html(LOTObil_URL)
         lotobil_rows, lotobil_errors = parse_lotobil_archive(lotobil_html)
         r54_archive = [row for row in archive_rows if row["date"] < R60_START]
+        r54_start_date = min(
+            (row["date"] for row in r54_archive),
+            default=R60_START,
+        )
+        # Compare only the archive's actual R54 coverage window, not every
+        # historical Lotobil row going back to 2007.
         r54_source = {
             draw_date: nums for draw_date, nums in lotobil_rows.items()
-            if draw_date < R60_START
+            if _within_date_scope(draw_date, r54_start_date, R60_START)
         }
-        r54_report = _compare(r54_archive, r54_source, lotobil_errors)
+        r54_errors = [
+            draw_date for draw_date in lotobil_errors
+            if _within_date_scope(draw_date, r54_start_date, R60_START)
+        ]
+        r54_report = _compare(r54_archive, r54_source, r54_errors)
         r54_fetch_status = "FETCHED"
     except AuditSourceError:
         r54_report = {"status": "FETCH_FAILED", "draw_numbers_in_report": False}
@@ -290,7 +312,11 @@ def run_audit(archive_path: Path = ARCHIVE_PATH) -> dict[str, Any]:
             if draw_date >= R60_START
         }
         primary_r60 = [row for row in archive_rows if row["date"] >= R60_START]
-        lotobil_r60_report = _compare(primary_r60, lotobil_all, lotobil_errors)
+        r60_errors = [
+            draw_date for draw_date in lotobil_errors
+            if _within_date_scope(draw_date, R60_START)
+        ]
+        lotobil_r60_report = _compare(primary_r60, lotobil_all, r60_errors)
     else:
         lotobil_r60_report = {"status": "FETCH_FAILED", "draw_numbers_in_report": False}
 
@@ -302,6 +328,7 @@ def run_audit(archive_path: Path = ARCHIVE_PATH) -> dict[str, Any]:
         "archive_last_date": summary["last_date"],
         "active_target_numbers_exposed": False,
         "archive_modified": False,
+        "draw_numbers_in_report": False,
         "primary_source_cross_check_scope_in_existing_fetcher": "2025 only",
         "regime_rule": {"R54_end_date": "2020-07-30", "R60_start_date": R60_START},
         "loto_gen_by_year": year_status,
