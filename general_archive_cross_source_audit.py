@@ -302,6 +302,7 @@ def run_audit(archive_path: Path = ARCHIVE_PATH) -> dict[str, Any]:
         "archive_last_date": summary["last_date"],
         "active_target_numbers_exposed": False,
         "archive_modified": False,
+        "draw_numbers_in_report": False,
         "primary_source_cross_check_scope_in_existing_fetcher": "2025 only",
         "regime_rule": {"R54_end_date": "2020-07-30", "R60_start_date": R60_START},
         "loto_gen_by_year": year_status,
