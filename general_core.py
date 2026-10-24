@@ -62,6 +62,7 @@ def load_method_registry_context(target=None):
 
     visible_methods = {}
     withheld_methods = []
+    withheld_method_reasons = {}
     for name, method in registry["methods"].items():
         if not isinstance(method, dict):
             raise RuntimeError("Method registry contains an invalid method entry.")
@@ -69,9 +70,24 @@ def load_method_registry_context(target=None):
             visible_methods[name] = method
         else:
             withheld_methods.append(name)
+            available = method.get("available_from")
+            if not isinstance(available, str):
+                reason = "missing_available_from"
+            else:
+                try:
+                    parsed = date.fromisoformat(available)
+                    reason = (
+                        "invalid_available_from"
+                        if parsed.isoformat() != available
+                        else "not_before_target"
+                    )
+                except ValueError:
+                    reason = "invalid_available_from"
+            withheld_method_reasons[name] = reason
 
     visible_results = {}
     withheld_results = []
+    withheld_result_reasons = {}
     for name, result in registry["historical_results"].items():
         if not isinstance(result, dict):
             raise RuntimeError("Method registry contains an invalid historical result.")
@@ -79,6 +95,20 @@ def load_method_registry_context(target=None):
             visible_results[name] = result
         else:
             withheld_results.append(name)
+            available = result.get("available_from")
+            if not isinstance(available, str):
+                reason = "missing_available_from"
+            else:
+                try:
+                    parsed = date.fromisoformat(available)
+                    reason = (
+                        "invalid_available_from"
+                        if parsed.isoformat() != available
+                        else "not_before_target"
+                    )
+                except ValueError:
+                    reason = "invalid_available_from"
+            withheld_result_reasons[name] = reason
 
     return {
         "schema_version": registry["schema_version"],
@@ -90,11 +120,22 @@ def load_method_registry_context(target=None):
         "historical_results": visible_results,
         "withheld_post_target_or_undated_methods": withheld_methods,
         "withheld_post_target_or_undated_results": withheld_results,
+        "withheld_method_reasons": withheld_method_reasons,
+        "withheld_result_reasons": withheld_result_reasons,
+        "registry_audit": {
+            "method_count": len(registry["methods"]),
+            "eligible_method_count": len(visible_methods),
+            "withheld_method_count": len(withheld_methods),
+            "historical_result_count": len(registry["historical_results"]),
+            "eligible_historical_result_count": len(visible_results),
+            "withheld_historical_result_count": len(withheld_results)
+        },
         "promotion_requirements": registry["promotion_requirements"],
         "note": (
             "Only entries with a valid available_from date strictly before "
-            "the isolated target are visible. Missing provenance is withheld, "
-            "not assumed to be historical."
+            "the isolated target are visible. Each withheld entry has an "
+            "explicit reason. Missing provenance is withheld, not assumed "
+            "to be historical; do not invent dates to make entries eligible."
         )
     }
 
@@ -474,6 +515,20 @@ def prepare_data(target):
             "SECURITY: row-level chronology or target-isolation audit failed."
         )
 
+    # R54 and R60 are separate regimes. R60 starts on 2020-08-02;
+    # no draw is duplicated or silently reclassified.
+    r60_start = date(2020, 8, 2)
+    training_by_regime = {"R54": [], "R60": []}
+    for row in training:
+        regime = "R60" if date.fromisoformat(row["date"]) >= r60_start else "R54"
+        training_by_regime[regime].append(row)
+
+    if (
+        len(training_by_regime["R54"]) + len(training_by_regime["R60"])
+        != len(training)
+    ):
+        raise RuntimeError("SECURITY: regime partition count mismatch.")
+
     return {
         "guard": "PASS",
         "target_date": target,
@@ -490,7 +545,13 @@ def prepare_data(target):
         "excluded_dates_match_archive": excluded_dates_match_archive,
         "training_dates_match_archive": training_dates_match_archive,
         "partition_counts_match": partition_counts_match,
-        "training_data": training
+        "training_data": training,
+        "training_by_regime": training_by_regime,
+        "regime_counts": {
+            "R54": len(training_by_regime["R54"]),
+            "R60": len(training_by_regime["R60"])
+        },
+        "regime_boundary": "2020-08-02"
     }
 
 
@@ -686,7 +747,9 @@ def run_agent(agent, task):
                 "DATA GUARD PASS. Data Guard validated the archive and isolated "
                 "the target. Only records strictly before target_date are "
                 "supplied below. The target draw values and all target/future "
-                "records are not supplied. Do not claim to have inspected "
+                "records are not supplied. R54 (before 2020-08-02) and R60 "
+                " (from 2020-08-02) must be evaluated separately; do not pool "
+                "their draw rows as one regime. Do not claim to have inspected "
                 "excluded values.\n"
             )
 
@@ -743,7 +806,18 @@ def run_agent(agent, task):
     )
 
     if data:
-        model_data = data
+        # For analysis agents, transmit the two regime partitions explicitly
+        # instead of an undifferentiated training_data list.
+        model_data = {
+            key: value for key, value in data.items()
+            if key != "training_data"
+        }
+        if agent != "validation":
+            model_data["regime_analysis_instruction"] = (
+                "R54 and R60 are separate regimes. Analyze each regime "
+                "independently; do not combine rows or infer a pooled formula "
+                "without a separately reported and justified cross-regime test."
+            )
         if agent == "validation":
             # Validation needs only metadata; transmitting every training draw
             # adds latency and exposes unnecessary number data to the model.
