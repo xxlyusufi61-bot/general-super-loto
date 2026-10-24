@@ -67,5 +67,33 @@ class ArchiveCrossSourceAuditTests(unittest.TestCase):
         self.assertNotIn("2, 3, 4, 5, 6, 7", str(result))
 
 
+    def test_run_audit_declares_top_level_report_is_number_free(self):
+        import json
+        from unittest.mock import patch
+
+        with TemporaryDirectory() as temp_dir:
+            archive_path = Path(temp_dir) / "archive.json"
+            archive_path.write_text(
+                json.dumps({"draws": []}),
+                encoding="utf-8",
+            )
+            guard_summary = {
+                "valid": True,
+                "guard_version": "test",
+                "record_count": 0,
+                "first_date": None,
+                "last_date": None,
+            }
+            with patch(
+                "general_data_guard.validate_archive",
+                return_value=guard_summary,
+            ), patch.object(audit, "fetch_html", return_value="<html></html>"):
+                report = audit.run_audit(archive_path)
+
+        self.assertIs(report.get("draw_numbers_in_report"), False)
+        self.assertIs(report.get("archive_modified"), False)
+        self.assertIs(report.get("active_target_numbers_exposed"), False)
+
+
 if __name__ == "__main__":
     unittest.main()
