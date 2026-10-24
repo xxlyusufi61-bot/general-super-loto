@@ -7,6 +7,7 @@ name: GENERAL Live Multi-Year Archive Cross-Source Audit
       - "general_archive_cross_source_audit.py"
       - "general_archive_cross_source_audit_test.py"
       - "general_archive_fetch.py"
+      - "general_archive_fetch_test.py"
       - "general_data_guard.py"
       - "super_loto_archive.json"
       - ".github/workflows/archive-live-cross-source-audit.yml"
@@ -33,10 +34,11 @@ jobs:
           general_archive_cross_source_audit.py
           general_archive_cross_source_audit_test.py
           general_archive_fetch.py
+          general_archive_fetch_test.py
           general_data_guard.py
 
       - name: Run deterministic parser and comparison tests
-        run: python -m unittest -v general_archive_cross_source_audit_test
+        run: python -m unittest -v general_archive_cross_source_audit_test general_archive_fetch_test
 
   live-cross-source-audit:
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request'
