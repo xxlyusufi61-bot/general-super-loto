@@ -145,8 +145,8 @@ class ArchiveCrossSourceAuditTests(unittest.TestCase):
 
     def test_lotobil_unregistered_invalid_row_remains_a_parse_error(self):
         html = """
-        <table><tr><td>29/10/2023</td><td>130</td>
-        <td>7</td><td>12</td><td>20</td><td>25</td><td>48</td><td>49</td>
+        <table><tr><td>29/10/2023</td><td>131</td>
+        <td>7</td><td>12</td><td>20</td><td>25</td><td>48</td><td>48</td>
         </tr></table>
         """
         rows, errors, anomalies, _indices, _index_dates = (
