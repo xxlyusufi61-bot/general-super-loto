@@ -83,5 +83,55 @@ class MethodRegistryContextTests(unittest.TestCase):
                     general_core.load_method_registry_context()
 
 
+
+    def test_real_registry_exposes_why_undated_entries_are_withheld(self):
+        with patch.object(general_core, "METHOD_REGISTRY", Path(__file__).with_name("general_method_registry.json")):
+            context = general_core.load_method_registry_context("2026-10-24")
+
+        audit = context["registry_audit"]
+        self.assertEqual(audit["method_count"], 3)
+        self.assertEqual(audit["eligible_method_count"], 0)
+        self.assertEqual(audit["withheld_method_count"], 3)
+        self.assertEqual(audit["historical_result_count"], 2)
+        self.assertEqual(audit["eligible_historical_result_count"], 0)
+        self.assertEqual(
+            set(context["withheld_method_reasons"].values()),
+            {"missing_available_from"}
+        )
+        self.assertEqual(
+            set(context["withheld_result_reasons"].values()),
+            {"missing_available_from"}
+        )
+
+    def test_real_archive_regime_partition_is_explicit_and_disjoint(self):
+        import tempfile
+        archive_rows = [
+            {"date": "2020-07-30", "numbers": [1, 2, 3, 4, 5, 6]},
+            {"date": "2020-08-02", "numbers": [7, 8, 9, 10, 11, 12]},
+            {"date": "2020-08-05", "numbers": [13, 14, 15, 16, 17, 18]},
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            archive_path = Path(tmp) / "archive.json"
+            archive_path.write_text(
+                json.dumps({"draws": archive_rows}), encoding="utf-8"
+            )
+            with patch.object(general_core, "ARCHIVE", archive_path):
+                data = general_core.prepare_data("2020-08-05")
+
+        regimes = data["training_by_regime"]
+        self.assertEqual(data["regime_boundary"], "2020-08-02")
+        self.assertEqual(data["regime_counts"], {"R54": 1, "R60": 1})
+        self.assertEqual([row["date"] for row in regimes["R54"]], ["2020-07-30"])
+        self.assertEqual([row["date"] for row in regimes["R60"]], ["2020-08-02"])
+        self.assertFalse(
+            set(row["date"] for row in regimes["R54"])
+            & set(row["date"] for row in regimes["R60"])
+        )
+        self.assertTrue(all(
+            row["date"] < "2020-08-05"
+            for rows in regimes.values() for row in rows
+        ))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
