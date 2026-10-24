@@ -21,7 +21,7 @@ name: GENERAL Agent
         default: "GENERAL sisteminin mevcut durumunu ve sonraki geliştirme adımlarını değerlendir."
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: general-agent-memory
@@ -184,24 +184,25 @@ jobs:
         run: |
           python3 general_core.py "$AGENT_ID" "$TASK_TEXT"
 
-      - name: Save validated archive and any updated memory
+      - name: Preserve outputs without writing to main
         if: ${{ success() }}
-        env:
-          AGENT_ID: ${{ inputs.agent }}
         run: |
+          mkdir -p general-run-output
           if [ -f super_loto_archive.json ]; then
-            git add super_loto_archive.json
+            cp super_loto_archive.json general-run-output/super_loto_archive.json
+          fi
+          if [ -f general_memory.json ]; then
+            cp general_memory.json general-run-output/general_memory.json
+          fi
+          if [ -f archive_fetch_output.log ]; then
+            cp archive_fetch_output.log general-run-output/archive_fetch_output.log
           fi
 
-          if [ "$AGENT_ID" != "archive" ] && [ "$AGENT_ID" != "isolation-test" ] && [ -f general_memory.json ]; then
-            git add general_memory.json
-          fi
-
-          if ! git diff --cached --quiet; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git commit -m "Update validated GENERAL data"
-            git push
-          else
-            echo "No changes to save."
-          fi
+      - name: Upload run outputs for review
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: general-agent-output
+          path: general-run-output/
+          if-no-files-found: ignore
+          retention-days: 7
