@@ -4,19 +4,42 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: general-nvidia-api
+  cancel-in-progress: false
 
 jobs:
   nvidia-test:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check global NVIDIA safety lock
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GENERAL_DEFAULT_BRANCH: main
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python3 general_nvidia_guard.py check
+
       - name: Test NVIDIA API connection
+        id: nvidia-api-test
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
         run: |
           python3 - <<'PY'
           import json
           import os
+          from pathlib import Path
           import urllib.request
           import urllib.error
 
@@ -35,6 +58,8 @@ jobs:
               },
               method="GET"
           )
+
+          Path("/tmp/general_nvidia_api_attempted").touch()
 
           try:
               with urllib.request.urlopen(
@@ -68,6 +93,8 @@ jobs:
                       if isinstance(model_id, str):
                           print("-", model_id)
 
+              Path("/tmp/general_nvidia_api_succeeded").touch()
+
               print("NVIDIA API TEST SUCCESS")
 
           except urllib.error.HTTPError as error:
@@ -86,3 +113,18 @@ jobs:
               print("Connection test failed:", type(error).__name__)
               raise SystemExit(1)
           PY
+
+      - name: Activate global lock after NVIDIA request failure
+        if: ${{ failure() && steps.nvidia-api-test.outcome == 'failure' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GENERAL_DEFAULT_BRANCH: main
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -f /tmp/general_nvidia_api_attempted ] && [ ! -f /tmp/general_nvidia_api_succeeded ]; then
+            python3 general_nvidia_guard.py lock --reason "NVIDIA API model-list request failed or returned an unvalidated response; global pause is required because cause is uncertain."
+          else
+            echo "No incomplete NVIDIA API request detected; global lock unchanged."
+          fi

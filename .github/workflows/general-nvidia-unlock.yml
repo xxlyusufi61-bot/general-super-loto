@@ -1,0 +1,43 @@
+name: GENERAL NVIDIA Manual Unlock
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Only choose yes after manually reviewing the lock reason and account/API status."
+        required: true
+        type: choice
+        options:
+          - "no"
+          - "yes"
+        default: "no"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: general-nvidia-api
+  cancel-in-progress: false
+
+jobs:
+  unlock:
+    if: ${{ inputs.confirm == 'yes' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Clear lock after explicit confirmation
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GENERAL_DEFAULT_BRANCH: main
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python3 general_nvidia_guard.py unlock

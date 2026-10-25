@@ -21,10 +21,10 @@ name: GENERAL Agent
         default: "GENERAL sisteminin mevcut durumunu ve sonraki geliştirme adımlarını değerlendir."
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
-  group: general-agent-memory
+  group: general-nvidia-api
   cancel-in-progress: false
 
 jobs:
@@ -40,6 +40,15 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - name: Check global NVIDIA safety lock
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GENERAL_DEFAULT_BRANCH: main
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python3 general_nvidia_guard.py check
 
       - name: Initialize memory if missing
         if: ${{ inputs.agent != 'archive' && inputs.agent != 'isolation-test' }}
@@ -175,6 +184,7 @@ jobs:
           PY
 
       - name: Run selected GENERAL agent
+        id: run-agent
         if: ${{ inputs.agent != 'archive' && inputs.agent != 'isolation-test' }}
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
@@ -183,6 +193,21 @@ jobs:
           GENERAL_SAVE_MEMORY: "1"
         run: |
           python3 general_core.py "$AGENT_ID" "$TASK_TEXT"
+
+      - name: Activate global lock if an NVIDIA request failed
+        if: ${{ failure() && steps.run-agent.outcome == 'failure' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GENERAL_DEFAULT_BRANCH: main
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -f /tmp/general_nvidia_api_attempted ] && [ ! -f /tmp/general_nvidia_api_succeeded ]; then
+            python3 general_nvidia_guard.py lock --reason "GENERAL agent NVIDIA request failed or its response could not be validated; quota, authorization, billing/limit, or service state is uncertain."
+          else
+            echo "No incomplete NVIDIA API request detected; global lock unchanged."
+          fi
 
       - name: Preserve outputs without writing to main
         if: ${{ success() }}
