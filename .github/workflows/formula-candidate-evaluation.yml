@@ -1,0 +1,73 @@
+name: GENERAL Formula Candidate Evaluation
+
+on:
+  push:
+    branches:
+      - feature/chronological-formula-evaluation-20261026
+    paths:
+      - "general_formula_evaluation.py"
+      - "general_formula_proposals.py"
+      - "general_data_guard.py"
+      - "general_archive_fetch.py"
+      - "general_method_registry.json"
+      - "formula_archive/**"
+      - "tests/**"
+      - ".github/workflows/formula-candidate-evaluation.yml"
+  pull_request:
+    paths:
+      - "general_formula_evaluation.py"
+      - "general_formula_proposals.py"
+      - "general_data_guard.py"
+      - "general_archive_fetch.py"
+      - "general_method_registry.json"
+      - "formula_archive/**"
+      - "tests/**"
+      - ".github/workflows/formula-candidate-evaluation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Get GENERAL source code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run offline unit and synthetic tests
+        run: python3 -m unittest discover -s tests -v
+
+      - name: Test archive parser without network access
+        run: python3 general_archive_fetch.py --self-test
+
+      - name: Fetch canonical Super Loto archive with details suppressed
+        run: |
+          mkdir -p formula-evaluation-output
+          if python3 general_archive_fetch.py > formula-evaluation-output/archive_fetch.log 2>&1; then
+            echo "ARCHIVE FETCH: completed; detailed output suppressed."
+          else
+            echo "ARCHIVE FETCH FAILED; details are withheld. No evaluation was performed."
+            exit 1
+          fi
+
+      - name: Validate target isolation and evaluate experimental candidates
+        run: |
+          python3 general_formula_evaluation.py \
+            --archive super_loto_archive.json \
+            --output formula-evaluation-output/report.json
+
+      - name: Upload aggregate metrics only
+        if: ${{ success() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: formula-candidate-evaluation-report
+          path: formula-evaluation-output/report.json
+          if-no-files-found: error
+          retention-days: 7
