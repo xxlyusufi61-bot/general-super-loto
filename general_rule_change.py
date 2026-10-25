@@ -94,22 +94,24 @@ def decision_status(body: str, decision: str, actor_id: int, actor_name: str, ca
         "- Telegram approver user ID: " + str(actor_id) + "\n"
         "- Telegram name: " + safe_name + "\n"
         "- Decided at (UTC): " + stamp + "\n"
-        "- Callback ID: " + callback_id + "\n"
+        "- Telegram command reference: " + callback_id + "\n"
     )
     if decision == "APPROVED":
         updated += "\nApproval does not modify binding rules or merge code; a separately reviewed implementation pull request is required.\n"
     return updated
 
-def parse_callback(data: Any) -> tuple[str, int] | None:
-    if not isinstance(data, str):
+def parse_decision_command(text: Any) -> tuple[str, int] | None:
+    """Only exact approval/rejection commands are actionable."""
+    if not isinstance(text, str):
         return None
-    match = re.fullmatch(r"g:([ar]):([1-9][0-9]{0,8})", data)
+    match = re.fullmatch(r"\s*/(approve|reject)(?:@[A-Za-z0-9_]+)?\s+#?([1-9][0-9]{0,8})\s*", text, re.IGNORECASE)
     if not match:
         return None
-    return ("APPROVED" if match.group(1) == "a" else "REJECTED", int(match.group(2)))
+    decision = "APPROVED" if match.group(1).lower() == "approve" else "REJECTED"
+    return decision, int(match.group(2))
 
-def is_authorized(callback: dict[str, Any], chat_id: str, approver_user_id: str = "") -> bool:
-    message, actor = callback.get("message"), callback.get("from")
+def is_authorized(message_update: dict[str, Any], chat_id: str, approver_user_id: str = "") -> bool:
+    message, actor = message_update.get("message"), message_update.get("from")
     if not isinstance(message, dict) or not isinstance(actor, dict):
         return False
     chat = message.get("chat")
@@ -221,15 +223,14 @@ def submit_report(path: str) -> int:
     message = (
         "GENERAL — KURAL DEĞİŞİKLİĞİ TALEBİ\n"
         f"Talep no: #{number}\nKural: {request['rule_id']}\nÖneri: {preview}\n\n"
-        "Düğmeler talebi onaylar/reddeder. Onay, kuralı otomatik değiştirmez; uygulama için ayrıca incelenen bir PR gerekir."
+        f"Onaylamak için bu sohbete /approve {number} yaz.\n"
+        f"Reddetmek için bu sohbete /reject {number} yaz.\n\n"
+        "Komut yalnızca yetkili Telegram hesabından ve bu sohbetten gelirse işlenir. "
+        "Onay kuralı otomatik değiştirmez; uygulama için ayrıca incelenen bir PR gerekir."
     )
     try:
         sent = telegram.call("sendMessage", {
             "chat_id": chat_id, "text": message, "disable_web_page_preview": "true",
-            "reply_markup": {"inline_keyboard": [[
-                {"text": "✅ Onayla", "callback_data": f"g:a:{number}"},
-                {"text": "❌ Reddet", "callback_data": f"g:r:{number}"},
-            ]]},
         })
         result = sent.get("result", {})
         if not isinstance(result, dict) or type(result.get("message_id")) is not int:
@@ -251,61 +252,56 @@ def submit_report(path: str) -> int:
     print("No binding rule changed.")
     return 0
 
-def telegram_text(telegram: Telegram, callback_id: str, text: str) -> None:
-    telegram.call("answerCallbackQuery", {"callback_query_id": callback_id, "text": text[:180]})
+def send_chat_text(telegram: Telegram, chat_id: str, text: str, reply_to: int | None = None) -> None:
+    payload: dict[str, Any] = {"chat_id": chat_id, "text": text[:3500], "disable_web_page_preview": "true"}
+    if type(reply_to) is int:
+        payload["reply_to_message_id"] = reply_to
+    telegram.call("sendMessage", payload)
 
-def handle_callback(callback: dict[str, Any], github: Api, telegram: Telegram,
-                    chat_id: str, approver_user_id: str, repo: str) -> str:
-    callback_id = callback.get("id")
-    parsed = parse_callback(callback.get("data"))
-    if not isinstance(callback_id, str) or parsed is None:
-        if isinstance(callback_id, str):
-            telegram_text(telegram, callback_id, "Geçersiz karar düğmesi.")
+def handle_message(message: dict[str, Any], github: Api, telegram: Telegram,
+                   chat_id: str, approver_user_id: str, repo: str) -> str:
+    parsed = parse_decision_command(message.get("text"))
+    if parsed is None:
         return "ignored"
-    if not is_authorized(callback, chat_id, approver_user_id):
-        telegram_text(telegram, callback_id, "Yetkisiz kullanıcı; talep değiştirilmedi.")
+    message_id = message.get("message_id")
+    if type(message_id) is not int:
+        return "ignored"
+    auth_context = {"message": message, "from": message.get("from")}
+    chat = message.get("chat", {})
+    if not is_authorized(auth_context, chat_id, approver_user_id):
+        if isinstance(chat, dict) and str(chat.get("id", "")) == str(chat_id):
+            send_chat_text(telegram, chat_id, "Yetkisiz kullanıcı; talep değiştirilmedi.", message_id)
         return "unauthorized"
+
     decision, number = parsed
     issue = github.request("GET", repo + "/issues/" + str(number))
     if not isinstance(issue, dict) or not str(issue.get("title", "")).startswith("[RULE CHANGE REQUEST]"):
-        telegram_text(telegram, callback_id, "Kural değişikliği talebi bulunamadı.")
+        send_chat_text(telegram, chat_id, f"#{number} numaralı kural değişikliği talebi bulunamadı.", message_id)
         return "not_found"
     body = issue.get("body")
     if not isinstance(body, str):
-        telegram_text(telegram, callback_id, "Talep kaydı okunamadı.")
+        send_chat_text(telegram, chat_id, "Talep kaydı okunamadı; karar uygulanmadı.", message_id)
         return "invalid_issue"
     if status_from_body(body) != "PENDING_USER_APPROVAL" or issue.get("state") != "open":
-        telegram_text(telegram, callback_id, "Bu talep daha önce işlendi veya artık beklemede değil.")
+        send_chat_text(telegram, chat_id, f"#{number} talebi daha önce işlendi veya artık beklemede değil.", message_id)
         return "already_handled"
-    actor = callback.get("from", {})
+
+    actor = message.get("from", {})
     actor_id = actor.get("id")
     if type(actor_id) is not int:
-        telegram_text(telegram, callback_id, "Telegram kullanıcı doğrulaması başarısız.")
+        send_chat_text(telegram, chat_id, "Telegram kullanıcı doğrulaması başarısız.", message_id)
         return "unauthorized"
     actor_name = str(actor.get("username") or actor.get("first_name") or "")
-    updated_body = decision_status(body, decision, actor_id, actor_name, callback_id)
+    updated_body = decision_status(body, decision, actor_id, actor_name, "message-" + str(message_id))
     state_reason = "completed" if decision == "APPROVED" else "not_planned"
     github.request("PATCH", repo + "/issues/" + str(number), {
         "body": updated_body, "state": "closed", "state_reason": state_reason,
     })
     outcome = (
-        "ONAYLANDI — uygulama için ayrıca incelenen PR gerekiyor; kurallar henüz değişmedi."
-        if decision == "APPROVED" else "REDDEDİLDİ — kural değişmedi."
+        f"GENERAL — Talep #{number} ONAYLANDI. Kurallar henüz değişmedi; ayrıca incelenen bir PR gerekir."
+        if decision == "APPROVED" else f"GENERAL — Talep #{number} REDDEDİLDİ. Kural değişmedi."
     )
-    message = callback.get("message", {})
-    chat = message.get("chat", {})
-    message_id = message.get("message_id")
-    if type(message_id) is int and chat.get("id") is not None:
-        try:
-            telegram.call("editMessageText", {
-                "chat_id": str(chat["id"]), "message_id": message_id,
-                "text": f"GENERAL — Talep #{number}: {outcome}",
-                "disable_web_page_preview": "true",
-            })
-        except RuntimeError:
-            # The GitHub issue is already the durable record of the decision.
-            pass
-    telegram_text(telegram, callback_id, outcome)
+    send_chat_text(telegram, chat_id, outcome, message_id)
     return "approved" if decision == "APPROVED" else "rejected"
 
 def poll_approvals() -> int:
@@ -325,7 +321,7 @@ def poll_approvals() -> int:
     offset = 0
     for _ in range(10):
         payload = telegram.call("getUpdates", {
-            "offset": offset, "timeout": 0, "allowed_updates": ["callback_query"],
+            "offset": offset, "timeout": 0, "allowed_updates": ["message"],
         })
         updates = payload.get("result", [])
         if not isinstance(updates, list) or not updates:
@@ -334,21 +330,21 @@ def poll_approvals() -> int:
             if not isinstance(update, dict) or type(update.get("update_id")) is not int:
                 continue
             offset = max(offset, update["update_id"] + 1)
-            callback = update.get("callback_query")
-            if not isinstance(callback, dict):
+            message = update.get("message")
+            if not isinstance(message, dict):
                 counts["ignored"] += 1
                 continue
-            outcome = handle_callback(callback, github, telegram, chat_id, approver, repo)
+            outcome = handle_message(message, github, telegram, chat_id, approver, repo)
             counts[outcome] = counts.get(outcome, 0) + 1
     # Confirm the highest processed update ID. If a newer callback arrives
     # in this final response, it remains available for the next poll.
     telegram.call("getUpdates", {
-        "offset": offset, "timeout": 0, "allowed_updates": ["callback_query"],
+        "offset": offset, "timeout": 0, "allowed_updates": ["message"],
     })
     print("RULE CHANGE POLL: completed")
     print("Decisions approved:", counts["approved"])
     print("Decisions rejected:", counts["rejected"])
-    print("Unauthorized callbacks ignored:", counts["unauthorized"])
+    print("Unauthorized approval commands ignored:", counts["unauthorized"])
     print("No rule was automatically modified.")
     return 0
 
