@@ -197,7 +197,11 @@ jobs:
       - name: Activate global lock if an NVIDIA request failed
         if: ${{ failure() && steps.run-agent.outcome == 'failure' }}
         env:
-${tokenEnv}
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GENERAL_DEFAULT_BRANCH: main
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           if [ -f /tmp/general_nvidia_api_attempted ] && [ ! -f /tmp/general_nvidia_api_succeeded ]; then
             python3 general_nvidia_guard.py lock --reason "GENERAL agent NVIDIA request failed or its response could not be validated; quota, authorization, billing/limit, or service state is uncertain."
