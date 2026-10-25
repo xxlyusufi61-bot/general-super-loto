@@ -1,0 +1,29 @@
+name: V8.6 Real Archive Audit Tests
+
+on:
+  push:
+    branches:
+      - main
+      - audit/v86-real-archive-evidence-20261025
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile audit and evaluator
+        run: python -m py_compile general_data_guard.py v86_leakage_safe_evaluator.py v86_real_archive_audit.py v86_real_archive_audit_test.py
+      - name: Run synthetic isolation and audit tests
+        run: python -m unittest -v v86_real_archive_audit_test.py
