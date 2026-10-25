@@ -11183,5 +11183,118 @@
         51
       ]
     }
-  ]
+  ],
+  "archive_updated_at": "2026-10-24T23:59:07+00:00",
+  "archive_update_reason": "Merged verified multi-year reconciliation on 2026-10-24; 10 independently verified missing historical draws were added without changing previously verified draw rows.",
+  "multi_year_cross_source_validation": {
+    "audit_version": "1.1.0",
+    "result": "PASS_AFTER_DOCUMENTED_SOURCE_NORMALIZATION",
+    "checked_at": "2026-10-24T23:56:23+00:00",
+    "archive_records": 1006,
+    "archive_first_date": "2020-01-02",
+    "archive_last_date": "2026-10-22",
+    "loto_gen_r60_by_year": {
+      "2020": {
+        "scope": "R60 only; R54 is verified separately",
+        "status": "MATCH",
+        "archive_count": 66,
+        "independent_count": 66,
+        "common_date_count": 66,
+        "archive_only_count": 0,
+        "independent_only_count": 0,
+        "number_mismatch_count": 0,
+        "source_parse_error_count": 0
+      },
+      "2021": {
+        "status": "MATCH",
+        "archive_count": 156,
+        "independent_count": 156,
+        "common_date_count": 156,
+        "archive_only_count": 0,
+        "independent_only_count": 0,
+        "number_mismatch_count": 0,
+        "source_parse_error_count": 0
+      },
+      "2022": {
+        "status": "MATCH",
+        "archive_count": 156,
+        "independent_count": 156,
+        "common_date_count": 156,
+        "archive_only_count": 0,
+        "independent_only_count": 0,
+        "number_mismatch_count": 0,
+        "source_parse_error_count": 0
+      },
+      "2023": {
+        "status": "MATCH",
+        "archive_count": 157,
+        "independent_count": 157,
+        "common_date_count": 157,
+        "archive_only_count": 0,
+        "independent_only_count": 0,
+        "number_mismatch_count": 0,
+        "source_parse_error_count": 0
+      },
+      "2024": {
+        "status": "MATCH",
+        "archive_count": 157,
+        "independent_count": 157,
+        "common_date_count": 157,
+        "archive_only_count": 0,
+        "independent_only_count": 0,
+        "number_mismatch_count": 0,
+        "source_parse_error_count": 0
+      },
+      "2025": {
+        "status": "MATCH",
+        "archive_count": 156,
+        "independent_count": 156,
+        "common_date_count": 156,
+        "archive_only_count": 0,
+        "independent_only_count": 0,
+        "number_mismatch_count": 0,
+        "source_parse_error_count": 0
+      },
+      "2026": {
+        "status": "MATCH",
+        "archive_count": 127,
+        "independent_count": 127,
+        "common_date_count": 127,
+        "archive_only_count": 0,
+        "independent_only_count": 0,
+        "number_mismatch_count": 0,
+        "source_parse_error_count": 0
+      }
+    },
+    "lotobil_r54": {
+      "status": "MATCH",
+      "archive_count": 31,
+      "independent_count": 31,
+      "common_date_count": 31,
+      "archive_only_count": 0,
+      "independent_only_count": 0,
+      "number_mismatch_count": 0,
+      "source_parse_error_count": 0
+    },
+    "lotobil_r60": {
+      "status": "MATCH_AFTER_DOCUMENTED_SOURCE_NORMALIZATION",
+      "archive_count": 971,
+      "independent_count": 971,
+      "common_date_count": 971,
+      "archive_only_count": 0,
+      "independent_only_count": 0,
+      "number_mismatch_count": 0,
+      "source_parse_error_count": 0,
+      "raw_source_parse_error_count": 0,
+      "source_date_correction_count": 9,
+      "excluded_confirmed_bad_row_count": 4,
+      "excluded_confirmed_missing_row_count": 1,
+      "unresolved_index_gap_count": 0,
+      "anomaly_registry_version": "1.0.0"
+    },
+    "fetch_failures": [],
+    "draw_numbers_in_report": false,
+    "archive_modified_by_audit": false,
+    "note": "R60 year checks cover 2020-08-02 onward; the separate R54 check covers 2020-01-02 through 2020-07-30. Lotobil-only normalizations are documented in the audit report and do not alter the canonical archive."
+  }
 }
