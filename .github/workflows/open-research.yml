@@ -1,0 +1,88 @@
+name: GENERAL Blank-Slate Research
+
+'on':
+  push:
+    branches:
+      - feature/blank-slate-research-20261025
+    paths:
+      - "general_open_research.py"
+      - "general_open_research_test.py"
+      - ".github/workflows/open-research.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "general_open_research.py"
+      - "general_open_research_test.py"
+      - ".github/workflows/open-research.yml"
+  workflow_dispatch:
+    inputs:
+      task:
+        description: "Optional research focus (must not request number predictions)"
+        required: false
+        type: string
+        default: "Explore the pre-target archive from scratch and propose testable hypotheses."
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile and test blank-slate runner
+        run: |
+          python3 -m py_compile general_open_research.py general_open_research_test.py
+          python3 -m unittest -v general_open_research_test.py
+
+  research:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Refresh archive
+        run: |
+          if python3 general_archive_fetch.py > /tmp/archive-fetch.log 2>&1; then
+            echo "Archive retrieval completed."
+          else
+            echo "Archive retrieval failed; research stopped."
+            exit 1
+          fi
+      - name: Run isolated blank-slate exploration
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          TASK_TEXT: ${{ inputs.task }}
+        run: |
+          python3 general_open_research.py
+      - name: Submit a structured rule-change request for Telegram approval if proposed
+        if: ${{ success() }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python3 general_rule_change.py submit-report --report open_research_report.md
+      - name: Upload hypothesis report only
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: general-blank-slate-research-report
+          path: open_research_report.md
+          if-no-files-found: ignore
+          retention-days: 14

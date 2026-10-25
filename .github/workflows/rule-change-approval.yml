@@ -1,0 +1,70 @@
+name: GENERAL Rule Change Approval
+
+'on':
+  push:
+    branches:
+      - feature/blank-slate-research-20261025
+    paths:
+      - "general_rule_change.py"
+      - "general_rule_change_test.py"
+      - ".github/workflows/rule-change-approval.yml"
+      - ".github/workflows/open-research.yml"
+      - "general_open_research.py"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "general_rule_change.py"
+      - "general_rule_change_test.py"
+      - ".github/workflows/rule-change-approval.yml"
+      - ".github/workflows/open-research.yml"
+      - "general_open_research.py"
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: general-rule-change-approval
+  cancel-in-progress: false
+
+jobs:
+  tests:
+    if: ${{ github.event_name == 'push' || github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile rule-change manager and tests
+        run: python3 -m py_compile general_rule_change.py general_rule_change_test.py
+      - name: Run synthetic approval security tests
+        run: python3 -m unittest -v general_rule_change_test.py
+
+  poll:
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Process authorized Telegram approval/rejection commands
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_APPROVER_USER_ID: ${{ secrets.TELEGRAM_APPROVER_USER_ID }}
+        run: python3 general_rule_change.py poll
