@@ -560,6 +560,16 @@ def ask_nvidia(messages):
     if not key:
         raise RuntimeError("NVIDIA_API_KEY missing.")
 
+    # These runner-local markers let the workflow activate the global lock
+    # only when an NVIDIA request started but did not produce a validated reply.
+    attempt_marker = Path("/tmp/general_nvidia_api_attempted")
+    success_marker = Path("/tmp/general_nvidia_api_succeeded")
+    for marker in (attempt_marker, success_marker):
+        try:
+            marker.unlink()
+        except FileNotFoundError:
+            pass
+
     body = json.dumps({
         "model": MODEL,
         "messages": messages,
@@ -582,6 +592,8 @@ def ask_nvidia(messages):
         method="POST"
     )
 
+    # Write the marker immediately before the paid-risk API boundary.
+    attempt_marker.write_text(datetime.now(timezone.utc).isoformat(), encoding="utf-8")
     try:
         with urllib.request.urlopen(req, timeout=NVIDIA_TIMEOUT_SECONDS) as r:
             result = json.loads(r.read().decode())
@@ -612,6 +624,7 @@ def ask_nvidia(messages):
     if not isinstance(answer, str) or not answer.strip():
         raise RuntimeError("Empty model response.")
 
+    success_marker.write_text(datetime.now(timezone.utc).isoformat(), encoding="utf-8")
     return answer.strip()
 
 
