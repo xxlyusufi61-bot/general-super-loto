@@ -42,10 +42,10 @@ GOVERNANCE_RULES = (
     "must be labelled retrospective stress testing and not forward predictive evidence.",
     "Compare candidates with an appropriate random baseline and report uncertainty and search limits.",
     "A valid outcome may be that no robust signal is found. Never promise lottery predictions.",
-    "If a governance rule blocks the research or a change is proposed, do not alter it. Produce a structured "
-    "rule-change request marked PENDING_USER_APPROVAL. Do not claim it was sent to Telegram: automated "
-    "Telegram request/approval handling is not implemented by this runner. Until that integration exists "
-    "and the user explicitly approves the exact request, keep the existing rule.",
+    "If a binding-rule change is proposed, do not alter the rule during research. Include a structured request "
+    "only when justified. The separate workflow may submit that request for explicit Telegram user approval; "
+    "never claim it was sent or approved without a confirmed workflow/decision record. Approval alone never "
+    "edits project rules: a separate reviewed implementation pull request is required.",
 )
 
 def parse_archive(path: Path = ARCHIVE) -> list[dict[str, Any]]:
@@ -136,15 +136,15 @@ def build_messages(target: str, train: list[dict[str, Any]], focus: str = "") ->
         "Do not output winning-number predictions. A no-signal conclusion is acceptable. "
         "If and only if you recommend changing a binding rule, include exactly one structured block using "
         "the markers shown below, with every field filled by a factual, concise string. Do not state that "
-        "the request was sent or approved. No rule changes during this research call.\\n"
-        "<RULE_CHANGE_REQUEST_JSON>\\n"
-        "{\\\"rule_id\\\":\\\"stable rule identifier\\\",\\\"current_rule\\\":\\\"exact current wording\\\","
-        "\\\"proposed_rule\\\":\\\"proposed wording\\\",\\\"reason\\\":\\\"why change is needed\\\","
-        "\\\"evidence\\\":\\\"available evidence and its limitations\\\","
-        "\\\"risk_assessment\\\":\\\"risks and safeguards\\\","
-        "\\\"tests_required\\\":\\\"tests required before implementation\\\","
-        "\\\"rollback_plan\\\":\\\"how to revert\\\"}\\n"
-        "</RULE_CHANGE_REQUEST_JSON>\\n"
+        "the request was sent or approved. No rule changes during this research call.\n"
+        "<RULE_CHANGE_REQUEST_JSON>\n"
+        "{\"rule_id\":\"stable rule identifier\",\"current_rule\":\"exact current wording\","
+        "\"proposed_rule\":\"proposed wording\",\"reason\":\"why change is needed\","
+        "\"evidence\":\"available evidence and its limitations\","
+        "\"risk_assessment\":\"risks and safeguards\","
+        "\"tests_required\":\"tests required before implementation\","
+        "\"rollback_plan\":\"how to revert\"}\n"
+        "</RULE_CHANGE_REQUEST_JSON>\n"
         "If no rule change is needed, omit the entire block. Request proposals are submitted separately "
         "for user approval; malformed or incomplete blocks are rejected."
     )
