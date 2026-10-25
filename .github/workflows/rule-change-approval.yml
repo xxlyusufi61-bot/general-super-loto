@@ -32,7 +32,7 @@ concurrency:
 
 jobs:
   tests:
-    if: \${{ github.event_name == 'push' || github.event_name == 'pull_request' }}
+    if: ${{ github.event_name == 'push' || github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -48,7 +48,7 @@ jobs:
         run: python3 -m unittest -v general_rule_change_test.py
 
   poll:
-    if: \${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -63,8 +63,8 @@ jobs:
           python-version: "3.12"
       - name: Process pending Telegram approval buttons
         env:
-          GITHUB_TOKEN: \${{ secrets.GITHUB_TOKEN }}
-          TELEGRAM_BOT_TOKEN: \${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: \${{ secrets.TELEGRAM_CHAT_ID }}
-          TELEGRAM_APPROVER_USER_ID: \${{ secrets.TELEGRAM_APPROVER_USER_ID }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_APPROVER_USER_ID: ${{ secrets.TELEGRAM_APPROVER_USER_ID }}
         run: python3 general_rule_change.py poll
