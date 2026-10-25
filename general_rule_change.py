@@ -87,7 +87,7 @@ def decision_status(body: str, decision: str, actor_id: int, actor_name: str, ca
     status = "APPROVED_PENDING_IMPLEMENTATION" if decision == "APPROVED" else "REJECTED"
     updated = MARKER.sub("<!-- GENERAL_RULE_CHANGE_STATUS:" + status + " -->", body, count=1)
     stamp = datetime.now(timezone.utc).isoformat()
-    safe_name = actor_name.replace("\\r", " ").replace("\\n", " ")[:128] if actor_name else "(not provided)"
+    safe_name = actor_name.replace(chr(13), " ").replace(chr(10), " ")[:128] if actor_name else "(not provided)"
     updated += (
         "\n\n---\n## Decision audit entry\n"
         "- Decision: **" + status + "**\n"
