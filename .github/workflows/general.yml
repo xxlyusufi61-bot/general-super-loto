@@ -15,6 +15,7 @@ jobs:
       - name: Check Telegram bot and send status
         env:
           BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           python3 - <<'PY'
           import json
@@ -85,58 +86,24 @@ jobs:
                   "HEARTBEAT FAILED: Bot identity could not be verified."
               )
 
-          # Identify the most recent chat in the available updates.
-          updates_data = request("getUpdates")
-          updates = updates_data.get("result", [])
+          # Use an explicit, stable destination. getUpdates is transient and
+          # can be empty after another poller consumes the update; it must not
+          # be the scheduled heartbeat's only source of the chat identifier.
+          chat_id = os.environ.get("CHAT_ID", "").strip()
 
-          if not isinstance(updates, list):
-              raise RuntimeError(
-                  "HEARTBEAT FAILED: Invalid Telegram updates response."
-              )
-
-          candidates = []
-
-          for update in updates:
-              if not isinstance(update, dict):
-                  continue
-
-              message = (
-                  update.get("message")
-                  or update.get("edited_message")
-                  or update.get("channel_post")
-                  or update.get("edited_channel_post")
-              )
-
-              if not isinstance(message, dict):
-                  continue
-
-              chat = message.get("chat")
-
-              if not isinstance(chat, dict):
-                  continue
-
-              chat_id = chat.get("id")
-
-              if chat_id is None:
-                  continue
-
-              update_id = update.get("update_id", -1)
-
-              if not isinstance(update_id, int):
-                  update_id = -1
-
-              candidates.append((update_id, chat_id))
-
-          if not candidates:
+          if not chat_id:
               raise SystemExit(
-                  "HEARTBEAT FAILED: No chat found in available updates. "
-                  "Open the bot in Telegram, send /start, "
-                  "then run the workflow again."
+                  "HEARTBEAT CONFIGURATION REQUIRED: Add a repository Actions "
+                  "secret named TELEGRAM_CHAT_ID containing the intended "
+                  "Telegram private/group chat ID. Do not use getUpdates as "
+                  "persistent storage for the destination."
               )
 
-          # Use the chat from the newest available update.
-          candidates.sort(key=lambda item: item[0])
-          chat_id = candidates[-1][1]
+          if not chat_id.lstrip("-").isdigit():
+              raise SystemExit(
+                  "HEARTBEAT CONFIGURATION FAILED: TELEGRAM_CHAT_ID must be a "
+                  "numeric Telegram chat ID."
+              )
 
           sent = request(
               "sendMessage",
