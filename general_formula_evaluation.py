@@ -12,7 +12,7 @@ import sys
 from collections import Counter
 from datetime import date, timedelta
 from pathlib import Path
-from statistics import mean, stdev
+from statistics import mean
 
 import general_data_guard as data_guard
 from general_formula_proposals import (
@@ -132,6 +132,11 @@ def _summarize_samples(samples, random_repeats, bootstrap_replicates, seed):
         for sample in samples
     ]
     hit_histogram = Counter(str(value) for value in hits)
+    all_random_hits = [
+        random_hit
+        for sample in samples
+        for random_hit in sample["random_all_hits"]
+    ]
 
     return {
         "eligible_target_draws": n,
@@ -154,15 +159,7 @@ def _summarize_samples(samples, random_repeats, bootstrap_replicates, seed):
             "draws_per_target": 6,
             "random_predictions_per_target": random_repeats,
             "mean_hits_per_random_prediction": (
-                mean(
-                    sample["random_all_hits"]
-                    for sample in samples
-                    for _ in [0]
-                ) if False else (
-                    sum(sum(sample["random_all_hits"]) for sample in samples)
-                    / (n * random_repeats)
-                    if n and random_repeats else None
-                )
+                mean(all_random_hits) if all_random_hits else None
             ),
             "mean_random_hits_per_target": mean(baseline_means) if baseline_means else None,
             "mean_random_hits_per_target_95_ci": _block_bootstrap_interval(
