@@ -87,7 +87,7 @@ def decision_status(body: str, decision: str, actor_id: int, actor_name: str, ca
     status = "APPROVED_PENDING_IMPLEMENTATION" if decision == "APPROVED" else "REJECTED"
     updated = MARKER.sub("<!-- GENERAL_RULE_CHANGE_STATUS:" + status + " -->", body, count=1)
     stamp = datetime.now(timezone.utc).isoformat()
-    safe_name = actor_name[:128] if actor_name else "(not provided)"
+    safe_name = actor_name.replace("\\r", " ").replace("\\n", " ")[:128] if actor_name else "(not provided)"
     updated += (
         "\n\n---\n## Decision audit entry\n"
         "- Decision: **" + status + "**\n"
@@ -223,16 +223,29 @@ def submit_report(path: str) -> int:
         f"Talep no: #{number}\nKural: {request['rule_id']}\nÖneri: {preview}\n\n"
         "Düğmeler talebi onaylar/reddeder. Onay, kuralı otomatik değiştirmez; uygulama için ayrıca incelenen bir PR gerekir."
     )
-    sent = telegram.call("sendMessage", {
-        "chat_id": chat_id, "text": message, "disable_web_page_preview": "true",
-        "reply_markup": {"inline_keyboard": [[
-            {"text": "✅ Onayla", "callback_data": f"g:a:{number}"},
-            {"text": "❌ Reddet", "callback_data": f"g:r:{number}"},
-        ]]},
-    })
-    result = sent.get("result", {})
-    if not isinstance(result, dict) or type(result.get("message_id")) is not int:
-        raise RuntimeError(f"Rule-change issue #{number} exists, but Telegram delivery was not confirmed.")
+    try:
+        sent = telegram.call("sendMessage", {
+            "chat_id": chat_id, "text": message, "disable_web_page_preview": "true",
+            "reply_markup": {"inline_keyboard": [[
+                {"text": "✅ Onayla", "callback_data": f"g:a:{number}"},
+                {"text": "❌ Reddet", "callback_data": f"g:r:{number}"},
+            ]]},
+        })
+        result = sent.get("result", {})
+        if not isinstance(result, dict) or type(result.get("message_id")) is not int:
+            raise RuntimeError("Telegram delivery was not confirmed.")
+    except RuntimeError:
+        failed_body = MARKER.sub("<!-- GENERAL_RULE_CHANGE_STATUS:DELIVERY_FAILED_CLOSED -->", body, count=1)
+        failed_body += "\n\nTelegram delivery was not confirmed; request closed without a decision.\n"
+        try:
+            github.request("PATCH", repo + "/issues/" + str(number), {
+                "body": failed_body, "state": "closed", "state_reason": "not_planned",
+            })
+        except RuntimeError:
+            pass
+        raise RuntimeError(
+            f"Rule-change issue #{number} was created, but Telegram delivery was not confirmed."
+        ) from None
     print("RULE CHANGE REQUEST: created; issue #" + str(number))
     print("Telegram delivery: confirmed; status: PENDING_USER_APPROVAL")
     print("No binding rule changed.")
