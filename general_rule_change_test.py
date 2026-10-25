@@ -40,65 +40,64 @@ class RuleChangeRequestTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             rules.extract_request(self.make_report(data))
 
-    def test_callback_parser_accepts_only_expected_format(self):
-        self.assertEqual(rules.parse_callback("g:a:18"), ("APPROVED", 18))
-        self.assertEqual(rules.parse_callback("g:r:19"), ("REJECTED", 19))
-        self.assertIsNone(rules.parse_callback("approve:18"))
-        self.assertIsNone(rules.parse_callback("g:a:0"))
-        self.assertIsNone(rules.parse_callback("g:a:18;evil"))
+    def test_command_parser_accepts_only_explicit_commands(self):
+        self.assertEqual(rules.parse_decision_command("/approve 18"), ("APPROVED", 18))
+        self.assertEqual(rules.parse_decision_command("/reject #19"), ("REJECTED", 19))
+        self.assertEqual(rules.parse_decision_command("/approve@GeneralBot 20"), ("APPROVED", 20))
+        self.assertIsNone(rules.parse_decision_command("approve 18"))
+        self.assertIsNone(rules.parse_decision_command("/approve 0"))
+        self.assertIsNone(rules.parse_decision_command("/approve 18; malicious"))
+        self.assertIsNone(rules.parse_decision_command("/approve 18 extra"))
 
     def test_private_chat_authorization_requires_same_user(self):
-        callback = {"from": {"id": 123456, "username": "approver"},
-                    "message": {"chat": {"id": 123456, "type": "private"}}}
-        self.assertTrue(rules.is_authorized(callback, "123456"))
-        self.assertFalse(rules.is_authorized(callback, "123456", "999999"))
-        self.assertFalse(rules.is_authorized(callback, "999999"))
+        message = {"chat": {"id": 123456, "type": "private"}, "from": {"id": 123456}}
+        self.assertTrue(rules.is_authorized({"message": message, "from": message["from"]}, "123456"))
+        self.assertFalse(rules.is_authorized({"message": message, "from": message["from"]}, "123456", "999999"))
+        self.assertFalse(rules.is_authorized({"message": message, "from": message["from"]}, "999999"))
 
     def test_group_chat_fails_closed_without_explicit_approver(self):
-        callback = {"from": {"id": 123456},
-                    "message": {"chat": {"id": -456, "type": "group"}}}
-        self.assertFalse(rules.is_authorized(callback, "-456"))
-        self.assertTrue(rules.is_authorized(callback, "-456", "123456"))
-        self.assertFalse(rules.is_authorized(callback, "-456", "999999"))
+        message = {"chat": {"id": -456, "type": "group"}, "from": {"id": 123456}}
+        context = {"message": message, "from": message["from"]}
+        self.assertFalse(rules.is_authorized(context, "-456"))
+        self.assertTrue(rules.is_authorized(context, "-456", "123456"))
+        self.assertFalse(rules.is_authorized(context, "-456", "999999"))
 
     def test_decision_requires_pending_state_and_records_audit(self):
         body = rules.build_issue_body(VALID_REQUEST, {
             "workflow": "test", "run_id": "1", "sha": "abc123",
             "submitted_at": "2026-01-01T00:00:00+00:00",
         })
-        approved = rules.decision_status(body, "APPROVED", 123456, "approver", "cb-1")
+        approved = rules.decision_status(body, "APPROVED", 123456, "approver", "message-1")
         self.assertEqual(rules.status_from_body(approved), "APPROVED_PENDING_IMPLEMENTATION")
-        self.assertIn("Callback ID: cb-1", approved)
+        self.assertIn("Telegram command reference: message-1", approved)
         self.assertIn("does not modify binding rules", approved)
-        rejected = rules.decision_status(body, "REJECTED", 123456, "approver", "cb-2")
+        rejected = rules.decision_status(body, "REJECTED", 123456, "approver", "message-2")
         self.assertEqual(rules.status_from_body(rejected), "REJECTED")
         with self.assertRaises(ValueError):
-            rules.decision_status(approved, "APPROVED", 123456, "approver", "cb-3")
+            rules.decision_status(approved, "APPROVED", 123456, "approver", "message-3")
 
-
-    def test_unauthorized_callback_does_not_read_or_update_issue(self):
+    def test_unauthorized_command_never_queries_github(self):
         class FakeGitHub:
             def request(self, *args, **kwargs):
-                raise AssertionError("GitHub must not be called for an unauthorized callback")
+                raise AssertionError("GitHub must not be called for unauthorized command")
         class FakeTelegram:
             def __init__(self):
                 self.calls = []
             def call(self, method, payload):
                 self.calls.append((method, payload))
                 return {"ok": True, "result": {}}
-        callback = {
-            "id": "callback-unauthorized",
-            "data": "g:a:42",
+        message = {
+            "message_id": 5, "text": "/approve 42",
             "from": {"id": 777777},
-            "message": {"message_id": 5, "chat": {"id": 123456, "type": "private"}},
+            "chat": {"id": 123456, "type": "private"},
         }
         telegram = FakeTelegram()
-        outcome = rules.handle_callback(callback, FakeGitHub(), telegram, "123456", "", "/repos/example/repo")
+        outcome = rules.handle_message(message, FakeGitHub(), telegram, "123456", "", "/repos/example/repo")
         self.assertEqual(outcome, "unauthorized")
         self.assertEqual(len(telegram.calls), 1)
-        self.assertEqual(telegram.calls[0][0], "answerCallbackQuery")
+        self.assertEqual(telegram.calls[0][0], "sendMessage")
 
-    def test_authorized_callback_records_decision_and_closes_issue(self):
+    def test_authorized_command_records_decision_and_closes_issue(self):
         body = rules.build_issue_body(VALID_REQUEST, {
             "workflow": "test", "run_id": "1", "sha": "abc123",
             "submitted_at": "2026-01-01T00:00:00+00:00",
@@ -112,6 +111,7 @@ class RuleChangeRequestTests(unittest.TestCase):
                     return self.issue
                 if method == "PATCH":
                     self.patch = payload
+                    self.issue = {"title": self.issue["title"], "body": payload["body"], "state": "closed"}
                     return {}
                 raise AssertionError("Unexpected GitHub method")
         class FakeTelegram:
@@ -120,19 +120,19 @@ class RuleChangeRequestTests(unittest.TestCase):
             def call(self, method, payload):
                 self.calls.append((method, payload))
                 return {"ok": True, "result": {}}
-        callback = {
-            "id": "callback-authorized",
-            "data": "g:a:42",
+        message = {
+            "message_id": 5, "text": "/approve 42",
             "from": {"id": 123456, "username": "approver"},
-            "message": {"message_id": 5, "chat": {"id": 123456, "type": "private"}},
+            "chat": {"id": 123456, "type": "private"},
         }
         github, telegram = FakeGitHub(), FakeTelegram()
-        outcome = rules.handle_callback(callback, github, telegram, "123456", "", "/repos/example/repo")
+        outcome = rules.handle_message(message, github, telegram, "123456", "", "/repos/example/repo")
         self.assertEqual(outcome, "approved")
         self.assertEqual(github.patch["state"], "closed")
         self.assertEqual(github.patch["state_reason"], "completed")
         self.assertIn("Decision: **APPROVED_PENDING_IMPLEMENTATION**", github.patch["body"])
         self.assertEqual(rules.status_from_body(github.patch["body"]), "APPROVED_PENDING_IMPLEMENTATION")
+        self.assertEqual(telegram.calls[-1][0], "sendMessage")
 
 if __name__ == "__main__":
     unittest.main()
