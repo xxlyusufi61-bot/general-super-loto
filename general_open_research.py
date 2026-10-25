@@ -1,30 +1,41 @@
-"""Blank-slate Super Loto research runner.
+"""Blank-slate Super Loto research runner with cautious NVIDIA usage observation.
 
 This module intentionally does not import the legacy method registry, candidate
 implementations, evidence catalog, or project memory. It validates the archive,
 isolates the latest draw locally, and sends only strictly pre-target draws plus
 governance rules to the research model. Its output is a hypothesis report, not
 a verified formula or prediction.
+
+NVIDIA's account-level rate limit/quota is not queried here. The runner records
+only safe usage metadata returned by the same inference request, when provided.
 """
 from __future__ import annotations
 
 import json
 import os
-import sys
 import urllib.error
 import urllib.request
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 import general_data_guard as guard
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 MODEL = "z-ai/glm-5.3-flash"
 BASE = Path(__file__).resolve().parent
 ARCHIVE = BASE / os.environ.get("GENERAL_ARCHIVE_FILE", "super_loto_archive.json")
 REPORT = BASE / "open_research_report.md"
+USAGE_REPORT = BASE / "open_research_usage.json"
 API_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
+DOCUMENTATION_REVIEW_DATE = "2026-10-25"
+
+QUOTA_LIMITATION_NOTE = (
+    "No supported account-level remaining-quota API was identified in the NVIDIA "
+    "API Catalog documentation reviewed on 2026-10-25. Check account-level rate "
+    "limits in the NVIDIA API Catalog UI. This is a documentation review, not proof "
+    "that NVIDIA has no private or newly introduced endpoint."
+)
 
 GOVERNANCE_RULES = (
     "Keep the target draw hidden: do not use target or later draw values for discovery, "
@@ -117,8 +128,6 @@ def isolate_pre_target(rows: list[dict[str, Any]]) -> tuple[str, list[dict[str, 
         raise RuntimeError("Archive partition mismatch; open research stopped.")
     if not train:
         raise RuntimeError("No pre-target draws available.")
-    # Construct a fresh payload from only pre-target rows; never pass the source
-    # archive or target record to the model.
     clean_train = [{"date": row["date"], "numbers": list(row["numbers"])} for row in train]
     return target, clean_train
 
@@ -162,7 +171,69 @@ def build_messages(target: str, train: list[dict[str, Any]], focus: str = "") ->
         {"role": "user", "content": json.dumps(user, ensure_ascii=False, separators=(",", ":"))},
     ]
 
+def filter_usage_headers(headers: Mapping[str, Any] | None) -> dict[str, str]:
+    """Keep only non-secret rate-limit/retry/request-id headers from the response."""
+    safe: dict[str, str] = {}
+    if headers is None:
+        return safe
+    for key, value in headers.items():
+        normalized = str(key).strip().lower().replace("_", "-")
+        if (
+            "ratelimit" in normalized
+            or "rate-limit" in normalized
+            or normalized == "retry-after"
+            or normalized in {"request-id", "x-request-id"}
+        ):
+            safe[str(key)] = str(value)
+    return safe
+
+def build_usage_observation(
+    status_code: int | None,
+    headers: Mapping[str, Any] | None,
+    payload: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Build a cautious report without treating token usage as remaining quota or cost."""
+    usage = payload.get("usage") if isinstance(payload, Mapping) else None
+    if not isinstance(usage, dict):
+        usage = None
+    return {
+        "schema_version": 1,
+        "observed_at_utc": datetime.now(timezone.utc).isoformat(),
+        "model": MODEL,
+        "endpoint": API_URL,
+        "http_status": status_code,
+        "inference_requests_made_by_this_run": 1,
+        "automatic_retries": 0,
+        "rate_limit_headers_returned": filter_usage_headers(headers),
+        "token_usage_returned_by_provider": usage,
+        "remaining_quota_before_request": None,
+        "account_level_quota_api_query": "NOT_PERFORMED",
+        "account_level_quota_status": "UNKNOWN",
+        "account_level_rate_limits_location": "NVIDIA API Catalog account UI; check manually",
+        "billing_or_paid_entitlement_status": "NOT_VERIFIED_BY_THIS_REQUEST",
+        "documentation_review_date": DOCUMENTATION_REVIEW_DATE,
+        "quota_limitation_note": QUOTA_LIMITATION_NOTE,
+        "interpretation": (
+            "Response token usage is not remaining quota and does not establish cost or unlimited access. "
+            "Only provider-returned rate-limit headers are recorded; missing headers mean unavailable, "
+            "not unlimited."
+        ),
+    }
+
+def save_usage_observation(observation: dict[str, Any]) -> None:
+    try:
+        USAGE_REPORT.write_text(
+            json.dumps(observation, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        raise RuntimeError("Could not write NVIDIA usage observation report.") from exc
+
 def call_model(messages: list[dict[str, str]]) -> str:
+    if os.environ.get("GENERAL_ALLOW_NVIDIA_CALL", "").strip().lower() != "true":
+        raise RuntimeError(
+            "NVIDIA inference was not explicitly approved; no provider request was sent."
+        )
     key = os.environ.get("NVIDIA_API_KEY")
     if not key:
         raise RuntimeError("NVIDIA_API_KEY missing; research stopped.")
@@ -180,16 +251,47 @@ def call_model(messages: list[dict[str, str]]) -> str:
     )
     try:
         with urllib.request.urlopen(request, timeout=240) as response:
-            result = json.loads(response.read().decode("utf-8"))
+            status = getattr(response, "status", 200)
+            headers = response.headers
+            raw = response.read().decode("utf-8")
+        try:
+            result = json.loads(raw)
+        except json.JSONDecodeError:
+            save_usage_observation(build_usage_observation(status, headers, None))
+            raise RuntimeError(
+                "Research model returned invalid JSON; usage observation was saved; no retry attempted."
+            ) from None
+        save_usage_observation(build_usage_observation(status, headers, result))
     except urllib.error.HTTPError as exc:
-        raise RuntimeError("Research model HTTP error: " + str(exc.code)) from None
+        save_usage_observation(build_usage_observation(exc.code, exc.headers, None))
+        if exc.code == 429:
+            raise RuntimeError(
+                "NVIDIA returned HTTP 429 (rate limit). No automatic retry was attempted; "
+                "inspect open_research_usage.json."
+            ) from None
+        if exc.code == 402:
+            raise RuntimeError(
+                "NVIDIA returned HTTP 402 (provider reported insufficient credits/access). "
+                "No automatic retry was attempted; inspect account access and usage metadata."
+            ) from None
+        raise RuntimeError(
+            "Research model HTTP error " + str(exc.code) +
+            "; no automatic retry was attempted; inspect open_research_usage.json."
+        ) from None
     except (urllib.error.URLError, TimeoutError):
-        raise RuntimeError("Research model connection/timeout error.") from None
+        save_usage_observation(build_usage_observation(None, None, None))
+        raise RuntimeError(
+            "Research model connection/timeout error. Whether the provider received the request "
+            "is unknown; no automatic retry was attempted."
+        ) from None
     choices = result.get("choices", [])
     message = choices[0].get("message", {}) if choices else {}
     content = message.get("content")
     if not isinstance(content, str) or not content.strip():
-        raise RuntimeError("Research model returned no final content.")
+        raise RuntimeError(
+            "Research model returned no final content. Inspect open_research_usage.json; "
+            "no automatic retry was attempted."
+        )
     return content.strip()
 
 def main() -> int:
@@ -198,6 +300,15 @@ def main() -> int:
         target, train = isolate_pre_target(rows)
         messages = build_messages(target, train, os.environ.get("TASK_TEXT", ""))
         report = call_model(messages)
+        usage_note = (
+            "\n\n## NVIDIA usage observation\n\n"
+            "- Provider quota checked before request: NO; no account-level remaining-quota API "
+            "was identified in the reviewed public documentation.\n"
+            "- Request count made by this run: 1; automatic retries: 0.\n"
+            "- Provider rate-limit headers/token usage, if returned, are in "
+            "`open_research_usage.json`.\n"
+            "- Missing usage/limit data is UNKNOWN, not unlimited or proof of free use.\n"
+        )
         header = (
             "# GENERAL Blank-Slate Research Report\n\n"
             f"- Runner version: {VERSION}\n"
@@ -209,12 +320,15 @@ def main() -> int:
             "- Legacy method registry, candidate files, evidence catalog, and project memory loaded: NO\n"
             "- Status: EXPLORATORY HYPOTHESES ONLY; NOT VALIDATED; NOT CANONICAL\n\n"
         )
-        REPORT.write_text(header + report + "\n", encoding="utf-8")
+        REPORT.write_text(header + report + usage_note, encoding="utf-8")
         print("OPEN RESEARCH: completed")
         print("Target date isolated:", target)
         print("Pre-target draws supplied:", len(train))
         print("Target numbers exposed: NO")
         print("Legacy research context loaded: NO")
+        print("Provider quota checked before request: NO; no documented account quota API was identified")
+        print("Request count:", 1, "| automatic retries:", 0)
+        print("Usage observation:", USAGE_REPORT.name)
         print("Report status: EXPLORATORY ONLY; NOT VALIDATED")
         print("Report path:", REPORT.name)
         return 0
