@@ -36,7 +36,8 @@ class OpenResearchIsolationTests(unittest.TestCase):
         system = research.build_messages("2026-10-22", self.rows[:2])[0]["content"].lower()
         self.assertIn("user explicitly approves", system)
         self.assertIn("pending_user_approval", system)
-        self.assertIn("not implemented", system)
+        self.assertIn("<rule_change_request_json>", system)
+        self.assertIn("separate reviewed implementation pull request is required", system)
         self.assertIn("telegram", system)
 
     def test_invalid_archive_stops_before_model_payload(self):
