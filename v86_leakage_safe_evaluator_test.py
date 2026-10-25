@@ -61,6 +61,19 @@ class LeakageSafeEvaluatorTests(unittest.TestCase):
         p2 = predict_from_known_pair(tuple(rows[:20]))
         self.assertEqual(p1, p2)
 
+    def test_exact_mode_returns_none_when_no_exact_signature_match_exists(self):
+        # Alternating gaps make adjacent transition signatures differ, so an
+        # exact query match should not silently select arbitrary old triples.
+        rows = (
+            Draw(date(2020, 1, 1), (1, 2, 3, 4, 5, 6)),
+            Draw(date(2020, 1, 2), (1, 3, 5, 7, 9, 11)),
+            Draw(date(2020, 1, 3), (2, 4, 6, 8, 10, 12)),
+            Draw(date(2020, 1, 4), (1, 2, 3, 4, 5, 6)),
+            Draw(date(2020, 1, 5), (1, 3, 5, 7, 9, 11)),
+        )
+        prediction = predict_from_known_pair(rows, feature="sumdiff", mode="exact", k=5)
+        self.assertIsNone(prediction)
+
     def test_walk_forward_target_mutation_does_not_change_prediction_history(self):
         rows = fixture(25)
         target_index = 18
