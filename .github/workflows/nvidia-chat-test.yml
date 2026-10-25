@@ -132,7 +132,7 @@ jobs:
 
               Path("/tmp/general_nvidia_api_succeeded").touch()
 
-          print("GENERAL AI CHAT TEST SUCCESS")
+              print("GENERAL AI CHAT TEST SUCCESS")
               print("Model:", data.get("model", "not specified"))
               print("Finish reason:", finish_reason)
               print("Final answer received: YES")
