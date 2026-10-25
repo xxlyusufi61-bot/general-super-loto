@@ -78,4 +78,22 @@ jobs:
 
       - name: Run leakage-aware walk-forward and chronological CV
         run: |
-          python3 general_walkforward.py --archive super_loto_archive.json --min-train 100 --folds 5
+          set -o pipefail
+          python3 general_walkforward.py --archive super_loto_archive.json --min-train 100 --folds 5 2>&1 | tee walkforward-report.log
+
+      - name: Send evaluation report to Telegram
+        if: always()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          JOB_STATUS: ${{ job.status }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          BRANCH_NAME: ${{ github.ref_name }}
+        run: |
+          python3 telegram_report.py \
+            --title "Walk-Forward Evaluation" \
+            --status "$JOB_STATUS" \
+            --run-url "$RUN_URL" \
+            --branch "$BRANCH_NAME" \
+            --kind "walkforward" \
+            --report-log "walkforward-report.log"
