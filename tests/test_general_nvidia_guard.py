@@ -1,4 +1,6 @@
 import unittest
+from pathlib import Path
+import textwrap
 
 from general_nvidia_guard import (
     initial_lock_state,
@@ -78,6 +80,21 @@ class GlobalNvidiaLockTests(unittest.TestCase):
             stamp="2026-10-26T10:00:00+00:00",
         )
         self.assertLessEqual(len(state["reason"]), 320)
+
+    def test_general_core_python_syntax(self):
+        source = Path("general_core.py").read_text(encoding="utf-8")
+        compile(source, "general_core.py", "exec")
+
+    def test_nvidia_workflow_inline_python_syntax(self):
+        for workflow_name in ("nvidia-test.yml", "nvidia-chat-test.yml"):
+            workflow_path = Path(".github/workflows") / workflow_name
+            workflow = workflow_path.read_text(encoding="utf-8")
+            marker = "python3 - <<'PY'\\n"
+            self.assertIn(marker, workflow, workflow_name + " missing inline Python script")
+            script = workflow.split(marker, 1)[1].split("\\n          PY", 1)[0]
+            script = textwrap.dedent(script)
+            with self.subTest(workflow=workflow_name):
+                compile(script, str(workflow_path), "exec")
 
 
 if __name__ == "__main__":
