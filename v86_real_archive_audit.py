@@ -70,10 +70,11 @@ def prepare_r60_history(
             raise ValueError("Draw numbers must already be sorted; no silent normalization.")
         draws.append(Draw(day=day, numbers=tuple(numbers)))
 
-    # validate_history checks uniqueness, ordering and values and removes locked dates.
+    # Validate once without exclusions to preserve accurate before/after counts.
+    valid_pre_target = validate_history(draws, target, locked_dates=())
     clean = validate_history(draws, target, locked_dates=locked)
     r54_count = sum(row.day < R60_START_DATE for row in clean)
-    r60_before_filter = sum(row.day >= R60_START_DATE for row in clean)
+    r60_before_filter = sum(row.day >= R60_START_DATE for row in valid_pre_target)
     r60 = tuple(row for row in clean if row.day >= R60_START_DATE)
     locked_present = sorted(
         day.isoformat() for day in locked
@@ -87,6 +88,7 @@ def prepare_r60_history(
         raise ValueError("R60 history is not strictly chronological.")
     summary = {
         "pre_target_rows_received": len(rows),
+        "pre_target_rows_before_locked_date_exclusion": len(valid_pre_target),
         "pre_target_rows_after_locked_date_exclusion": len(clean),
         "r54_rows_excluded_from_this_audit": r54_count,
         "r60_rows_before_locked_date_exclusion": r60_before_filter,
