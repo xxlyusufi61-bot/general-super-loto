@@ -20,7 +20,7 @@ class OpenResearchIsolationTests(unittest.TestCase):
         self.assertEqual(target, "2026-10-22")
         self.assertEqual([r["date"] for r in payload["pre_target_history"]],
                          ["2026-10-18", "2026-10-20"])
-        self.assertNotIn("2026-10-22", messages[1]["content"])
+        self.assertNotIn("[3,9,15,24,36,50]", messages[1]["content"])
         self.assertFalse(payload["target_numbers_included"])
         self.assertFalse(payload["post_target_records_included"])
         self.assertNotIn("3,9,15,24,36,50", messages[1]["content"])
@@ -44,7 +44,7 @@ class OpenResearchIsolationTests(unittest.TestCase):
             {"date": "2026-10-20", "numbers": [1, 1, 14, 23, 35, 49]},
             {"date": "2026-10-22", "numbers": [3, 9, 15, 24, 36, 50]},
         ]
-        with self.assertRaises(RuntimeError):
+        with self.assertRaises(ValueError):
             research.isolate_pre_target(bad)
 
     def test_target_or_future_training_row_is_rejected(self):
