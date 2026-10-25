@@ -75,6 +75,25 @@ class RealArchiveAuditTests(unittest.TestCase):
         self.assertFalse(report["reverse_retrospective_stress_test"]["predictive_evidence"])
         self.assertEqual(report["random_prediction_reference"]["replications"], 100)
 
+
+    def test_archive_row_counts_distinguish_locked_exclusions(self):
+        rows = make_rows(300)
+        # Use a fixture where the locked date is guaranteed to be present.
+        rows = [row for row in rows if row["date"] not in DEFAULT_LOCKED_DATES]
+        rows.extend([
+            {"date": "2021-01-26", "numbers": [1, 2, 3, 4, 5, 6]},
+            {"date": "2021-01-28", "numbers": [2, 3, 4, 5, 6, 7]},
+        ])
+        rows.sort(key=lambda row: row["date"])
+        r60, summary = prepare_r60_history(rows, "2022-12-31")
+        self.assertEqual(summary["pre_target_rows_before_locked_date_exclusion"], len(rows))
+        self.assertEqual(
+            summary["pre_target_rows_after_locked_date_exclusion"],
+            len(rows) - 2,
+        )
+        self.assertEqual(len(summary["locked_dates_excluded"]), 2)
+        self.assertTrue(all(draw.day.isoformat() not in DEFAULT_LOCKED_DATES for draw in r60))
+
     def test_duplicate_dates_fail_closed(self):
         rows = make_rows(20)
         rows[1]["date"] = rows[0]["date"]
