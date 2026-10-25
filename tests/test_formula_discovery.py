@@ -92,7 +92,7 @@ class OfflineFormulaDiscoveryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "R54 record contains"):
             discovery.build_report(rows, random_repeats=1, bootstrap_replicates=0)
 
-    def test_invalid_isolation_metadata_fails_closed(self):
+    def test_valid_target_isolation_metadata_is_reported(self):
         rows = random_rows(30, date(2022, 1, 1))
         # A valid archive always isolates exactly its latest record.
         report = discovery.build_report(rows, random_repeats=1, bootstrap_replicates=0)
@@ -109,6 +109,24 @@ class OfflineFormulaDiscoveryTests(unittest.TestCase):
         self.assertIs(design["provider_or_paid_service_required"], False)
         self.assertIs(design["canonical_registry_modified"], False)
         self.assertIs(design["automatic_promotion"], False)
+
+    def test_bootstrap_interval_is_unavailable_for_short_test_series(self):
+        interval = discovery._block_bootstrap_ci(
+            [0.2, -0.1, 0.4, 0.0, 0.1, -0.2, 0.3, 0.1, -0.1, 0.0, 0.2],
+            replicates=250,
+            block_length=20,
+            seed=7,
+        )
+        self.assertIsNone(interval)
+
+    def test_bootstrap_interval_has_uncertainty_with_sufficient_targets(self):
+        values = [(-0.2 if index % 3 == 0 else 0.1) for index in range(100)]
+        interval = discovery._block_bootstrap_ci(
+            values, replicates=50, block_length=20, seed=7
+        )
+        self.assertIsNotNone(interval)
+        self.assertLessEqual(interval["low"], interval["high"])
+        self.assertEqual(interval["replicates"], 50)
 
     def test_workflow_has_no_provider_key_and_tests_this_engine(self):
         workflow_path = ROOT / ".github" / "workflows" / "formula-discovery.yml"
