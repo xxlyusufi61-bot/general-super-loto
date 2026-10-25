@@ -95,7 +95,7 @@ jobs:
 
               Path("/tmp/general_nvidia_api_succeeded").touch()
 
-          print("NVIDIA API TEST SUCCESS")
+              print("NVIDIA API TEST SUCCESS")
 
           except urllib.error.HTTPError as error:
               print("NVIDIA API HTTP status:", error.code)
