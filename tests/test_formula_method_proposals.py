@@ -64,7 +64,7 @@ class MethodDefinitionProposalTests(unittest.TestCase):
         rows = synthetic_rows()
         target_date = "2026-01-26"
         result = score_abc_transition(rows, target_date)
-        expected_c = set(rows[-3]["numbers"])  # repeating states make matching A->B lead to C
+        expected_c = set(rows[1]["numbers"])  # the same earlier A->B transition was followed by this C
         self.assertEqual(result["status"], "scored")
         self.assertEqual(set(result["ranked_numbers"][:6]), expected_c)
         self.assertEqual(result["diagnostics"]["training_triples"], len(rows) - 2)
@@ -116,7 +116,7 @@ class MethodDefinitionProposalTests(unittest.TestCase):
 
     def test_insufficient_history_returns_no_signal_not_fabricated_numbers(self):
         rows = synthetic_rows(count=4)
-        target_date = "2026-01-05"
+        target_date = "2026-01-03"  # only two draws are strictly pre-target
         for scorer in (score_abc_transition, score_a_to_t, score_mod5_to_t):
             with self.subTest(scorer=scorer.__name__):
                 result = scorer(rows, target_date)
