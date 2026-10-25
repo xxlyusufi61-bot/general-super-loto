@@ -73,7 +73,7 @@ class LegacyFormulaArchiveTests(unittest.TestCase):
         text = json.dumps(self.archive, ensure_ascii=False).lower()
         self.assertIn("holdout", text)
         self.assertIn("embedded", text)
-        self.assertIn("random/null baseline", text)
+        self.assertIn("null/random baseline", text)
         self.assertIs(self.archive["binding_policy"]["canonical_method_definition_changes_require_explicit_user_approval"], True)
         self.assertIs(self.archive["binding_policy"]["formulas_execution_enabled"], False)
 
