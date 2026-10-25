@@ -42,6 +42,8 @@ def extract_request(report: str) -> dict[str, str] | None:
             raise ValueError("Missing or invalid rule-change field: " + name)
         value = value.strip()
         limit = 160 if name == "rule_id" else MAX_FIELD_LENGTH
+        if name == "rule_id" and (chr(10) in value or chr(13) in value):
+            raise ValueError("Rule ID must be a single line.")
         if len(value) > limit:
             raise ValueError("Rule-change field exceeds length limit: " + name)
         clean[name] = value
@@ -218,16 +220,18 @@ def submit_report(path: str) -> int:
     number = issue.get("number") if isinstance(issue, dict) else None
     if type(number) is not int or number < 1:
         raise RuntimeError("GitHub did not return a valid rule-change issue number.")
-    preview = request["proposed_rule"]
+    preview = " ".join(request["proposed_rule"].split())
     if len(preview) > 380:
         preview = preview[:377] + "..."
+    issue_url = os.environ.get("GITHUB_SERVER_URL", "https://github.com").rstrip("/") + "/" + os.environ["GITHUB_REPOSITORY"] + "/issues/" + str(number)
     message = (
         "GENERAL — KURAL DEĞİŞİKLİĞİ TALEBİ\n"
-        f"Talep no: #{number}\nKural: {request['rule_id']}\nÖneri: {preview}\n\n"
+        f"Talep no: #{number}\nKural: {request['rule_id']}\nÖneri: {preview}\n"
+        f"Talep ayrıntısı: {issue_url}\n\n"
         f"Onaylamak için bu sohbete /approve {number} yaz.\n"
         f"Reddetmek için bu sohbete /reject {number} yaz.\n\n"
         "Komut yalnızca yetkili Telegram hesabından ve bu sohbetten gelirse işlenir. "
-        "Onay kuralı otomatik değiştirmez; uygulama için ayrıca incelenen bir PR gerekir."
+        "Kontrol yaklaşık 5 dakikada bir çalışır; gecikme olabilir. Onay kuralı otomatik değiştirmez; uygulama için ayrıca incelenen bir PR gerekir."
     )
     try:
         sent = telegram.call("sendMessage", {
