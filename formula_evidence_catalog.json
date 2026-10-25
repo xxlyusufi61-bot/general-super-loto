@@ -189,12 +189,12 @@
     "leakage_safe_v86_audit_candidate": "SYNTHETIC_TESTS_PASSING; REAL_ARCHIVE_AUDIT_COMPLETED_ON_REVIEW_BRANCH; EXPERIMENTAL_ONLY; NOT_CANONICAL"
   },
   "next_recovery_actions": [
-    "Review and approve or request changes to the separate leakage-safe V8.6 audit candidate before any real-archive evaluation.",
-    "Audit the exact recovered V8.6 source for target-B leakage and the null-evaluation bug before any execution.",
-    "Compare the recovered v1 source with the earlier tuple/int bug fix and audit its embedded archive separately from the canonical archive.",
+    "Independently review the completed leakage-safe V8.6 audit candidate and its recorded real-archive results before any reuse; keep it experimental and non-canonical.",
+    "Audit the exact recovered V8.6 source statically for target-B leakage and the null-evaluation bug; do not execute it as a trusted evaluator until a separate reviewed fix is tested.",
+    "Compare the recovered Super Loto cipher motor v1 source with the earlier tuple/int bug fix and audit its embedded archive separately from the canonical archive.",
     "Audit the recovered NEAR_STATE v5.0 source for chronology, archive boundaries, and target isolation.",
     "Recover version-specific logs for V19 and V0.3.1 weights; keep those weights unverified until definitions and run logs are available.",
-    "Do not change OPEN_DEFINITION statuses until the user approves canonical definitions."
+    "Do not change OPEN_DEFINITION statuses or promote the experimental V8.6 candidate to canonical without the required evidence and explicit user approval."
   ],
   "real_archive_audit": {
     "run_id": 40197247520,
@@ -252,7 +252,8 @@
         0.691358
       ],
       "reverse_retrospective_stress_test_mean_hits_out_of_6": 0.595183,
-      "reverse_retrospective_stress_test_predictive_evidence": false
+      "reverse_retrospective_stress_test_predictive_evidence": false,
+      "exact_transform_guard": "In exact mode, only historical signatures with distance 0 are eligible; nonmatching signatures are skipped rather than arbitrary fallback candidates. Covered by a synthetic regression test."
     },
     "interpretation_and_limits": [
       "This is a candidate based on legacy V8.6 feature vocabulary, not a verified exact reconstruction of the legacy formula.",
