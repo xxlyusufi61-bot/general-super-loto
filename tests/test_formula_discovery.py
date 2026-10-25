@@ -100,6 +100,23 @@ class OfflineFormulaDiscoveryTests(unittest.TestCase):
         self.assertIs(report["current_isolated_target"]["present_in_archive"], True)
         self.assertEqual(report["archive_integrity"]["pre_target_draw_count"], len(rows) - 1)
 
+    def test_report_records_reproducible_evaluation_parameters(self):
+        rows = random_rows(35, date(2022, 1, 1))
+        report = discovery.build_report(
+            rows, random_repeats=3, bootstrap_replicates=12, seed=1234
+        )
+        self.assertTrue(report["generated_at_utc"].endswith("+00:00"))
+        self.assertEqual(
+            report["evaluation_parameters"],
+            {
+                "random_predictions_per_target": 3,
+                "bootstrap_replicates": 12,
+                "bootstrap_block_length": discovery.DEFAULT_BLOCK_LENGTH,
+                "seed": 1234,
+                "minimum_history_draws": discovery.MIN_HISTORY,
+            },
+        )
+
     def test_report_declares_api_free_no_promotion_policy(self):
         rows = random_rows(35, date(2022, 1, 1))
         report = discovery.build_report(rows, random_repeats=1, bootstrap_replicates=0)
