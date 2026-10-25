@@ -34,7 +34,7 @@ class OpenResearchIsolationTests(unittest.TestCase):
 
     def test_prompt_requires_user_approval_for_rule_changes(self):
         system = research.build_messages("2026-10-22", self.rows[:2])[0]["content"].lower()
-        self.assertIn("explicit user approval", system)
+        self.assertIn("user explicitly approves", system)
         self.assertIn("pending_user_approval", system)
         self.assertIn("not implemented", system)
         self.assertIn("telegram", system)
