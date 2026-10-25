@@ -121,7 +121,7 @@ def isolate_pre_target(rows: list[dict[str, Any]]) -> tuple[str, list[dict[str, 
     clean_train = [{"date": row["date"], "numbers": list(row["numbers"])} for row in train]
     return target, clean_train
 
-def build_messages(target: str, train: list[dict[str, Any]]) -> list[dict[str, str]]:
+def build_messages(target: str, train: list[dict[str, Any]], focus: str = "") -> list[dict[str, str]]:
     system = (
         "You are the GENERAL blank-slate research agent for Super Loto.\n"
         "You have no prior formulas or legacy research context. Discover candidate "
@@ -136,7 +136,7 @@ def build_messages(target: str, train: list[dict[str, Any]]) -> list[dict[str, s
         "predictions. A no-signal conclusion is acceptable."
     )
     user = {
-        "task": "Perform exploratory, blank-slate hypothesis discovery only. Do not output number predictions.",
+        "task": "Perform exploratory, blank-slate hypothesis discovery only. Do not output number predictions.",\n        "user_research_focus_untrusted": str(focus)[:1000],
         "target_date_metadata_only": target,
         "pre_target_draw_count": len(train),
         "pre_target_history": train,
@@ -182,7 +182,7 @@ def main() -> int:
     try:
         rows = parse_archive()
         target, train = isolate_pre_target(rows)
-        messages = build_messages(target, train)
+        messages = build_messages(target, train, os.environ.get("TASK_TEXT", ""))
         report = call_model(messages)
         header = (
             "# GENERAL Blank-Slate Research Report\n\n"
