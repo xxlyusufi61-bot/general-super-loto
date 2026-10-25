@@ -81,6 +81,40 @@ class CanonicalArchiveTargetIsolationTests(unittest.TestCase):
             self.fail("Archive provenance timestamps are invalid.")
         self.assertLessEqual(checked_at, fetched_at)
 
+    def test_archive_update_and_multi_year_provenance_are_recorded(self):
+        updated = self.payload.get("archive_updated_at")
+        self.assertIsInstance(updated, str)
+        updated_at = datetime.fromisoformat(updated.replace("Z", "+00:00"))
+        fetched_at = datetime.fromisoformat(
+            str(self.payload.get("fetched_at", "")).replace("Z", "+00:00")
+        )
+        self.assertGreaterEqual(updated_at, fetched_at)
+
+        validation = self.payload.get("multi_year_cross_source_validation")
+        self.assertIsInstance(validation, dict)
+        self.assertEqual(
+            validation.get("result"),
+            "PASS_AFTER_DOCUMENTED_SOURCE_NORMALIZATION",
+        )
+        self.assertEqual(validation.get("archive_records"), len(self.rows))
+        self.assertEqual(validation.get("archive_last_date"), self.target_date)
+        self.assertIs(validation.get("draw_numbers_in_report"), False)
+        self.assertIs(validation.get("archive_modified_by_audit"), False)
+        self.assertEqual(set(validation.get("loto_gen_r60_by_year", {})),
+                         {str(year) for year in range(2020, 2027)})
+        for details in validation["loto_gen_r60_by_year"].values():
+            self.assertEqual(details.get("status"), "MATCH")
+            self.assertEqual(details.get("archive_only_count"), 0)
+            self.assertEqual(details.get("independent_only_count"), 0)
+            self.assertEqual(details.get("number_mismatch_count"), 0)
+            self.assertEqual(details.get("source_parse_error_count"), 0)
+        self.assertEqual(validation["lotobil_r54"].get("status"), "MATCH")
+        self.assertEqual(
+            validation["lotobil_r60"].get("status"),
+            "MATCH_AFTER_DOCUMENTED_SOURCE_NORMALIZATION",
+        )
+        self.assertEqual(validation["fetch_failures"], [])
+
     def test_r54_and_r60_periods_remain_separated(self):
         old_regime = [
             row for row in self.rows
