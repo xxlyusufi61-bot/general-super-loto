@@ -150,6 +150,7 @@ def run_audit(
     seed: int = 20261025,
 ) -> dict[str, Any]:
     """Select on an earlier validation interval and assess one frozen candidate later."""
+    locked_dates = tuple(locked_dates)
     r60, history_summary = prepare_r60_history(history_rows, target_date, locked_dates)
     if min_train < 5:
         raise ValueError("min_train must be at least 5.")
