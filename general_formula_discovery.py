@@ -189,11 +189,16 @@ def _block_bootstrap_ci(values, replicates, block_length, seed):
     if not values:
         return None
     point = mean(values)
-    if len(values) == 1 or replicates <= 0:
-        return {"low": point, "high": point, "method": "degenerate"}
+    # A block length equal to or large relative to the whole series can make
+    # every bootstrap sample a rotation of the same data, falsely collapsing
+    # the interval to a single point. Mark short series as insufficient instead.
+    if len(values) < max(40, 2 * block_length):
+        return None
+    if replicates <= 0:
+        return {"low": point, "high": point, "method": "degenerate_no_bootstrap"}
     rng = random.Random(seed)
     n = len(values)
-    width = max(1, min(block_length, n))
+    width = min(block_length, n // 2)
     estimates = []
     for _ in range(replicates):
         sample = []
@@ -366,14 +371,17 @@ def build_report(rows, random_repeats=DEFAULT_RANDOM_REPEATS,
             }
             continue
         candidate_results = {}
-        for candidate_index, candidate in enumerate(CANDIDATES):
+        # Use identical per-target random baseline draws across candidates so
+        # candidate-to-candidate comparisons are not confounded by baseline RNG.
+        shared_regime_seed = seed + (54 if regime == "R54" else 60) * 10000019
+        for candidate in CANDIDATES:
             candidate_results[candidate["candidate_id"]] = _evaluate_candidate(
                 number_draws,
                 candidate,
                 universe_size,
                 random_repeats,
                 bootstrap_replicates,
-                seed + candidate_index * 100003 + (54 if regime == "R54" else 60) * 10000019,
+                shared_regime_seed,
             )
         regime_reports[regime] = {
             "status": "EXPLORATORY_EVALUATION_COMPLETE",
@@ -416,6 +424,8 @@ def build_report(rows, random_repeats=DEFAULT_RANDOM_REPEATS,
             "automatic_promotion": False,
             "multiple_testing_correction": "NOT_APPLIED; candidates are exploratory and results require independent follow-up",
             "uncertainty": "95% circular moving-block bootstrap intervals are approximate and do not prove predictive signal",
+            "confidence_interval_policy": "No bootstrap interval is reported with fewer than max(40, 2 * block_length) eligible targets.",
+            "random_baseline_policy": "Identical random baseline seeds are used across candidates within each regime/protocol for fairer paired comparison.",
         },
         "candidate_definitions": list(CANDIDATES),
         "regimes": regime_reports,
