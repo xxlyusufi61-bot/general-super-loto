@@ -1,0 +1,100 @@
+{
+  "schema_version": 1,
+  "project": "GENERAL Super Loto",
+  "proposal_version": "0.1.0",
+  "created_at": "2026-10-26",
+  "title": "Mathematical definition proposals for synthetic testing",
+  "status": "EXPERIMENTAL_PROPOSALS_ONLY",
+  "binding_policy": {
+    "canonical_registry_changed": false,
+    "execution_enabled": false,
+    "requires_explicit_user_approval_before_canonical_promotion": true,
+    "live_archive_evaluation_allowed": false,
+    "live_nvidia_calls_allowed_for_this_work": false,
+    "target_draw_and_all_later_draws_must_be_excluded": true
+  },
+  "common_contract": {
+    "input": "Chronologically ordered, Data-Guard-validated archive rows with date and six-number draw; a separate ISO target_date.",
+    "isolation": "Only rows whose date is strictly earlier than target_date contribute numbers to any score. On/after-target number arrays must never be accessed.",
+    "draw_constraints": "Exactly six distinct integers in 1..60, internally sorted.",
+    "ranking": "Descending score, ascending number as stable tie-break.",
+    "failures": "Insufficient history returns no_signal and an empty candidate list; never fill with arbitrary numbers.",
+    "validation_protocols_after_approval": [
+      "deterministic synthetic unit tests",
+      "forward chronological walk-forward",
+      "reverse chronological retrospective stress test",
+      "time-ordered cross-validation",
+      "random/null baseline and uncertainty",
+      "canonical archive integrity and target-isolation audit"
+    ]
+  },
+  "proposals": [
+    {
+      "method_id": "A->B->C",
+      "registry_status": "OPEN_DEFINITION",
+      "status": "PROPOSED_FOR_SYNTHETIC_TESTING_ONLY",
+      "execution_ready": false,
+      "source_relationship": "Inspired by V8.6 transition signatures; deliberately repairs the legacy direction mismatch by using the historical C state as outcome.",
+      "parameters": {
+        "k": 5,
+        "signature_transform": "sign",
+        "distance": "Hamming",
+        "vote_weight": "1/rank"
+      },
+      "mathematical_definition": [
+        "Let pre-target history be D_0,...,D_m in chronological order, m>=2. The current observed transition is (A*,B*)=(D_(m-1),D_m).",
+        "For each historical triple i=0,...,m-2, define signature S_i=sign(Phi(D_i,D_(i+1))) and outcome C_i=D_(i+2). The current signature is S*=sign(Phi(A*,B*)).",
+        "Phi concatenates V8.6 features posdiff, gapdiff, parityflip, bandmove, mod3diff, mod5diff, mod7diff, sumdiff, span_diff, shape_diff and signed_core. rawdiff is omitted because it duplicates posdiff.",
+        "d_i is Hamming distance between S* and S_i. Sort examples by (d_i ascending, i descending), select at most the nearest five.",
+        "For rank r starting at 1, add 1/r to score(y) for every y in C_i of the selected example at rank r. Return positive-score numbers by score descending then number ascending."
+      ],
+      "insufficient_history": "Fewer than three pre-target draws -> no_signal; no synthetic fallback values.",
+      "key_test": "A repeating synthetic transition A->B whose observed continuation is C must rank C, not B.",
+      "legacy_mismatch": "The legacy evaluator votes on B, so its results do not prove an A->B->C predictor."
+    },
+    {
+      "method_id": "A->T",
+      "registry_status": "OPEN_DEFINITION",
+      "status": "PROPOSED_FOR_SYNTHETIC_TESTING_ONLY",
+      "execution_ready": false,
+      "source_relationship": "Formalizes the old gen_pair_relation source-number to next-draw-number count, including its top-10-per-source behavior.",
+      "parameters": {
+        "minimum_history_draws": 20,
+        "top_targets_per_source_number": 10
+      },
+      "mathematical_definition": [
+        "Let pre-target history be D_0,...,D_m; the latest source A*=D_m.",
+        "For every historical transition i=0,...,m-1, define M[x,y]=sum_i 1{x in D_i}*1{y in D_(i+1)} for x,y in 1..60.",
+        "For each x in A*, choose the up-to-ten y with M[x,y]>0 having highest M[x,y], ties by ascending y.",
+        "score(y)=sum over x in A* of M[x,y] when y belongs to that x's selected top-ten list; otherwise that source contributes zero.",
+        "Return positive-score numbers by score descending then number ascending."
+      ],
+      "insufficient_history": "Fewer than 20 pre-target draws -> no_signal; no arbitrary filler numbers.",
+      "key_test": "When the synthetic history repeatedly maps every current-source number to a known next state, that next state must receive the top scores.",
+      "legacy_mismatch": "This is a descriptive co-occurrence candidate, not evidence of causation or predictive advantage."
+    },
+    {
+      "method_id": "MOD5->T",
+      "registry_status": "OPEN_DEFINITION",
+      "status": "PROPOSED_FOR_SYNTHETIC_TESTING_ONLY",
+      "execution_ready": false,
+      "source_relationship": "A new explicit proposal, not the same as the legacy V8.6 mod5diff transition feature.",
+      "parameters": {
+        "minimum_history_draws": 6,
+        "k": 5,
+        "profile": "five-count residue histogram",
+        "distance": "L1",
+        "vote": "unweighted presence per selected next draw"
+      },
+      "mathematical_definition": [
+        "For each draw D define MOD5(D)=(c_0,c_1,c_2,c_3,c_4), where c_r is the number of n in D for which n mod 5=r.",
+        "For the latest pre-target source D_m, compute the L1 distance from MOD5(D_m) to each source profile MOD5(D_i) from fully historical transitions D_i->D_(i+1), i=0,...,m-1.",
+        "Sort transitions by (distance ascending, i descending) and keep at most five nearest transitions.",
+        "score(y)=the number of selected next-draw sets D_(i+1) that contain y. Return positive-score numbers by score descending then number ascending."
+      ],
+      "insufficient_history": "Fewer than six pre-target draws -> no_signal; no arbitrary filler numbers.",
+      "key_test": "For a residue-profile repeated in the synthetic history, the corresponding known next draw must rank highest.",
+      "legacy_mismatch": "The old mod5diff is a per-position transition-change feature; it does not specify a mapping from a MOD5 state to T."
+    }
+  ]
+}
