@@ -198,16 +198,11 @@ def run_audit(
         folds=folds, start_index=split, end_index=len(r60)
     )
     fold_report = []
-    fold_edges = [
-        split + (len(r60) - split) * index // folds
-        for index in range(folds + 1)
-    ]
-    for index, item in enumerate(chronological_folds):
-        start_index, end_index = fold_edges[index], fold_edges[index + 1]
+    for item in chronological_folds:
         fold_report.append({
             "fold": item["fold"],
-            "start_date": r60[start_index].day.isoformat(),
-            "end_date": r60[end_index - 1].day.isoformat(),
+            "start_date": r60[item["start_index"]].day.isoformat(),
+            "end_date": r60[item["end_index"] - 1].day.isoformat(),
             "evaluated_draws": item["n_targets"],
             "mean_hits_out_of_6": round(item["mean_hits"], 6),
         })
@@ -216,7 +211,7 @@ def run_audit(
     reverse = reverse_stress_test(
         r60, feature, transform, k, start_index=min_train, end_index=len(r60)
     )
-    locked_date_set = set(locked_dates)
+    locked_date_set = {_parse_iso_date(value, "locked date") for value in locked_dates}
     return {
         "audit_version": VERSION,
         "status": "COMPLETED_EXPERIMENTAL_AUDIT",
