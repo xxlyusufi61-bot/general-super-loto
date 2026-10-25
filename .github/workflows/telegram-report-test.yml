@@ -1,0 +1,28 @@
+name: GENERAL Telegram Report Formatter Test
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "telegram_report.py"
+      - "telegram_report_test.py"
+      - ".github/workflows/telegram-report-test.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  report-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile report helper and tests
+        run: python -m py_compile telegram_report.py telegram_report_test.py
+      - name: Run synthetic report formatting tests
+        run: python -m unittest -v telegram_report_test
