@@ -89,9 +89,9 @@ class GlobalNvidiaLockTests(unittest.TestCase):
         for workflow_name in ("nvidia-test.yml", "nvidia-chat-test.yml"):
             workflow_path = Path(".github/workflows") / workflow_name
             workflow = workflow_path.read_text(encoding="utf-8")
-            marker = "python3 - <<'PY'\\n"
+            marker = "python3 - <<'PY'\n"
             self.assertIn(marker, workflow, workflow_name + " missing inline Python script")
-            script = workflow.split(marker, 1)[1].split("\\n          PY", 1)[0]
+            script = workflow.split(marker, 1)[1].split("\n          PY", 1)[0]
             script = textwrap.dedent(script)
             with self.subTest(workflow=workflow_name):
                 compile(script, str(workflow_path), "exec")
