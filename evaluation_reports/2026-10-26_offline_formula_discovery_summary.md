@@ -6,7 +6,7 @@
 - Workflow run (pull request, successful): https://github.com/xxlyusufi61-bot/general-super-loto/actions/runs/40245170619
 - Pull request: https://github.com/xxlyusufi61-bot/general-super-loto/pull/28
 - Report generation time (UTC): 2026-10-25T23:32:54.807477+00:00
-- Runner: \`general_formula_discovery.py\` version \`0.1.0\`
+- Runner: `general_formula_discovery.py` version `0.1.0`
 - Parameters: 40 random six-number baselines per target, 250 block-bootstrap replicates, block length 20, seed 20261026, minimum history 20 draws.
 - Archive: 1,007 valid records, 2020-01-02 through 2026-10-25.
 - Isolated target: 2026-10-25. Isolation checks passed. Target values and later records were not used in scoring, selection, or tuning.
@@ -45,7 +45,7 @@ Positive values mean the candidate’s top-six set averaged more overlap with th
 ## Confidence-interval interpretation for R60
 
 - All R60 forward walk-forward and reverse stress-test bootstrap intervals include zero.
-- In time-ordered cross-validation, the intervals for \`position_neighbors_k5\`, \`position_neighbors_k10\` and \`position_neighbors_k20\` are below zero; this indicates underperformance relative to the random baseline in this test, not a useful signal.
+- In time-ordered cross-validation, the intervals for `position_neighbors_k5`, `position_neighbors_k10` and `position_neighbors_k20` are below zero; this indicates underperformance relative to the random baseline in this test, not a useful signal.
 - The remaining R60 CV intervals include zero.
 - R54 intervals are unavailable due to the small number of eligible outcomes.
 
