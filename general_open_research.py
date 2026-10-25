@@ -42,9 +42,10 @@ GOVERNANCE_RULES = (
     "must be labelled retrospective stress testing and not forward predictive evidence.",
     "Compare candidates with an appropriate random baseline and report uncertainty and search limits.",
     "A valid outcome may be that no robust signal is found. Never promise lottery predictions.",
-    "If a governance rule blocks the research or a change is proposed, do not alter it. Submit a rule-change "
-    "request for explicit user approval through the approved Telegram approval process; absent approval, "
-    "keep the existing rule.",
+    "If a governance rule blocks the research or a change is proposed, do not alter it. Produce a structured "
+    "rule-change request marked PENDING_USER_APPROVAL. Do not claim it was sent to Telegram: automated "
+    "Telegram request/approval handling is not implemented by this runner. Until that integration exists "
+    "and the user explicitly approves the exact request, keep the existing rule.",
 )
 
 def parse_archive(path: Path = ARCHIVE) -> list[dict[str, Any]]:
