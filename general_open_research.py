@@ -234,6 +234,15 @@ def call_model(messages: list[dict[str, str]]) -> str:
         raise RuntimeError(
             "NVIDIA inference was not explicitly approved; no provider request was sent."
         )
+    # Fail closed unless the operator has independently verified that this
+    # single hosted request is within the currently documented free terms.
+    # If NVIDIA exposes only rate limits and no remaining-free-usage status,
+    # this gate must remain closed: rate limits are not proof of free allowance.
+    if os.environ.get("GENERAL_NVIDIA_FREE_USAGE_VERIFIED", "").strip().lower() != "true":
+        raise RuntimeError(
+            "Free-use status was not independently verified; NVIDIA inference blocked. "
+            "No provider request was sent."
+        )
     key = os.environ.get("NVIDIA_API_KEY")
     if not key:
         raise RuntimeError("NVIDIA_API_KEY missing; research stopped.")

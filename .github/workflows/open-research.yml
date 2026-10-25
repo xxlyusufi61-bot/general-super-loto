@@ -27,6 +27,11 @@ name: GENERAL Blank-Slate Research
         required: true
         type: boolean
         default: false
+      confirm_free_usage_verified:
+        description: "Only true if NVIDIA's account UI and current terms clearly verify this single hosted request is within free use with no paid charge risk. If only rate limits are visible and free allowance cannot be verified, leave false."
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -48,7 +53,7 @@ jobs:
           python3 -m unittest -v general_open_research_test.py
 
   research:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.confirm_nvidia_call == true }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.confirm_nvidia_call == true && inputs.confirm_free_usage_verified == true }}
     needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -75,6 +80,7 @@ jobs:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           TASK_TEXT: ${{ inputs.task }}
           GENERAL_ALLOW_NVIDIA_CALL: "true"
+          GENERAL_NVIDIA_FREE_USAGE_VERIFIED: "true"
         run: |
           python3 general_open_research.py
       - name: Submit a structured rule-change request for Telegram approval if proposed

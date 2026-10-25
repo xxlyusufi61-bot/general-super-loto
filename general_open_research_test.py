@@ -93,6 +93,16 @@ class NvidiaUsageObservationTests(unittest.TestCase):
                 research.call_model([])
             mocked_urlopen.assert_not_called()
 
+    def test_live_inference_is_blocked_when_free_use_is_not_verified(self):
+        with patch.dict(
+            os.environ,
+            {"GENERAL_ALLOW_NVIDIA_CALL": "true", "NVIDIA_API_KEY": "test-secret"},
+            clear=True,
+        ), patch("general_open_research.urllib.request.urlopen") as mocked_urlopen:
+            with self.assertRaisesRegex(RuntimeError, "Free-use status was not independently verified"):
+                research.call_model([{"role": "user", "content": "test"}])
+            mocked_urlopen.assert_not_called()
+
     def test_rate_limit_error_is_not_retried_and_metadata_is_saved(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             usage_path = Path(temp_dir) / "usage.json"
@@ -109,7 +119,11 @@ class NvidiaUsageObservationTests(unittest.TestCase):
             )
             with patch.object(research, "USAGE_REPORT", usage_path), patch.dict(
                 os.environ,
-                {"GENERAL_ALLOW_NVIDIA_CALL": "true", "NVIDIA_API_KEY": "test-secret"},
+                {
+                    "GENERAL_ALLOW_NVIDIA_CALL": "true",
+                    "GENERAL_NVIDIA_FREE_USAGE_VERIFIED": "true",
+                    "NVIDIA_API_KEY": "test-secret",
+                },
             ), patch(
                 "general_open_research.urllib.request.urlopen", side_effect=error
             ) as mocked_urlopen:
