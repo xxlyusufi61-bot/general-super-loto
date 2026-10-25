@@ -27,18 +27,33 @@ permissions:
   contents: read
 
 jobs:
-  blank-slate-research:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile and test blank-slate runner
+        run: |
+          python3 -m py_compile general_open_research.py general_open_research_test.py
+          python3 -m unittest -v general_open_research_test.py
+
+  research:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
       - name: Refresh archive
         run: |
           if python3 general_archive_fetch.py > /tmp/archive-fetch.log 2>&1; then
@@ -47,22 +62,12 @@ jobs:
             echo "Archive retrieval failed; research stopped."
             exit 1
           fi
-
-      - name: Compile and test blank-slate runner
-        run: |
-          python3 -m py_compile general_open_research.py general_open_research_test.py
-          python3 -m unittest -v general_open_research_test.py
-
       - name: Run isolated blank-slate exploration
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           TASK_TEXT: ${{ inputs.task }}
         run: |
-          # Task text is intentionally not allowed to replace or weaken the
-          # governance prompt; it is recorded as a focus label only.
-          printf '%s\n' "Research focus: ${TASK_TEXT}" > /tmp/research-focus.txt
           python3 general_open_research.py
-
       - name: Upload hypothesis report only
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
