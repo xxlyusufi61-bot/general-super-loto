@@ -1,6 +1,20 @@
 name: GENERAL Blank-Slate Research
 
 'on':
+  push:
+    branches:
+      - feature/blank-slate-research-20261025
+    paths:
+      - "general_open_research.py"
+      - "general_open_research_test.py"
+      - ".github/workflows/open-research.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "general_open_research.py"
+      - "general_open_research_test.py"
+      - ".github/workflows/open-research.yml"
   workflow_dispatch:
     inputs:
       task:
