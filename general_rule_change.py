@@ -340,6 +340,11 @@ def poll_approvals() -> int:
                 continue
             outcome = handle_callback(callback, github, telegram, chat_id, approver, repo)
             counts[outcome] = counts.get(outcome, 0) + 1
+    # Confirm the highest processed update ID. If a newer callback arrives
+    # in this final response, it remains available for the next poll.
+    telegram.call("getUpdates", {
+        "offset": offset, "timeout": 0, "allowed_updates": ["callback_query"],
+    })
     print("RULE CHANGE POLL: completed")
     print("Decisions approved:", counts["approved"])
     print("Decisions rejected:", counts["rejected"])
