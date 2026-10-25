@@ -69,7 +69,7 @@
         "Reverse-time run is labelled retrospective stress testing, not predictive evidence.",
         "Locked dates are excluded from returned history."
       ],
-      "evaluation_status": "SYNTHETIC_TESTS_ONLY; REAL_ARCHIVE_NOT_RUN"
+      "evaluation_status": "REAL_ARCHIVE_AUDIT_COMPLETED_2026-10-25; EXPERIMENTAL_ONLY; NOT_CANONICAL"
     }
   },
   "methods": {
@@ -185,8 +185,8 @@
     "chronological_fold_summaries": "IMPLEMENTED; same walk-forward predictions summarized in contiguous folds",
     "nested_time_series_cross_validation": "NOT_IMPLEMENTED",
     "random_prediction_null": "MONTE_CARLO_REFERENCE_IMPLEMENTED; not a permutation test and no multiple-hypothesis adjustment",
-    "real_archive_run_in_this_step": false,
-    "leakage_safe_v86_audit_candidate": "SYNTHETIC_TESTS_PASSING_ON_REVIEW_BRANCH; REAL_ARCHIVE_NOT_RUN; NOT_CANONICAL"
+    "real_archive_run_in_this_step": true,
+    "leakage_safe_v86_audit_candidate": "SYNTHETIC_TESTS_PASSING; REAL_ARCHIVE_AUDIT_COMPLETED_ON_REVIEW_BRANCH; EXPERIMENTAL_ONLY; NOT_CANONICAL"
   },
   "next_recovery_actions": [
     "Review and approve or request changes to the separate leakage-safe V8.6 audit candidate before any real-archive evaluation.",
@@ -195,5 +195,73 @@
     "Audit the recovered NEAR_STATE v5.0 source for chronology, archive boundaries, and target isolation.",
     "Recover version-specific logs for V19 and V0.3.1 weights; keep those weights unverified until definitions and run logs are available.",
     "Do not change OPEN_DEFINITION statuses until the user approves canonical definitions."
-  ]
+  ],
+  "real_archive_audit": {
+    "run_id": 40197247520,
+    "run_url": "https://github.com/xxlyusufi61-bot/general-super-loto/actions/runs/40197247520",
+    "completed_at_utc": "2026-10-25T13:30:48Z",
+    "source_branch": "audit/v86-real-archive-evidence-20261025",
+    "source_commit": "294fd7736b00ad0358202d911ae567d2be812d67",
+    "status": "COMPLETED_EXPERIMENTAL_AUDIT",
+    "canonical_status": "NOT_CANONICAL_NOT_APPROVED",
+    "archive_integrity": {
+      "total_rows_validated": 1006,
+      "latest_date_isolated_as_target": "2026-10-22",
+      "strictly_pre_target_rows_passed_to_audit": 1005,
+      "target_numbers_passed_to_audit_process": false,
+      "target_numbers_used_for_scoring": false,
+      "target_excluded_from_scoring": true
+    },
+    "scope": {
+      "regime": "R60_ONLY",
+      "r60_start_date": "2020-08-02",
+      "r60_history_rows_used": 972,
+      "r60_first_date": "2020-08-02",
+      "r60_last_date": "2026-10-20",
+      "locked_dates_excluded": [
+        "2021-01-26",
+        "2021-01-28"
+      ]
+    },
+    "protocol": {
+      "candidate_count": 108,
+      "selection_interval": {
+        "start_date": "2021-03-28",
+        "end_date": "2025-04-01",
+        "evaluated_draws": 629,
+        "role": "validation-only candidate selection"
+      },
+      "frozen_final_interval": {
+        "start_date": "2025-04-03",
+        "end_date": "2026-10-20",
+        "evaluated_draws": 243,
+        "selected_candidate_not_reselected": true
+      },
+      "selected_candidate": {
+        "feature": "mod7diff",
+        "transform": "absolute",
+        "k": 5,
+        "validation_mean_hits_out_of_6": 0.669316
+      },
+      "final_mean_hits_out_of_6": 0.63786,
+      "theoretical_random_expected_hits_out_of_6": 0.6,
+      "simulated_random_mean_hits_out_of_6": 0.600971,
+      "delta_vs_simulated_random_mean": 0.036889,
+      "simulated_random_mean_95pct_interval": [
+        0.518519,
+        0.691358
+      ],
+      "reverse_retrospective_stress_test_mean_hits_out_of_6": 0.595183,
+      "reverse_retrospective_stress_test_predictive_evidence": false
+    },
+    "interpretation_and_limits": [
+      "This is a candidate based on legacy V8.6 feature vocabulary, not a verified exact reconstruction of the legacy formula.",
+      "The observed final mean is above the simulated random mean in this run, but the simulated random 95% interval includes the observed mean.",
+      "The random reference is descriptive Monte Carlo, not a formal significance test; there is no multiple-hypothesis adjustment for selecting among 108 candidates.",
+      "Chronological fold summaries reuse the same frozen final predictions and are not nested cross-validation.",
+      "Reverse-time results are retrospective stress tests, not predictive evidence.",
+      "No current target draw numbers were passed into the audit process or scored.",
+      "This result does not prove a predictive mechanism and does not approve any method as canonical."
+    ]
+  }
 }
