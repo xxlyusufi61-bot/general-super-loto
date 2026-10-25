@@ -62,6 +62,10 @@ class OfflineFormulaDiscoveryTests(unittest.TestCase):
         report_b = discovery.build_report(
             rows_b, random_repeats=2, bootstrap_replicates=0, seed=99
         )
+        # The execution timestamp should differ; every scientific result and
+        # isolation field must remain invariant when only target numbers change.
+        report_a.pop("generated_at_utc")
+        report_b.pop("generated_at_utc")
         self.assertEqual(report_a, report_b)
         self.assertIs(
             report_a["current_isolated_target"]["target_numbers_used_by_discovery_or_evaluation"],
