@@ -8,7 +8,7 @@ import argparse
 import json
 import random
 import sys
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from statistics import mean
 
@@ -396,6 +396,14 @@ def build_report(rows, random_repeats=DEFAULT_RANDOM_REPEATS,
         "project": "GENERAL Super Loto",
         "report_type": "offline_new_method_family_discovery",
         "runner_version": VERSION,
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "evaluation_parameters": {
+            "random_predictions_per_target": random_repeats,
+            "bootstrap_replicates": bootstrap_replicates,
+            "bootstrap_block_length": DEFAULT_BLOCK_LENGTH,
+            "seed": seed,
+            "minimum_history_draws": MIN_HISTORY,
+        },
         "archive_integrity": {
             "valid": True,
             "record_count": archive_check["record_count"],
