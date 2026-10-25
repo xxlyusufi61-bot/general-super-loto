@@ -1,4 +1,4 @@
-"""Send short, number-safe GitHub Actions reports to Telegram."""
+"""GitHub Actions test ve değerlendirme raporlarını Türkçe olarak Telegram'a gönderir."""
 import argparse
 import json
 import os
@@ -7,12 +7,12 @@ import urllib.request
 from pathlib import Path
 
 LABELS = {
-    'abc_transition_to_c': 'A->B->C candidate',
-    'a_to_t_pair_counts': 'A->T candidate',
-    'mod5_state_to_t': 'MOD5->T candidate',
-    'frequency_top6': 'Frequency top-6 baseline',
-    'frequency_bottom6': 'Frequency bottom-6 baseline',
-    'adjacent_draw_overlap': 'Adjacent-draw baseline',
+    "abc_transition_to_c": "A->B->C deneysel adayı",
+    "a_to_t_pair_counts": "A->T deneysel adayı",
+    "mod5_state_to_t": "MOD5->T deneysel adayı",
+    "frequency_top6": "En sık çıkan 6 sayı temel yöntemi",
+    "frequency_bottom6": "En az çıkan 6 sayı temel yöntemi",
+    "adjacent_draw_overlap": "Ardışık çekiliş örtüşmesi temel yöntemi",
 }
 
 
@@ -20,7 +20,7 @@ def read_report(path):
     if not path:
         return None
     try:
-        lines = Path(path).read_text(encoding='utf-8').splitlines()
+        lines = Path(path).read_text(encoding="utf-8").splitlines()
     except OSError:
         return None
     for line in reversed(lines):
@@ -40,73 +40,95 @@ def metric_lines(value):
     for name, stats in value.items():
         if not isinstance(stats, dict):
             continue
-        hits = stats.get('mean_hits_out_of_6', stats.get('observed_mean_hits_out_of_6'))
-        count = stats.get('evaluated_draws')
+        hits = stats.get("mean_hits_out_of_6", stats.get("observed_mean_hits_out_of_6"))
+        count = stats.get("evaluated_draws")
         if isinstance(hits, (int, float)) and not isinstance(hits, bool):
-            suffix = f'{hits:.3f}/6 mean hits'
+            suffix = f"{hits:.3f}/6 ortalama isabet"
             if isinstance(count, int):
-                suffix += f', {count} draws'
+                suffix += f", {count} çekiliş"
             output.append(f"- {LABELS.get(name, name)}: {suffix}")
     return output
 
 
-def format_message(title, status, run_url, branch, kind='status', report=None):
-    ok = status.lower() == 'success'
-    lines = [f"{'PASS' if ok else 'FAIL'} — GENERAL {title}", f"Result: {'SUCCESS' if ok else 'FAILURE'}", f'Branch: {branch or "unknown"}']
-    if not ok:
-        lines.append('Open the Actions run below for failure details.')
-    elif kind == 'candidates' and report:
-        lines.append('Forward walk-forward experimental results:')
-        lines.extend(metric_lines(report.get('forward_walk_forward', {}).get('baselines')))
-        lines.append('Experimental only; historical overlap is not proof of prediction.')
-        lines.append('Reverse-time results are retrospective, not predictive.')
-    elif kind == 'walkforward' and report:
-        isolated = report.get('current_target_excluded_from_scoring') is True and report.get('current_target_numbers_used_for_scoring') is False and report.get('current_target_numbers_exposed') is False
-        lines.append('Target isolation: ' + ('PASS' if isolated else 'NOT CONFIRMED'))
-        count = report.get('pre_target_history_records')
+def format_message(title, status, run_url, branch, kind="status", report=None):
+    basarili = status.lower() == "success"
+    lines = [
+        f"{'✅ BAŞARILI' if basarili else '❌ BAŞARISIZ'} — GENERAL: {title}",
+        f"Sonuç: {'BAŞARILI' if basarili else 'BAŞARISIZ'}",
+        f"Dal: {branch or 'bilinmiyor'}",
+    ]
+    if not basarili:
+        lines.append("Hata ayrıntıları için aşağıdaki GitHub Actions çalıştırmasını aç.")
+    elif kind == "candidates" and report:
+        lines.append("İleriye dönük kronolojik test — deneysel yöntemler:")
+        forward = report.get("forward_walk_forward", {})
+        lines.extend(metric_lines(forward.get("baselines") if isinstance(forward, dict) else None))
+        lines.append("Durum: Yalnızca deneysel; geçmişteki isabetler tahmin gücünü kanıtlamaz.")
+        lines.append("Ters kronolojik sonuçlar yalnızca geriye dönük stres testidir; tahmin kanıtı değildir.")
+    elif kind == "walkforward" and report:
+        izolasyon = (
+            report.get("current_target_excluded_from_scoring") is True
+            and report.get("current_target_numbers_used_for_scoring") is False
+            and report.get("current_target_numbers_exposed") is False
+        )
+        lines.append("Hedef çekiliş izolasyonu: " + ("BAŞARILI" if izolasyon else "DOĞRULANAMADI"))
+        count = report.get("pre_target_history_records")
         if isinstance(count, int):
-            lines.append(f'Pre-target history records: {count}')
-        forward = report.get('forward_walk_forward', {})
-        lines.append('Forward baselines:')
-        lines.extend(metric_lines(forward.get('baselines') if isinstance(forward, dict) else None))
-        cv = report.get('time_ordered_cross_validation', {})
-        lines.append('Chronological CV baselines:')
-        lines.extend(metric_lines(cv.get('baselines') if isinstance(cv, dict) else None))
-        lines.append('A->B->C, A->T and MOD5->T are not implemented in this baseline engine.')
-        lines.append('Reverse-time results are retrospective, not predictive.')
+            lines.append(f"Hedef öncesi geçmiş kayıt sayısı: {count}")
+        forward = report.get("forward_walk_forward", {})
+        lines.append("İleriye dönük temel yöntemler:")
+        lines.extend(metric_lines(forward.get("baselines") if isinstance(forward, dict) else None))
+        cv = report.get("time_ordered_cross_validation", {})
+        lines.append("Kronolojik çapraz doğrulama:")
+        lines.extend(metric_lines(cv.get("baselines") if isinstance(cv, dict) else None))
+        lines.append("A->B->C, A->T ve MOD5->T bu temel değerlendirme motorunda uygulanmış değil.")
+        lines.append("Ters kronolojik sonuçlar geriye dönük incelemedir; tahmin kanıtı değildir.")
     if run_url:
-        lines.extend(['', f'GitHub Actions: {run_url}'])
-    return '\n'.join(lines)[:3800]
+        lines.extend(["", f"GitHub Actions ayrıntıları: {run_url}"])
+    return "\n".join(lines)[:3800]
 
 
 def main():
-    p = argparse.ArgumentParser()
-    p.add_argument('--title', required=True)
-    p.add_argument('--status', required=True)
-    p.add_argument('--run-url', default='')
-    p.add_argument('--branch', default='')
-    p.add_argument('--kind', choices=['status', 'candidates', 'walkforward'], default='status')
-    p.add_argument('--report-log')
-    a = p.parse_args()
-    token = os.environ.get('TELEGRAM_BOT_TOKEN', '').strip()
-    chat_id = os.environ.get('TELEGRAM_CHAT_ID', '').strip()
-    if not token or not chat_id or not chat_id.lstrip('-').isdigit():
-        raise SystemExit('Telegram report failed: required secrets missing or invalid.')
-    report = read_report(a.report_log)
-    if a.status.lower() == 'success' and a.kind in ('candidates', 'walkforward') and report is None:
-        raise SystemExit('Telegram report failed: aggregate report could not be parsed.')
-    message = format_message(a.title, a.status, a.run_url, a.branch, a.kind, report)
-    data = urllib.parse.urlencode({'chat_id': chat_id, 'text': message, 'disable_web_page_preview': 'true'}).encode()
-    request = urllib.request.Request('https://api.telegram.org/bot' + token + '/sendMessage', data=data, method='POST')
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--title", required=True)
+    parser.add_argument("--status", required=True)
+    parser.add_argument("--run-url", default="")
+    parser.add_argument("--branch", default="")
+    parser.add_argument("--kind", choices=["status", "candidates", "walkforward"], default="status")
+    parser.add_argument("--report-log")
+    args = parser.parse_args()
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    if not token or not chat_id or not chat_id.lstrip("-").isdigit():
+        raise SystemExit("Telegram raporu gönderilemedi: gerekli secret eksik veya geçersiz.")
+    report = read_report(args.report_log)
+    if args.status.lower() == "success" and args.kind in ("candidates", "walkforward") and report is None:
+        raise SystemExit("Telegram raporu gönderilemedi: toplu değerlendirme raporu okunamadı.")
+    message = format_message(args.title, args.status, args.run_url, args.branch, args.kind, report)
+    data = urllib.parse.urlencode({
+        "chat_id": chat_id,
+        "text": message,
+        "disable_web_page_preview": "true",
+    }).encode()
+    request = urllib.request.Request(
+        "https://api.telegram.org/bot" + token + "/sendMessage",
+        data=data,
+        method="POST",
+    )
     try:
         with urllib.request.urlopen(request, timeout=20) as response:
-            result = json.loads(response.read().decode('utf-8'))
+            result = json.loads(response.read().decode("utf-8"))
     except Exception:
-        raise SystemExit('Telegram report failed: delivery request did not complete.') from None
-    if not isinstance(result, dict) or result.get('ok') is not True or not isinstance(result.get('result'), dict) or not isinstance(result['result'].get('message_id'), int):
-        raise SystemExit('Telegram report failed: Telegram did not confirm delivery.')
-    print('TELEGRAM REPORT DELIVERY: PASS')
+        raise SystemExit("Telegram raporu gönderilemedi: gönderim isteği tamamlanmadı.") from None
+    if (
+        not isinstance(result, dict)
+        or result.get("ok") is not True
+        or not isinstance(result.get("result"), dict)
+        or not isinstance(result["result"].get("message_id"), int)
+    ):
+        raise SystemExit("Telegram raporu gönderilemedi: Telegram teslimatı doğrulamadı.")
+    print("TELEGRAM RAPOR TESLİMİ: BAŞARILI")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
