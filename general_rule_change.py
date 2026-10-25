@@ -210,9 +210,10 @@ def submit_report(path: str) -> int:
         "sha": os.environ.get("GITHUB_SHA", "unknown"),
         "submitted_at": datetime.now(timezone.utc).isoformat(),
     }
+    body = build_issue_body(request, source)
     issue = github.request("POST", repo + "/issues", {
         "title": "[RULE CHANGE REQUEST] " + request["rule_id"],
-        "body": build_issue_body(request, source),
+        "body": body,
     })
     number = issue.get("number") if isinstance(issue, dict) else None
     if type(number) is not int or number < 1:
