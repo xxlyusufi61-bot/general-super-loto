@@ -69,7 +69,7 @@ class LeakageSafeEvaluatorTests(unittest.TestCase):
             Draw(date(2020, 1, 2), (1, 3, 5, 7, 9, 11)),
             Draw(date(2020, 1, 3), (2, 4, 6, 8, 10, 12)),
             Draw(date(2020, 1, 4), (1, 2, 3, 4, 5, 6)),
-            Draw(date(2020, 1, 5), (1, 3, 5, 7, 9, 11)),
+            Draw(date(2020, 1, 5), (1, 2, 3, 4, 5, 7)),
         )
         prediction = predict_from_known_pair(rows, feature="sumdiff", mode="exact", k=5)
         self.assertIsNone(prediction)
