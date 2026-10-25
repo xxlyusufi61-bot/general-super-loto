@@ -136,7 +136,8 @@ def build_messages(target: str, train: list[dict[str, Any]], focus: str = "") ->
         "predictions. A no-signal conclusion is acceptable."
     )
     user = {
-        "task": "Perform exploratory, blank-slate hypothesis discovery only. Do not output number predictions.",\n        "user_research_focus_untrusted": str(focus)[:1000],
+        "task": "Perform exploratory, blank-slate hypothesis discovery only. Do not output number predictions.",
+        "user_research_focus_untrusted": str(focus)[:1000],
         "target_date_metadata_only": target,
         "pre_target_draw_count": len(train),
         "pre_target_history": train,
