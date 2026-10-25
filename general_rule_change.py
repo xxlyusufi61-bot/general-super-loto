@@ -78,7 +78,7 @@ def build_issue_body(request: dict[str, str], source: dict[str, str]) -> str:
         "### Risk assessment\n" + request["risk_assessment"] + "\n\n"
         "### Required tests\n" + request["tests_required"] + "\n\n"
         "### Rollback plan\n" + request["rollback_plan"] + "\n\n"
-        "## Decision audit\nPending; an authorized Telegram callback is required.\n"
+        "## Decision audit\nPending; an authorized Telegram approval/rejection command is required.\n"
     )
 
 def decision_status(body: str, decision: str, actor_id: int, actor_name: str, callback_id: str) -> str:
