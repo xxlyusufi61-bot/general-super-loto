@@ -1,0 +1,72 @@
+name: GENERAL Offline Formula Hypothesis Discovery
+
+on:
+  push:
+    branches:
+      - feature/offline-hypothesis-discovery-20261026
+    paths:
+      - "general_formula_discovery.py"
+      - "tests/test_formula_discovery.py"
+      - "general_data_guard.py"
+      - "general_archive_fetch.py"
+      - ".github/workflows/formula-discovery.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "general_formula_discovery.py"
+      - "tests/test_formula_discovery.py"
+      - "general_data_guard.py"
+      - "general_archive_fetch.py"
+      - ".github/workflows/formula-discovery.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-discovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out GENERAL
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run repository unit and synthetic tests
+        run: python3 -m unittest discover -s tests -v
+
+      - name: Test archive parser without network access
+        run: python3 general_archive_fetch.py --self-test
+
+      - name: Fetch canonical archive
+        run: |
+          mkdir -p formula-discovery-output
+          if python3 general_archive_fetch.py > /tmp/general-archive-fetch.log 2>&1; then
+            echo "ARCHIVE FETCH: completed; detailed output suppressed."
+          else
+            echo "ARCHIVE FETCH FAILED; detailed output suppressed. Discovery stopped."
+            exit 1
+          fi
+
+      - name: Validate target isolation and run offline hypothesis search
+        run: |
+          python3 general_formula_discovery.py \
+            --archive super_loto_archive.json \
+            --output formula-discovery-output/report.json \
+            --random-repeats 40 \
+            --bootstrap-replicates 250 \
+            --seed 20261026
+
+      - name: Upload aggregate discovery report only
+        if: \${{ success() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: general-offline-formula-discovery
+          path: formula-discovery-output/report.json
+          if-no-files-found: error
+          retention-days: 14
