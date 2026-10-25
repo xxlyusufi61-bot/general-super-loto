@@ -48,7 +48,7 @@ jobs:
           python3 -m unittest -v general_open_research_test.py
 
   research:
-    if: ${{ github.event_name == 'workflow_dispatch' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.confirm_nvidia_call == true }}
     needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 15
