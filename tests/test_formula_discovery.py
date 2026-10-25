@@ -118,7 +118,8 @@ class OfflineFormulaDiscoveryTests(unittest.TestCase):
         self.assertNotIn("integrate.api.nvidia.com", workflow)
         self.assertNotIn("urllib.request.urlopen", source)
         self.assertIn("general_formula_discovery.py", workflow)
-        self.assertIn("general_formula_discovery.py", source)
+        self.assertIn('"api_calls": 0', source)
+        self.assertIn('"live_ai_calls": False', source)
 
 
 if __name__ == "__main__":
