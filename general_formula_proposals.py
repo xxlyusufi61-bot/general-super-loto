@@ -73,6 +73,7 @@ def _history_before_target(rows, target_date):
 
     history = []
     previous_day = None
+    target_date_count = 0
     for row in rows:
         if not isinstance(row, dict):
             raise ValueError("each archive row must be an object")
@@ -81,11 +82,19 @@ def _history_before_target(rows, target_date):
             raise ValueError("archive dates must be unique and strictly chronological")
         previous_day = draw_day
 
+        # The target record must exist exactly once, but its numbers must never
+        # be accessed. Chronological validation catches duplicate target dates.
+        if draw_day == cutoff:
+            target_date_count += 1
+
         # IMPORTANT: do not even read/validate numbers for target or later rows.
         if draw_day >= cutoff:
             continue
 
         history.append(_normalize_draw(row.get("numbers")))
+
+    if target_date_count != 1:
+        raise ValueError("isolated target date must appear exactly once in the archive")
 
     return tuple(history)
 
@@ -136,7 +145,7 @@ def _result(method, scores, diagnostics, reason=None):
     return {
         "method": method,
         "status": "scored" if ranked else "no_signal",
-        "reason": reason,
+        "reason": reason if reason else (None if ranked else "no positive-score candidates from pre-target history"),
         "scores": normalized_scores,
         "ranked_numbers": [number for number, _ in ranked],
         "ranked_scores": [{"number": number, "score": score} for number, score in ranked],
