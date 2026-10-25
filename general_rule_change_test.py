@@ -75,5 +75,64 @@ class RuleChangeRequestTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             rules.decision_status(approved, "APPROVED", 123456, "approver", "cb-3")
 
+
+    def test_unauthorized_callback_does_not_read_or_update_issue(self):
+        class FakeGitHub:
+            def request(self, *args, **kwargs):
+                raise AssertionError("GitHub must not be called for an unauthorized callback")
+        class FakeTelegram:
+            def __init__(self):
+                self.calls = []
+            def call(self, method, payload):
+                self.calls.append((method, payload))
+                return {"ok": True, "result": {}}
+        callback = {
+            "id": "callback-unauthorized",
+            "data": "g:a:42",
+            "from": {"id": 777777},
+            "message": {"message_id": 5, "chat": {"id": 123456, "type": "private"}},
+        }
+        telegram = FakeTelegram()
+        outcome = rules.handle_callback(callback, FakeGitHub(), telegram, "123456", "", "/repos/example/repo")
+        self.assertEqual(outcome, "unauthorized")
+        self.assertEqual(len(telegram.calls), 1)
+        self.assertEqual(telegram.calls[0][0], "answerCallbackQuery")
+
+    def test_authorized_callback_records_decision_and_closes_issue(self):
+        body = rules.build_issue_body(VALID_REQUEST, {
+            "workflow": "test", "run_id": "1", "sha": "abc123",
+            "submitted_at": "2026-01-01T00:00:00+00:00",
+        })
+        class FakeGitHub:
+            def __init__(self):
+                self.issue = {"title": "[RULE CHANGE REQUEST] RULE-EXAMPLE", "body": body, "state": "open"}
+                self.patch = None
+            def request(self, method, path, payload=None):
+                if method == "GET":
+                    return self.issue
+                if method == "PATCH":
+                    self.patch = payload
+                    return {}
+                raise AssertionError("Unexpected GitHub method")
+        class FakeTelegram:
+            def __init__(self):
+                self.calls = []
+            def call(self, method, payload):
+                self.calls.append((method, payload))
+                return {"ok": True, "result": {}}
+        callback = {
+            "id": "callback-authorized",
+            "data": "g:a:42",
+            "from": {"id": 123456, "username": "approver"},
+            "message": {"message_id": 5, "chat": {"id": 123456, "type": "private"}},
+        }
+        github, telegram = FakeGitHub(), FakeTelegram()
+        outcome = rules.handle_callback(callback, github, telegram, "123456", "", "/repos/example/repo")
+        self.assertEqual(outcome, "approved")
+        self.assertEqual(github.patch["state"], "closed")
+        self.assertEqual(github.patch["state_reason"], "completed")
+        self.assertIn("Decision: **APPROVED_PENDING_IMPLEMENTATION**", github.patch["body"])
+        self.assertEqual(rules.status_from_body(github.patch["body"]), "APPROVED_PENDING_IMPLEMENTATION")
+
 if __name__ == "__main__":
     unittest.main()
