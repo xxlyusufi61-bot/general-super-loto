@@ -63,7 +63,6 @@ jobs:
             --seed 20261026
 
       - name: Upload aggregate discovery report only
-        if: \${{ success() }}
         uses: actions/upload-artifact@v4
         with:
           name: general-offline-formula-discovery
