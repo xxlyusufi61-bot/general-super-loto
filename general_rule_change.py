@@ -231,7 +231,7 @@ def submit_report(path: str) -> int:
         f"Onaylamak için bu sohbete /approve {number} yaz.\n"
         f"Reddetmek için bu sohbete /reject {number} yaz.\n\n"
         "Komut yalnızca yetkili Telegram hesabından ve bu sohbetten gelirse işlenir. "
-        "Kontrol yaklaşık 5 dakikada bir çalışır; gecikme olabilir. Onay kuralı otomatik değiştirmez; uygulama için ayrıca incelenen bir PR gerekir."
+        "Kontrol yaklaşık 30 dakikada bir çalışır; gecikme olabilir. Onay kuralı otomatik değiştirmez; uygulama için ayrıca incelenen bir PR gerekir."
     )
     try:
         sent = telegram.call("sendMessage", {
