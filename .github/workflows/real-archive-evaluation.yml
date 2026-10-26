@@ -1,0 +1,52 @@
+name: GENERAL Real Archive Evaluation
+
+on:
+  pull_request:
+    paths:
+      - "real_archive_evaluation.py"
+      - "real_archive_evaluation_test.py"
+      - "v86_leakage_safe_evaluator.py"
+      - "super_loto_archive.json"
+      - ".github/workflows/real-archive-evaluation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  evaluation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile evaluator and tests
+        run: python -m py_compile real_archive_evaluation.py real_archive_evaluation_test.py v86_leakage_safe_evaluator.py
+      - name: Run synthetic safety tests
+        run: python -m unittest -v real_archive_evaluation_test v86_leakage_safe_evaluator_test
+      - name: Run real-archive chronological evaluation
+        run: python real_archive_evaluation.py
+      - name: Verify report isolation contract
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r = json.loads(Path("real_archive_evaluation_report.json").read_text())
+          assert r["status"] == "COMPLETED_NO_PREDICTION_FOR_ISOLATED_TARGET"
+          assert r["archive_integrity"]["isolated_target_excluded_from_training_and_scoring"] is True
+          assert r["archive_integrity"]["isolated_target_numbers_written_to_report"] is False
+          assert r["protocol"]["target_numbers_passed_to_predictor"] is False
+          assert r["binding_rules_changed"] is False
+          assert r["official_source_verification_required"] is False
+          stats = r["statistical_comparison"]
+          assert stats["candidates_selected_using_validation_only"] is True
+          assert stats["final_interval_used_for_candidate_selection"] is False
+          assert len(stats["model_block_bootstrap_uncertainty"]["mean_hits_ci"]) == 2
+          assert 0.0 <= stats["matched_random_null"]["one_sided_random_pick_tail_probability_mc"] <= 1.0
+          assert stats["holdout_reuse_policy"]
+          print("Real-archive isolation and statistical comparison contract: PASS")
+          PY
