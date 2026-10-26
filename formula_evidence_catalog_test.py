@@ -65,10 +65,11 @@ class FormulaEvidenceCatalogTests(unittest.TestCase):
     def test_audit_candidate_is_not_canonical_or_archive_tested(self):
         entry = self.catalog["source_inventory"]["v86_leakage_safe_evaluator.py"]
         self.assertEqual(entry["canonical_status"], "NOT_CANONICAL_NOT_APPROVED")
-        self.assertIn("REAL_ARCHIVE_NOT_RUN", entry["evaluation_status"])
+        self.assertIn("REAL_ARCHIVE_AUDIT_COMPLETED", entry["evaluation_status"])
+        self.assertIn("NOT_CANONICAL", entry["evaluation_status"])
         self.assertEqual(
             self.catalog["evaluation_status"]["leakage_safe_v86_audit_candidate"],
-            "SYNTHETIC_TESTS_PASSING_ON_REVIEW_BRANCH; REAL_ARCHIVE_NOT_RUN; NOT_CANONICAL"
+            "SYNTHETIC_TESTS_PASSING; REAL_ARCHIVE_AUDIT_COMPLETED_ON_REVIEW_BRANCH; EXPERIMENTAL_ONLY; NOT_CANONICAL"
         )
 
     def test_old_weights_remain_unverified(self):

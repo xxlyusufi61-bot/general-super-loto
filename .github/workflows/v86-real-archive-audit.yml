@@ -1,0 +1,116 @@
+name: V8.6 Isolated Real Archive Audit
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - audit/v86-real-archive-evidence-20261025
+    paths:
+      - "v86_real_archive_audit.py"
+      - "v86_leakage_safe_evaluator.py"
+      - "general_data_guard.py"
+      - "super_loto_archive.json"
+      - ".github/workflows/v86-real-archive-audit.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  isolated-real-archive-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout review branch
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate archive and create pre-target-only input
+        run: |
+          python - <<'PY'
+          import json
+          from datetime import date
+          from pathlib import Path
+
+          source = json.loads(Path("super_loto_archive.json").read_text(encoding="utf-8"))
+          rows = source.get("draws") if isinstance(source, dict) else source
+          if not isinstance(rows, list) or not rows:
+              raise SystemExit("Archive has no draw list; audit stopped.")
+          seen = set()
+          previous = None
+          for index, row in enumerate(rows, start=1):
+              if not isinstance(row, dict) or "date" not in row or "numbers" not in row:
+                  raise SystemExit(f"Invalid archive row structure at index {index}.")
+              try:
+                  day = date.fromisoformat(row["date"])
+              except (TypeError, ValueError):
+                  raise SystemExit(f"Invalid archive date at index {index}.")
+              if day.isoformat() != row["date"]:
+                  raise SystemExit(f"Non-ISO archive date at index {index}.")
+              if day in seen:
+                  raise SystemExit("Duplicate archive date; audit stopped.")
+              if previous is not None and day <= previous:
+                  raise SystemExit("Archive is not strictly chronological; audit stopped.")
+              seen.add(day)
+              previous = day
+              nums = row["numbers"]
+              if (not isinstance(nums, list) or len(nums) != 6
+                  or any(type(n) is not int or n < 1 or n > 60 for n in nums)
+                  or len(set(nums)) != 6 or nums != sorted(nums)):
+                  raise SystemExit(f"Invalid number-set structure at archive row {index}.")
+          target_date = rows[-1]["date"]
+          pre_target = [row for row in rows if row["date"] < target_date]
+          if not pre_target:
+              raise SystemExit("No strictly pre-target history; audit stopped.")
+          # Only strictly pre-target rows are written to the evaluator input.
+          Path("/tmp/v86_pre_target_history.json").write_text(
+              json.dumps(pre_target, separators=(",", ":")), encoding="utf-8"
+          )
+          print(f"Archive rows validated: {len(rows)}")
+          print(f"Isolated target date: {target_date}; target numbers not emitted.")
+          print(f"Pre-target rows passed to evaluator: {len(pre_target)}")
+          Path("/tmp/v86_target_date.txt").write_text(target_date, encoding="utf-8")
+          PY
+      - name: Compile audit modules
+        run: python -m py_compile general_data_guard.py v86_leakage_safe_evaluator.py v86_real_archive_audit.py
+      - name: Run isolated audit with aggregate-only output
+        run: |
+          TARGET_DATE="$(cat /tmp/v86_target_date.txt)"
+          python v86_real_archive_audit.py \
+            --history /tmp/v86_pre_target_history.json \
+            --target-date "$TARGET_DATE" \
+            --min-train 100 \
+            --validation-fraction 0.75 \
+            --folds 5 \
+            --random-replications 250 \
+            --seed 20261025 > /tmp/v86_audit_report.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          report = json.loads(Path("/tmp/v86_audit_report.json").read_text(encoding="utf-8"))
+          print(json.dumps({
+              "status": report["status"],
+              "canonical_status": report["canonical_status"],
+              "current_target": {
+                  "date": report["current_target"]["date"],
+                  "numbers_passed_to_audit_process": report["current_target"]["numbers_passed_to_audit_process"],
+                  "numbers_used_for_scoring": report["current_target"]["numbers_used_for_scoring"],
+                  "excluded_from_scoring": report["current_target"]["excluded_from_scoring"],
+              },
+              "archive_scope": {
+                  "regime": report["archive_scope"]["regime"],
+                  "r60_history_rows_used": report["archive_scope"]["r60_history_rows_used"],
+                  "r60_first_date": report["archive_scope"]["r60_first_date"],
+                  "r60_last_date": report["archive_scope"]["r60_last_date"],
+                  "locked_dates_excluded": report["archive_scope"]["locked_dates_excluded"],
+              },
+              "protocol": report["protocol"],
+              "selected_candidate": report["selected_candidate"],
+              "frozen_final_result": report["frozen_final_result"],
+              "random_prediction_reference": report["random_prediction_reference"],
+              "chronological_final_folds": report["chronological_final_folds"],
+              "reverse_retrospective_stress_test": report["reverse_retrospective_stress_test"],
+              "limitations": report["limitations"],
+          }, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+          PY

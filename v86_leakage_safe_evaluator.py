@@ -131,6 +131,10 @@ def predict_from_known_pair(history: Sequence[Draw], feature="mod5diff", mode="s
         x, y, z = history[j].numbers, history[j + 1].numbers, history[j + 2].numbers
         sig = transform(state_features(x, y)[feature], mode)
         d = distance(query_sig, sig, mode)
+        # Exact mode means exact signature matches only; never fall back to
+        # arbitrary non-matches, which would otherwise all tie at distance 1e9.
+        if mode == "exact" and d != 0:
+            continue
         candidates.append((d, j, z))
     if not candidates:
         return None
