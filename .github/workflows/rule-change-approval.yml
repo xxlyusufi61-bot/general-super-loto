@@ -20,7 +20,7 @@ name: GENERAL Rule Change Approval
       - ".github/workflows/open-research.yml"
       - "general_open_research.py"
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: "*/30 * * * *"
   workflow_dispatch:
 
 permissions:
