@@ -67,7 +67,7 @@ class NvidiaUsageObservationTests(unittest.TestCase):
                 "x-ratelimit-remaining-requests": "8",
                 "retry-after": "30",
                 "x-request-id": "request-123",
-                "Authorization": "Bearer must-not-be-recorded",
+                "Authorization": "Bearer FAKE_BEARER_TOKEN_DO_NOT_USE",
                 "Set-Cookie": "must-not-be-recorded",
             },
             {"usage": {"prompt_tokens": 120, "completion_tokens": 40, "total_tokens": 160}},
@@ -83,6 +83,7 @@ class NvidiaUsageObservationTests(unittest.TestCase):
         header_blob = json.dumps(observed["rate_limit_headers_returned"])
         self.assertNotIn("Authorization", header_blob)
         self.assertNotIn("Set-Cookie", header_blob)
+        self.assertNotIn("FAKE_BEARER_TOKEN_DO_NOT_USE", json.dumps(observed))
         self.assertNotIn("must-not-be-recorded", json.dumps(observed))
 
     def test_inference_requires_explicit_approval_and_sends_no_request_otherwise(self):
