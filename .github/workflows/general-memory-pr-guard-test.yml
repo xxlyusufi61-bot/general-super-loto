@@ -1,0 +1,35 @@
+name: GENERAL Memory Proposal Guard Tests
+
+on:
+  push:
+    paths:
+      - "general_memory_pr_guard.py"
+      - "general_memory_pr_guard_test.py"
+      - ".github/workflows/general-memory-pr-guard-test.yml"
+  pull_request:
+    paths:
+      - "general_memory_pr_guard.py"
+      - "general_memory_pr_guard_test.py"
+      - ".github/workflows/general-memory-pr-guard-test.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  memory-guard-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile guard and tests
+        run: python3 -m py_compile general_memory_pr_guard.py general_memory_pr_guard_test.py
+
+      - name: Run offline memory proposal tests
+        run: python3 -m unittest -v general_memory_pr_guard_test
