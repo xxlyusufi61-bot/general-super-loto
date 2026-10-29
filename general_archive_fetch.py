@@ -361,6 +361,7 @@ def reconcile_archive_with_loto_gen(
     """Verify every year against Loto.gen before an archive can be saved."""
     from general_archive_cross_source_audit import (
         fetch_html as fetch_audit_html,
+        fetch_loto_gen_year_from_root_archive,
         parse_loto_gen_year_page,
     )
 
@@ -370,33 +371,42 @@ def reconcile_archive_with_loto_gen(
     reports = {}
 
     for year in range(start_year, through_year + 1):
-        urls = [f"{LOTO_GEN_BASE}/{year}"]
-        if year >= 2021:
-            urls.append(f"{LOTO_GEN_BASE}/{year}?sayfa=2")
-
         supplied_pages = html_pages_by_year.get(year)
-        if supplied_pages is not None and len(supplied_pages) != len(urls):
-            raise RuntimeError(
-                f"{year}: wrong number of independent-source fixture pages; "
-                "archive not saved"
-            )
-
         independent = {}
         parse_errors = []
-        for index, url in enumerate(urls):
-            html = (
-                supplied_pages[index]
-                if supplied_pages is not None
-                else fetch_audit_html(url)
+        if year == through_year and supplied_pages is None:
+            # Reuse the current-year root-pagination fallback used by the audit.
+            independent, parse_errors, _, coverage_failures = (
+                fetch_loto_gen_year_from_root_archive(year)
             )
-            page_rows, page_errors = parse_loto_gen_year_page(html, year)
-            parse_errors.extend(page_errors)
-            for day, numbers in page_rows.items():
-                if day in independent and independent[day] != numbers:
-                    parse_errors.append(day)
-                    independent.pop(day, None)
-                elif day not in independent:
-                    independent[day] = numbers
+            if coverage_failures:
+                raise RuntimeError(
+                    f"{year}: current-year independent-source coverage failed; "
+                    "archive not saved"
+                )
+        else:
+            urls = [f"{LOTO_GEN_BASE}/{year}"]
+            if year >= 2021:
+                urls.append(f"{LOTO_GEN_BASE}/{year}?sayfa=2")
+            if supplied_pages is not None and len(supplied_pages) != len(urls):
+                raise RuntimeError(
+                    f"{year}: wrong number of independent-source fixture pages; "
+                    "archive not saved"
+                )
+            for index, url in enumerate(urls):
+                html = (
+                    supplied_pages[index]
+                    if supplied_pages is not None
+                    else fetch_audit_html(url)
+                )
+                page_rows, page_errors = parse_loto_gen_year_page(html, year)
+                parse_errors.extend(page_errors)
+                for day, numbers in page_rows.items():
+                    if day in independent and independent[day] != numbers:
+                        parse_errors.append(day)
+                        independent.pop(day, None)
+                    elif day not in independent:
+                        independent[day] = numbers
 
         verified_rows = [
             row for row in reconciled
