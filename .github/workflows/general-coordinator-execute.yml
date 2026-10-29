@@ -47,8 +47,8 @@ jobs:
 
       - name: Compile coordinator and run offline tests
         run: |
-          python3 -m py_compile general_core.py general_coordinator.py general_source_context.py general_memory_pr_guard.py general_coordinator_memory_publication.py
-          python3 -m unittest -v general_coordinator_test general_memory_pr_guard_test general_coordinator_memory_publication_test
+          python3 -m py_compile general_agent_report_guard.py general_core.py general_coordinator.py general_source_context.py general_memory_pr_guard.py general_coordinator_memory_publication.py
+          python3 -m unittest -v general_agent_report_guard_test general_coordinator_test general_memory_pr_guard_test general_coordinator_memory_publication_test
 
       - name: Build plan only
         id: build-plan
