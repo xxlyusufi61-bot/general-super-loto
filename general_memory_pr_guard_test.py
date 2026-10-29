@@ -181,7 +181,7 @@ class MemoryProposalExportTests(unittest.TestCase):
     def test_cli_exports_only_new_entries_and_requires_human_review(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            candidate = self.candidate_with(report_entry())
+            candidate = self._candidate_with(report_entry())
             baseline, baseline_path, candidate_path = self._write_inputs(root, candidate)
             proposal_path = root / "review" / "memory-delta.json"
 
@@ -208,7 +208,7 @@ class MemoryProposalExportTests(unittest.TestCase):
     def test_invalid_delta_does_not_create_proposal_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            candidate = self.candidate_with(report_entry())
+            candidate = self._candidate_with(report_entry())
             candidate["binding_rules"].append("Unapproved binding rule.")
             _, baseline_path, candidate_path = self._write_inputs(root, candidate)
             proposal_path = root / "memory-delta.json"
@@ -223,7 +223,7 @@ class MemoryProposalExportTests(unittest.TestCase):
     def test_cli_refuses_to_overwrite_existing_proposal(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            candidate = self.candidate_with(report_entry())
+            candidate = self._candidate_with(report_entry())
             _, baseline_path, candidate_path = self._write_inputs(root, candidate)
             proposal_path = root / "memory-delta.json"
             proposal_path.write_text("preserve-me", encoding="utf-8")
