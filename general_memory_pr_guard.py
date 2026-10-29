@@ -9,7 +9,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -157,23 +157,90 @@ def validate_memory_delta(
     }
 
 
+def build_memory_proposal(
+    baseline: dict[str, Any],
+    candidate: dict[str, Any],
+) -> dict[str, Any]:
+    """Return a review-only bundle containing only newly appended reports."""
+    summary = validate_memory_delta(baseline, candidate)
+    baseline_ids = {
+        entry["id"] for entry in baseline["entries"]
+    }
+    new_entries = [
+        entry for entry in candidate["entries"]
+        if entry["id"] not in baseline_ids
+    ]
+    canonical_baseline = json.dumps(
+        baseline, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return {
+        "proposal_schema_version": 1,
+        "project": baseline["project"],
+        "baseline_sha256": hashlib.sha256(canonical_baseline).hexdigest(),
+        "candidate_updated_at": candidate.get("updated_at"),
+        "new_entries": new_entries,
+        "new_entries_count": len(new_entries),
+        "human_review_required": bool(new_entries),
+        "binding_rules_changed": False,
+        "all_new_entries_unverified": summary["all_new_entries_unverified"],
+        "auto_merge": False,
+        "note": (
+            "Delta only: prior memory entries and binding rules are not included. "
+            "Review the new reports before manually applying them to shared memory."
+        ),
+    }
+
+
+def _write_new_proposal(path_text: str, proposal: dict[str, Any]) -> None:
+    """Write a proposal exactly once; never overwrite an existing review file."""
+    path = Path(path_text)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("x", encoding="utf-8") as output:
+            json.dump(proposal, output, ensure_ascii=False, indent=2)
+            output.write("\\n")
+    except FileExistsError:
+        raise MemoryProposalError(
+            "Proposal output already exists; refusing to overwrite."
+        ) from None
+    except OSError:
+        raise MemoryProposalError(
+            "Proposal output could not be written."
+        ) from None
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Validate a shared-memory update before proposing it for human review."
+        description=(
+            "Validate a shared-memory update and optionally export a delta-only "
+            "proposal for human review. Nothing is committed or auto-merged."
+        )
     )
     parser.add_argument("--baseline", required=True, help="Path to pre-run memory JSON.")
     parser.add_argument("--candidate", required=True, help="Path to updated memory JSON.")
+    parser.add_argument(
+        "--proposal-output",
+        help="Optional new output path for a delta-only proposal; existing files are never overwritten.",
+    )
     args = parser.parse_args()
 
     try:
         baseline = _read_json(args.baseline)
         candidate = _read_json(args.candidate)
         summary = validate_memory_delta(baseline, candidate)
+        proposal_written = False
+        if args.proposal_output and summary["has_new_entries"]:
+            proposal = build_memory_proposal(baseline, candidate)
+            _write_new_proposal(args.proposal_output, proposal)
+            proposal_written = True
+        summary["proposal_written"] = proposal_written
+        summary["human_review_required"] = bool(summary["has_new_entries"])
     except MemoryProposalError as error:
         print(json.dumps({
             "valid": False,
             "reason": str(error),
             "auto_merge": False,
+            "proposal_written": False,
         }, ensure_ascii=False))
         return 1
 
