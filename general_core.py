@@ -772,15 +772,43 @@ def run_agent(agent, task, coordinator_context=None):
         print("Target numbers exposed: NO")
 
     else:
-        role = AGENTS[agent] + (
-            " Scope: inspect the supplied repository code, workflows, and tests "
-            "only; propose reproducible fixes and do not claim tests were run "
-            "unless their results are supplied."
-            if mode == "code"
-            else " Scope: review GENERAL architecture and workflows from the "
-            "supplied source context only; do not claim that runtime archive "
-            "data or external services were checked."
-        )
+        code_roles = {
+            "research": (
+                "Trace relevant code paths and summarize hypotheses about how "
+                "the current implementation behaves; separate observations from hypotheses."
+            ),
+            "debug": (
+                "Identify concrete implementation defects, edge cases, and "
+                "reproducible fixes from the supplied source files."
+            ),
+            "validation": (
+                "Independently verify code claims and proposed fixes against "
+                "the supplied source files and tests; flag missing evidence."
+            ),
+            "crossover": (
+                "Compare alternative implementation approaches and their trade-offs "
+                "using the supplied source files; do not invent test results."
+            ),
+        }
+        system_roles = {
+            "research": (
+                "Explore architecture and workflow design options grounded in the "
+                "supplied source files; label proposals as hypotheses."
+            ),
+            "debug": (
+                "Review GENERAL architecture and workflow control paths for concrete "
+                "failure modes, unsafe defaults, and maintainability defects."
+            ),
+            "validation": (
+                "Skeptically audit architecture claims against the supplied source "
+                "files; distinguish static inspection from executed tests and live checks."
+            ),
+            "crossover": (
+                "Compare architecture options and integration risks based on the "
+                "supplied sources; do not claim runtime services were tested."
+            ),
+        }
+        role = (code_roles if mode == "code" else system_roles)[agent]
 
         context = []
         source_context = build_source_context("agent " + agent + " " + task, BASE)
