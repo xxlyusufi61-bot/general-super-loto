@@ -19,13 +19,7 @@ class MethodRegistryContextTests(unittest.TestCase):
         self.assertEqual(context["registry_audit"]["historical_result_count"], 0)
         self.assertEqual(context["registry_audit"]["inherited_candidate_count"], 0)
         serialized = json.dumps(context, ensure_ascii=False)
-        for marker in (
-            "V19_best_stable_ABC_weight",
-            "V0_3_1_crossover_weights",
-            "1.171946",
-            "legacy_sources/",
-            "general_method_candidates.py",
-        ):
+        for marker in ("legacy_candidate", "source_artifact", "legacy_sources/"):
             with self.subTest(marker=marker):
                 self.assertNotIn(marker, serialized)
 
