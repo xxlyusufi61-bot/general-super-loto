@@ -102,13 +102,15 @@ def build_source_context(
         except (OSError, UnicodeError):
             continue
 
-        limit = min(len(content), MAX_FILE_CHARS, MAX_CONTEXT_CHARS - total)
-        if limit <= 0:
+        remaining = MAX_CONTEXT_CHARS - total
+        truncation_marker = "\n...[source context truncated]"
+        if remaining < len(truncation_marker) + 1:
             break
+        limit = min(len(content), MAX_FILE_CHARS, remaining)
         truncated = len(content) > limit
         if truncated:
             any_truncated = True
-            content = content[:limit] + "\n...[source context truncated]"
+            content = content[:limit - len(truncation_marker)] + truncation_marker
 
         selected.append({
             "path": relative_path,
