@@ -1,6 +1,13 @@
+import os
+import tempfile
 import unittest
 from pathlib import Path
 import textwrap
+import urllib.error
+from unittest.mock import patch
+
+import general_core as core
+from general_live_consent import CONFIRMATION_PHRASE
 
 from general_nvidia_guard import (
     initial_lock_state,
@@ -89,12 +96,60 @@ class GlobalNvidiaLockTests(unittest.TestCase):
         for workflow_name in ("nvidia-test.yml", "nvidia-chat-test.yml"):
             workflow_path = Path(".github/workflows") / workflow_name
             workflow = workflow_path.read_text(encoding="utf-8")
-            marker = "python3 - <<'PY'\n"
+            marker = "python3 - <<'PY'\\n"
             self.assertIn(marker, workflow, workflow_name + " missing inline Python script")
-            script = workflow.split(marker, 1)[1].split("\n          PY", 1)[0]
+            script = workflow.split(marker, 1)[1].split("\\n          PY", 1)[0]
             script = textwrap.dedent(script)
             with self.subTest(workflow=workflow_name):
                 compile(script, str(workflow_path), "exec")
+
+    def _assert_timeout_does_not_retry(self, failure):
+        """Exercise the real timeout branch while replacing network I/O with a mock."""
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            marker_root = Path(temporary_directory)
+
+            def temporary_marker_path(original_path):
+                return marker_root / Path(original_path).name
+
+            with patch.dict(
+                os.environ,
+                {
+                    "NVIDIA_API_KEY": "offline-unit-test-key",
+                    "GENERAL_CONFIRM_LIVE_CALLS": CONFIRMATION_PHRASE,
+                    "GENERAL_NVIDIA_GUARD_PASSED": "1",
+                },
+            ):
+                with patch("general_core.Path", side_effect=temporary_marker_path):
+                    with patch(
+                        "general_core.urllib.request.urlopen",
+                        side_effect=failure,
+                    ) as mocked_urlopen:
+                        with self.assertRaisesRegex(RuntimeError, "timed out after"):
+                            core.ask_nvidia(
+                                [{"role": "user", "content": "offline timeout test"}]
+                            )
+
+            self.assertEqual(
+                mocked_urlopen.call_count,
+                1,
+                "A failed request must not be retried automatically.",
+            )
+            self.assertTrue(
+                (marker_root / "general_nvidia_api_attempted").is_file(),
+                "The attempted-request marker must be present after a timeout.",
+            )
+            self.assertFalse(
+                (marker_root / "general_nvidia_api_succeeded").exists(),
+                "A timed-out request must never receive a success marker.",
+            )
+
+    def test_timeout_fails_closed_without_retry(self):
+        self._assert_timeout_does_not_retry(TimeoutError("simulated timeout"))
+
+    def test_urlerror_timeout_fails_closed_without_retry(self):
+        self._assert_timeout_does_not_retry(
+            urllib.error.URLError(TimeoutError("simulated socket timeout"))
+        )
 
 
 if __name__ == "__main__":
