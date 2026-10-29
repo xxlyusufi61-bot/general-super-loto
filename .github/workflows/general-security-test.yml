@@ -5,19 +5,23 @@ name: GENERAL Security Test
   pull_request:
     paths:
       - "general_core.py"
+      - "general_live_consent.py"
       - "general_data_guard.py"
       - "general_memory.py"
       - "general_memory.json"
       - "general_core_security_test.py"
+      - "general_core_live_consent_test.py"
       - "super_loto_archive.json"
       - ".github/workflows/general-security-test.yml"
   push:
     paths:
       - "general_core.py"
+      - "general_live_consent.py"
       - "general_data_guard.py"
       - "general_memory.py"
       - "general_memory.json"
       - "general_core_security_test.py"
+      - "general_core_live_consent_test.py"
       - "super_loto_archive.json"
       - ".github/workflows/general-security-test.yml"
 
@@ -47,4 +51,6 @@ jobs:
           echo "Required files: PASS"
 
       - name: Run security test without real NVIDIA API calls
-        run: python3 general_core_security_test.py
+        run: |
+          python3 -m unittest -v general_core_live_consent_test
+          python3 general_core_security_test.py

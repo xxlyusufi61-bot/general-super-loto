@@ -104,13 +104,19 @@ Status must be updated only when supported by actual code inspection or reproduc
 - Do not delete or change working infrastructure, scheduled tasks, secrets, archive data, or binding rules without first explaining the effect and receiving approval where required.
 - Keep legacy sources unchanged during audit. Make corrections in a separately named reviewed version so the original evidence remains available.
 - Add tests for new behavior. Inspect CI results and the specific test steps; do not treat a queued or incomplete check as a pass.
+- Every workflow that can call NVIDIA must default to **no live call** and require the exact confirmation phrase `I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_3_NVIDIA_REQUESTS`. The remote global safety lock must also be checked before inference; GENERAL Core enforces the consent and preflight again at the API boundary.
+- Blank-slate research additionally requires the user to confirm that free use and no-charge risk were independently verified. That input is an operator attestation, not proof supplied by the workflow. If free-only status is unclear, do not authorize a live request.
+- Archive-only, isolation-test, coordinator-plan, and offline-test paths must not need live model consent because they do not make model requests.
 - Update this README when implementation or binding rules materially change.
 
 ## 7. Workflows and what they prove
 
 | Workflow file | Purpose | What success means—and does not mean |
 |---|---|---|
-| `general-agent.yml` | Refresh and validate the archive, then run the selected agent or isolation test. | Confirms only the steps completed in that run. |
+| `general-agent.yml` | Refresh and validate the archive, then run the selected agent or isolation test. Live agent calls require the exact confirmation phrase. | Without the phrase, the agent call is skipped; archive and isolation checks can still run. |
+| `general-coordinator-execute.yml` | Build an agent plan and execute the coordinator only after explicit consent and global-lock preflight. | Defaults to plan-only and can make up to three sequential requests only when explicitly enabled; it does not prove provider billing settings. |
+| `nvidia-test.yml` / `nvidia-chat-test.yml` | Check NVIDIA API access or request one test response. | Both default to no request and require the exact confirmation phrase and a clear global lock. |
+| `open-research.yml` | Run blank-slate research with a separate user-confirmed free-use check. | The research job is skipped unless exact consent, the free-use attestation, and global-lock preflight all pass. |
 | `general.yml` | Scheduled/manual Telegram heartbeat. | Confirms Telegram checks in that workflow; not core or archive health. |
 | `method-registry-test.yml` | Test registry/evidence integration and compile/test audit components. | Confirms those listed tests only; not real-archive predictive validity. |
 | `method-candidate-evaluation.yml` | Evaluate experimental candidates on isolated pre-target history. | A run must be inspected for its exact split and output; it does not automatically establish a final independent holdout. |

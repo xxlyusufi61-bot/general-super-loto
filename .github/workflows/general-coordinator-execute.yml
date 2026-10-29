@@ -129,6 +129,7 @@ jobs:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           TASK_TEXT: ${{ inputs.task }}
           CONFIRM_LIVE_CALLS: ${{ inputs.confirm_live_calls }}
+          GENERAL_CONFIRM_LIVE_CALLS: ${{ inputs.confirm_live_calls }}
           GENERAL_SAVE_MEMORY: "1"
         run: |
           set +e

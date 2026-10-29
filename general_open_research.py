@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 import general_data_guard as guard
+from general_live_consent import has_explicit_live_consent
 
 VERSION = "0.2.0"
 MODEL = "z-ai/glm-5.3-flash"
@@ -230,6 +231,17 @@ def save_usage_observation(observation: dict[str, Any]) -> None:
         raise RuntimeError("Could not write NVIDIA usage observation report.") from exc
 
 def call_model(messages: list[dict[str, str]]) -> str:
+    if not has_explicit_live_consent(
+        os.environ.get("GENERAL_CONFIRM_LIVE_CALLS", "")
+    ):
+        raise RuntimeError(
+            "NVIDIA inference was not explicitly approved by exact confirmation phrase; "
+            "no provider request was sent."
+        )
+    if os.environ.get("GENERAL_NVIDIA_GUARD_PASSED") != "1":
+        raise RuntimeError(
+            "Global NVIDIA safety-lock preflight was not confirmed; no provider request was sent."
+        )
     if os.environ.get("GENERAL_ALLOW_NVIDIA_CALL", "").strip().lower() != "true":
         raise RuntimeError(
             "NVIDIA inference was not explicitly approved; no provider request was sent."
@@ -258,6 +270,17 @@ def call_model(messages: list[dict[str, str]]) -> str:
         headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"},
         method="POST",
     )
+    attempt_marker = Path("/tmp/general_nvidia_api_attempted")
+    success_marker = Path("/tmp/general_nvidia_api_succeeded")
+    for marker in (attempt_marker, success_marker):
+        try:
+            marker.unlink()
+        except FileNotFoundError:
+            pass
+    attempt_marker.write_text(
+        datetime.now(timezone.utc).isoformat(), encoding="utf-8"
+    )
+
     try:
         with urllib.request.urlopen(request, timeout=240) as response:
             status = getattr(response, "status", 200)
@@ -301,6 +324,9 @@ def call_model(messages: list[dict[str, str]]) -> str:
             "Research model returned no final content. Inspect open_research_usage.json; "
             "no automatic retry was attempted."
         )
+    success_marker.write_text(
+        datetime.now(timezone.utc).isoformat(), encoding="utf-8"
+    )
     return content.strip()
 
 def main() -> int:
