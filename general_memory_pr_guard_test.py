@@ -63,7 +63,7 @@ class MemoryDeltaGuardTests(unittest.TestCase):
         return value
 
     def test_accepts_one_unverified_report_without_changing_binding_rules(self):
-        candidate = self._candidate_with(report_entry())
+        candidate = self.candidate_with(report_entry())
         result = validate_memory_delta(baseline_memory(), candidate)
         self.assertTrue(result["valid"])
         self.assertEqual(result["new_entries_count"], 1)
