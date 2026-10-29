@@ -31,7 +31,7 @@ jobs:
           if python3 general_archive_fetch.py > archive_fetch_output.log 2>&1; then
             echo "ARCHIVE FETCH: completed; parser details suppressed."
           else
-            safe_category="$(grep -oE 'ARCHIVE FETCH FAILED \\[[A-Z_]+\\]' archive_fetch_output.log | tail -n 1 || true)"
+            safe_category="$(grep -oE 'ARCHIVE FETCH FAILED \[[A-Z_]+\]' archive_fetch_output.log | tail -n 1 || true)"
             if [ -n "$safe_category" ]; then
               echo "$safe_category; details suppressed."
             else
