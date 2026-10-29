@@ -221,6 +221,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           RUN_OUTCOME: ${{ steps.run-coordinator.outcome }}
+          PUBLISH_MEMORY_PR: ${{ inputs.publish_memory_pr }}
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/general-memory"
