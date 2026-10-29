@@ -69,6 +69,44 @@ class LiveModelConsentGateTests(unittest.TestCase):
                 self.assertIn("nvidia", no_consent_step.lower())
                 self.assertIn("made", no_consent_step.lower())
 
+    def test_blank_slate_research_requires_exact_phrase_free_check_and_global_lock(self):
+        source = (WORKFLOWS / "open-research.yml").read_text(encoding="utf-8")
+        self.assertIn("      confirm_live_calls:", source)
+        self.assertRegex(source, r'(?m)^        default: "NO"        source = (
+            WORKFLOWS / "general-coordinator-execute.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn(CONFIRMATION, source)
+        consent_step = read_step(source, "Evaluate explicit free-only consent")
+        self.assertIn(f'CONFIRM_LIVE_CALLS" = "{CONFIRMATION}"', consent_step)
+        run_step = read_step(source, "Run coordinator agents sequentially")
+        self.assertIn("steps.consent.outputs.enabled == 'true'", run_step)
+
+    def test_workflow_run_gating_is_static_and_does_not_use_api(self):
+        # The guard test itself is offline: it only reads local workflow text.
+        self.assertNotIn("integrate.api.nvidia.com", __file__.lower())
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)
+)
+        self.assertIn(
+            f"inputs.confirm_live_calls == '{CONFIRMATION}'",
+            source,
+        )
+        self.assertIn("inputs.confirm_free_usage_verified == true", source)
+        self.assertIn(
+            "GENERAL_CONFIRM_LIVE_CALLS: ${{ inputs.confirm_live_calls }}",
+            source,
+        )
+        self.assertIn("GENERAL_NVIDIA_GUARD_PASSED=1", source)
+        guard_step = read_step(source, "Check global NVIDIA safety lock")
+        request_step = read_step(source, "Run isolated blank-slate exploration")
+        lock_step = read_step(source, "Activate global lock after an incomplete NVIDIA research request")
+        self.assertIn("general_nvidia_guard.py check", guard_step)
+        self.assertIn("python3 general_open_research.py", request_step)
+        self.assertIn("steps.nvidia-research.outcome == 'failure'", lock_step)
+        self.assertIn("general_nvidia_guard.py lock", lock_step)
+
     def test_coordinator_execute_keeps_its_existing_explicit_gate(self):
         source = (
             WORKFLOWS / "general-coordinator-execute.yml"
