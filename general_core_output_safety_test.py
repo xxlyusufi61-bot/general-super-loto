@@ -41,7 +41,15 @@ class GeneralCoreOutputSafetyTests(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/general-agent.yml").read_text(
             encoding="utf-8"
         )
-        self.assertNotIn("cp general_memory.json", workflow)
+        # Shared memory may be staged only in the explicitly requested,
+        # guard-validated review-PR path; it must never be bundled as an artifact.
+        self.assertIn("Snapshot shared-memory baseline for optional review PR", workflow)
+        self.assertIn("Validate single-agent memory delta", workflow)
+        self.assertIn("Publish single-agent memory for human review only", workflow)
+        upload_start = workflow.find("      - name: Upload run outputs for review")
+        self.assertGreaterEqual(upload_start, 0)
+        artifact_steps = workflow[upload_start:]
+        self.assertNotIn("general_memory.json", artifact_steps)
         self.assertNotIn("cp archive_fetch_output.log", workflow)
         self.assertIn("inputs.agent == 'archive'", workflow)
         self.assertIn(

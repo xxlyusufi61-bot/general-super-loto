@@ -16,7 +16,7 @@ GENERAL is a research and software-validation project—not a way to guarantee l
 ### Runtime and orchestration
 
 - **GitHub repository and GitHub Actions** hold the source code and run explicitly triggered workflows; some workflows also run on a schedule.
-- **`.github/workflows/general-agent.yml`** is the manually triggered agent workflow. It offers the `research`, `debug`, `validation`, `crossover`, `archive`, and `isolation-test` choices.
+- **`.github/workflows/general-agent.yml`** is the manually triggered agent workflow. It offers the `research`, `debug`, `validation`, `crossover`, `archive`, and `isolation-test` choices. A single-agent report is not persisted to shared memory unless the operator explicitly chooses `publish_memory_pr=YES`; then the report must pass the memory-delta guard and is proposed in a public review-only PR. The default is `NO`, and automatic merge is disabled.
 - **`.github/workflows/general.yml`** is the scheduled/manual Telegram heartbeat workflow. It checks Telegram bot authentication and message delivery. It explicitly does **not** establish that the GENERAL core, archive integrity, or target isolation are healthy.
 - **`general_core.py`** is the Python coordinator for the four AI roles. It applies task-mode and target-date rules, prepares guarded data when needed, builds model context, calls the configured NVIDIA model API, and can save reports to project memory.
 - **`NVIDIA_API_KEY`** and **`TELEGRAM_BOT_TOKEN`** are expected to be stored as GitHub Actions secrets, not committed to source files.
@@ -113,7 +113,7 @@ Status must be updated only when supported by actual code inspection or reproduc
 
 | Workflow file | Purpose | What success means—and does not mean |
 |---|---|---|
-| `general-agent.yml` | Refresh and validate the archive, then run the selected agent or isolation test. Live agent calls require the exact confirmation phrase. | Without the phrase, the agent call is skipped; archive and isolation checks can still run. |
+| `general-agent.yml` | Refresh and validate the archive, then run the selected agent or isolation test. Live agent calls require the exact confirmation phrase. Optional report persistence is a separate `publish_memory_pr=YES` choice. | Without the phrase, the agent call is skipped; archive and isolation checks can still run. Shared memory is only proposed through a guard-validated public review PR; it is not automatically merged or bundled as an artifact. |
 | `general-coordinator-execute.yml` | Build an agent plan and execute the coordinator only after explicit consent and global-lock preflight. | Defaults to plan-only and can make up to three sequential requests only when explicitly enabled; it does not prove provider billing settings. |
 | `nvidia-test.yml` / `nvidia-chat-test.yml` | Check NVIDIA API access or request one test response. | Both default to no request and require the exact confirmation phrase and a clear global lock. |
 | `open-research.yml` | Run blank-slate research with a separate user-confirmed free-use check. | The research job is skipped unless exact consent, the free-use attestation, and global-lock preflight all pass. |
