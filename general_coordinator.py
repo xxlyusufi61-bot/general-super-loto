@@ -58,7 +58,7 @@ def build_plan(raw_task: str) -> dict[str, Any]:
         raise ValueError("Task is empty.")
 
     if target and mode in {"code", "system"}:
-        raise ValueError("A target date conflicts with code/system-only mode.")
+        raise RuntimeError("A target date conflicts with code/system-only mode.")
 
     if mode == "data" or (mode is None and is_data_task(task)):
         task_type = "data"
