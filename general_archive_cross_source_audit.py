@@ -322,11 +322,11 @@ class _LotoGenArchiveLinkParser(HTMLParser):
 
 
 _ROOT_ARCHIVE_DATE = re.compile(
-    r"\\b\\d{1,2}\\s+(?:ocak|şubat|subat|mart|nisan|mayıs|mayis|haziran|"
-    r"temmuz|ağustos|agustos|eylül|eylul|ekim|kasım|kasim|aralık|aralik)\\s+\\d{4}\\b",
+    r"\b\d{1,2}\s+(?:ocak|şubat|subat|mart|nisan|mayıs|mayis|haziran|"
+    r"temmuz|ağustos|agustos|eylül|eylul|ekim|kasım|kasim|aralık|aralik)\s+\d{4}\b",
     re.IGNORECASE,
 )
-_ROOT_ARCHIVE_DRAW_ID = re.compile(r"(?<!\\d)#?\\s*(20\\d{2})\\d{4}(?!\\d)")
+_ROOT_ARCHIVE_DRAW_ID = re.compile(r"(?<!\d)#?\s*(20\d{2})\d{4}(?!\d)")
 
 
 def parse_loto_gen_root_archive_page(
@@ -366,7 +366,7 @@ def parse_loto_gen_root_archive_page(
         number_text = _ROOT_ARCHIVE_DATE.sub(" ", number_text, count=1)
         number_tokens = [
             int(value)
-            for value in re.findall(r"(?<!\\d)\\d{1,2}(?!\\d)", number_text)
+            for value in re.findall(r"(?<!\d)\d{1,2}(?!\d)", number_text)
         ]
         if (
             len(number_tokens) != 6
