@@ -72,6 +72,14 @@ def _date(row):
 
 def _validate_regime_ranges(rows):
     for row in rows:
+        # Gap/position features assume the six-number draw is canonicalized
+        # in ascending order. Data Guard validates uniqueness/range but does
+        # not currently enforce the order, so fail closed before feature work.
+        if list(row["numbers"]) != sorted(row["numbers"]):
+            raise ValueError(
+                "Archive draw numbers must be sorted ascending; "
+                "archive integrity audit failed."
+            )
         if _date(row) < R60_START:
             if any(number > NUMBER_MAX_R54 for number in row["numbers"]):
                 raise ValueError("R54 record contains a value above 54; regime audit failed.")
