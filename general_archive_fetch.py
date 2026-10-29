@@ -2,10 +2,12 @@ import json
 import re
 import sys
 import os
+import time
 from pathlib import Path
 from datetime import date, datetime, timezone
 from html.parser import HTMLParser
 from urllib.request import Request, urlopen
+from urllib.error import HTTPError, URLError
 
 # GENERAL Super Loto archive fetcher 3.4
 BASE_URL = "https://lotoistatistik.com/super-loto/"
@@ -107,16 +109,45 @@ class TableParser(HTMLParser):
             self._finish_row()
 
 
-def fetch_html(url, label):
-    req = Request(url, headers={"User-Agent": "GENERAL-Archive-Research/3.4"})
-    try:
-        with urlopen(req, timeout=40) as response:
-            text = response.read().decode("utf-8", "replace")
-    except Exception as exc:
-        raise RuntimeError(f"{label} download failed: {exc}; archive not saved") from exc
-    if not text.strip():
-        raise RuntimeError(f"{label} returned an empty page; archive not saved")
-    return text
+def fetch_html(url, label, attempts=3):
+    """Fetch a source page with bounded retries for transient network failures."""
+    req = Request(url, headers={"User-Agent": "GENERAL-Archive-Research/3.5"})
+    last_error = None
+    for attempt in range(attempts):
+        try:
+            with urlopen(req, timeout=40) as response:
+                page_text = response.read().decode("utf-8", "replace")
+            if page_text.strip():
+                return page_text
+            last_error = RuntimeError("empty source page")
+        except (HTTPError, URLError, TimeoutError, OSError) as exc:
+            last_error = exc
+            retryable = not isinstance(exc, HTTPError) or exc.code in (408, 425, 429, 500, 502, 503, 504)
+            if not retryable:
+                break
+        if attempt + 1 < attempts:
+            time.sleep(2 ** attempt)
+    raise RuntimeError(
+        f"{label} download failed after {attempt + 1} attempt(s); archive not saved"
+    ) from last_error
+
+
+def safe_failure_category(exc):
+    """Return a number-free diagnostic category suitable for public CI logs."""
+    message = str(exc).lower()
+    if "download failed after" in message or "returned an empty page" in message:
+        return "SOURCE_FETCH_FAILED"
+    if "current-year independent-source coverage failed" in message:
+        return "CURRENT_YEAR_COVERAGE_FAILED"
+    if "independent archive contains" in message or "unparsed row" in message:
+        return "SOURCE_PARSE_FAILED"
+    if "independent-source verification failed" in message or "number-set mismatch" in message:
+        return "CROSS_SOURCE_MISMATCH"
+    if "verified archive count is not" in message or "unexpected number of unique primary-source dates" in message:
+        return "ARCHIVE_COUNT_MISMATCH"
+    if "did not yield six distinct numbers" in message or "no primary results found" in message:
+        return "PRIMARY_SOURCE_PARSE_FAILED"
+    return "ARCHIVE_VALIDATION_FAILED"
 
 
 def parse_primary_year(year, html=None):
@@ -581,5 +612,5 @@ if __name__ == "__main__":
         else:
             main()
     except Exception as exc:
-        print("ARCHIVE FETCH FAILED:", exc)
+        print(f"ARCHIVE FETCH FAILED [{safe_failure_category(exc)}]; details suppressed.")
         sys.exit(1)
