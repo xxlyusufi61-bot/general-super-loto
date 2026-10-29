@@ -48,6 +48,27 @@ class LiveModelConsentGateTests(unittest.TestCase):
                 self.assertIn("nvidia", no_consent.lower())
                 self.assertIn("made", no_consent.lower())
 
+    def test_single_agent_memory_is_persisted_only_through_optional_review_pr(self):
+        source = (WORKFLOWS / "general-agent.yml").read_text(encoding="utf-8")
+        self.assertIn("      publish_memory_pr:", source)
+        self.assertIn('        default: "NO"', source)
+        self.assertIn("publicly visible", source)
+        run_step = read_step(source, "Run selected GENERAL agent")
+        self.assertIn("GENERAL_SAVE_MEMORY: ${{ inputs.publish_memory_pr == 'YES' && '1' || '0' }}", run_step)
+        baseline = read_step(source, "Snapshot shared-memory baseline for optional review PR")
+        self.assertIn("inputs.publish_memory_pr == 'YES'", baseline)
+        self.assertIn("cp general_memory.json", baseline)
+        validate = read_step(source, "Validate single-agent memory delta")
+        self.assertIn("general_memory_pr_guard.py", validate)
+        self.assertIn('entries[0].get("source") != "GENERAL/" + os.environ["AGENT_ID"]', validate)
+        self.assertIn('entries[0].get("status") != "unverified"', validate)
+        publish = read_step(source, "Publish single-agent memory for human review only")
+        self.assertIn("cmp -s", publish)
+        self.assertIn("git diff --cached --name-only", publish)
+        self.assertIn('gh pr create', publish)
+        self.assertNotIn("gh pr merge", publish)
+        self.assertNotIn("general_memory.json", source[source.find("Upload run outputs for review"):])
+
     def test_blank_slate_research_requires_exact_phrase_free_check_and_global_lock(self):
         source = (WORKFLOWS / "open-research.yml").read_text(encoding="utf-8")
         self.assert_default_no_and_phrase_present(source)
