@@ -783,7 +783,7 @@ def run_agent(agent, task):
         )
 
         context = []
-        source_context = build_source_context(task, BASE)
+        source_context = build_source_context("agent " + agent + " " + task, BASE)
         safety_text = (
             "MODE: CODE/SYSTEM ONLY.\n"
             "No archive, runtime draw data, or shared memory reports were loaded. "
