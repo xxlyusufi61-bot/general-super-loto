@@ -6,6 +6,8 @@ name: GENERAL Blank-Slate Research
       - feature/blank-slate-research-20261025
     paths:
       - "general_open_research.py"
+      - "general_nvidia_guard.py"
+      - "general_live_consent.py"
       - "general_open_research_test.py"
       - ".github/workflows/open-research.yml"
   pull_request:
@@ -13,6 +15,8 @@ name: GENERAL Blank-Slate Research
       - main
     paths:
       - "general_open_research.py"
+      - "general_nvidia_guard.py"
+      - "general_live_consent.py"
       - "general_open_research_test.py"
       - ".github/workflows/open-research.yml"
   workflow_dispatch:
@@ -62,7 +66,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
-      contents: read
+      contents: write
       issues: write
     steps:
       - name: Checkout repository
