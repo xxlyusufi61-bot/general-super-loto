@@ -19,11 +19,56 @@ class SafeFetchDiagnosticsTests(unittest.TestCase):
 
     def test_fetch_failure_category_does_not_expose_source_details(self):
         exc = RuntimeError(
-            "Primary source 2026 download failed after 3 attempt(s); "
+            "Primary source 2026 download failed after 4 attempt(s); "
             "private page contents and draw numbers suppressed"
         )
-        self.assertEqual(fetcher.safe_failure_category(exc), "SOURCE_FETCH_FAILED")
-        self.assertNotIn("2026", fetcher.safe_failure_category(exc))
+        category = fetcher.safe_failure_category(exc)
+        self.assertEqual(category, "PRIMARY_SOURCE_FETCH_FAILED")
+        self.assertNotIn("2026", category)
+        self.assertNotIn("private", category)
+
+    def test_fetch_failure_category_distinguishes_http_rejection_safely(self):
+        exc = RuntimeError(
+            "Primary source 2026 download failed after 1 attempt(s); archive not saved"
+        )
+        exc.__cause__ = fetcher.HTTPError(
+            "https://private.invalid/path", 403, "Forbidden", None, None
+        )
+        category = fetcher.safe_failure_category(exc)
+        self.assertEqual(category, "PRIMARY_SOURCE_HTTP_REJECTED")
+        self.assertNotIn("2026", category)
+        self.assertNotIn("private.invalid", category)
+        self.assertNotIn("403", category)
+
+    def test_fetch_failure_category_marks_exhausted_transient_http_safely(self):
+        exc = RuntimeError(
+            "Independent 2025 source download failed after 4 attempt(s); archive not saved"
+        )
+        exc.__cause__ = fetcher.HTTPError(
+            "https://private.invalid/path", 429, "Too Many Requests", None, None
+        )
+        category = fetcher.safe_failure_category(exc)
+        self.assertEqual(category, "INDEPENDENT_SOURCE_HTTP_RETRY_EXHAUSTED")
+        self.assertNotIn("2025", category)
+        self.assertNotIn("private.invalid", category)
+        self.assertNotIn("429", category)
+
+    def test_retries_four_times_with_exponential_backoff(self):
+        with patch.object(
+            fetcher, "urlopen",
+            side_effect=[
+                URLError("temporary detail"),
+                URLError("temporary detail"),
+                URLError("temporary detail"),
+                io.BytesIO(b"ok"),
+            ],
+        ) as mock_open, patch.object(fetcher.time, "sleep") as mock_sleep:
+            self.assertEqual(
+                fetcher.fetch_html("https://example.invalid", "fixture"),
+                "ok",
+            )
+        self.assertEqual(mock_open.call_count, 4)
+        self.assertEqual([call.args[0] for call in mock_sleep.call_args_list], [1, 2, 4])
 
     def test_cross_source_failure_has_safe_category(self):
         self.assertEqual(

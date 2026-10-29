@@ -109,7 +109,7 @@ class TableParser(HTMLParser):
             self._finish_row()
 
 
-def fetch_html(url, label, attempts=3):
+def fetch_html(url, label, attempts=4):
     """Fetch a source page with bounded retries for transient network failures."""
     req = Request(url, headers={"User-Agent": "GENERAL-Archive-Research/3.5"})
     last_error = None
@@ -135,8 +135,32 @@ def fetch_html(url, label, attempts=3):
 def safe_failure_category(exc):
     """Return a number-free diagnostic category suitable for public CI logs."""
     message = str(exc).lower()
-    if "download failed after" in message or "returned an empty page" in message:
-        return "SOURCE_FETCH_FAILED"
+    if "download failed after" in message:
+        if "primary source" in message:
+            prefix = "PRIMARY_SOURCE"
+        elif "independent 2025 source" in message:
+            prefix = "INDEPENDENT_SOURCE"
+        else:
+            prefix = "SOURCE"
+
+        cause = exc.__cause__
+        if isinstance(cause, HTTPError):
+            retryable_codes = (408, 425, 429, 500, 502, 503, 504)
+            suffix = (
+                "HTTP_RETRY_EXHAUSTED"
+                if cause.code in retryable_codes
+                else "HTTP_REJECTED"
+            )
+        elif isinstance(cause, (URLError, TimeoutError, OSError)):
+            suffix = "NETWORK_RETRY_EXHAUSTED"
+        elif isinstance(cause, RuntimeError) and "empty source page" in str(cause).lower():
+            suffix = "EMPTY_RESPONSE"
+        else:
+            suffix = "FETCH_FAILED"
+        return f"{prefix}_{suffix}"
+
+    if "returned an empty page" in message:
+        return "SOURCE_EMPTY_RESPONSE"
     if "current-year independent-source coverage failed" in message:
         return "CURRENT_YEAR_COVERAGE_FAILED"
     if "independent archive contains" in message or "unparsed row" in message:
@@ -148,7 +172,6 @@ def safe_failure_category(exc):
     if "did not yield six distinct numbers" in message or "no primary results found" in message:
         return "PRIMARY_SOURCE_PARSE_FAILED"
     return "ARCHIVE_VALIDATION_FAILED"
-
 
 def parse_primary_year(year, html=None):
     if html is None:
