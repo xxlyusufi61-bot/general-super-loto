@@ -84,6 +84,11 @@ class CoordinatorOutputSanitizationTests(unittest.TestCase):
                     "error_type": "TimeoutError",
                     "secret": "PRIVATE_FAILURE_REPORT",
                 },
+                {
+                    "agent": "research",
+                    "status": "failed",
+                    "error_type": "PRIVATE_REPORT_TEXT",
+                },
             ],
         )
         summary = summarize_payload(source)
@@ -93,6 +98,8 @@ class CoordinatorOutputSanitizationTests(unittest.TestCase):
         self.assertEqual(summary["agent_results"][1]["error_type"], "TimeoutError")
         self.assertNotIn("PRIVATE_FAILURE_REPORT", serialized)
         self.assertNotIn("secret", serialized)
+        self.assertNotIn("PRIVATE_REPORT_TEXT", serialized)
+        self.assertNotIn("PRIVATE_FAILURE_REPORT", serialized)
 
     def test_malformed_untrusted_fields_fail_closed_without_leaking_them(self):
         source = payload()
@@ -171,6 +178,25 @@ class PublicationDecisionTests(unittest.TestCase):
         result = self.decide(memory=memory)
         self.assertFalse(result["allowed"])
         self.assertEqual(result["reason"], "memory_guard_failed")
+
+    def test_new_entries_must_remain_unverified(self):
+        memory = valid_memory_summary()
+        memory["all_new_entries_unverified"] = False
+        result = self.decide(memory=memory)
+        self.assertFalse(result["allowed"])
+        self.assertEqual(result["reason"], "new_entries_not_unverified")
+
+    def test_binding_rules_and_auto_merge_must_remain_locked(self):
+        for key, value, reason in (
+            ("binding_rules_changed", True, "binding_rules_changed"),
+            ("auto_merge", True, "automatic_merge_not_disabled"),
+        ):
+            with self.subTest(key=key):
+                memory = valid_memory_summary()
+                memory[key] = value
+                result = self.decide(memory=memory)
+                self.assertFalse(result["allowed"])
+                self.assertEqual(result["reason"], reason)
 
     def test_stale_main_memory_is_blocked(self):
         result = self.decide(current=b'{"entries":[{"id":99}]}\n')
