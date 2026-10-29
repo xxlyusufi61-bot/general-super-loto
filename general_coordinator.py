@@ -119,7 +119,7 @@ def build_plan(raw_task: str) -> dict[str, Any]:
     }
 
 
-EXECUTION_CONFIRMATION = "I_APPROVE_UP_TO_3_NVIDIA_REQUESTS"
+EXECUTION_CONFIRMATION = "I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_3_NVIDIA_REQUESTS"
 REQUIRED_PREFLIGHT_FLAGS = (
     "row_level_audit_pass",
     "archive_dates_chronological",
@@ -276,7 +276,7 @@ def main() -> int:
     parser.add_argument(
         "--confirm-live-calls",
         default="",
-        help="Must equal I_APPROVE_UP_TO_3_NVIDIA_REQUESTS to allow agent execution."
+        help="Must equal I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_3_NVIDIA_REQUESTS to allow agent execution."
     )
     args = parser.parse_args()
 
