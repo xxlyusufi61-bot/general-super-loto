@@ -1,7 +1,12 @@
 import copy
 import hashlib
+import json
+import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
+import general_core as core
 from general_memory_pr_guard import MemoryProposalError, validate_memory_delta
 
 
@@ -133,6 +138,50 @@ class MemoryDeltaGuardTests(unittest.TestCase):
         candidate["entries"][1]["id"] = 1
         with self.assertRaisesRegex(MemoryProposalError, "unique and increasing"):
             validate_memory_delta(baseline_memory(), candidate)
+
+
+
+class CoreMemoryWriterIntegrationTests(unittest.TestCase):
+    def test_core_memory_write_passes_proposal_guard(self):
+        """The real memory writer emits only a valid, unverified append proposal."""
+        baseline = {
+            "schema_version": 1,
+            "project": "GENERAL Super Loto",
+            "created_at": "2026-10-01T00:00:00+00:00",
+            "binding_rules": list(core.RULES),
+            "entries": [
+                {
+                    "id": 1,
+                    "timestamp": "2026-10-02T00:00:00+00:00",
+                    "category": "project_note",
+                    "title": "Initial note",
+                    "content": "Preserve chronological evaluation.",
+                    "source": "GENERAL",
+                    "status": "verified",
+                }
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            memory_path = Path(tmp) / "general_memory.json"
+            memory_path.write_text(
+                json.dumps(baseline, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            with patch.object(core, "MEMORY", memory_path):
+                core.add_memory("research", "Mock hypothesis; not verified.")
+
+            candidate = json.loads(memory_path.read_text(encoding="utf-8"))
+
+        result = validate_memory_delta(baseline, candidate)
+        self.assertTrue(result["valid"])
+        self.assertEqual(result["new_entries_count"], 1)
+        self.assertTrue(result["has_new_entries"])
+        self.assertTrue(result["all_new_entries_unverified"])
+        self.assertFalse(result["binding_rules_changed"])
+        self.assertFalse(result["auto_merge"])
+        self.assertEqual(candidate["entries"][-1]["source"], "GENERAL/research")
+        self.assertEqual(candidate["entries"][-1]["status"], "unverified")
 
 
 if __name__ == "__main__":
