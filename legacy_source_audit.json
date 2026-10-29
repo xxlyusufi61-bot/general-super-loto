@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "project": "GENERAL Super Loto",
+  "audit_version": "legacy-source-audit-0.1.0",
+  "audit_scope": "Static code inspection of preserved legacy engines; no archive execution and no prediction run.",
+  "binding_rules_changed": false,
+  "official_source_verification_required": false,
+  "status": "STATIC_AUDIT_FINDINGS_RECORDED",
+  "sources": {
+    "legacy_sources/Super_Loto_V8_6_Donusum_Kesif.py": {
+      "source_sha_on_main_at_audit": "2d74ae57e757ecd393917015d294b3fbf9558975",
+      "status": "DO_NOT_USE_AS_TRUSTED_EVALUATOR",
+      "findings": [
+        {
+          "id": "V86-TARGET-B-LEAKAGE",
+          "severity": "critical",
+          "detail": "The legacy matching query is formed from a target transition A->B and the scoring target is that same transition's B. The reported historical FINAL score is not valid evidence because target B participates in the query signature.",
+          "action": "Keep original unchanged. Use only the separate leakage-safe evaluator for any future controlled experiment."
+        },
+        {
+          "id": "V86-NULL-RESULT-BOOKKEEPING",
+          "severity": "high",
+          "detail": "Prior audit notes identified null-evaluation bookkeeping that used ALL instead of FINAL. The legacy result must not be relied upon until separately reconstructed.",
+          "action": "Treat historical scores as unverified and do not reuse them as evidence."
+        }
+      ]
+    },
+    "legacy_sources/Super_Loto_Sifre_Kesif_Motoru_v1.py": {
+      "source_sha_on_main_at_audit": "d2b65e80031faafe431a943a13fb7bab8a4b2a15",
+      "status": "DO_NOT_USE_AS_CURRENT_CANONICAL_EVALUATOR",
+      "findings": [
+        {
+          "id": "V1-EMBEDDED-ARCHIVE",
+          "severity": "high",
+          "detail": "The preserved engine contains an old embedded archive ending at 2026 draw #107; it is not the current canonical archive.",
+          "action": "Do not use its embedded data for current experiments."
+        },
+        {
+          "id": "V1-SILENT-GENERATOR-FAILURES",
+          "severity": "high",
+          "detail": "The recipe predictor catches broad exceptions from component generators and continues; this can hide broken hypotheses and produce apparently valid output from only the surviving components.",
+          "action": "Any reviewed successor should record component failure counts and fail closed when required components fail."
+        },
+        {
+          "id": "V1-FALLBACK-NUMBERS",
+          "severity": "high",
+          "detail": "The recipe predictor fills missing selections with low-numbered values when a recipe yields fewer than six candidates, masking insufficient model output.",
+          "action": "A research evaluator should mark that target as no-prediction/invalid rather than fabricate a complete pick."
+        },
+        {
+          "id": "V1-HOLDOUT-REORDERING",
+          "severity": "high",
+          "detail": "The final holdout rows are sorted by their holdout score before the winner and detailed cases are reported. This is not itself target leakage into each per-target prediction, but it makes post-hoc winner presentation easy to misinterpret and does not replace a frozen, untouched final evaluation protocol.",
+          "action": "Preserve a single frozen final evaluation; do not choose or tune a winner based on final scores."
+        }
+      ]
+    },
+    "legacy_sources/Super_Loto_NEAR_STATE_Yapi_Dogrulama_Motoru_v5_0.py": {
+      "source_sha_on_main_at_audit": "bd58e2f467dc0f124b99c1b7e341d60152549065",
+      "status": "LEGACY_RESULT_NOT_REPRODUCED",
+      "findings": [
+        {
+          "id": "NEAR-STATE-HISTORICAL-INDEX-BOUNDARIES",
+          "severity": "high",
+          "detail": "The preserved source uses fixed historical draw indices for development and holdout, with locked draws described separately. Those boundaries are tied to its embedded 263-draw archive, not the current canonical date-based archive.",
+          "action": "Do not transplant its old metrics to the current archive. A successor must define splits by actual dates and dynamically isolate the latest target."
+        },
+        {
+          "id": "NEAR-STATE-REPRODUCTION-PENDING",
+          "severity": "medium",
+          "detail": "The original holdout and shuffle experiments have not been reproduced against the current archive under the current binding rules.",
+          "action": "Keep historical metrics unverified until a separate, leakage-safe reproduction exists."
+        }
+      ]
+    }
+  },
+  "next_gate": {
+    "name": "DATE-BASED-LEGACY-REPRODUCTION-DESIGN",
+    "requirements": [
+      "Do not edit preserved legacy source files.",
+      "Use the canonical archive only after Data Guard passes.",
+      "Keep R54 and R60 regimes separate.",
+      "Select candidate settings only on a chronological validation interval.",
+      "Freeze settings before a separate final interval.",
+      "Never pass target numbers to a predictor or tuning routine.",
+      "Run forward walk-forward; label reverse chronology as retrospective stress testing only.",
+      "Compare against a random 6-of-60 baseline on identical test dates.",
+      "Do not promote A->B->C, A->T, or MOD5->T from OPEN_DEFINITION without explicit user approval."
+    ]
+  }
+}
