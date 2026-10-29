@@ -64,7 +64,7 @@ jobs:
 
       - name: Compile coordinator modules
         run: |
-          python3 -m py_compile general_live_consent.py general_core.py general_coordinator.py general_source_context.py general_open_research.py general_coordinator_memory_publication.py general_core_output_safety_test.py general_agent_workflow_guard_test.py general_core_live_consent_test.py
+          python3 -m py_compile general_live_consent.py general_core.py general_agent_report_guard.py general_agent_report_guard_test.py general_coordinator.py general_source_context.py general_open_research.py general_coordinator_memory_publication.py general_core_output_safety_test.py general_agent_workflow_guard_test.py general_core_live_consent_test.py
 
       - name: Run mock-only coordinator and explicit-consent tests
         run: python3 -m unittest -v general_coordinator_test general_memory_pr_guard_test general_coordinator_memory_publication_test general_core_output_safety_test general_agent_report_guard_test general_agent_workflow_guard_test general_core_live_consent_test general_open_research_test
