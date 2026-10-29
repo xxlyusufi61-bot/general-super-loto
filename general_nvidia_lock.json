@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
-  "locked": false,
-  "reason": "",
-  "locked_at": null,
-  "locked_by": null,
-  "last_lock_reason": "",
+  "locked": true,
+  "reason": "GENERAL agent NVIDIA request failed or its response could not be validated; quota, authorization, billing/limit, or service state is uncertain.",
+  "locked_at": "2026-10-29T18:08:19.461642+00:00",
+  "locked_by": "xxlyusufi61-bot | https://github.com/xxlyusufi61-bot/general-super-loto/actions/runs/40927242956",
+  "last_lock_reason": "GENERAL agent NVIDIA request failed or its response could not be validated; quota, authorization, billing/limit, or service state is uncertain.",
   "last_unlocked_at": null,
-  "updated_at": null
+  "updated_at": "2026-10-29T18:08:19.461642+00:00"
 }
