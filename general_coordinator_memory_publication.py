@@ -66,6 +66,8 @@ def summarize_payload(payload: Any) -> dict[str, Any]:
             safe_item["report_received"] = report_received
         elif result_status == "success":
             malformed_result = True
+        else:
+            safe_item["report_received"] = False
         error_type = item.get("error_type")
         if isinstance(error_type, str) and SAFE_ERROR_TYPE.fullmatch(error_type):
             safe_item["error_type"] = error_type
