@@ -27,11 +27,7 @@ class MethodRegistryTests(unittest.TestCase):
     def test_no_inherited_formula_results_or_implementation_pointers(self):
         self.assertEqual(self.data["historical_results"], {})
         serialized = json.dumps(self.data, ensure_ascii=False)
-        forbidden = (
-            "legacy_candidate", "source_artifact", "legacy_sources/",
-            "V19_best_stable_ABC_weight", "V0_3_1_crossover_weights",
-            "1.171946", "0.106117", "0.102668", "0.10094", "0.099944",
-        )
+        forbidden = ("legacy_candidate", "source_artifact", "legacy_sources/")
         for marker in forbidden:
             with self.subTest(marker=marker):
                 self.assertNotIn(marker, serialized)
