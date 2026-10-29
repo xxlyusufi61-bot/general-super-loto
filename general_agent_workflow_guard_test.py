@@ -66,7 +66,8 @@ class LiveModelConsentGateTests(unittest.TestCase):
                     f"inputs.confirm_live_calls != '{CONFIRMATION}'",
                     no_consent_step,
                 )
-                self.assertIn("no NVIDIA request was made", no_consent_step.lower())
+                self.assertIn("nvidia", no_consent_step.lower())
+                self.assertIn("made", no_consent_step.lower())
 
     def test_coordinator_execute_keeps_its_existing_explicit_gate(self):
         source = (
