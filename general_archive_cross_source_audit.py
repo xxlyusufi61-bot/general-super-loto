@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+import time
 from html.parser import HTMLParser
 from collections import defaultdict
 from datetime import date
@@ -95,17 +96,28 @@ class AuditSourceError(RuntimeError):
     pass
 
 
-def fetch_html(url: str) -> str:
-    request = Request(url, headers={"User-Agent": "GENERAL-Archive-Audit/1.0"})
-    try:
-        with urlopen(request, timeout=TIMEOUT_SECONDS) as response:
-            data = response.read().decode("utf-8", "replace")
-    except (HTTPError, URLError, TimeoutError, OSError):
-        raise AuditSourceError("Independent source could not be fetched.") from None
-    if not data.strip():
-        raise AuditSourceError("Independent source returned an empty page.")
-    return data
+def fetch_html(url: str, attempts: int = 3) -> str:
+    """Fetch independent source pages with bounded retries and safe diagnostics."""
+    request = Request(url, headers={"User-Agent": "GENERAL-Archive-Audit/1.1"})
+    for attempt in range(attempts):
+        try:
+            with urlopen(request, timeout=TIMEOUT_SECONDS) as response:
+                data = response.read().decode("utf-8", "replace")
+            if data.strip():
+                return data
+        except HTTPError as exc:
+            # Retry only responses that commonly indicate rate limiting or a
+            # temporary server problem. A permanent 4xx response fails closed.
+            if exc.code not in (408, 425, 429, 500, 502, 503, 504):
+                break
+        except (URLError, TimeoutError, OSError):
+            # Keep raw host/network details out of public Actions logs.
+            pass
 
+        if attempt + 1 < attempts:
+            time.sleep(2 ** attempt)
+
+    raise AuditSourceError("Independent source could not be fetched.")
 
 def _raw_number_values(cells: list[dict[str, str]], use_attrs: bool = False) -> list[int]:
     field = "attrs" if use_attrs else "text"
