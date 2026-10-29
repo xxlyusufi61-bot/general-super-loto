@@ -198,7 +198,7 @@ def _write_new_proposal(path_text: str, proposal: dict[str, Any]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("x", encoding="utf-8") as output:
             json.dump(proposal, output, ensure_ascii=False, indent=2)
-            output.write("\\n")
+            output.write("\n")
     except FileExistsError:
         raise MemoryProposalError(
             "Proposal output already exists; refusing to overwrite."
