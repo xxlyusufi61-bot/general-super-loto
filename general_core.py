@@ -629,6 +629,16 @@ def ask_nvidia(messages):
     return answer.strip()
 
 
+def safe_report_metadata(answer):
+    """Return non-content metadata for logs without exposing the report body."""
+    if not isinstance(answer, str):
+        return {"report_received": False, "character_count": 0}
+    return {
+        "report_received": bool(answer.strip()),
+        "character_count": len(answer),
+    }
+
+
 def run_agent(agent, task, coordinator_context=None):
     if agent not in AGENTS:
         raise RuntimeError("Unknown agent: " + agent)
@@ -906,7 +916,7 @@ def run_agent(agent, task, coordinator_context=None):
         {"role": "user", "content": task}
     ])
 
-    print("\n--- AGENT REPORT ---\n" + answer + "\n--- END ---")
+    print("AGENT_REPORT_METADATA: " + json.dumps(safe_report_metadata(answer), sort_keys=True))
 
     if os.environ.get("GENERAL_SAVE_MEMORY") == "1":
         add_memory(agent, answer)

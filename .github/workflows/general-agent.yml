@@ -209,19 +209,18 @@ jobs:
             echo "No incomplete NVIDIA API request detected; global lock unchanged."
           fi
 
-      - name: Preserve outputs without writing to main
-        if: ${{ success() }}
+      - name: Preserve archive output only for explicit archive runs
+        if: ${{ success() && inputs.agent == 'archive' }}
         run: |
           mkdir -p general-run-output
           if [ -f super_loto_archive.json ]; then
             cp super_loto_archive.json general-run-output/super_loto_archive.json
+          else
+            echo "ARCHIVE OUTPUT FAILED: validated archive file is missing."
+            exit 1
           fi
-          if [ -f general_memory.json ]; then
-            cp general_memory.json general-run-output/general_memory.json
-          fi
-          if [ -f archive_fetch_output.log ]; then
-            cp archive_fetch_output.log general-run-output/archive_fetch_output.log
-          fi
+          # Never publish shared memory, agent reports, or raw fetch logs as artifacts.
+
 
       - name: Upload run outputs for review
         if: ${{ always() }}
