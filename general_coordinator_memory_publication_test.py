@@ -235,6 +235,8 @@ class WorkflowWiringTests(unittest.TestCase):
         self.assertIn("rm -f coordinator-execution.log", workflow)
         self.assertIn("default: \"NO\"", workflow)
         self.assertIn("path: general-coordinator-output/", workflow)
+        self.assertIn("steps.memory-proposal.outputs.has_new_entries == 'true'", workflow)
+        self.assertIn("inputs.publish_memory_pr == 'YES'", workflow)
         self.assertNotIn("path: coordinator-execution.log", workflow)
         self.assertNotIn("path: general_memory.json", workflow)
 
