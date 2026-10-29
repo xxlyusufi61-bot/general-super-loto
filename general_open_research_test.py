@@ -106,7 +106,7 @@ class NvidiaUsageObservationTests(unittest.TestCase):
             },
             clear=True,
         ), patch("general_open_research.urllib.request.urlopen") as mocked_urlopen:
-            with self.assertRaisesRegex(RuntimeError, "global safety-lock preflight was not confirmed"):
+            with self.assertRaisesRegex(RuntimeError, "Global NVIDIA safety-lock preflight was not confirmed"):
                 research.call_model([{"role": "user", "content": "test"}])
             mocked_urlopen.assert_not_called()
 
