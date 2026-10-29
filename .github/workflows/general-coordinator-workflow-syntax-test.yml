@@ -43,4 +43,4 @@ jobs:
           python3 -m py_compile general_core.py general_coordinator.py general_source_context.py general_coordinator_memory_publication.py
 
       - name: Run mock-only coordinator tests
-        run: python3 -m unittest -v general_coordinator_test general_coordinator_memory_publication_test
+        run: python3 -m unittest -v general_coordinator_test general_memory_pr_guard_test general_coordinator_memory_publication_test
