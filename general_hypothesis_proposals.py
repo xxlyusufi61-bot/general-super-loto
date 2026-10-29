@@ -63,7 +63,7 @@ def _validate_proposal(value: Any) -> dict[str, Any]:
     if set(value) != PROPOSAL_KEYS:
         raise ValueError("Proposal keys do not match the exact allowed schema.")
     proposal_id = value.get("hypothesis_id")
-    if not isinstance(proposal_id, str) or re.fullmatch(r"HYP-[0-9]{3}", proposal_id) is None:
+    if not isinstance(proposal_id, str) or re.fullmatch(r"HYP-(?!000)[0-9]{3}", proposal_id) is None:
         raise ValueError("hypothesis_id must match HYP-001 through HYP-999.")
     proposal: dict[str, Any] = {"hypothesis_id": proposal_id}
     for field in sorted(TEXT_FIELDS):
