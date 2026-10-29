@@ -3,6 +3,7 @@ name: GENERAL Blank-Slate Research
 'on':
   push:
     branches:
+      - main
       - feature/blank-slate-research-20261025
     paths:
       - "general_open_research.py"
