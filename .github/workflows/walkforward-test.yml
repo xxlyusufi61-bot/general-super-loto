@@ -8,6 +8,12 @@ on:
       - "general_walkforward_test.py"
       - "general_data_guard.py"
       - ".github/workflows/walkforward-test.yml"
+  pull_request:
+    paths:
+      - "general_walkforward.py"
+      - "general_walkforward_test.py"
+      - "general_data_guard.py"
+      - ".github/workflows/walkforward-test.yml"
 
 permissions:
   contents: read
