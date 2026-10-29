@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import general_open_research as research
+from general_live_consent import CONFIRMATION_PHRASE
 
 
 class OpenResearchIsolationTests(unittest.TestCase):
@@ -98,7 +99,7 @@ class NvidiaUsageObservationTests(unittest.TestCase):
         with patch.dict(
             os.environ,
             {
-                "GENERAL_CONFIRM_LIVE_CALLS": research.CONFIRMATION_PHRASE,
+                "GENERAL_CONFIRM_LIVE_CALLS": CONFIRMATION_PHRASE,
                 "GENERAL_ALLOW_NVIDIA_CALL": "true",
                 "GENERAL_NVIDIA_FREE_USAGE_VERIFIED": "true",
                 "NVIDIA_API_KEY": "test-secret",
@@ -113,7 +114,7 @@ class NvidiaUsageObservationTests(unittest.TestCase):
         with patch.dict(
             os.environ,
             {
-                "GENERAL_CONFIRM_LIVE_CALLS": research.CONFIRMATION_PHRASE,
+                "GENERAL_CONFIRM_LIVE_CALLS": CONFIRMATION_PHRASE,
                 "GENERAL_NVIDIA_GUARD_PASSED": "1",
                 "GENERAL_ALLOW_NVIDIA_CALL": "true",
                 "NVIDIA_API_KEY": "test-secret",
@@ -141,7 +142,7 @@ class NvidiaUsageObservationTests(unittest.TestCase):
             with patch.object(research, "USAGE_REPORT", usage_path), patch.dict(
                 os.environ,
                 {
-                    "GENERAL_CONFIRM_LIVE_CALLS": research.CONFIRMATION_PHRASE,
+                    "GENERAL_CONFIRM_LIVE_CALLS": CONFIRMATION_PHRASE,
                     "GENERAL_NVIDIA_GUARD_PASSED": "1",
                     "GENERAL_ALLOW_NVIDIA_CALL": "true",
                     "GENERAL_NVIDIA_FREE_USAGE_VERIFIED": "true",
