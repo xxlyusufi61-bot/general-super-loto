@@ -124,7 +124,7 @@ class CoreSourceContextIntegrationTests(unittest.TestCase):
 
             def fake_ask_nvidia(messages):
                 captured["messages"] = messages
-                return "MOCK_REPORT"
+                return "SCOPE_AND_EVIDENCE:\nSynthetic test fixture and supplied source context only.\n\nCHECKS_PERFORMED:\nOnly source-context prompt assembly was exercised; no repository commands were run.\n\nFINDINGS:\nUNVERIFIED: This mock report validates test plumbing only.\n\nLIMITATIONS:\nNo live model request or real code execution was performed.\n\nNEXT_OFFLINE_CHECK:\nRun the source-context unit tests.\n\nREPRODUCTION_OR_DIAGNOSTIC:\nNo production defect was reproduced by this mock.\n\nPROPOSED_FIX_AND_TEST:\nNo actual fix is claimed; run the named offline tests."
 
             with (
                 patch.object(core, "BASE", root),
