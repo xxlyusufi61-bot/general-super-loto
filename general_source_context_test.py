@@ -111,7 +111,7 @@ class CoreSourceContextIntegrationTests(unittest.TestCase):
                 "UNLISTED_SOURCE_SENTINEL", encoding="utf-8"
             )
             registry_path = root / "general_method_registry.json"
-            registry.write_text(
+            registry_path.write_text(
                 json.dumps(json.loads(
                     Path(__file__).with_name("general_method_registry.json")
                     .read_text(encoding="utf-8")
