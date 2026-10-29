@@ -24,9 +24,18 @@ name: GENERAL Agent
         required: true
         type: string
         default: "NO"
+      publish_memory_pr:
+        description: "When YES, publish the new report in a public review-only PR before it can enter shared memory. The report text will be publicly visible. Default NO."
+        required: true
+        type: choice
+        options:
+          - "NO"
+          - "YES"
+        default: "NO"
 
 permissions:
   contents: write
+  pull-requests: write
 
 concurrency:
   group: general-nvidia-api
@@ -191,6 +200,15 @@ jobs:
           print("Target numbers displayed: NO")
           PY
 
+      - name: Snapshot shared-memory baseline for optional review PR
+        id: memory-baseline
+        if: ${{ inputs.agent != 'archive' && inputs.agent != 'isolation-test' && inputs.confirm_live_calls == 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_3_NVIDIA_REQUESTS' && inputs.publish_memory_pr == 'YES' }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/general-agent-memory"
+          cp general_memory.json "$RUNNER_TEMP/general-agent-memory/baseline.json"
+          sha256sum "$RUNNER_TEMP/general-agent-memory/baseline.json" | awk '{print "sha256=" $1}' >> "$GITHUB_OUTPUT"
+
       - name: Run selected GENERAL agent
         id: run-agent
         if: ${{ inputs.agent != 'archive' && inputs.agent != 'isolation-test' && inputs.confirm_live_calls == 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_3_NVIDIA_REQUESTS' }}
@@ -198,7 +216,7 @@ jobs:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           AGENT_ID: ${{ inputs.agent }}
           TASK_TEXT: ${{ inputs.task }}
-          GENERAL_SAVE_MEMORY: "1"
+          GENERAL_SAVE_MEMORY: ${{ inputs.publish_memory_pr == 'YES' && '1' || '0' }}
           GENERAL_CONFIRM_LIVE_CALLS: ${{ inputs.confirm_live_calls }}
         run: |
           python3 general_core.py "$AGENT_ID" "$TASK_TEXT"
@@ -222,6 +240,119 @@ jobs:
             python3 general_nvidia_guard.py lock --reason "GENERAL agent NVIDIA request failed or its response could not be validated; quota, authorization, billing/limit, or service state is uncertain."
           else
             echo "No incomplete NVIDIA API request detected; global lock unchanged."
+          fi
+
+      - name: Validate single-agent memory delta
+        id: memory-proposal
+        if: ${{ success() && steps.run-agent.outcome == 'success' && inputs.publish_memory_pr == 'YES' }}
+        env:
+          MEMORY_BASELINE: ${{ runner.temp }}/general-agent-memory/baseline.json
+          MEMORY_CANDIDATE: general_memory.json
+          MEMORY_PROPOSAL: ${{ runner.temp }}/general-agent-memory/memory-delta.json
+          AGENT_ID: ${{ inputs.agent }}
+        run: |
+          set -euo pipefail
+          if [ ! -f "$MEMORY_BASELINE" ] || [ ! -f "$MEMORY_CANDIDATE" ]; then
+            echo "Memory baseline or candidate is missing; refusing publication."
+            exit 1
+          fi
+          if python3 general_memory_pr_guard.py \
+            --baseline "$MEMORY_BASELINE" \
+            --candidate "$MEMORY_CANDIDATE" \
+            --proposal-output "$MEMORY_PROPOSAL" \
+            > "$RUNNER_TEMP/general-agent-memory/summary.json"; then
+            :
+          else
+            cat "$RUNNER_TEMP/general-agent-memory/summary.json"
+            echo "Memory guard rejected the candidate; no PR will be created."
+            exit 1
+          fi
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ["RUNNER_TEMP"], "general-agent-memory")
+          summary = json.loads((root / "summary.json").read_text(encoding="utf-8"))
+          if summary.get("valid") is not True:
+              raise SystemExit("Memory guard did not validate the candidate.")
+          has_new = summary.get("has_new_entries") is True
+          if has_new:
+              proposal = json.loads((root / "memory-delta.json").read_text(encoding="utf-8"))
+              entries = proposal.get("new_entries")
+              if not isinstance(entries, list) or len(entries) != 1:
+                  raise SystemExit("Single-agent run must propose exactly one report; refusing publication.")
+              if entries[0].get("source") != "GENERAL/" + os.environ["AGENT_ID"]:
+                  raise SystemExit("Memory report source does not match the selected agent.")
+              if entries[0].get("status") != "unverified":
+                  raise SystemExit("New report must remain unverified.")
+              if proposal.get("auto_merge") is not False or proposal.get("human_review_required") is not True:
+                  raise SystemExit("Memory proposal is not review-only.")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write("has_new_entries=" + ("true" if has_new else "false") + "\n")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as report:
+              report.write("## Single-agent shared-memory proposal\n\n")
+              report.write("- Memory delta guard: PASS\n")
+              report.write("- New reports: " + str(summary.get("new_entries_count", 0)) + "\n")
+              report.write("- Report status: unverified; human review required\n")
+              report.write("- Automatic merge: disabled\n")
+              if not has_new:
+                  report.write("- No new report was added; no PR will be opened.\n")
+          PY
+
+      - name: Publish single-agent memory for human review only
+        if: ${{ always() && steps.memory-proposal.outputs.has_new_entries == 'true' && inputs.publish_memory_pr == 'YES' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          git fetch origin +refs/heads/main:refs/remotes/origin/main --quiet
+          git show origin/main:general_memory.json > "$RUNNER_TEMP/general-agent-memory/current-main.json"
+          if ! cmp -s "$RUNNER_TEMP/general-agent-memory/baseline.json" "$RUNNER_TEMP/general-agent-memory/current-main.json"; then
+            echo "::warning::Shared memory changed during the run. No PR was opened; rerun from the current main branch."
+            echo "- Memory PR not opened: shared memory changed during the run." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          branch="general-agent-memory-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          git reset --hard origin/main
+          git switch -c "$branch" origin/main
+          cp "$RUNNER_TEMP/general-agent-memory/candidate.json" general_memory.json
+          python3 -m json.tool general_memory.json > /dev/null
+          git add -- general_memory.json
+          staged_files="$(git diff --cached --name-only)"
+          if [ "$staged_files" != "general_memory.json" ]; then
+            echo "Unexpected staged files; refusing to publish memory PR."
+            exit 1
+          fi
+          git diff --cached --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Propose validated GENERAL agent report"
+          git push origin "$branch"
+
+          body="$(cat <<EOF
+          ## Review-only GENERAL agent memory update
+
+          - Only general_memory.json is changed.
+          - The report passed general_memory_pr_guard.py against the pre-run baseline.
+          - The main-branch memory matched that baseline before the proposal branch was created.
+          - The report remains unverified; binding rules and existing entries were not changed.
+          - This is a public repository: the new report text is visible in this PR before merge.
+          - No automatic merging is enabled; human review and manual merge are required.
+          EOF
+          )"
+          pr_url="$(gh pr create --repo "$GITHUB_REPOSITORY" --title "GENERAL: Review ${{ inputs.agent }} report (run ${GITHUB_RUN_ID})" --body "$body" --base main --head "$branch")"
+          echo "Opened human-review PR: $pr_url"
+          echo "- Review PR: $pr_url" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Preserve safe memory-proposal metadata
+        if: ${{ always() }}
+        run: |
+          mkdir -p general-run-output
+          if [ -f "$RUNNER_TEMP/general-agent-memory/summary.json" ]; then
+            cp "$RUNNER_TEMP/general-agent-memory/summary.json" general-run-output/memory-proposal-summary.json
           fi
 
       - name: Preserve archive output only for explicit archive runs
