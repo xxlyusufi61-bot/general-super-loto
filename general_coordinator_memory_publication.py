@@ -42,9 +42,9 @@ def summarize_payload(payload: Any) -> dict[str, Any]:
         return summary
 
     raw_status = payload.get("status", payload.get("plan_status"))
-    status = raw_status if raw_status in {"success", "failed", "rejected"} else "unparsed"
+    status = raw_status if isinstance(raw_status, str) and raw_status in {"success", "failed", "rejected"} else "unparsed"
     raw_task_type = payload.get("task_type")
-    task_type = raw_task_type if raw_task_type in ALLOWED_TASK_TYPES else None
+    task_type = raw_task_type if isinstance(raw_task_type, str) and raw_task_type in ALLOWED_TASK_TYPES else None
     raw_results = payload.get("agent_results", [])
     if not isinstance(raw_results, list) or len(raw_results) > MAX_AGENTS:
         return summary
@@ -57,7 +57,7 @@ def summarize_payload(payload: Any) -> dict[str, Any]:
             continue
         agent = item.get("agent")
         result_status = item.get("status")
-        if agent not in ALLOWED_AGENTS or result_status not in {"success", "failed"}:
+        if not isinstance(agent, str) or agent not in ALLOWED_AGENTS or not isinstance(result_status, str) or result_status not in {"success", "failed"}:
             malformed_result = True
             continue
         safe_item: dict[str, Any] = {"agent": agent, "status": result_status}
@@ -123,9 +123,9 @@ def publication_decision(
     if not isinstance(coordinator_summary, dict):
         return blocked("coordinator_summary_invalid")
     status = coordinator_summary.get("status")
-    if status not in ALLOWED_RUN_STATUSES:
+    if not isinstance(status, str) or status not in ALLOWED_RUN_STATUSES:
         return blocked("coordinator_status_not_publishable")
-    if coordinator_summary.get("task_type") not in ALLOWED_TASK_TYPES:
+    if not isinstance(coordinator_summary.get("task_type"), str) or coordinator_summary.get("task_type") not in ALLOWED_TASK_TYPES:
         return blocked("task_type_invalid")
     results = coordinator_summary.get("agent_results")
     if not isinstance(results, list) or not results or len(results) > MAX_AGENTS:
@@ -141,7 +141,7 @@ def publication_decision(
     for item in results:
         if not isinstance(item, dict):
             return blocked("agent_result_invalid")
-        if item.get("agent") not in ALLOWED_AGENTS or item.get("status") not in {"success", "failed"}:
+        if not isinstance(item.get("agent"), str) or item.get("agent") not in ALLOWED_AGENTS or not isinstance(item.get("status"), str) or item.get("status") not in {"success", "failed"}:
             return blocked("agent_result_invalid")
         received = item.get("report_received")
         if type(received) is not bool:
