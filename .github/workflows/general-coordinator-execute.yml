@@ -47,8 +47,8 @@ jobs:
 
       - name: Compile coordinator and run offline tests
         run: |
-          python3 -m py_compile general_core.py general_coordinator.py general_source_context.py general_memory_pr_guard.py
-          python3 -m unittest -v general_coordinator_test general_memory_pr_guard_test
+          python3 -m py_compile general_core.py general_coordinator.py general_source_context.py general_memory_pr_guard.py general_coordinator_memory_publication.py
+          python3 -m unittest -v general_coordinator_test general_memory_pr_guard_test general_coordinator_memory_publication_test
 
       - name: Build plan only
         id: build-plan
@@ -135,55 +135,8 @@ jobs:
           python3 general_coordinator.py --task-env --execute --confirm-live-calls "$CONFIRM_LIVE_CALLS" > coordinator-execution.log 2>&1
           coordinator_status=$?
           set -e
-          python3 - <<'PY'
-          import json
-          from pathlib import Path
-
-          log_text = Path("coordinator-execution.log").read_text(
-              encoding="utf-8", errors="replace"
-          )
-          marker = '{\n  "planner": "GENERAL Coordinator"'
-          start = log_text.rfind(marker)
-          summary = {
-              "status": "unparsed",
-              "task_type": None,
-              "successful_agents": 0,
-              "agent_invocations_started": 0,
-              "agent_results": [],
-              "report_text_suppressed": True,
-          }
-          if start >= 0:
-              try:
-                  payload, _ = json.JSONDecoder().raw_decode(log_text[start:])
-                  if isinstance(payload, dict):
-                      raw_results = payload.get("agent_results", [])
-                      if not isinstance(raw_results, list):
-                          raw_results = []
-                      summary = {
-                          "status": payload.get("status", payload.get("plan_status", "unparsed")),
-                          "task_type": payload.get("task_type"),
-                          "successful_agents": payload.get("successful_agents", 0),
-                          "agent_invocations_started": payload.get("agent_invocations_started", 0),
-                          "agent_results": [
-                              {
-                                  key: item.get(key)
-                                  for key in ("agent", "status", "report_received", "error_type")
-                                  if key in item
-                              }
-                              for item in raw_results
-                              if isinstance(item, dict)
-                          ],
-                          "report_text_suppressed": True,
-                      }
-              except (json.JSONDecodeError, TypeError, ValueError):
-                  pass
-
-          Path("coordinator-execution-summary.json").write_text(
-              json.dumps(summary, ensure_ascii=False, indent=2) + "\n",
-              encoding="utf-8",
-          )
-          print(json.dumps(summary, ensure_ascii=False))
-          PY
+          python3 general_coordinator_memory_publication.py summarize-log --input coordinator-execution.log --output coordinator-execution-summary.json
+          cat coordinator-execution-summary.json
           exit "$coordinator_status"
 
       - name: Activate global lock after an incomplete NVIDIA request
@@ -274,12 +227,20 @@ jobs:
           cp general_memory.json "$RUNNER_TEMP/general-memory/candidate.json"
           git fetch origin +refs/heads/main:refs/remotes/origin/main --quiet
           git show origin/main:general_memory.json > "$RUNNER_TEMP/general-memory/current-main.json"
-          if ! cmp -s "$RUNNER_TEMP/general-memory/baseline.json" "$RUNNER_TEMP/general-memory/current-main.json"; then
-            echo "::warning::main/general_memory.json changed during the run; refusing to publish a stale memory candidate."
-            echo "- PR not opened: persistent memory changed since this run started. No file was merged or overwritten; review and rerun after reconciling." >> "$GITHUB_STEP_SUMMARY"
+          python3 general_coordinator_memory_publication.py publication-check \
+            --coordinator-summary coordinator-execution-summary.json \
+            --memory-summary "$RUNNER_TEMP/general-memory/summary.json" \
+            --baseline "$RUNNER_TEMP/general-memory/baseline.json" \
+            --current-main "$RUNNER_TEMP/general-memory/current-main.json" \
+            --publish-request "$PUBLISH_MEMORY_PR" \
+            > "$RUNNER_TEMP/general-memory/publication-decision.json"
+          decision_allowed="$(python3 -c 'import json,sys; print("true" if json.load(open(sys.argv[1], encoding="utf-8")).get("allowed") is True else "false")' "$RUNNER_TEMP/general-memory/publication-decision.json")"
+          if [ "$decision_allowed" != "true" ]; then
+            decision_reason="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("reason", "publication_inputs_unavailable"))' "$RUNNER_TEMP/general-memory/publication-decision.json")"
+            echo "::warning::Memory PR blocked by offline safety check: $decision_reason"
+            echo "- PR not opened: memory-publication safety check blocked this candidate ($decision_reason)." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-
           branch="general-memory-proposal-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           git reset --hard origin/main
           git switch -c "$branch" origin/main
