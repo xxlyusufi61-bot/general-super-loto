@@ -1,0 +1,59 @@
+name: GENERAL Coordinator Planner
+
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: "Task to route (planner only; no model request is made)"
+        required: true
+        type: string
+        default: "mode=system Review GENERAL project architecture and next development steps."
+  push:
+    paths:
+      - "general_coordinator.py"
+      - "general_coordinator_test.py"
+      - ".github/workflows/general-coordinator-plan.yml"
+  pull_request:
+    paths:
+      - "general_coordinator.py"
+      - "general_coordinator_test.py"
+      - ".github/workflows/general-coordinator-plan.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  plan-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile planner and tests
+        run: python3 -m py_compile general_coordinator.py general_coordinator_test.py
+
+      - name: Run offline coordinator tests
+        run: python3 -m unittest -v general_coordinator_test
+
+      - name: Generate plan when manually triggered (offline only)
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        env:
+          TASK_TEXT: ${{ inputs.task }}
+        run: |
+          python3 general_coordinator.py --task-env > coordinator-plan.json
+          cat coordinator-plan.json >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload plan for review
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: general-coordinator-plan
+          path: coordinator-plan.json
+          if-no-files-found: error
+          retention-days: 7
