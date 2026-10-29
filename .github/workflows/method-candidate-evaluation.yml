@@ -6,6 +6,7 @@ on:
     paths:
       - "general_method_candidates.py"
       - "general_archive_fetch.py"
+      - "general_archive_cross_source_audit.py"
       - "general_data_guard.py"
       - ".github/workflows/method-candidate-evaluation.yml"
 
