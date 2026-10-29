@@ -22,11 +22,11 @@ name: GENERAL Blank-Slate Research
         required: false
         type: string
         default: "Explore the pre-target archive from scratch and propose testable hypotheses."
-      confirm_nvidia_call:
-        description: "Approve exactly one live NVIDIA inference request; it can consume trial limits. This does not authorize paid use. Leave false to skip research."
+      confirm_live_calls:
+        description: "Leave NO to block all live calls. Type the exact free-only confirmation phrase only after manually verifying there is no paid-charge risk."
         required: true
-        type: boolean
-        default: false
+        type: string
+        default: "NO"
       confirm_free_usage_verified:
         description: "Only true if NVIDIA's account UI and current terms clearly verify this single hosted request is within free use with no paid charge risk. If only rate limits are visible and free allowance cannot be verified, leave false."
         required: true
@@ -34,7 +34,11 @@ name: GENERAL Blank-Slate Research
         default: false
 
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: general-nvidia-api
+  cancel-in-progress: false
 
 jobs:
   test:
@@ -53,7 +57,7 @@ jobs:
           python3 -m unittest -v general_open_research_test.py
 
   research:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.confirm_nvidia_call == true && inputs.confirm_free_usage_verified == true }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.confirm_live_calls == 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_3_NVIDIA_REQUESTS' && inputs.confirm_free_usage_verified == true }}
     needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -67,6 +71,16 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Check global NVIDIA safety lock
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GENERAL_DEFAULT_BRANCH: main
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python3 general_nvidia_guard.py check
+          echo "GENERAL_NVIDIA_GUARD_PASSED=1" >> "$GITHUB_ENV"
       - name: Refresh archive
         run: |
           if python3 general_archive_fetch.py > /tmp/archive-fetch.log 2>&1; then
@@ -76,13 +90,29 @@ jobs:
             exit 1
           fi
       - name: Run isolated blank-slate exploration
+        id: nvidia-research
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           TASK_TEXT: ${{ inputs.task }}
+          GENERAL_CONFIRM_LIVE_CALLS: ${{ inputs.confirm_live_calls }}
           GENERAL_ALLOW_NVIDIA_CALL: "true"
           GENERAL_NVIDIA_FREE_USAGE_VERIFIED: "true"
         run: |
           python3 general_open_research.py
+      - name: Activate global lock after an incomplete NVIDIA research request
+        if: ${{ failure() && steps.nvidia-research.outcome == 'failure' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GENERAL_DEFAULT_BRANCH: main
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -f /tmp/general_nvidia_api_attempted ] && [ ! -f /tmp/general_nvidia_api_succeeded ]; then
+            python3 general_nvidia_guard.py lock --reason "GENERAL blank-slate NVIDIA request failed or its response could not be validated; global safety pause is required because quota, authorization, billing/limit, or service state is uncertain."
+          else
+            echo "No incomplete NVIDIA request detected; global lock unchanged."
+          fi
       - name: Submit a structured rule-change request for Telegram approval if proposed
         if: ${{ success() }}
         env:
