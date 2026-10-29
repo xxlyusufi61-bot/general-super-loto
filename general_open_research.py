@@ -21,12 +21,14 @@ from typing import Any, Mapping
 
 import general_data_guard as guard
 from general_live_consent import has_explicit_live_consent
+from general_hypothesis_proposals import parse_hypothesis_proposals
 
 VERSION = "0.2.0"
 MODEL = "z-ai/glm-5.3-flash"
 BASE = Path(__file__).resolve().parent
 ARCHIVE = BASE / os.environ.get("GENERAL_ARCHIVE_FILE", "super_loto_archive.json")
 REPORT = BASE / "open_research_report.md"
+PROPOSALS = BASE / "open_research_proposals.json"
 USAGE_REPORT = BASE / "open_research_usage.json"
 API_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
 DOCUMENTATION_REVIEW_DATE = "2026-10-25"
@@ -141,8 +143,8 @@ def build_messages(target: str, train: list[dict[str, Any]], focus: str = "") ->
         "The target date is metadata only; its numbers and every record on or after it are absent. "
         "Do not infer or fabricate those values. The data supplied is discovery history, not a frozen "
         "final test set. Do not claim a candidate is validated or predictive based on inspection alone.\n"
-        "Return a concise report with: (1) observations, (2) clearly labelled candidate hypotheses, "
-        "(3) exact reproducible tests needed, (4) leakage/overfitting risks, and (5) what was not tested. "
+        "Return a concise report with observations, clearly labelled candidate hypotheses, exact reproducible "
+        "tests needed, leakage/overfitting risks, and what was not tested. "
         "Do not output winning-number predictions. A no-signal conclusion is acceptable. "
         "If and only if you recommend changing a binding rule, include exactly one structured block using "
         "the markers shown below, with every field filled by a factual, concise string. Do not state that "
@@ -155,8 +157,31 @@ def build_messages(target: str, train: list[dict[str, Any]], focus: str = "") ->
         "\"tests_required\":\"tests required before implementation\","
         "\"rollback_plan\":\"how to revert\"}\n"
         "</RULE_CHANGE_REQUEST_JSON>\n"
-        "If no rule change is needed, omit the entire block. Request proposals are submitted separately "
-        "for user approval; malformed or incomplete blocks are rejected."
+        "If no rule change is needed, omit the entire rule-change block. Rule-change requests are submitted "
+        "separately for user approval; malformed or incomplete blocks are rejected.\n"
+        "Also include exactly one machine-readable hypothesis proposal block. It is a research queue only, "
+        "not an approved or executable formula. If no testable hypothesis is supported, use an empty proposals "
+        "list. At most five proposals; provide no source code and no winning-number predictions.\n"
+        "<HYPOTHESIS_PROPOSALS_JSON>\n"
+        "{\"schema_version\":1,\"proposals\":[{"
+        "\"hypothesis_id\":\"HYP-001\","
+        "\"proposed_family\":\"free descriptive label; not a registry status\","
+        "\"hypothesis\":\"testable statement\","
+        "\"exact_definition\":\"precise mathematical steps, no executable code\","
+        "\"inputs\":\"strictly pre-target inputs\","
+        "\"output_rule\":\"deterministic ranking and scoring rule\","
+        "\"parameter_policy\":\"how parameters are fixed\","
+        "\"selection_policy\":\"development-only selection policy\","
+        "\"falsification_criterion\":\"what result rejects this hypothesis\","
+        "\"known_risks\":[\"overfitting risk\"],"
+        "\"evaluation_protocols\":[\"forward_walk_forward\","
+        "\"reverse_retrospective_stress_test\","
+        "\"time_ordered_cross_validation\","
+        "\"uniform_random_6_of_60\"]}]}\n"
+        "</HYPOTHESIS_PROPOSALS_JSON>\n"
+        "Use exactly the schema keys shown; do not add prediction numbers, source code, weights chosen from hidden "
+        "targets, or any claim of validation. Proposed family names are descriptive only: they do not create or "
+        "change a method registry entry. An empty proposals list is an acceptable result."
     )
     user = {
         "task": "Perform exploratory, blank-slate hypothesis discovery only. Do not output number predictions.",
@@ -171,6 +196,7 @@ def build_messages(target: str, train: list[dict[str, Any]], focus: str = "") ->
         {"role": "system", "content": system},
         {"role": "user", "content": json.dumps(user, ensure_ascii=False, separators=(",", ":"))},
     ]
+
 
 def filter_usage_headers(headers: Mapping[str, Any] | None) -> dict[str, str]:
     """Keep only non-secret rate-limit/retry/request-id headers from the response."""
@@ -335,6 +361,19 @@ def main() -> int:
         target, train = isolate_pre_target(rows)
         messages = build_messages(target, train, os.environ.get("TASK_TEXT", ""))
         report = call_model(messages)
+        proposal_document = parse_hypothesis_proposals(report)
+        PROPOSALS.write_text(
+            json.dumps(proposal_document, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        proposal_note = (
+            "\n\n## Structured hypothesis proposals\n\n"
+            f"- Proposal parser status: {proposal_document['status']}\n"
+            f"- Validated proposal count: {len(proposal_document['proposals'])}\n"
+            "- Execution ready: NO\n"
+            "- Method registry modified: NO\n"
+            "- Hypotheses are unverified proposals only; no implementation or scoring was run.\n"
+        )
         usage_note = (
             "\n\n## NVIDIA usage observation\n\n"
             "- Provider quota checked before request: NO; no account-level remaining-quota API "
@@ -355,7 +394,7 @@ def main() -> int:
             "- Legacy method registry, candidate files, evidence catalog, and project memory loaded: NO\n"
             "- Status: EXPLORATORY HYPOTHESES ONLY; NOT VALIDATED; NOT CANONICAL\n\n"
         )
-        REPORT.write_text(header + report + usage_note, encoding="utf-8")
+        REPORT.write_text(header + report + proposal_note + usage_note, encoding="utf-8")
         print("OPEN RESEARCH: completed")
         print("Target date isolated:", target)
         print("Pre-target draws supplied:", len(train))
@@ -365,6 +404,10 @@ def main() -> int:
         print("Request count:", 1, "| automatic retries:", 0)
         print("Usage observation:", USAGE_REPORT.name)
         print("Report status: EXPLORATORY ONLY; NOT VALIDATED")
+        print("Proposal status:", proposal_document["status"])
+        print("Validated proposals:", len(proposal_document["proposals"]))
+        print("Execution ready: NO | Method registry modified: NO")
+        print("Proposal file:", PROPOSALS.name)
         print("Report path:", REPORT.name)
         return 0
     except Exception as exc:

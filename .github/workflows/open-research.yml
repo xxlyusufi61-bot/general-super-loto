@@ -58,8 +58,8 @@ jobs:
           python-version: "3.12"
       - name: Compile and test blank-slate runner
         run: |
-          python3 -m py_compile general_open_research.py general_open_research_test.py
-          python3 -m unittest -v general_open_research_test.py
+          python3 -m py_compile general_open_research.py general_open_research_test.py general_hypothesis_proposals.py general_hypothesis_proposals_test.py
+          python3 -m unittest -v general_hypothesis_proposals_test general_open_research_test
 
   research:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.confirm_live_calls == 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_3_NVIDIA_REQUESTS' && inputs.confirm_free_usage_verified == true }}
@@ -132,6 +132,7 @@ jobs:
           name: general-blank-slate-research-report
           path: |
             open_research_report.md
+            open_research_proposals.json
             open_research_usage.json
           if-no-files-found: ignore
           retention-days: 14
