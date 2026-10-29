@@ -374,11 +374,16 @@ def reconcile_archive_with_loto_gen(
         supplied_pages = html_pages_by_year.get(year)
         independent = {}
         parse_errors = []
+        urls = []
         if year == through_year and supplied_pages is None:
             # Reuse the current-year root-pagination fallback used by the audit.
-            independent, parse_errors, _, coverage_failures = (
+            independent, parse_errors, root_pages_fetched, coverage_failures = (
                 fetch_loto_gen_year_from_root_archive(year)
             )
+            urls = [
+                f"{LOTO_GEN_BASE} (root archive page {page_number})"
+                for page_number in range(1, root_pages_fetched + 1)
+            ]
             if coverage_failures:
                 raise RuntimeError(
                     f"{year}: current-year independent-source coverage failed; "
