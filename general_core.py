@@ -24,7 +24,7 @@ METHOD_REGISTRY = BASE / "general_method_registry.json"
 
 
 def load_method_registry_context(target=None):
-    """Load method history without exposing post-target discoveries to data runs."""
+    """Load only fresh-start method-family labels; inherited formula history is forbidden."""
     if not METHOD_REGISTRY.is_file():
         raise RuntimeError("Method registry missing; agent run stopped.")
 
@@ -34,111 +34,68 @@ def load_method_registry_context(target=None):
     except (OSError, json.JSONDecodeError):
         raise RuntimeError("Method registry is unreadable; agent run stopped.") from None
 
+    expected_keys = {
+        "schema_version", "project", "purpose", "binding_rules_changed",
+        "methods", "historical_results", "promotion_requirements"
+    }
     if (
         not isinstance(registry, dict)
+        or set(registry) != expected_keys
         or registry.get("schema_version") != 1
+        or registry.get("binding_rules_changed") is not False
         or not isinstance(registry.get("methods"), dict)
         or not isinstance(registry.get("historical_results"), dict)
+        or registry.get("historical_results") != {}
         or not isinstance(registry.get("promotion_requirements"), list)
     ):
-        raise RuntimeError("Method registry schema invalid; agent run stopped.")
+        raise RuntimeError(
+            "Fresh-start method registry invalid or contains inherited history; agent run stopped."
+        )
 
-    if target is None:
-        return registry
+    expected_methods = {"A->B->C", "A->T", "MOD5->T"}
+    if set(registry["methods"]) != expected_methods:
+        raise RuntimeError("Fresh-start method families are invalid; agent run stopped.")
 
-    try:
-        target_day = date.fromisoformat(target)
-    except (TypeError, ValueError):
-        raise RuntimeError("Method registry target date is invalid.") from None
-
-    def available_before_target(item):
-        if not isinstance(item, dict):
-            return False
-        available = item.get("available_from")
-        if not isinstance(available, str):
-            return False
-        try:
-            parsed = date.fromisoformat(available)
-        except ValueError:
-            return False
-        return parsed.isoformat() == available and parsed < target_day
-
-    visible_methods = {}
-    withheld_methods = []
-    withheld_method_reasons = {}
     for name, method in registry["methods"].items():
-        if not isinstance(method, dict):
-            raise RuntimeError("Method registry contains an invalid method entry.")
-        if available_before_target(method):
-            visible_methods[name] = method
-        else:
-            withheld_methods.append(name)
-            available = method.get("available_from")
-            if not isinstance(available, str):
-                reason = "missing_available_from"
-            else:
-                try:
-                    parsed = date.fromisoformat(available)
-                    reason = (
-                        "invalid_available_from"
-                        if parsed.isoformat() != available
-                        else "not_before_target"
-                    )
-                except ValueError:
-                    reason = "invalid_available_from"
-            withheld_method_reasons[name] = reason
+        if (
+            not isinstance(method, dict)
+            or set(method) != {
+                "status", "canonical_definition", "execution_ready", "research_scope"
+            }
+            or method.get("status") != "OPEN_DEFINITION"
+            or method.get("canonical_definition") is not None
+            or method.get("execution_ready") is not False
+        ):
+            raise RuntimeError(
+                "Fresh-start method registry contains an inherited or invalid method; agent run stopped."
+            )
 
-    visible_results = {}
-    withheld_results = []
-    withheld_result_reasons = {}
-    for name, result in registry["historical_results"].items():
-        if not isinstance(result, dict):
-            raise RuntimeError("Method registry contains an invalid historical result.")
-        if available_before_target(result):
-            visible_results[name] = result
-        else:
-            withheld_results.append(name)
-            available = result.get("available_from")
-            if not isinstance(available, str):
-                reason = "missing_available_from"
-            else:
-                try:
-                    parsed = date.fromisoformat(available)
-                    reason = (
-                        "invalid_available_from"
-                        if parsed.isoformat() != available
-                        else "not_before_target"
-                    )
-                except ValueError:
-                    reason = "invalid_available_from"
-            withheld_result_reasons[name] = reason
+    if target is not None:
+        try:
+            target_day = date.fromisoformat(target)
+        except (TypeError, ValueError):
+            raise RuntimeError("Method registry target date is invalid.") from None
+        if target_day.isoformat() != target:
+            raise RuntimeError("Method registry target date is invalid.")
 
     return {
         "schema_version": registry["schema_version"],
-        "project": registry.get("project"),
-        "registry_mode": "target_date_filtered",
+        "project": registry["project"],
+        "registry_mode": "fresh_start_no_inherited_formula_history",
         "target_date": target,
-        "binding_rules_changed": registry.get("binding_rules_changed"),
-        "methods": visible_methods,
-        "historical_results": visible_results,
-        "withheld_post_target_or_undated_methods": withheld_methods,
-        "withheld_post_target_or_undated_results": withheld_results,
-        "withheld_method_reasons": withheld_method_reasons,
-        "withheld_result_reasons": withheld_result_reasons,
+        "binding_rules_changed": False,
+        "methods": registry["methods"],
+        "historical_results": {},
         "registry_audit": {
             "method_count": len(registry["methods"]),
-            "eligible_method_count": len(visible_methods),
-            "withheld_method_count": len(withheld_methods),
-            "historical_result_count": len(registry["historical_results"]),
-            "eligible_historical_result_count": len(visible_results),
-            "withheld_historical_result_count": len(withheld_results)
+            "historical_result_count": 0,
+            "inherited_candidate_count": 0
         },
         "promotion_requirements": registry["promotion_requirements"],
         "note": (
-            "Only entries with a valid available_from date strictly before "
-            "the isolated target are visible. Each withheld entry has an "
-            "explicit reason. Missing provenance is withheld, not assumed "
-            "to be historical; do not invent dates to make entries eligible."
+            "Only three research-family labels and general evaluation safeguards are supplied. "
+            "Their mathematical definitions remain open. No inherited formula source, candidate "
+            "implementation, tuned weight, historical score, or previous formula result is supplied."
         )
     }
 
