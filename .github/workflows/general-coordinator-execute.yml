@@ -13,9 +13,18 @@ name: GENERAL Coordinator Execute (Explicit Free-Only Gate)
         required: true
         type: string
         default: "NO"
+      publish_memory_pr:
+        description: "When YES, publish the validated memory update in a public review-only PR. Use NO to avoid publishing report content."
+        required: true
+        type: choice
+        options:
+          - "NO"
+          - "YES"
+        default: "NO"
 
 permissions:
   contents: write
+  pull-requests: write
 
 concurrency:
   group: general-nvidia-api
@@ -28,6 +37,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: main
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -36,8 +47,8 @@ jobs:
 
       - name: Compile coordinator and run offline tests
         run: |
-          python3 -m py_compile general_core.py general_coordinator.py general_source_context.py
-          python3 -m unittest -v general_coordinator_test
+          python3 -m py_compile general_core.py general_coordinator.py general_source_context.py general_memory_pr_guard.py general_coordinator_memory_publication.py
+          python3 -m unittest -v general_coordinator_test general_memory_pr_guard_test general_coordinator_memory_publication_test
 
       - name: Build plan only
         id: build-plan
@@ -103,6 +114,14 @@ jobs:
             exit 1
           fi
 
+      - name: Snapshot shared-memory baseline
+        id: memory-baseline
+        if: ${{ steps.consent.outputs.enabled == 'true' }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/general-memory"
+          cp general_memory.json "$RUNNER_TEMP/general-memory/baseline.json"
+          sha256sum "$RUNNER_TEMP/general-memory/baseline.json" | awk '{print "sha256=" $1}' >> "$GITHUB_OUTPUT"
+
       - name: Run coordinator agents sequentially
         id: run-coordinator
         if: ${{ steps.consent.outputs.enabled == 'true' }}
@@ -112,7 +131,13 @@ jobs:
           CONFIRM_LIVE_CALLS: ${{ inputs.confirm_live_calls }}
           GENERAL_SAVE_MEMORY: "1"
         run: |
-          python3 general_coordinator.py --task-env --execute --confirm-live-calls "$CONFIRM_LIVE_CALLS" 2>&1 | tee coordinator-execution.log
+          set +e
+          python3 general_coordinator.py --task-env --execute --confirm-live-calls "$CONFIRM_LIVE_CALLS" > coordinator-execution.log 2>&1
+          coordinator_status=$?
+          set -e
+          python3 general_coordinator_memory_publication.py summarize-log --input coordinator-execution.log --output coordinator-execution-summary.json
+          cat coordinator-execution-summary.json
+          exit "$coordinator_status"
 
       - name: Activate global lock after an incomplete NVIDIA request
         if: ${{ failure() && steps.run-coordinator.outcome == 'failure' }}
@@ -129,14 +154,137 @@ jobs:
             echo "No incomplete NVIDIA API request detected; global lock unchanged."
           fi
 
+      - name: Validate candidate shared memory
+        id: memory-proposal
+        if: ${{ always() && steps.consent.outputs.enabled == 'true' && steps.run-coordinator.outcome != 'skipped' }}
+        env:
+          MEMORY_BASELINE: ${{ runner.temp }}/general-memory/baseline.json
+          MEMORY_CANDIDATE: general_memory.json
+          MEMORY_PROPOSAL: ${{ runner.temp }}/general-memory/memory-delta.json
+          COORDINATOR_STATUS: ${{ steps.run-coordinator.outcome }}
+          PUBLISH_MEMORY_PR: ${{ inputs.publish_memory_pr }}
+        run: |
+          set -euo pipefail
+          if [ ! -f coordinator-execution-summary.json ]; then
+            echo "Coordinator status summary is missing; refusing memory publication."
+            exit 1
+          fi
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          result = json.loads(Path("coordinator-execution-summary.json").read_text(encoding="utf-8"))
+          if result.get("status") == "unparsed":
+              raise SystemExit("Coordinator outcome could not be safely summarized; refusing memory publication.")
+          PY
+          if [ ! -f "$MEMORY_BASELINE" ] || [ ! -f "$MEMORY_CANDIDATE" ]; then
+            echo "Memory baseline or candidate is missing; refusing publication."
+            exit 1
+          fi
+          if python3 general_memory_pr_guard.py \
+            --baseline "$MEMORY_BASELINE" \
+            --candidate "$MEMORY_CANDIDATE" \
+            --proposal-output "$MEMORY_PROPOSAL" \
+            > "$RUNNER_TEMP/general-memory/summary.json"; then
+            :
+          else
+            cat "$RUNNER_TEMP/general-memory/summary.json"
+            echo "Memory guard rejected the candidate; no PR will be created."
+            exit 1
+          fi
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          summary = json.loads(
+              Path(os.environ["RUNNER_TEMP"], "general-memory", "summary.json").read_text(encoding="utf-8")
+          )
+          if summary.get("valid") is not True:
+              raise SystemExit("Memory guard did not validate the candidate.")
+          has_new = summary.get("has_new_entries") is True
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write("has_new_entries=" + ("true" if has_new else "false") + "\n")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as report:
+              report.write("## Shared-memory persistence check\n\n")
+              report.write("- Candidate validation: PASS\n")
+              report.write("- New report count: " + str(summary.get("new_entries_count", 0)) + "\n")
+              report.write("- Coordinator step outcome: " + os.environ["COORDINATOR_STATUS"] + "\n")
+              report.write("- Public review PR requested: " + os.environ["PUBLISH_MEMORY_PR"] + "\n")
+              report.write("- New reports remain unverified; no automatic merge is permitted.\n")
+              if has_new and os.environ["PUBLISH_MEMORY_PR"] != "YES":
+                  report.write("- No PR was opened because the publication input is NO. The run workspace is temporary.\n")
+          PY
+
+      - name: Publish validated shared-memory update for human review
+        if: ${{ always() && steps.memory-proposal.outputs.has_new_entries == 'true' && inputs.publish_memory_pr == 'YES' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          RUN_OUTCOME: ${{ steps.run-coordinator.outcome }}
+          PUBLISH_MEMORY_PR: ${{ inputs.publish_memory_pr }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/general-memory"
+          cp general_memory.json "$RUNNER_TEMP/general-memory/candidate.json"
+          git fetch origin +refs/heads/main:refs/remotes/origin/main --quiet
+          git show origin/main:general_memory.json > "$RUNNER_TEMP/general-memory/current-main.json"
+          python3 general_coordinator_memory_publication.py publication-check \
+            --coordinator-summary coordinator-execution-summary.json \
+            --memory-summary "$RUNNER_TEMP/general-memory/summary.json" \
+            --baseline "$RUNNER_TEMP/general-memory/baseline.json" \
+            --current-main "$RUNNER_TEMP/general-memory/current-main.json" \
+            --publish-request "$PUBLISH_MEMORY_PR" \
+            > "$RUNNER_TEMP/general-memory/publication-decision.json"
+          decision_allowed="$(python3 -c 'import json,sys; print("true" if json.load(open(sys.argv[1], encoding="utf-8")).get("allowed") is True else "false")' "$RUNNER_TEMP/general-memory/publication-decision.json")"
+          if [ "$decision_allowed" != "true" ]; then
+            decision_reason="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("reason", "publication_inputs_unavailable"))' "$RUNNER_TEMP/general-memory/publication-decision.json")"
+            echo "::warning::Memory PR blocked by offline safety check: $decision_reason"
+            echo "- PR not opened: memory-publication safety check blocked this candidate ($decision_reason)." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          branch="general-memory-proposal-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          git reset --hard origin/main
+          git switch -c "$branch" origin/main
+          cp "$RUNNER_TEMP/general-memory/candidate.json" general_memory.json
+          python3 -m json.tool general_memory.json > /dev/null
+          git add -- general_memory.json
+          staged_files="$(git diff --cached --name-only)"
+          if [ "$staged_files" != "general_memory.json" ]; then
+            echo "Unexpected staged files; refusing to publish memory PR."
+            exit 1
+          fi
+          git diff --cached --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Propose validated GENERAL shared-memory update"
+          git push origin "$branch"
+
+          body="$(cat <<EOF
+          ## Review-only shared-memory update
+
+          - Only general_memory.json is changed.
+          - The candidate passed general_memory_pr_guard.py against the pre-run baseline.
+          - The persistent memory file on main matched that baseline before the proposal branch was created.
+          - New agent reports remain unverified; existing entries and binding rules must remain unchanged.
+          - Coordinator step outcome: ${RUN_OUTCOME}.
+          - This PR must be reviewed and merged manually. Automatic merging is disabled.
+
+          **Public-repository notice:** The proposed report text is visible in this PR before merge. Review its contents before approving.
+          EOF
+          )"
+          pr_url="$(gh pr create --repo "$GITHUB_REPOSITORY" --title "GENERAL: Review shared-memory update (run $GITHUB_RUN_ID)" --body "$body" --base main --head "$branch")"
+          echo "Opened human-review PR: $pr_url"
+          echo "- Review PR: $pr_url" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Preserve safe review outputs
         if: ${{ always() }}
         run: |
           mkdir -p general-coordinator-output
           if [ -f coordinator-plan.json ]; then cp coordinator-plan.json general-coordinator-output/; fi
-          if [ -f coordinator-execution.log ]; then cp coordinator-execution.log general-coordinator-output/; fi
-          if [ -f general_memory.json ]; then cp general_memory.json general-coordinator-output/; fi
+          if [ -f coordinator-execution-summary.json ]; then cp coordinator-execution-summary.json general-coordinator-output/; fi
+          if [ -f "$RUNNER_TEMP/general-memory/summary.json" ]; then cp "$RUNNER_TEMP/general-memory/summary.json" general-coordinator-output/memory-proposal-summary.json; fi
           if [ -f archive_fetch_output.log ]; then rm -f archive_fetch_output.log; fi
+          rm -f coordinator-execution.log
 
       - name: Upload coordinator outputs
         if: ${{ always() }}
