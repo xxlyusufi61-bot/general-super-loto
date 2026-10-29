@@ -1,13 +1,60 @@
+import io
 import json
 import unittest
 from unittest.mock import patch
 from pathlib import Path
+from urllib.error import HTTPError, URLError
 from tempfile import TemporaryDirectory
 
 import general_archive_cross_source_audit as audit
 
 
 class ArchiveCrossSourceAuditTests(unittest.TestCase):
+    def test_fetch_retries_transient_network_error_then_succeeds(self):
+        with patch.object(
+            audit, "urlopen",
+            side_effect=[URLError("temporary private detail"), io.BytesIO(b"<html>ok</html>")],
+        ) as mock_open, patch.object(audit.time, "sleep") as mock_sleep:
+            self.assertEqual(
+                audit.fetch_html("https://example.invalid"),
+                "<html>ok</html>",
+            )
+        self.assertEqual(mock_open.call_count, 2)
+        mock_sleep.assert_called_once_with(1)
+
+    def test_fetch_retries_empty_response_then_succeeds(self):
+        with patch.object(
+            audit, "urlopen",
+            side_effect=[io.BytesIO(b"   "), io.BytesIO(b"<html>ok</html>")],
+        ) as mock_open, patch.object(audit.time, "sleep") as mock_sleep:
+            self.assertEqual(
+                audit.fetch_html("https://example.invalid"),
+                "<html>ok</html>",
+            )
+        self.assertEqual(mock_open.call_count, 2)
+        mock_sleep.assert_called_once_with(1)
+
+    def test_fetch_exhaustion_is_safe_and_permanent_http_error_is_not_retried(self):
+        with patch.object(
+            audit, "urlopen",
+            side_effect=URLError("private network detail"),
+        ) as mock_open, patch.object(audit.time, "sleep") as mock_sleep:
+            with self.assertRaises(audit.AuditSourceError) as caught:
+                audit.fetch_html("https://example.invalid")
+        self.assertEqual(mock_open.call_count, 3)
+        self.assertEqual([call.args[0] for call in mock_sleep.call_args_list], [1, 2])
+        self.assertNotIn("private network detail", str(caught.exception))
+
+        permanent = HTTPError(
+            "https://example.invalid", 404, "Not Found", None, None
+        )
+        with patch.object(audit, "urlopen", side_effect=permanent) as mock_open, \
+             patch.object(audit.time, "sleep") as mock_sleep:
+            with self.assertRaises(audit.AuditSourceError):
+                audit.fetch_html("https://example.invalid")
+        self.assertEqual(mock_open.call_count, 1)
+        mock_sleep.assert_not_called()
+
     def test_compare_exact_match(self):
         rows = [
             {"date": "2025-01-02", "numbers": [1, 2, 3, 4, 5, 6]},
