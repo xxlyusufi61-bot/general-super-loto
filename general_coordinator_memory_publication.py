@@ -14,7 +14,12 @@ from typing import Any
 ALLOWED_AGENTS = {"validation", "debug", "research", "crossover"}
 ALLOWED_TASK_TYPES = {"code", "system", "data"}
 ALLOWED_RUN_STATUSES = {"success", "failed"}
-SAFE_ERROR_TYPE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,63}$")
+SAFE_ERROR_TYPES = {
+    "AssertionError", "ConnectionError", "FileNotFoundError", "HTTPError",
+    "IndexError", "JSONDecodeError", "KeyError", "MemoryError", "OSError",
+    "PermissionError", "RuntimeError", "StopIteration", "TimeoutError",
+    "TypeError", "URLError", "UnicodeDecodeError", "ValueError",
+}
 MAX_AGENTS = 3
 
 
@@ -69,7 +74,7 @@ def summarize_payload(payload: Any) -> dict[str, Any]:
         else:
             safe_item["report_received"] = False
         error_type = item.get("error_type")
-        if isinstance(error_type, str) and SAFE_ERROR_TYPE.fullmatch(error_type):
+        if isinstance(error_type, str) and error_type in SAFE_ERROR_TYPES:
             safe_item["error_type"] = error_type
         safe_results.append(safe_item)
 
@@ -159,6 +164,12 @@ def publication_decision(
         return blocked("memory_guard_failed")
     if memory_summary.get("has_new_entries") is not True:
         return blocked("no_new_memory_entries")
+    if memory_summary.get("all_new_entries_unverified") is not True:
+        return blocked("new_entries_not_unverified")
+    if memory_summary.get("binding_rules_changed") is not False:
+        return blocked("binding_rules_changed")
+    if memory_summary.get("auto_merge") is not False:
+        return blocked("automatic_merge_not_disabled")
     new_count = _count(memory_summary.get("new_entries_count"))
     if new_count is None or new_count < 1:
         return blocked("new_entry_count_invalid")
