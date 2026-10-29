@@ -90,6 +90,14 @@ class OfflineFormulaDiscoveryTests(unittest.TestCase):
         self.assertEqual(report["regimes"]["R60"]["pre_target_draw_count"], 29)
         self.assertIs(report["research_design"]["r54_and_r60_pooled"], False)
 
+    def test_unsorted_draw_numbers_are_rejected_before_positional_scoring(self):
+        rows = random_rows(35, date(2022, 1, 1))
+        rows[10]["numbers"] = list(reversed(rows[10]["numbers"]))
+        with self.assertRaisesRegex(ValueError, "sorted ascending"):
+            discovery.build_report(
+                rows, random_repeats=1, bootstrap_replicates=0, seed=7
+            )
+
     def test_r54_record_with_number_over_54_is_rejected(self):
         rows = random_rows(4, date(2020, 7, 1), universe_size=54)
         rows[1]["numbers"] = [1, 8, 16, 29, 43, 55]
