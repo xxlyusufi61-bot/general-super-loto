@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
-  "locked": false,
-  "reason": "",
-  "locked_at": null,
-  "locked_by": null,
-  "last_lock_reason": "One-shot NVIDIA connection diagnostic ended; inference remains unapproved. Restore fail-closed lock.",
+  "locked": true,
+  "reason": "Single bounded inference diagnostic ended; no further live requests approved. Restore fail-closed lock.",
+  "locked_at": "2026-10-29T18:51:49.409579+00:00",
+  "locked_by": "xxlyusufi61-bot | https://github.com/xxlyusufi61-bot/general-super-loto/actions/runs/40934684724",
+  "last_lock_reason": "Single bounded inference diagnostic ended; no further live requests approved. Restore fail-closed lock.",
   "last_unlocked_at": "2026-10-29T18:51:17.292812+00:00",
-  "updated_at": "2026-10-29T18:51:17.292812+00:00"
+  "updated_at": "2026-10-29T18:51:49.409579+00:00"
 }
