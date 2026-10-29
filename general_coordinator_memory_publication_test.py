@@ -1,13 +1,16 @@
-import copy
+import io
 import json
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from unittest.mock import patch
 from pathlib import Path
 
 from general_coordinator_memory_publication import (
     publication_decision,
     summarize_log,
     summarize_payload,
+    main as publication_main,
 )
 
 
@@ -223,6 +226,68 @@ class PublicationDecisionTests(unittest.TestCase):
         summary["status"] = {"unexpected": "value"}
         result = self.decide(coordinator=summary)
         self.assertFalse(result["allowed"])
+
+
+class PublicationCliTests(unittest.TestCase):
+    def _write_json(self, path, value):
+        path.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
+        return str(path)
+
+    def test_publication_cli_allows_valid_candidate_without_exposing_report_text(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            baseline = root / "baseline.json"
+            current = root / "current-main.json"
+            coordinator = root / "coordinator-summary.json"
+            memory = root / "memory-summary.json"
+            baseline.write_text('{"entries":[]}\n', encoding="utf-8")
+            current.write_bytes(baseline.read_bytes())
+            self._write_json(coordinator, valid_coordinator_summary())
+            self._write_json(memory, valid_memory_summary())
+            argv = [
+                "general_coordinator_memory_publication.py", "publication-check",
+                "--coordinator-summary", str(coordinator),
+                "--memory-summary", str(memory),
+                "--baseline", str(baseline),
+                "--current-main", str(current),
+                "--publish-request", "YES",
+            ]
+            output = io.StringIO()
+            with patch("sys.argv", argv), redirect_stdout(output):
+                code = publication_main()
+
+        decision = json.loads(output.getvalue())
+        self.assertEqual(code, 0)
+        self.assertTrue(decision["allowed"])
+        self.assertNotIn("PRIVATE_REPORT", output.getvalue())
+
+    def test_publication_cli_blocks_stale_main_memory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            baseline = root / "baseline.json"
+            current = root / "current-main.json"
+            coordinator = root / "coordinator-summary.json"
+            memory = root / "memory-summary.json"
+            baseline.write_text('{"entries":[]}\n', encoding="utf-8")
+            current.write_text('{"entries":[{"id":99}]}\n', encoding="utf-8")
+            self._write_json(coordinator, valid_coordinator_summary())
+            self._write_json(memory, valid_memory_summary())
+            argv = [
+                "general_coordinator_memory_publication.py", "publication-check",
+                "--coordinator-summary", str(coordinator),
+                "--memory-summary", str(memory),
+                "--baseline", str(baseline),
+                "--current-main", str(current),
+                "--publish-request", "YES",
+            ]
+            output = io.StringIO()
+            with patch("sys.argv", argv), redirect_stdout(output):
+                code = publication_main()
+
+        decision = json.loads(output.getvalue())
+        self.assertEqual(code, 0)
+        self.assertFalse(decision["allowed"])
+        self.assertEqual(decision["reason"], "main_memory_changed_during_run")
 
 
 class WorkflowWiringTests(unittest.TestCase):
