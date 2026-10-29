@@ -63,7 +63,7 @@ class MemoryDeltaGuardTests(unittest.TestCase):
         return value
 
     def test_accepts_one_unverified_report_without_changing_binding_rules(self):
-        candidate = self.candidate_with(report_entry())
+        candidate = self._candidate_with(report_entry())
         result = validate_memory_delta(baseline_memory(), candidate)
         self.assertTrue(result["valid"])
         self.assertEqual(result["new_entries_count"], 1)
@@ -149,6 +149,12 @@ class MemoryDeltaGuardTests(unittest.TestCase):
 
 
 class MemoryProposalExportTests(unittest.TestCase):
+    def _candidate_with(self, *entries):
+        value = copy.deepcopy(baseline_memory())
+        value["entries"].extend(entries)
+        value["updated_at"] = "2026-10-29T00:01:00+00:00"
+        return value
+
     def _run_cli(self, baseline_path, candidate_path, proposal_path):
         argv = [
             "general_memory_pr_guard.py",
