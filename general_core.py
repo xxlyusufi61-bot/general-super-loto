@@ -9,6 +9,7 @@ from pathlib import Path
 from datetime import datetime, date, timezone
 from general_source_context import build_source_context
 from general_live_consent import has_explicit_live_consent
+from general_agent_report_guard import report_contract_prompt, validate_agent_report
 
 VERSION = "0.5.6"
 MODEL = "z-ai/glm-5.3-flash"
@@ -828,18 +829,8 @@ def run_agent(agent, task, coordinator_context=None):
         "Binding rules:\n- " + "\n- ".join(RULES) + "\n"
         "Memory reports are not proof. Distinguish hypotheses from verified "
         "results. Never invent data or tests.\n"
-        "EVIDENCE AND REPORT CONTRACT:\n"
-        "Use these labeled sections in the final report: Scope and evidence supplied; "
-        "Checks actually performed; Findings with each claim labeled "
-        "VERIFIED_FROM_SUPPLIED_EVIDENCE, HYPOTHESIS, or UNVERIFIED; "
-        "Limitations / what remains unknown; Next reproducible offline check.\n"
-        "A label is not proof. Verification status must match the source context and "
-        "explicit test/tool output actually available in this call. This model call has "
-        "no command-execution tool: never claim repository commands or tests were run "
-        "or passed unless their real execution output is supplied. Do not present "
-        "read-only source inspection as runtime validation. Do not invent metrics, "
-        "test results, archive checks, or agent execution. If a check was not performed, "
-        "say so explicitly.\n"
+        + report_contract_prompt(agent)
+        + "\n"
         "Do not claim whether this report was saved to shared memory or committed: "
         "the workflow runner performs those actions after your response, outside "
         "the agent's control. Report only the checks performed in this model call.\n"
@@ -940,6 +931,23 @@ def run_agent(agent, task, coordinator_context=None):
         {"role": "user", "content": task}
     ])
 
+    report_check = validate_agent_report(agent, answer)
+    if report_check.get("valid") is not True:
+        # Log only the guard's allow-listed structural metadata, never report text.
+        print("AGENT_REPORT_GUARD: " + json.dumps({
+            "valid": False,
+            "reason": report_check.get("reason"),
+            "missing_sections": report_check.get("missing_sections", []),
+            "empty_sections": report_check.get("empty_sections", []),
+            "duplicate_sections": report_check.get("duplicate_sections", []),
+            "unlabelled_finding_lines": report_check.get("unlabelled_finding_lines", []),
+        }, sort_keys=True))
+        raise RuntimeError(
+            "Agent report rejected by the required report-structure guard; "
+            "it was not saved to shared memory."
+        )
+
+    print("AGENT_REPORT_GUARD: PASS (structure only; semantic truth is not verified)")
     print("AGENT_REPORT_METADATA: " + json.dumps(safe_report_metadata(answer), sort_keys=True))
 
     if os.environ.get("GENERAL_SAVE_MEMORY") == "1":

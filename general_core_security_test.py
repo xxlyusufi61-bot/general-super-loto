@@ -142,7 +142,7 @@ old_target = os.environ.get("GENERAL_TARGET_DATE")
 
 def fake_nvidia(messages):
     captured["messages"] = messages
-    return "MOCK_RESPONSE"
+    return "SCOPE_AND_EVIDENCE:\nSynthetic fixture and Data Guard metadata supplied to a test only.\n\nCHECKS_PERFORMED:\nThe offline security fixture checks prompt/data boundaries; no real model request or independent archive audit was performed.\n\nFINDINGS:\nVERIFIED_FROM_SUPPLIED_EVIDENCE: The test fixture can inspect the system prompt after the mock call.\nUNVERIFIED: This mock does not establish real archive provenance.\n\nLIMITATIONS:\nNo live model request or authoritative historical draw-by-draw verification was performed.\n\nNEXT_OFFLINE_CHECK:\nRun the offline security test suite.\n\nVALIDATION_MATRIX:\nSynthetic prompt/data boundary assertions only.\n\nPASS_FAIL_UNKNOWN:\nOnly assertions in the actual test output can be marked PASS; real-world source accuracy remains UNKNOWN."
 
 
 # ==================================================
