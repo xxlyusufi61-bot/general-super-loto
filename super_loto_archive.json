@@ -11182,17 +11182,39 @@
         49,
         51
       ]
+    },
+    {
+      "date": "2026-10-25",
+      "numbers": [
+        1,
+        3,
+        5,
+        18,
+        28,
+        59
+      ]
+    },
+    {
+      "date": "2026-10-27",
+      "numbers": [
+        7,
+        14,
+        30,
+        37,
+        40,
+        42
+      ]
     }
   ],
-  "archive_updated_at": "2026-10-24T23:59:07+00:00",
-  "archive_update_reason": "Merged verified multi-year reconciliation on 2026-10-24; 10 independently verified missing historical draws were added without changing previously verified draw rows.",
+  "archive_updated_at": "2026-10-29T14:42:57.008+00:00",
+  "archive_update_reason": "Incremental refresh on 2026-10-29: appended the published 2026-10-25 and 2026-10-27 draws after matching dates and sorted six-number sets across Lotoistatistik, Loto.gen, and Lotobil result archives. Existing historical rows were preserved. The live cross-source audit and canonical target-isolation test must pass on this proposed snapshot before merge.",
   "multi_year_cross_source_validation": {
     "audit_version": "1.1.0",
     "result": "PASS_AFTER_DOCUMENTED_SOURCE_NORMALIZATION",
-    "checked_at": "2026-10-24T23:56:23+00:00",
-    "archive_records": 1006,
+    "checked_at": "2026-10-29T14:42:57.008+00:00",
+    "archive_records": 1008,
     "archive_first_date": "2020-01-02",
-    "archive_last_date": "2026-10-22",
+    "archive_last_date": "2026-10-27",
     "loto_gen_r60_by_year": {
       "2020": {
         "scope": "R60 only; R54 is verified separately",
@@ -11257,9 +11279,9 @@
       },
       "2026": {
         "status": "MATCH",
-        "archive_count": 127,
-        "independent_count": 127,
-        "common_date_count": 127,
+        "archive_count": 129,
+        "independent_count": 129,
+        "common_date_count": 129,
         "archive_only_count": 0,
         "independent_only_count": 0,
         "number_mismatch_count": 0,
@@ -11278,9 +11300,9 @@
     },
     "lotobil_r60": {
       "status": "MATCH_AFTER_DOCUMENTED_SOURCE_NORMALIZATION",
-      "archive_count": 971,
-      "independent_count": 971,
-      "common_date_count": 971,
+      "archive_count": 973,
+      "independent_count": 973,
+      "common_date_count": 973,
       "archive_only_count": 0,
       "independent_only_count": 0,
       "number_mismatch_count": 0,
@@ -11295,6 +11317,23 @@
     "fetch_failures": [],
     "draw_numbers_in_report": false,
     "archive_modified_by_audit": false,
-    "note": "R60 year checks cover 2020-08-02 onward; the separate R54 check covers 2020-01-02 through 2020-07-30. Lotobil-only normalizations are documented in the audit report and do not alter the canonical archive."
+    "note": "Incremental refresh on 2026-10-29: the two newest published records (2026-10-25 and 2026-10-27) were separately checked against Lotoistatistik, Loto.gen, and Lotobil; the existing historical rows were not changed. Aggregate counts now reflect 1,008 archive records and 129 R60 records in 2026. The live multi-year source audit must pass on the pull request before this refreshed metadata is treated as verified. The report metadata contains no draw-number sets."
+  },
+  "recent_draw_source_check": {
+    "checked_at": "2026-10-29T14:42:57.008+00:00",
+    "status": "MATCH",
+    "records_checked": 2,
+    "checked_dates": [
+      "2026-10-25",
+      "2026-10-27"
+    ],
+    "sources": [
+      "https://lotoistatistik.com/super-loto/super-loto-son-1-ay-sonuclari/",
+      "https://loto.gen.tr/super-loto/arsiv",
+      "https://www.lotobil.com/Super-Loto-Butun-Sonuc-Listesi"
+    ],
+    "date_and_number_set_mismatch_count": 0,
+    "numbers_in_metadata": false,
+    "scope_note": "Publication-level agreement for the two appended rows only; the PR live-audit workflow independently checks the full current archive."
   }
 }
