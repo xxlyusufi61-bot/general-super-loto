@@ -28,9 +28,9 @@ class GeneralCoordinatorPlanTests(unittest.TestCase):
         plan = build_plan("mode=data target_date=2026-10-20 research formula patterns")
         self.assertEqual(plan["agent_order"], ["validation", "research"])
 
-    def test_comparison_task_adds_crossover(self):
+    def test_comparison_task_adds_research_and_crossover(self):
         plan = build_plan("mode=data target_date=2026-10-20 compare methods with crossover")
-        self.assertEqual(plan["agent_order"], ["validation", "crossover"])
+        self.assertEqual(plan["agent_order"], ["validation", "research", "crossover"])
 
     def test_formula_and_comparison_task_routes_three_agents(self):
         plan = build_plan("mode=data target_date=2026-10-20 research formula and compare methods")
