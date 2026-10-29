@@ -1,13 +1,19 @@
 import copy
 import hashlib
+import io
 import json
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
 import general_core as core
-from general_memory_pr_guard import MemoryProposalError, validate_memory_delta
+from general_memory_pr_guard import (
+    MemoryProposalError,
+    main as guard_main,
+    validate_memory_delta,
+)
 
 
 RULES = [
@@ -139,6 +145,112 @@ class MemoryDeltaGuardTests(unittest.TestCase):
         with self.assertRaisesRegex(MemoryProposalError, "unique and increasing"):
             validate_memory_delta(baseline_memory(), candidate)
 
+
+
+
+class MemoryProposalExportTests(unittest.TestCase):
+    def _candidate_with(self, *entries):
+        value = copy.deepcopy(baseline_memory())
+        value["entries"].extend(entries)
+        value["updated_at"] = "2026-10-29T00:01:00+00:00"
+        return value
+
+    def _run_cli(self, baseline_path, candidate_path, proposal_path):
+        argv = [
+            "general_memory_pr_guard.py",
+            "--baseline", str(baseline_path),
+            "--candidate", str(candidate_path),
+            "--proposal-output", str(proposal_path),
+        ]
+        output = io.StringIO()
+        with patch("sys.argv", argv), redirect_stdout(output):
+            return guard_main(), json.loads(output.getvalue())
+
+    def _write_inputs(self, root, candidate):
+        baseline = baseline_memory()
+        baseline_path = root / "baseline.json"
+        candidate_path = root / "candidate.json"
+        baseline_path.write_text(
+            json.dumps(baseline, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        candidate_path.write_text(
+            json.dumps(candidate, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        return baseline, baseline_path, candidate_path
+
+    def test_cli_exports_only_new_entries_and_requires_human_review(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            candidate = self._candidate_with(report_entry())
+            baseline, baseline_path, candidate_path = self._write_inputs(root, candidate)
+            proposal_path = root / "review" / "memory-delta.json"
+
+            code, summary = self._run_cli(baseline_path, candidate_path, proposal_path)
+
+            self.assertEqual(code, 0)
+            self.assertTrue(summary["valid"])
+            self.assertTrue(summary["proposal_written"])
+            self.assertTrue(summary["human_review_required"])
+            proposal = json.loads(proposal_path.read_text(encoding="utf-8"))
+            self.assertEqual(proposal["new_entries_count"], 1)
+            self.assertEqual(len(proposal["new_entries"]), 1)
+            self.assertEqual(proposal["new_entries"][0]["id"], 2)
+            self.assertEqual(proposal["new_entries"][0]["status"], "unverified")
+            self.assertTrue(proposal["all_new_entries_unverified"])
+            self.assertTrue(proposal["human_review_required"])
+            self.assertFalse(proposal["auto_merge"])
+            self.assertFalse(proposal["binding_rules_changed"])
+            self.assertNotIn("entries", proposal)
+            self.assertNotIn("binding_rules", proposal)
+            self.assertNotIn("Preserve chronological evaluation.", proposal_path.read_text(encoding="utf-8"))
+            self.assertEqual(len(proposal["baseline_sha256"]), 64)
+
+    def test_invalid_delta_does_not_create_proposal_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            candidate = self._candidate_with(report_entry())
+            candidate["binding_rules"].append("Unapproved binding rule.")
+            _, baseline_path, candidate_path = self._write_inputs(root, candidate)
+            proposal_path = root / "memory-delta.json"
+
+            code, summary = self._run_cli(baseline_path, candidate_path, proposal_path)
+
+            self.assertEqual(code, 1)
+            self.assertFalse(summary["valid"])
+            self.assertFalse(summary["proposal_written"])
+            self.assertFalse(proposal_path.exists())
+
+    def test_cli_refuses_to_overwrite_existing_proposal(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            candidate = self._candidate_with(report_entry())
+            _, baseline_path, candidate_path = self._write_inputs(root, candidate)
+            proposal_path = root / "memory-delta.json"
+            proposal_path.write_text("preserve-me", encoding="utf-8")
+
+            code, summary = self._run_cli(baseline_path, candidate_path, proposal_path)
+
+            self.assertEqual(code, 1)
+            self.assertFalse(summary["valid"])
+            self.assertIn("refusing to overwrite", summary["reason"])
+            self.assertEqual(proposal_path.read_text(encoding="utf-8"), "preserve-me")
+
+    def test_no_new_entries_does_not_create_empty_proposal(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            candidate = copy.deepcopy(baseline_memory())
+            candidate["updated_at"] = "2026-10-29T00:01:00+00:00"
+            _, baseline_path, candidate_path = self._write_inputs(root, candidate)
+            proposal_path = root / "memory-delta.json"
+
+            code, summary = self._run_cli(baseline_path, candidate_path, proposal_path)
+
+            self.assertEqual(code, 0)
+            self.assertTrue(summary["valid"])
+            self.assertFalse(summary["has_new_entries"])
+            self.assertFalse(summary["proposal_written"])
+            self.assertFalse(summary["human_review_required"])
+            self.assertFalse(proposal_path.exists())
 
 
 class CoreMemoryWriterIntegrationTests(unittest.TestCase):
