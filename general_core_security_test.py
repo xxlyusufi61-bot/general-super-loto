@@ -7,6 +7,7 @@ import tempfile
 
 import general_core as core
 import general_memory as memory_module
+from general_live_consent import CONFIRMATION_PHRASE
 
 
 # ==================================================
@@ -475,8 +476,12 @@ class _FakeResponse:
 
 
 old_api_key = os.environ.get("NVIDIA_API_KEY")
+old_confirmation = os.environ.get("GENERAL_CONFIRM_LIVE_CALLS")
+old_guard_passed = os.environ.get("GENERAL_NVIDIA_GUARD_PASSED")
 try:
     os.environ["NVIDIA_API_KEY"] = "unit-test-key"
+    os.environ["GENERAL_CONFIRM_LIVE_CALLS"] = CONFIRMATION_PHRASE
+    os.environ["GENERAL_NVIDIA_GUARD_PASSED"] = "1"
     reasoning_only = {
         "choices": [{
             "message": {
@@ -548,5 +553,18 @@ finally:
         os.environ.pop("NVIDIA_API_KEY", None)
     else:
         os.environ["NVIDIA_API_KEY"] = old_api_key
+    if old_confirmation is None:
+        os.environ.pop("GENERAL_CONFIRM_LIVE_CALLS", None)
+    else:
+        os.environ["GENERAL_CONFIRM_LIVE_CALLS"] = old_confirmation
+    if old_guard_passed is None:
+        os.environ.pop("GENERAL_NVIDIA_GUARD_PASSED", None)
+    else:
+        os.environ["GENERAL_NVIDIA_GUARD_PASSED"] = old_guard_passed
+    for marker_name in ("/tmp/general_nvidia_api_attempted", "/tmp/general_nvidia_api_succeeded"):
+        try:
+            Path(marker_name).unlink()
+        except FileNotFoundError:
+            pass
 
 print("RESULT: ALL GENERAL SECURITY AND MEMORY REGRESSION TESTS PASSED")
