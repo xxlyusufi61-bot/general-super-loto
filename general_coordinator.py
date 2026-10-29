@@ -12,7 +12,8 @@ import os
 import sys
 from typing import Any
 
-import general_core as core\nfrom general_core import is_data_task, target_date_from, task_mode_from
+import general_core as core
+from general_core import is_data_task, target_date_from, task_mode_from
 
 
 PLAN_VERSION = "0.1.0"
