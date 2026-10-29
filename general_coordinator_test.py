@@ -112,7 +112,7 @@ class GeneralCoordinatorExecutionTests(unittest.TestCase):
 
     def test_guard_failure_blocks_before_any_agent(self):
         runner = Mock()
-        with patch.dict(os.environ, {"NVIDIA_API_KEY": "MOCK_KEY"}, clear=False):
+        with patch.dict(os.environ, {"NVIDIA_API_KEY": "MOCK_KEY", "GENERAL_NVIDIA_GUARD_PASSED": "1"}, clear=False):
             with self.assertRaisesRegex(RuntimeError, "safety guard has not been confirmed"):
                 execute_plan(
                     "mode=code Fix a Python workflow bug.",
@@ -145,7 +145,7 @@ class GeneralCoordinatorExecutionTests(unittest.TestCase):
             calls.append((agent, task, coordinator_context))
             return "REPORT-" + agent
 
-        with patch.dict(os.environ, {"NVIDIA_API_KEY": "MOCK_KEY"}, clear=False):
+        with patch.dict(os.environ, {"NVIDIA_API_KEY": "MOCK_KEY", "GENERAL_NVIDIA_GUARD_PASSED": "1"}, clear=False):
             result = execute_plan(
                 "mode=code Fix a Python workflow bug and add a test.",
                 EXECUTION_CONFIRMATION,
@@ -176,7 +176,7 @@ class GeneralCoordinatorExecutionTests(unittest.TestCase):
             return "UNVERIFIED-" + agent
 
         with (
-            patch.dict(os.environ, {"NVIDIA_API_KEY": "MOCK_KEY"}, clear=False),
+            patch.dict(os.environ, {"NVIDIA_API_KEY": "MOCK_KEY", "GENERAL_NVIDIA_GUARD_PASSED": "1"}, clear=False),
             patch.object(core, "latest_archive_target_date", return_value=target),
             patch.object(core, "prepare_data", side_effect=prepare),
         ):
@@ -198,11 +198,11 @@ class GeneralCoordinatorExecutionTests(unittest.TestCase):
         self.assertFalse(result["binding_rules_changed"])
 
     def test_failed_data_preflight_prevents_every_model_call(self):
-        runner = unittest.mock.Mock()
+        runner = Mock()
         bad = self.good_preflight("2026-10-27", latest=True)
         bad["training_dates_match_archive"] = False
         with (
-            patch.dict(os.environ, {"NVIDIA_API_KEY": "MOCK_KEY"}, clear=False),
+            patch.dict(os.environ, {"NVIDIA_API_KEY": "MOCK_KEY", "GENERAL_NVIDIA_GUARD_PASSED": "1"}, clear=False),
             patch.object(core, "latest_archive_target_date", return_value="2026-10-27"),
             patch.object(core, "prepare_data", return_value=bad),
         ):
@@ -215,10 +215,10 @@ class GeneralCoordinatorExecutionTests(unittest.TestCase):
         runner.assert_not_called()
 
     def test_dynamic_target_must_be_latest(self):
-        runner = unittest.mock.Mock()
+        runner = Mock()
         bad = self.good_preflight("2026-10-27", latest=False)
         with (
-            patch.dict(os.environ, {"NVIDIA_API_KEY": "MOCK_KEY"}, clear=False),
+            patch.dict(os.environ, {"NVIDIA_API_KEY": "MOCK_KEY", "GENERAL_NVIDIA_GUARD_PASSED": "1"}, clear=False),
             patch.object(core, "latest_archive_target_date", return_value="2026-10-27"),
             patch.object(core, "prepare_data", return_value=bad),
         ):
@@ -239,7 +239,7 @@ class GeneralCoordinatorExecutionTests(unittest.TestCase):
                 raise TimeoutError("mock timeout")
             return "SHOULD_NOT_RUN"
 
-        with patch.dict(os.environ, {"NVIDIA_API_KEY": "MOCK_KEY"}, clear=False):
+        with patch.dict(os.environ, {"NVIDIA_API_KEY": "MOCK_KEY", "GENERAL_NVIDIA_GUARD_PASSED": "1"}, clear=False):
             result = execute_plan(
                 "mode=code Fix a Python workflow bug and add a test.",
                 EXECUTION_CONFIRMATION,
