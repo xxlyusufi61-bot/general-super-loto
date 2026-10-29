@@ -117,14 +117,15 @@ def fetch_html(url, label, attempts=3):
         try:
             with urlopen(req, timeout=40) as response:
                 page_text = response.read().decode("utf-8", "replace")
-            if not page_text.strip():
-                raise RuntimeError(f"{label} returned an empty page; archive not saved")
-            return page_text
+            if page_text.strip():
+                return page_text
+            last_error = RuntimeError("empty source page")
         except (HTTPError, URLError, TimeoutError, OSError) as exc:
             last_error = exc
             retryable = not isinstance(exc, HTTPError) or exc.code in (408, 425, 429, 500, 502, 503, 504)
-            if not retryable or attempt + 1 >= attempts:
+            if not retryable:
                 break
+        if attempt + 1 < attempts:
             time.sleep(2 ** attempt)
     raise RuntimeError(
         f"{label} download failed after {attempt + 1} attempt(s); archive not saved"
