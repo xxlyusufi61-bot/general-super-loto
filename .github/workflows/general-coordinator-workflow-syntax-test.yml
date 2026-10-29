@@ -19,6 +19,8 @@ on:
       - "general_coordinator_test.py"
       - "general_core.py"
       - "general_source_context.py"
+      - "general_coordinator_memory_publication.py"
+      - "general_coordinator_memory_publication_test.py"
 
 permissions:
   contents: read
