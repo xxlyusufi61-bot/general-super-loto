@@ -47,6 +47,18 @@ GitHub Actions is a job runner, not a continuously running server. A scheduled h
 | **Archive** | Run the archive-related workflow path. | A successful retrieval alone is not proof that every historical source or draw has been independently verified. |
 | **Isolation test** | Check that the latest valid archive draw is isolated from training. | A passing test verifies the assertions in that workflow, not every possible leakage route in all code. |
 
+### Agent report contract and structural gate
+
+Every model-backed specialized agent must provide these common sections: `SCOPE_AND_EVIDENCE`, `CHECKS_PERFORMED`, `FINDINGS`, `LIMITATIONS`, and `NEXT_OFFLINE_CHECK`. Every non-empty line under `FINDINGS` must be labeled `VERIFIED_FROM_SUPPLIED_EVIDENCE`, `HYPOTHESIS`, or `UNVERIFIED`.
+
+Each role also has a distinct output:
+- **Research:** `HYPOTHESES_AND_METHODS` and `EVIDENCE_NEEDED_TO_VALIDATE_OR_FALSIFY`.
+- **Debug:** `REPRODUCTION_OR_DIAGNOSTIC` and `PROPOSED_FIX_AND_TEST`.
+- **Validation:** `VALIDATION_MATRIX` and `PASS_FAIL_UNKNOWN`.
+- **Crossover:** `COMPARISON_BASIS` and `OVERFITTING_CONTROLS`.
+
+`general_agent_report_guard.py` checks these headings, that sections are non-empty, and that findings carry labels. A report that fails this structural check is rejected before it can be saved to shared memory. The check cannot determine whether a claim is true; only the cited evidence and reproducible checks can do that. Archive and isolation-only workflow paths do not use model reports.
+
 These are implemented workflow choices and role descriptions. They do not imply that six independent, continuously running agents are operating autonomously or communicating in the background.
 
 ## 4. Binding Super Loto research rules
