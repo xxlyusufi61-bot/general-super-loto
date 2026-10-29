@@ -66,7 +66,7 @@ class SourceContextBuilderTests(unittest.TestCase):
             self.make_file(root, ".github/workflows/general-agent.yml", "WORKFLOW")
             context = build_source_context("mode=system inspect agent workflow", root)
 
-        self.assertLessEqual(context["character_count"], MAX_CONTEXT_CHARS + 64)
+        self.assertLessEqual(context["character_count"], MAX_CONTEXT_CHARS)
         self.assertTrue(context["truncated"])
         self.assertTrue(any(item["truncated"] for item in context["files"]))
 
