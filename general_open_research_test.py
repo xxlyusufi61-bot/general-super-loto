@@ -39,6 +39,18 @@ class OpenResearchIsolationTests(unittest.TestCase):
         for legacy_marker in ("a->b->c", "a->t", "mod5->t", "v8.6", "v19", "v0.3.1"):
             self.assertNotIn(legacy_marker, system)
 
+    def test_prompt_requires_bounded_structured_proposal_block(self):
+        target, train = research.isolate_pre_target(self.rows)
+        system = research.build_messages(target, train)[0]["content"]
+        self.assertIn("<HYPOTHESIS_PROPOSALS_JSON>", system)
+        self.assertIn("</HYPOTHESIS_PROPOSALS_JSON>", system)
+        self.assertIn('"schema_version":1', system)
+        self.assertIn('"falsification_criterion"', system)
+        self.assertIn('"forward_walk_forward"', system)
+        self.assertIn("An empty proposals list is an acceptable result.", system)
+        for legacy_marker in ("a->b->c", "a->t", "mod5->t", "v8.6", "v19", "v0.3.1"):
+            self.assertNotIn(legacy_marker, system.lower())
+
     def test_prompt_requires_user_approval_for_rule_changes(self):
         system = research.build_messages("2026-10-22", self.rows[:2])[0]["content"].lower()
         self.assertIn("explicit telegram user approval", system)
