@@ -52,9 +52,6 @@ jobs:
           test -f general_agent_report_guard.py
           test -f general_agent_report_guard_test.py
           test -f general_data_guard.py
-          test -f general_core.py
-          test -f general_agent_report_guard.py
-          test -f general_agent_report_guard_test.py
           test -f general_core_security_test.py
           test -f super_loto_archive.json
           echo "Required files: PASS"
