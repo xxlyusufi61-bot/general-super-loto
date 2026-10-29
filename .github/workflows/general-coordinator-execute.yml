@@ -300,10 +300,10 @@ jobs:
           body="$(cat <<EOF
           ## Review-only shared-memory update
 
-          - Only `general_memory.json` is changed.
-          - The candidate passed `general_memory_pr_guard.py` against the pre-run baseline.
-          - The persistent memory file on `main` matched that baseline before the proposal branch was created.
-          - New agent reports remain `unverified`; existing entries and binding rules must remain unchanged.
+          - Only general_memory.json is changed.
+          - The candidate passed general_memory_pr_guard.py against the pre-run baseline.
+          - The persistent memory file on main matched that baseline before the proposal branch was created.
+          - New agent reports remain unverified; existing entries and binding rules must remain unchanged.
           - Coordinator step outcome: ${RUN_OUTCOME}.
           - This PR must be reviewed and merged manually. Automatic merging is disabled.
 
