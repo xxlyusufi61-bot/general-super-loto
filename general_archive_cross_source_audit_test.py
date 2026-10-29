@@ -109,6 +109,72 @@ class ArchiveCrossSourceAuditTests(unittest.TestCase):
         self.assertIs(report.get("active_target_numbers_exposed"), False)
 
 
+    def test_root_archive_parser_reads_multiple_result_links_without_exposing_numbers(self):
+        html = """
+        <div class="archive-results">
+          <a href="/super-loto/result/20260001">
+            <span>#20260001</span><span>05 Ocak 2026</span>
+            <span>3</span><span>11</span><span>18</span>
+            <span>24</span><span>37</span><span>52</span>
+          </a>
+          <a href="/super-loto/result/20250001">
+            <span>#20250001</span><span>02 Ocak 2025</span>
+            <span>4</span><span>12</span><span>19</span>
+            <span>25</span><span>38</span><span>53</span>
+          </a>
+        </div>
+        """
+        found, errors, years = audit.parse_loto_gen_root_archive_page(html)
+
+        self.assertEqual(years, {2025, 2026})
+        self.assertEqual(errors, [])
+        self.assertIn((2026, "2026-01-05"), found)
+        self.assertIn((2025, "2025-01-02"), found)
+        self.assertEqual(len(found), 2)
+        report_like = json.dumps({"record_count": len(found), "error_count": len(errors)})
+        self.assertNotIn("numbers", report_like)
+
+    def test_root_archive_parser_flags_invalid_draw_card(self):
+        html = """
+        <a href="/super-loto/result/20260002">
+          <span>#20260002</span><span>07 Ocak 2026</span>
+          <span>3</span><span>11</span><span>18</span>
+        </a>
+        """
+        found, errors, years = audit.parse_loto_gen_root_archive_page(html)
+        self.assertEqual(found, {})
+        self.assertEqual(errors, [(2026, "2026-01-07")])
+        self.assertEqual(years, {2026})
+
+    def test_root_archive_fetch_stops_at_first_page_without_requested_year(self):
+        page1 = """
+        <a href="/super-loto/result/20260001"><span>#20260001</span>
+        <span>05 Ocak 2026</span><span>3</span><span>11</span><span>18</span>
+        <span>24</span><span>37</span><span>52</span></a>
+        """
+        page2 = """
+        <a href="/super-loto/result/20250001"><span>#20250001</span>
+        <span>02 Ocak 2025</span><span>4</span><span>12</span><span>19</span>
+        <span>25</span><span>38</span><span>53</span></a>
+        """
+        with patch.object(audit, "fetch_html", side_effect=[page1, page2]) as fetch:
+            rows, errors, pages, failures = audit.fetch_loto_gen_year_from_root_archive(2026)
+        self.assertEqual(set(rows), {"2026-01-05"})
+        self.assertEqual(errors, [])
+        self.assertEqual(pages, 2)
+        self.assertEqual(failures, [])
+        self.assertEqual(fetch.call_count, 2)
+
+    def test_root_archive_fetch_fails_closed_when_first_page_is_unparseable(self):
+        with patch.object(audit, "fetch_html", return_value="<html></html>"):
+            rows, errors, pages, failures = audit.fetch_loto_gen_year_from_root_archive(2026)
+        self.assertEqual(rows, {})
+        self.assertEqual(errors, [])
+        self.assertEqual(pages, 1)
+        self.assertEqual(failures, [
+            "loto.gen.tr:root-archive:page1:no-draw-links"
+        ])
+
     def test_lotobil_known_date_typo_is_normalized_only_by_exact_index_date(self):
         html = """
         <table><tr><td>08/08/2020</td><td>17</td>
