@@ -110,10 +110,21 @@ class GeneralCoordinatorExecutionTests(unittest.TestCase):
             "partition_counts_match": True,
         }
 
+    def test_guard_failure_blocks_before_any_agent(self):
+        runner = Mock()
+        with patch.dict(os.environ, {"NVIDIA_API_KEY": "MOCK_KEY"}, clear=False):
+            with self.assertRaisesRegex(RuntimeError, "safety guard has not been confirmed"):
+                execute_plan(
+                    "mode=code Fix a Python workflow bug.",
+                    EXECUTION_CONFIRMATION,
+                    agent_runner=runner,
+                )
+        runner.assert_not_called()
+
     def test_wrong_confirmation_blocks_before_any_agent_or_preflight(self):
         runner = Mock()
         with (
-            patch.dict(os.environ, {"NVIDIA_API_KEY": "MOCK_KEY"}, clear=False),
+            patch.dict(os.environ, {"NVIDIA_API_KEY": "MOCK_KEY", "GENERAL_NVIDIA_GUARD_PASSED": "1"}, clear=False),
             patch.object(core, "latest_archive_target_date") as latest,
             patch.object(core, "prepare_data") as prepare,
         ):
