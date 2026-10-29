@@ -18,7 +18,7 @@ MAX_FILES = 6
 SOURCE_MANIFEST: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("general_core.py", ()),
     (".github/workflows/general-agent.yml",
-     ("agent", "workflow", "system", "architecture", "orchestrat", "coordinator")),
+     ("agent", "workflow", "system", "architecture", "orchestrat", "coordinator", "research", "debug", "validation", "crossover")),
     ("general_coordinator.py",
      ("coordinator", "routing", "route", "agent", "system", "architecture", "orchestrat")),
     (".github/workflows/general-coordinator-plan.yml",
