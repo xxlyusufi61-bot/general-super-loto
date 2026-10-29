@@ -307,6 +307,7 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
+          cp general_memory.json "$RUNNER_TEMP/general-agent-memory/candidate.json"
           git fetch origin +refs/heads/main:refs/remotes/origin/main --quiet
           git show origin/main:general_memory.json > "$RUNNER_TEMP/general-agent-memory/current-main.json"
           if ! cmp -s "$RUNNER_TEMP/general-agent-memory/baseline.json" "$RUNNER_TEMP/general-agent-memory/current-main.json"; then
