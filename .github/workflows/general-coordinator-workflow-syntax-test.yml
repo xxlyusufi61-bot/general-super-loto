@@ -1,0 +1,40 @@
+name: GENERAL Coordinator Workflow Syntax Tests
+
+on:
+  push:
+    paths:
+      - ".github/workflows/general-coordinator-execute.yml"
+      - ".github/workflows/general-coordinator-workflow-syntax-test.yml"
+      - "general_coordinator.py"
+      - "general_coordinator_test.py"
+      - "general_core.py"
+      - "general_source_context.py"
+  pull_request:
+    paths:
+      - ".github/workflows/general-coordinator-execute.yml"
+      - ".github/workflows/general-coordinator-workflow-syntax-test.yml"
+      - "general_coordinator.py"
+      - "general_coordinator_test.py"
+      - "general_core.py"
+      - "general_source_context.py"
+
+permissions:
+  contents: read
+
+jobs:
+  syntax-and-offline-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Parse coordinator workflow YAML
+        run: ruby -e 'require "yaml"; YAML.parse_file(".github/workflows/general-coordinator-execute.yml"); puts "Coordinator workflow YAML syntax: PASS"'
+
+      - name: Compile coordinator modules
+        run: |
+          python3 -m py_compile general_core.py general_coordinator.py general_source_context.py
+
+      - name: Run mock-only coordinator tests
+        run: python3 -m unittest -v general_coordinator_test
