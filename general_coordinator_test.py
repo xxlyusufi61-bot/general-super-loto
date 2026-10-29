@@ -112,7 +112,7 @@ class GeneralCoordinatorExecutionTests(unittest.TestCase):
 
     def test_guard_failure_blocks_before_any_agent(self):
         runner = Mock()
-        with patch.dict(os.environ, {"NVIDIA_API_KEY": "MOCK_KEY", "GENERAL_NVIDIA_GUARD_PASSED": "1"}, clear=False):
+        with patch.dict(os.environ, {"NVIDIA_API_KEY": "MOCK_KEY", "GENERAL_NVIDIA_GUARD_PASSED": ""}, clear=False):
             with self.assertRaisesRegex(RuntimeError, "safety guard has not been confirmed"):
                 execute_plan(
                     "mode=code Fix a Python workflow bug.",
