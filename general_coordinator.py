@@ -202,6 +202,24 @@ def execute_plan(
     runner = agent_runner or core_module.run_agent
     results = []
     prior_reports = []
+
+    def failed_result() -> dict[str, Any]:
+        return {
+            "planner": "GENERAL Coordinator",
+            "planner_version": PLAN_VERSION,
+            "mode": "sequential_execution",
+            "status": "failed",
+            "task_type": plan["task_type"],
+            "target_date": target,
+            "agent_results": results,
+            "successful_agents": sum(item["status"] == "success" for item in results),
+            "agent_invocations_started": len(results),
+            "model_requests_expected_if_all_agents_complete": len(plan["agent_order"]),
+            "next_agent_started_after_failure": False,
+            "target_numbers_in_coordinator_report": False,
+            "binding_rules_changed": False,
+        }
+
     for agent in plan["agent_order"]:
         try:
             answer = runner(
@@ -214,33 +232,31 @@ def execute_plan(
                 "agent": agent,
                 "status": "failed",
                 "error_type": type(exc).__name__,
+                "report_received": False,
             })
-            return {
-                "planner": "GENERAL Coordinator",
-                "planner_version": PLAN_VERSION,
-                "mode": "sequential_execution",
+            return failed_result()
+
+        # A returned value is not a successful agent result unless there is
+        # an actual non-empty final report. Fail closed at the coordinator
+        # boundary, even if a custom runner bypasses GENERAL Core's checks.
+        if not isinstance(answer, str) or not answer.strip():
+            results.append({
+                "agent": agent,
                 "status": "failed",
-                "task_type": plan["task_type"],
-                "target_date": target,
-                "agent_results": results,
-                "successful_agents": sum(item["status"] == "success" for item in results),
-                "agent_invocations_started": len(results),
-                "model_requests_expected_if_all_agents_complete": len(plan["agent_order"]),
-                "next_agent_started_after_failure": False,
-                "target_numbers_in_coordinator_report": False,
-                "binding_rules_changed": False,
-            }
+                "error_type": "InvalidReportError",
+                "report_received": False,
+            })
+            return failed_result()
 
         results.append({
             "agent": agent,
             "status": "success",
-            "report_received": isinstance(answer, str) and bool(answer.strip()),
+            "report_received": True,
         })
-        if isinstance(answer, str) and answer.strip():
-            prior_reports.append({
-                "agent": agent,
-                "report": answer[:4000],
-            })
+        prior_reports.append({
+            "agent": agent,
+            "report": answer.strip()[:4000],
+        })
 
     return {
         "planner": "GENERAL Coordinator",
@@ -250,7 +266,7 @@ def execute_plan(
         "task_type": plan["task_type"],
         "target_date": target,
         "agent_results": results,
-        "successful_agents": len(results),
+        "successful_agents": sum(item["status"] == "success" for item in results),
         "agent_invocations_started": len(results),
         "model_requests_expected_if_all_agents_complete": len(plan["agent_order"]),
         "next_agent_started_after_failure": False,
