@@ -293,14 +293,13 @@ class GeneralCorePriorReportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             registry = root / "general_method_registry.json"
-            registry.write_text(json.dumps({
-                "schema_version": 1,
-                "project": "GENERAL Super Loto",
-                "binding_rules_changed": False,
-                "methods": {},
-                "historical_results": {},
-                "promotion_requirements": [],
-            }), encoding="utf-8")
+            registry.write_text(
+                json.dumps(json.loads(
+                    Path(__file__).with_name("general_method_registry.json")
+                    .read_text(encoding="utf-8")
+                )),
+                encoding="utf-8",
+            )
             memory = root / "general_memory.json"
             baseline = {
                 "schema_version": 1,
@@ -341,14 +340,13 @@ class GeneralCorePriorReportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             registry = root / "general_method_registry.json"
-            registry.write_text(json.dumps({
-                "schema_version": 1,
-                "project": "GENERAL Super Loto",
-                "binding_rules_changed": False,
-                "methods": {},
-                "historical_results": {},
-                "promotion_requirements": [],
-            }), encoding="utf-8")
+            registry.write_text(
+                json.dumps(json.loads(
+                    Path(__file__).with_name("general_method_registry.json")
+                    .read_text(encoding="utf-8")
+                )),
+                encoding="utf-8",
+            )
             with (
                 patch.object(core, "METHOD_REGISTRY", registry),
                 patch.object(core, "ask_nvidia", fake_ask_nvidia),

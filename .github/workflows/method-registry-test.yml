@@ -1,43 +1,27 @@
-name: GENERAL Method Registry Tests
+name: GENERAL Fresh-Start Method Registry Tests
 
 on:
   pull_request:
     paths:
       - "general_method_registry.json"
-      - "formula_evidence_catalog.json"
-      - "formula_evidence_catalog_test.py"
-      - "legacy_sources/Super_Loto_NEAR_STATE_Yapi_Dogrulama_Motoru_v5_0.py"
-      - "legacy_sources/Super_Loto_Sifre_Kesif_Motoru_v1.py"
-      - "legacy_sources/Super_Loto_V8_6_Donusum_Kesif.py"
-      - "v86_leakage_safe_evaluator.py"
-      - "v86_leakage_safe_evaluator_test.py"
       - "general_method_registry_test.py"
-      - "general_core.py"
       - "general_core_registry_test.py"
-      - "v86_leakage_safe_evaluator.py"
-      - "v86_leakage_safe_evaluator_test.py"
+      - "general_core.py"
       - ".github/workflows/method-registry-test.yml"
-  workflow_dispatch:
   push:
     paths:
       - "general_method_registry.json"
-      - "formula_evidence_catalog.json"
-      - "formula_evidence_catalog_test.py"
       - "general_method_registry_test.py"
-      - "general_core.py"
       - "general_core_registry_test.py"
-      - "v86_leakage_safe_evaluator.py"
-      - "v86_leakage_safe_evaluator_test.py"
-      - "legacy_sources/Super_Loto_NEAR_STATE_Yapi_Dogrulama_Motoru_v5_0.py"
-      - "legacy_sources/Super_Loto_Sifre_Kesif_Motoru_v1.py"
-      - "legacy_sources/Super_Loto_V8_6_Donusum_Kesif.py"
+      - "general_core.py"
       - ".github/workflows/method-registry-test.yml"
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  registry-tests:
+  fresh-start-registry-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -47,13 +31,9 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Compile registry and evidence tests
-        run: python -m py_compile general_method_registry_test.py general_core_registry_test.py formula_evidence_catalog_test.py general_core.py legacy_sources/Super_Loto_V8_6_Donusum_Kesif.py legacy_sources/Super_Loto_Sifre_Kesif_Motoru_v1.py legacy_sources/Super_Loto_NEAR_STATE_Yapi_Dogrulama_Motoru_v5_0.py v86_leakage_safe_evaluator.py v86_leakage_safe_evaluator_test.py
-      - name: Verify method registry schema (no archive loaded)
+      - name: Compile current registry tests
+        run: python -m py_compile general_method_registry_test.py general_core_registry_test.py general_core.py
+      - name: Test fresh-start registry schema
         run: python -m unittest -v general_method_registry_test
-      - name: Verify target-safe registry integration (no archive loaded)
+      - name: Test runtime context isolation and regime partition
         run: python -m unittest -v general_core_registry_test
-      - name: Verify formula evidence catalog (no archive loaded)
-        run: python -m unittest -v formula_evidence_catalog_test
-      - name: Verify leakage-safe V8.6 evaluator (synthetic fixtures only)
-        run: python -m unittest -v v86_leakage_safe_evaluator_test

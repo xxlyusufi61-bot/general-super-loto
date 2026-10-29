@@ -4,6 +4,7 @@ from pathlib import Path
 
 
 REGISTRY = Path(__file__).with_name("general_method_registry.json")
+EXPECTED_METHODS = {"A->B->C", "A->T", "MOD5->T"}
 
 
 class MethodRegistryTests(unittest.TestCase):
@@ -14,25 +15,30 @@ class MethodRegistryTests(unittest.TestCase):
     def test_binding_rules_not_changed(self):
         self.assertIs(self.data["binding_rules_changed"], False)
 
-    def test_all_three_methods_remain_open_until_approved(self):
-        for name in ("A->B->C", "A->T", "MOD5->T"):
+    def test_only_open_research_family_labels_remain(self):
+        self.assertEqual(set(self.data["methods"]), EXPECTED_METHODS)
+        for name, method in self.data["methods"].items():
             with self.subTest(method=name):
-                method = self.data["methods"][name]
                 self.assertEqual(method["status"], "OPEN_DEFINITION")
                 self.assertIsNone(method["canonical_definition"])
                 self.assertIs(method["execution_ready"], False)
+                self.assertTrue(method["research_scope"].startswith("Research-family label only."))
 
-    def test_legacy_code_not_mislabeled_canonical(self):
-        for name in ("A->B->C", "A->T", "MOD5->T"):
-            with self.subTest(method=name):
-                candidate = self.data["methods"][name]["legacy_candidate"]
-                self.assertEqual(candidate["classification"], "LEGACY_CANDIDATE_NOT_CANONICAL")
-                self.assertTrue(candidate["source_artifact"])
+    def test_no_inherited_formula_results_or_implementation_pointers(self):
+        self.assertEqual(self.data["historical_results"], {})
+        serialized = json.dumps(self.data, ensure_ascii=False)
+        forbidden = ("legacy_candidate", "source_artifact", "legacy_sources/")
+        for marker in forbidden:
+            with self.subTest(marker=marker):
+                self.assertNotIn(marker, serialized)
 
-    def test_old_weights_are_unverified_context_only(self):
-        hist = self.data["historical_results"]
-        self.assertEqual(hist["V19_best_stable_ABC_weight"]["status"], "UNVERIFIED_CONTEXT_ONLY")
-        self.assertEqual(hist["V0_3_1_crossover_weights"]["status"], "UNVERIFIED_CONTEXT_ONLY")
+    def test_promotion_requirements_preserve_chronology_and_baselines(self):
+        text = "\n".join(self.data["promotion_requirements"]).lower()
+        self.assertIn("pre-target", text)
+        self.assertIn("walk-forward", text)
+        self.assertIn("cross-validation", text)
+        self.assertIn("null baseline", text)
+        self.assertIn("explicit user approval", text)
 
 
 if __name__ == "__main__":

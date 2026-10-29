@@ -1,76 +1,35 @@
 {
   "schema_version": 1,
   "project": "GENERAL Super Loto",
-  "purpose": "Track the canonical definition status of binding research methods without silently promoting legacy implementations to approved methods.",
+  "purpose": "Fresh-start registry containing only the three user-authorized research-family labels and experimental safeguards. No inherited formula implementation, source pointer, tuned weight, or historical result is permitted.",
   "binding_rules_changed": false,
   "methods": {
     "A->B->C": {
       "status": "OPEN_DEFINITION",
       "canonical_definition": null,
       "execution_ready": false,
-      "legacy_candidate": {
-        "source_artifact": "Super_Loto_V8_6_Donusum_Kesif.py",
-        "relevant_functions": [
-          "state_features",
-          "all_transitions",
-          "similarity_rank",
-          "predict_next_from_transitions",
-          "evaluate_model"
-        ],
-        "observed_behavior": "Creates transition feature signatures (including positional, gap, parity, band, modulo-3/5/7, sum, span, shape and signed-core changes), ranks similar historical transitions using exact/sign/absolute transforms, then votes on the matched transitions' B draw.",
-        "known_gap": "The legacy evaluator scores the B state for a target transition; it does not, as written, establish a canonical A->B transition to following C-state method.",
-        "classification": "LEGACY_CANDIDATE_NOT_CANONICAL"
-      }
+      "research_scope": "Research-family label only. Define and implement from scratch; no inherited legacy implementation."
     },
     "A->T": {
       "status": "OPEN_DEFINITION",
       "canonical_definition": null,
       "execution_ready": false,
-      "legacy_candidate": {
-        "source_artifact": "Super_Loto_Sifre_Kesif_Motoru_v1.py",
-        "relevant_function": "gen_pair_relation",
-        "observed_behavior": "Counts empirical co-occurrences from each source-draw number to numbers in the immediately following draw, then aggregates historical target-number counts for numbers present in the current source draw.",
-        "known_gap": "This is a legacy source-number-to-next-draw-number candidate; the repository's canonical A->T semantics and constraints are not explicitly approved.",
-        "classification": "LEGACY_CANDIDATE_NOT_CANONICAL"
-      }
+      "research_scope": "Research-family label only. Define and implement from scratch; no inherited legacy implementation."
     },
     "MOD5->T": {
       "status": "OPEN_DEFINITION",
       "canonical_definition": null,
       "execution_ready": false,
-      "legacy_candidate": {
-        "source_artifact": "Super_Loto_V8_6_Donusum_Kesif.py",
-        "relevant_feature": "state_features['mod5diff']",
-        "observed_behavior": "Computes per-position residue-change values (B[i] % 5) - (A[i] % 5) as one transition signature among several.",
-        "known_gap": "A modulo-5 transition-difference feature is not, by itself, an approved MOD5-to-target T mapping.",
-        "classification": "LEGACY_CANDIDATE_NOT_CANONICAL"
-      }
+      "research_scope": "Research-family label only. Define and implement from scratch; no inherited legacy implementation."
     }
   },
-  "historical_results": {
-    "V19_best_stable_ABC_weight": {
-      "value": 1.171946,
-      "status": "UNVERIFIED_CONTEXT_ONLY",
-      "meaning": "Reported prior memory value; formula definition, exact evaluation protocol and run logs have not been independently reconstructed in this audit."
-    },
-    "V0_3_1_crossover_weights": {
-      "values": {
-        "DECADE_T": 0.106117,
-        "ABC": 0.102668,
-        "NUMBER_T": 0.10094,
-        "ODD_EVEN_T": 0.099944
-      },
-      "status": "UNVERIFIED_CONTEXT_ONLY",
-      "meaning": "Reported prior memory values; weights do not define the algorithms or prove out-of-sample performance."
-    }
-  },
+  "historical_results": {},
   "promotion_requirements": [
-    "Record the exact mathematical/algorithmic definition for each method.",
-    "Preserve a traceable source/version and its applicable archive regime.",
-    "Do not use the current isolated target or any later draw during discovery or fitting.",
-    "Add deterministic synthetic unit tests before any real-archive execution.",
-    "Run forward walk-forward, reverse retrospective stress testing, and time-ordered cross-validation as separate labelled protocols.",
-    "Compare results with an appropriate random/null baseline and report uncertainty; do not claim proof from average hits alone.",
-    "Promote a method from OPEN_DEFINITION only after its definition is explicitly approved; do not change binding rules implicitly."
+    "Define the exact mathematical/algorithmic method from scratch before implementation.",
+    "Use only strictly pre-target draws during discovery, fitting, and selection.",
+    "Add deterministic synthetic unit tests before real-archive evaluation.",
+    "Run forward walk-forward, reverse retrospective stress testing, and time-ordered cross-validation as separately labelled protocols.",
+    "Compare against an appropriate random/null baseline and report uncertainty; mean hits alone are not proof.",
+    "Do not promote a method from OPEN_DEFINITION without explicit user approval."
   ]
 }
