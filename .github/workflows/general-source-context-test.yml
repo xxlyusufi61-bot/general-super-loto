@@ -1,0 +1,34 @@
+name: GENERAL Source Context Tests
+
+on:
+  push:
+    paths:
+      - "general_source_context.py"
+      - "general_source_context_test.py"
+      - "general_core.py"
+      - ".github/workflows/general-source-context-test.yml"
+  pull_request:
+    paths:
+      - "general_source_context.py"
+      - "general_source_context_test.py"
+      - "general_core.py"
+      - ".github/workflows/general-source-context-test.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  source-context-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile source context and core
+        run: python3 -m py_compile general_source_context.py general_source_context_test.py general_core.py
+      - name: Run offline source-context tests
+        run: python3 -m unittest -v general_source_context_test
