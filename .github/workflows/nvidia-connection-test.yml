@@ -1,0 +1,134 @@
+name: NVIDIA One-Shot Connection Diagnostic
+
+on:
+  push:
+    branches:
+      - nvidia-connection-test-20261029
+
+permissions:
+  contents: write
+
+concurrency:
+  group: general-nvidia-api
+  cancel-in-progress: false
+
+jobs:
+  one-shot-connection-test:
+    if: ${{ github.repository == 'xxlyusufi61-bot/general-super-loto' && github.ref == 'refs/heads/nvidia-connection-test-20261029' && github.actor == 'xxlyusufi61-bot' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Verify this exact one-shot run
+        env:
+          GH_ACTOR: ${{ github.actor }}
+          GH_REPOSITORY: ${{ github.repository }}
+          GH_REF: ${{ github.ref }}
+        run: |
+          test "$GH_ACTOR" = "xxlyusufi61-bot"
+          test "$GH_REPOSITORY" = "xxlyusufi61-bot/general-super-loto"
+          test "$GH_REF" = "refs/heads/nvidia-connection-test-20261029"
+          echo "ONE-SHOT CONTEXT: PASS"
+
+      - name: Temporarily unlock after explicit user approval
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GENERAL_DEFAULT_BRANCH: main
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python3 general_nvidia_guard.py unlock
+
+      - name: Verify main-branch lock is clear
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GENERAL_DEFAULT_BRANCH: main
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python3 general_nvidia_guard.py check
+
+      - name: Send exactly one authenticated read-only GET to NVIDIA models endpoint
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+          import urllib.error
+          import urllib.request
+
+          token = os.environ.get("NVIDIA_API_KEY", "").strip()
+          if not token:
+              print("NVIDIA CONNECTION TEST: FAIL; NVIDIA_API_KEY secret is missing.")
+              raise SystemExit(2)
+
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, req, fp, code, msg, headers, newurl):
+                  return None
+
+          url = "https://integrate.api.nvidia.com/v1/models"
+          request = urllib.request.Request(
+              url,
+              headers={
+                  "Authorization": "Bearer " + token,
+                  "Accept": "application/json",
+                  "User-Agent": "GENERAL-One-Shot-Connection-Diagnostic",
+              },
+              method="GET",
+          )
+          opener = urllib.request.build_opener(NoRedirect)
+
+          try:
+              with opener.open(request, timeout=20) as response:
+                  status = response.getcode()
+                  raw = response.read(1_000_001)
+          except urllib.error.HTTPError as error:
+              print("NVIDIA CONNECTION TEST: FAIL; HTTP status", error.code)
+              print("No response body, authorization header, or API key was logged.")
+              raise SystemExit(1)
+          except (urllib.error.URLError, TimeoutError, OSError) as error:
+              print("NVIDIA CONNECTION TEST: FAIL; transport error type:", type(error).__name__)
+              print("Details suppressed; no automatic retry was attempted.")
+              raise SystemExit(1)
+
+          if status != 200:
+              print("NVIDIA CONNECTION TEST: FAIL; HTTP status", status)
+              raise SystemExit(1)
+          if len(raw) > 1_000_000:
+              print("NVIDIA CONNECTION TEST: FAIL; response exceeded the 1 MB safety limit.")
+              raise SystemExit(1)
+
+          try:
+              payload = json.loads(raw.decode("utf-8"))
+          except (UnicodeDecodeError, json.JSONDecodeError):
+              print("NVIDIA CONNECTION TEST: FAIL; response was not valid JSON.")
+              raise SystemExit(1)
+
+          if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
+              print("NVIDIA CONNECTION TEST: FAIL; response schema was unexpected.")
+              raise SystemExit(1)
+
+          print("NVIDIA CONNECTION TEST: PASS")
+          print("Endpoint: GET /v1/models")
+          print("HTTP status: 200")
+          print("Authenticated JSON response: valid")
+          print("Listed model entries:", len(payload["data"]))
+          print("Chat-completion/inference request sent: NO")
+          print("Automatic retries: NO")
+          PY
+
+      - name: Restore the global safety lock after the diagnostic
+        if: ${{ always() }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GENERAL_DEFAULT_BRANCH: main
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python3 general_nvidia_guard.py lock --reason "One-shot NVIDIA connection diagnostic ended; inference remains unapproved. Restore fail-closed lock."
