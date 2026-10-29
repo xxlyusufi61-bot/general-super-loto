@@ -94,10 +94,30 @@ class NvidiaUsageObservationTests(unittest.TestCase):
                 research.call_model([])
             mocked_urlopen.assert_not_called()
 
+    def test_live_inference_is_blocked_without_global_lock_preflight(self):
+        with patch.dict(
+            os.environ,
+            {
+                "GENERAL_CONFIRM_LIVE_CALLS": research.CONFIRMATION_PHRASE,
+                "GENERAL_ALLOW_NVIDIA_CALL": "true",
+                "GENERAL_NVIDIA_FREE_USAGE_VERIFIED": "true",
+                "NVIDIA_API_KEY": "test-secret",
+            },
+            clear=True,
+        ), patch("general_open_research.urllib.request.urlopen") as mocked_urlopen:
+            with self.assertRaisesRegex(RuntimeError, "global safety-lock preflight was not confirmed"):
+                research.call_model([{"role": "user", "content": "test"}])
+            mocked_urlopen.assert_not_called()
+
     def test_live_inference_is_blocked_when_free_use_is_not_verified(self):
         with patch.dict(
             os.environ,
-            {"GENERAL_ALLOW_NVIDIA_CALL": "true", "NVIDIA_API_KEY": "test-secret"},
+            {
+                "GENERAL_CONFIRM_LIVE_CALLS": research.CONFIRMATION_PHRASE,
+                "GENERAL_NVIDIA_GUARD_PASSED": "1",
+                "GENERAL_ALLOW_NVIDIA_CALL": "true",
+                "NVIDIA_API_KEY": "test-secret",
+            },
             clear=True,
         ), patch("general_open_research.urllib.request.urlopen") as mocked_urlopen:
             with self.assertRaisesRegex(RuntimeError, "Free-use status was not independently verified"):
@@ -121,6 +141,8 @@ class NvidiaUsageObservationTests(unittest.TestCase):
             with patch.object(research, "USAGE_REPORT", usage_path), patch.dict(
                 os.environ,
                 {
+                    "GENERAL_CONFIRM_LIVE_CALLS": research.CONFIRMATION_PHRASE,
+                    "GENERAL_NVIDIA_GUARD_PASSED": "1",
                     "GENERAL_ALLOW_NVIDIA_CALL": "true",
                     "GENERAL_NVIDIA_FREE_USAGE_VERIFIED": "true",
                     "NVIDIA_API_KEY": "test-secret",
