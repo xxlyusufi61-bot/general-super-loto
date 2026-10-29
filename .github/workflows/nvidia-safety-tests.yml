@@ -1,6 +1,9 @@
 name: GENERAL NVIDIA Safety Tests
 
 on:
+  push:
+    branches:
+      - main
   pull_request:
   workflow_dispatch:
 
