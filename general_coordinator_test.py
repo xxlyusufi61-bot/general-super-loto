@@ -3,7 +3,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import general_core as core
 from general_coordinator import (
@@ -111,7 +111,7 @@ class GeneralCoordinatorExecutionTests(unittest.TestCase):
         }
 
     def test_wrong_confirmation_blocks_before_any_agent_or_preflight(self):
-        runner = unittest.mock.Mock()
+        runner = Mock()
         with (
             patch.dict(os.environ, {"NVIDIA_API_KEY": "MOCK_KEY"}, clear=False),
             patch.object(core, "latest_archive_target_date") as latest,
