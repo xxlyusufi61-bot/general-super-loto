@@ -5,7 +5,7 @@
     "Target draw must remain hidden during discovery and training.",
     "Evaluation must be chronological and leakage-free.",
     "Archive integrity must be checked before analysis.",
-    "Preserve A->B->C, A->T and MOD5->T as research families; their definitions remain open and must be developed from scratch.",
+    "Preserve A->B->C, A->T and MOD5->T research methods.",
     "Use walk-forward evaluation and cross-validation.",
     "Never invent data, experiments, or results.",
     "Never silently change binding project rules.",
