@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+from html.parser import HTMLParser
 from collections import defaultdict
 from datetime import date
 from pathlib import Path
@@ -299,6 +300,146 @@ def parse_lotobil_archive(
     return found, errors
 
 
+class _LotoGenArchiveLinkParser(HTMLParser):
+    """Capture text inside result-card links from the paginated root archive."""
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.links = []
+        self.current = None
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "a" and self.current is None:
+            self.current = {"attrs": dict(attrs), "parts": []}
+
+    def handle_data(self, data):
+        if self.current is not None and data and data.strip():
+            self.current["parts"].append(data.strip())
+
+    def handle_endtag(self, tag):
+        if tag == "a" and self.current is not None:
+            self.links.append(self.current)
+            self.current = None
+
+
+_ROOT_ARCHIVE_DATE = re.compile(
+    r"\\b\\d{1,2}\\s+(?:ocak|şubat|subat|mart|nisan|mayıs|mayis|haziran|"
+    r"temmuz|ağustos|agustos|eylül|eylul|ekim|kasım|kasim|aralık|aralik)\\s+\\d{4}\\b",
+    re.IGNORECASE,
+)
+_ROOT_ARCHIVE_DRAW_ID = re.compile(r"(?<!\\d)#?\\s*(20\\d{2})\\d{4}(?!\\d)")
+
+
+def parse_loto_gen_root_archive_page(
+    html: str,
+) -> tuple[dict[tuple[int, str], tuple[int, ...]], list[tuple[int, str]], set[int]]:
+    """Parse result-card links on the paginated Loto.gen archive.
+
+    Returns internal rows keyed by (draw year, ISO date), parse-error markers
+    keyed by year/date, and every draw year observed on the page. Caller reports
+    only aggregate/date metadata; number sets remain internal to comparison.
+    """
+    parser = _LotoGenArchiveLinkParser()
+    parser.feed(html)
+    parser.close()
+
+    found: dict[tuple[int, str], tuple[int, ...]] = {}
+    errors: list[tuple[int, str]] = []
+    years_seen: set[int] = set()
+
+    for link in parser.links:
+        text = " ".join(link["parts"])
+        attributes = " ".join(
+            str(value) for value in link["attrs"].values() if value
+        )
+        draw_match = _ROOT_ARCHIVE_DRAW_ID.search(text + " " + attributes)
+        if not draw_match:
+            continue
+
+        draw_year = int(draw_match.group(1))
+        years_seen.add(draw_year)
+        draw_date = get_turkish_date(text)
+        if not draw_date or not draw_date.startswith(f"{draw_year}-"):
+            errors.append((draw_year, draw_date or "UNKNOWN_DATE"))
+            continue
+
+        number_text = _ROOT_ARCHIVE_DRAW_ID.sub(" ", text)
+        number_text = _ROOT_ARCHIVE_DATE.sub(" ", number_text, count=1)
+        number_tokens = [
+            int(value)
+            for value in re.findall(r"(?<!\\d)\\d{1,2}(?!\\d)", number_text)
+        ]
+        if (
+            len(number_tokens) != 6
+            or len(set(number_tokens)) != 6
+            or any(value < 1 or value > 60 for value in number_tokens)
+        ):
+            errors.append((draw_year, draw_date))
+            continue
+
+        key = (draw_year, draw_date)
+        numbers = tuple(sorted(number_tokens))
+        if key in found and found[key] != numbers:
+            errors.append((draw_year, draw_date))
+            found.pop(key, None)
+            continue
+        found[key] = numbers
+
+    return found, sorted(set(errors)), years_seen
+
+
+def fetch_loto_gen_year_from_root_archive(
+    year: int,
+    max_pages: int = 12,
+) -> tuple[dict[str, tuple[int, ...]], list[str], int, list[str]]:
+    """Fetch a full year from root-archive pagination, stopping at older years.
+
+    This is the fallback for current-year pages that are unavailable or expose
+    only a selected month. Missing pages or a page with no parseable draw links
+    fail closed instead of being treated as an empty valid source.
+    """
+    combined: dict[str, tuple[int, ...]] = {}
+    parse_errors: list[str] = []
+    pages_fetched = 0
+    failures: list[str] = []
+
+    for page_number in range(1, max_pages + 1):
+        url = LOTO_GEN_BASE if page_number == 1 else f"{LOTO_GEN_BASE}?sayfa={page_number}"
+        try:
+            html = fetch_html(url)
+        except AuditSourceError:
+            failures.append(f"loto.gen.tr:root-archive:page{page_number}")
+            break
+
+        page_rows, page_errors, years_seen = parse_loto_gen_root_archive_page(html)
+        pages_fetched += 1
+
+        for error_year, error_date in page_errors:
+            if error_year == year:
+                parse_errors.append(error_date)
+
+        for (draw_year, draw_date), numbers in page_rows.items():
+            if draw_year != year:
+                continue
+            if draw_date in combined and combined[draw_date] != numbers:
+                parse_errors.append(draw_date)
+                combined.pop(draw_date, None)
+            else:
+                combined[draw_date] = numbers
+
+        # Root archive pages are newest-first. Once older-year results appear
+        # without any result from the requested year, its current-year range is
+        # complete. If the requested year never appears, the source may be lagging.
+        if year not in years_seen:
+            if not years_seen and not page_rows:
+                failures.append(f"loto.gen.tr:root-archive:page{page_number}:no-draw-links")
+            break
+
+    else:
+        failures.append(f"loto.gen.tr:root-archive:page-limit-{max_pages}")
+
+    return combined, sorted(set(parse_errors)), pages_fetched, failures
+
+
 def _find_missing_indices(indices_by_year: dict[int, set[int]]) -> dict[int, list[int]]:
     """Return internal gaps in each year's source draw-index sequence."""
     gaps: dict[int, list[int]] = {}
@@ -399,37 +540,45 @@ def run_audit(archive_path: Path = ARCHIVE_PATH) -> dict[str, Any]:
     all_loto_gen: dict[str, tuple[int, ...]] = {}
     year_status: dict[str, Any] = {}
     fetch_failures: list[str] = []
+    current_audit_year = max(YEAR_RANGE)
     for year in YEAR_RANGE:
-        combined: dict[str, tuple[int, ...]] = {}
         parse_errors: list[str] = []
-        pages = [f"{LOTO_GEN_BASE}/{year}"]
-        if year >= 2021:
-            pages.append(f"{LOTO_GEN_BASE}/{year}?sayfa=2")
         page_count = 0
-        for page_number, url in enumerate(pages, start=1):
-            try:
-                html = fetch_html(url)
-            except AuditSourceError:
-                # A missing/failed second page is a coverage warning, not
-                # silently interpreted as an empty archive page.
-                fetch_failures.append(f"loto.gen.tr:{year}:page{page_number}")
-                continue
-            page_rows, errors = parse_loto_gen_year_page(html, year)
-            page_count += 1
-            parse_errors.extend(errors)
-            for draw_date, numbers in page_rows.items():
-                if draw_date in combined and combined[draw_date] != numbers:
-                    parse_errors.append(draw_date)
-                    combined.pop(draw_date, None)
-                else:
-                    combined[draw_date] = numbers
+        if year == current_audit_year:
+            # Year pages can fail or expose only one selected month. For the
+            # current year, use the chronological root archive pages instead.
+            eligible, parse_errors, page_count, year_failures = (
+                fetch_loto_gen_year_from_root_archive(year)
+            )
+            fetch_failures.extend(year_failures)
+        else:
+            combined: dict[str, tuple[int, ...]] = {}
+            pages = [f"{LOTO_GEN_BASE}/{year}"]
+            if year >= 2021:
+                pages.append(f"{LOTO_GEN_BASE}/{year}?sayfa=2")
+            for page_number, url in enumerate(pages, start=1):
+                try:
+                    html = fetch_html(url)
+                except AuditSourceError:
+                    # A missing page is a coverage warning, never an empty page.
+                    fetch_failures.append(f"loto.gen.tr:{year}:page{page_number}")
+                    continue
+                page_rows, errors = parse_loto_gen_year_page(html, year)
+                page_count += 1
+                parse_errors.extend(errors)
+                for draw_date, numbers in page_rows.items():
+                    if draw_date in combined and combined[draw_date] != numbers:
+                        parse_errors.append(draw_date)
+                        combined.pop(draw_date, None)
+                    else:
+                        combined[draw_date] = numbers
 
-        # loto.gen.tr switched to 6/60 in August 2020; it only archives
-        # that regime for 2020. Exclude old 6/54 records from this comparison.
-        eligible = {
-            draw_date: numbers for draw_date, numbers in combined.items()
-            if year != 2020 or draw_date >= R60_START
-        }
+            # Loto.gen's 2020 page contains only R60; do not mix the R54 regime.
+            eligible = {
+                draw_date: numbers for draw_date, numbers in combined.items()
+                if year != 2020 or draw_date >= R60_START
+            }
+
         all_loto_gen.update(eligible)
         primary_year = [
             row for row in archive_rows
@@ -439,7 +588,14 @@ def run_audit(archive_path: Path = ARCHIVE_PATH) -> dict[str, Any]:
         year_status[str(year)] = {
             "loto_gen": _compare(primary_year, eligible, parse_errors),
             "pages_fetched": page_count,
-            "page_fetch_failure_count": sum(x.startswith(f"loto.gen.tr:{year}:") for x in fetch_failures),
+            "retrieval_mode": "root_archive_pagination" if year == current_audit_year else "year_pages",
+            "page_fetch_failure_count": sum(
+                x.startswith(f"loto.gen.tr:{year}:")
+                or x.startswith("loto.gen.tr:root-archive:")
+                for x in fetch_failures
+            ) if year == current_audit_year else sum(
+                x.startswith(f"loto.gen.tr:{year}:") for x in fetch_failures
+            ),
         }
 
     # Independently check Lotobil, but distinguish its documented historical
