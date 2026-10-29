@@ -47,4 +47,6 @@ jobs:
           echo "Required files: PASS"
 
       - name: Run security test without real NVIDIA API calls
-        run: python3 general_core_security_test.py
+        run: |
+          python3 -m unittest -v general_core_live_consent_test
+          python3 general_core_security_test.py
