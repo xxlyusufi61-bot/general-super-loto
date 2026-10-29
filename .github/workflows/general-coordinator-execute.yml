@@ -134,6 +134,7 @@ jobs:
           set +e
           python3 general_coordinator.py --task-env --execute --confirm-live-calls "$CONFIRM_LIVE_CALLS" > coordinator-execution.log 2>&1
           coordinator_status=$?
+          set -e
           python3 - <<'PY'
           import json
           from pathlib import Path
@@ -211,6 +212,17 @@ jobs:
           PUBLISH_MEMORY_PR: ${{ inputs.publish_memory_pr }}
         run: |
           set -euo pipefail
+          if [ ! -f coordinator-execution-summary.json ]; then
+            echo "Coordinator status summary is missing; refusing memory publication."
+            exit 1
+          fi
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          result = json.loads(Path("coordinator-execution-summary.json").read_text(encoding="utf-8"))
+          if result.get("status") == "unparsed":
+              raise SystemExit("Coordinator outcome could not be safely summarized; refusing memory publication.")
+          PY
           if [ ! -f "$MEMORY_BASELINE" ] || [ ! -f "$MEMORY_CANDIDATE" ]; then
             echo "Memory baseline or candidate is missing; refusing publication."
             exit 1
@@ -260,7 +272,7 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/general-memory"
           cp general_memory.json "$RUNNER_TEMP/general-memory/candidate.json"
-          git fetch origin main --quiet
+          git fetch origin +refs/heads/main:refs/remotes/origin/main --quiet
           git show origin/main:general_memory.json > "$RUNNER_TEMP/general-memory/current-main.json"
           if ! cmp -s "$RUNNER_TEMP/general-memory/baseline.json" "$RUNNER_TEMP/general-memory/current-main.json"; then
             echo "::warning::main/general_memory.json changed during the run; refusing to publish a stale memory candidate."
