@@ -1,8 +1,7 @@
-"""Offline GENERAL coordinator planner.
+"""GENERAL coordinator: plan-only by default, with explicitly gated execution.
 
-This module plans agent routing only. It does not fetch the archive, call an
-LLM, run agents, or make predictions. Data tasks remain blocked from execution
-until a separate runner performs Data Guard validation and resolves the target.
+Data tasks require a successful archive/target preflight before any agent call.
+This module does not promise or guarantee lottery predictions.
 """
 from __future__ import annotations
 
@@ -16,7 +15,7 @@ import general_core as core
 from general_core import is_data_task, target_date_from, task_mode_from
 
 
-PLAN_VERSION = "0.1.0"
+PLAN_VERSION = "0.2.0"
 
 VALIDATION_MARKERS = (
     "validate", "validation", "verify", "integrity", "archive", "target",
@@ -173,12 +172,13 @@ def execute_plan(
             "Live execution blocked. Exact confirmation phrase is required: "
             + EXECUTION_CONFIRMATION
         )
-    if not os.environ.get("NVIDIA_API_KEY", "").strip():
-        raise RuntimeError("NVIDIA_API_KEY is missing; no agent was invoked.")
-
     plan = build_plan(raw_task)
     if plan["agent_count"] > 3 or not plan["agent_order"]:
         raise RuntimeError("Coordinator plan is empty or exceeds the three-agent limit.")
+    if os.environ.get("GENERAL_NVIDIA_GUARD_PASSED") != "1":
+        raise RuntimeError("Global NVIDIA safety guard has not been confirmed; no agent was invoked.")
+    if not os.environ.get("NVIDIA_API_KEY", "").strip():
+        raise RuntimeError("NVIDIA_API_KEY is missing; no agent was invoked.")
 
     explicit_target, normalized_task = target_date_from(raw_task)
     _, normalized_task = task_mode_from(normalized_task)
