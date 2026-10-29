@@ -4,6 +4,9 @@ on:
   push:
     paths:
       - ".github/workflows/general-agent.yml"
+      - "general_agent_workflow_guard_test.py"
+      - ".github/workflows/nvidia-chat-test.yml"
+      - ".github/workflows/nvidia-test.yml"
       - "general_core_output_safety_test.py"
       - ".github/workflows/general-coordinator-execute.yml"
       - ".github/workflows/general-coordinator-workflow-syntax-test.yml"
@@ -16,6 +19,9 @@ on:
   pull_request:
     paths:
       - ".github/workflows/general-agent.yml"
+      - "general_agent_workflow_guard_test.py"
+      - ".github/workflows/nvidia-chat-test.yml"
+      - ".github/workflows/nvidia-test.yml"
       - "general_core_output_safety_test.py"
       - ".github/workflows/general-coordinator-execute.yml"
       - ".github/workflows/general-coordinator-workflow-syntax-test.yml"
@@ -39,12 +45,12 @@ jobs:
 
       - name: Parse coordinator workflow YAML
         run: |
-          ruby -e 'require "yaml"; YAML.parse_file(".github/workflows/general-coordinator-execute.yml")'
-          echo "Coordinator workflow YAML syntax: PASS"
+          ruby -e 'require "yaml"; %w[.github/workflows/general-agent.yml .github/workflows/nvidia-test.yml .github/workflows/nvidia-chat-test.yml .github/workflows/general-coordinator-execute.yml].each { |path| YAML.parse_file(path) }'
+          echo "GENERAL live-request workflow YAML syntax: PASS"
 
       - name: Compile coordinator modules
         run: |
           python3 -m py_compile general_core.py general_coordinator.py general_source_context.py general_coordinator_memory_publication.py general_core_output_safety_test.py
 
-      - name: Run mock-only coordinator tests
-        run: python3 -m unittest -v general_coordinator_test general_memory_pr_guard_test general_coordinator_memory_publication_test general_core_output_safety_test
+      - name: Run mock-only coordinator and explicit-consent tests
+        run: python3 -m unittest -v general_coordinator_test general_memory_pr_guard_test general_coordinator_memory_publication_test general_core_output_safety_test general_agent_workflow_guard_test
