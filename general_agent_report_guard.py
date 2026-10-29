@@ -94,8 +94,11 @@ def report_contract_prompt(agent: str) -> str:
         "SCOPE_AND_EVIDENCE must name the source/context supplied. CHECKS_PERFORMED "
         "must say what was actually checked; explicitly say 'not performed' when relevant. "
         "LIMITATIONS must disclose missing inputs and runtime checks. NEXT_OFFLINE_CHECK "
-        "must propose a reproducible, no-live-model check. Do not invent results, commands, "
-        "tests, metrics, archive checks, or tool access.\n"
+        "must propose a reproducible, no-live-model check. The model has no command-execution "
+        "tool in this call: never claim repository commands or tests ran or passed unless their "
+        "actual execution output is supplied. Read-only source inspection is not runtime validation. "
+        "If a check was not performed, say so explicitly. Do not invent results, commands, tests, "
+        "metrics, archive checks, or tool access.\n"
         + ROLE_GUIDANCE[agent]
     )
 
