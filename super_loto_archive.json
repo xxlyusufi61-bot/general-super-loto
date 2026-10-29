@@ -13,7 +13,7 @@
       "https://loto.gen.tr/super-loto/arsiv/2025?sayfa=2"
     ]
   },
-  "fetched_at": "2026-10-23T00:09:12.601320+00:00",
+  "fetched_at": "2026-10-29T15:03:02.818+00:00",
   "corrections_applied": [
     {
       "removed_source_date": "2025-07-19",
@@ -11206,15 +11206,15 @@
       ]
     }
   ],
-  "archive_updated_at": "2026-10-29T14:42:57.008+00:00",
-  "archive_update_reason": "Incremental refresh on 2026-10-29: appended the published 2026-10-25 and 2026-10-27 draws after matching dates and sorted six-number sets across Lotoistatistik, Loto.gen, and Lotobil result archives. Existing historical rows were preserved. The previous full multi-year validation snapshot is retained unchanged as historical provenance; a fresh full-source audit of this 1,008-row snapshot must pass on the pull request before it is treated as verified.",
+  "archive_updated_at": "2026-10-29T15:03:03.818+00:00",
+  "archive_update_reason": "Incremental refresh on 2026-10-29: appended the 2026-10-25 and 2026-10-27 published draws after their date and sorted six-number sets matched across Lotoistatistik, Loto.gen, and Lotobil. The complete read-only multi-year audit then matched all compared year scopes and Lotobil R54/R60 scopes with no fetch failures, parse errors, date mismatches, or number mismatches. Existing historical draw rows were preserved; the latest target is isolated by date and its numbers are not included in audit metadata.",
   "multi_year_cross_source_validation": {
     "audit_version": "1.1.0",
     "result": "PASS_AFTER_DOCUMENTED_SOURCE_NORMALIZATION",
-    "checked_at": "2026-10-24T23:56:23+00:00",
-    "archive_records": 1006,
+    "checked_at": "2026-10-29T15:01:16.7401256+00:00",
+    "archive_records": 1008,
     "archive_first_date": "2020-01-02",
-    "archive_last_date": "2026-10-22",
+    "archive_last_date": "2026-10-27",
     "loto_gen_r60_by_year": {
       "2020": {
         "scope": "R60 only; R54 is verified separately",
@@ -11279,9 +11279,9 @@
       },
       "2026": {
         "status": "MATCH",
-        "archive_count": 127,
-        "independent_count": 127,
-        "common_date_count": 127,
+        "archive_count": 129,
+        "independent_count": 129,
+        "common_date_count": 129,
         "archive_only_count": 0,
         "independent_only_count": 0,
         "number_mismatch_count": 0,
@@ -11300,9 +11300,9 @@
     },
     "lotobil_r60": {
       "status": "MATCH_AFTER_DOCUMENTED_SOURCE_NORMALIZATION",
-      "archive_count": 971,
-      "independent_count": 971,
-      "common_date_count": 971,
+      "archive_count": 973,
+      "independent_count": 973,
+      "common_date_count": 973,
       "archive_only_count": 0,
       "independent_only_count": 0,
       "number_mismatch_count": 0,
@@ -11317,7 +11317,7 @@
     "fetch_failures": [],
     "draw_numbers_in_report": false,
     "archive_modified_by_audit": false,
-    "note": "R60 year checks cover 2020-08-02 onward; the separate R54 check covers 2020-01-02 through 2020-07-30. Lotobil-only normalizations are documented in the audit report and do not alter the canonical archive."
+    "note": "Full read-only multi-year audit completed successfully against this 1,008-record snapshot on 2026-10-29. Loto.gen coverage for the current year used paginated root-archive pages because the year-specific page can be incomplete. R60 year checks cover 2020-08-02 onward; the separate R54 check covers 2020-01-02 through 2020-07-30. Lotobil-only normalizations are documented and do not alter the canonical archive. The audit report contains no draw-number sets."
   },
   "recent_draw_source_check": {
     "checked_at": "2026-10-29T14:42:57.008+00:00",
