@@ -66,12 +66,19 @@ class GeneralAgentReportGuardTests(unittest.TestCase):
         self.assertFalse(result["valid"])
         self.assertIn("EVIDENCE_NEEDED_TO_VALIDATE_OR_FALSIFY", result["missing_sections"])
 
-    def test_duplicate_or_empty_required_sections_are_rejected(self):
-        report = valid_report("debug")
-        report += "\n\nLIMITATIONS:\n"
+    def test_duplicate_required_sections_are_rejected(self):
+        report = valid_report("debug") + "\n\nLIMITATIONS:\nDuplicate section."
         result = validate_agent_report("debug", report)
         self.assertFalse(result["valid"])
         self.assertIn("LIMITATIONS", result["duplicate_sections"])
+
+    def test_empty_required_section_is_rejected(self):
+        report = valid_report("debug").replace(
+            "LIMITATIONS:\nThis structural check does not verify semantic truth.\n\nNEXT_OFFLINE_CHECK:",
+            "LIMITATIONS:\n\nNEXT_OFFLINE_CHECK:",
+        )
+        result = validate_agent_report("debug", report)
+        self.assertFalse(result["valid"])
         self.assertIn("LIMITATIONS", result["empty_sections"])
 
     def test_unlabelled_findings_are_rejected(self):
