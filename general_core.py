@@ -8,6 +8,7 @@ import urllib.error
 from pathlib import Path
 from datetime import datetime, date, timezone
 from general_source_context import build_source_context
+from general_live_consent import has_explicit_live_consent
 
 VERSION = "0.5.6"
 MODEL = "z-ai/glm-5.3-flash"
@@ -557,6 +558,17 @@ def prepare_data(target):
 
 
 def ask_nvidia(messages):
+    if not has_explicit_live_consent(
+        os.environ.get("GENERAL_CONFIRM_LIVE_CALLS", "")
+    ):
+        raise RuntimeError(
+            "Live NVIDIA request blocked: exact free-only confirmation phrase is missing."
+        )
+    if os.environ.get("GENERAL_NVIDIA_GUARD_PASSED") != "1":
+        raise RuntimeError(
+            "Live NVIDIA request blocked: global safety-lock preflight was not confirmed."
+        )
+
     key = os.environ.get("NVIDIA_API_KEY")
     if not key:
         raise RuntimeError("NVIDIA_API_KEY missing.")
