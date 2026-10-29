@@ -2,6 +2,12 @@ name: GENERAL NVIDIA API Test
 
 on:
   workflow_dispatch:
+    inputs:
+      confirm_live_calls:
+        description: "Leave NO to block all live NVIDIA API calls. Type the exact phrase only after verifying your provider account is free-only."
+        required: true
+        type: string
+        default: "NO"
 
 permissions:
   contents: write
@@ -23,6 +29,7 @@ jobs:
           python-version: "3.12"
 
       - name: Check global NVIDIA safety lock
+        if: ${{ inputs.confirm_live_calls == 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_3_NVIDIA_REQUESTS' }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
@@ -33,6 +40,7 @@ jobs:
 
       - name: Test NVIDIA API connection
         id: nvidia-api-test
+        if: ${{ inputs.confirm_live_calls == 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_3_NVIDIA_REQUESTS' }}
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
         run: |
@@ -113,6 +121,12 @@ jobs:
               print("Connection test failed:", type(error).__name__)
               raise SystemExit(1)
           PY
+
+      - name: Report no NVIDIA request when confirmation is absent
+        if: ${{ inputs.confirm_live_calls != 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_3_NVIDIA_REQUESTS' }}
+        run: |
+          echo "::notice::No live NVIDIA request was authorized or made."
+          echo "This workflow requires the exact free-only confirmation phrase for any live request."
 
       - name: Activate global lock after NVIDIA request failure
         if: ${{ failure() && steps.nvidia-api-test.outcome == 'failure' }}
