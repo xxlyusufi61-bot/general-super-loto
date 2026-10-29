@@ -1,7 +1,9 @@
+import io
 import json
 import os
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -287,6 +289,47 @@ class GeneralCoordinatorExecutionTests(unittest.TestCase):
 
 
 class GeneralCorePriorReportTests(unittest.TestCase):
+    def test_invalid_report_is_not_saved_or_logged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            registry = root / "general_method_registry.json"
+            registry.write_text(json.dumps({
+                "schema_version": 1,
+                "project": "GENERAL Super Loto",
+                "binding_rules_changed": False,
+                "methods": {},
+                "historical_results": {},
+                "promotion_requirements": [],
+            }), encoding="utf-8")
+            memory = root / "general_memory.json"
+            baseline = {
+                "schema_version": 1,
+                "project": "GENERAL Super Loto",
+                "binding_rules": [],
+                "entries": [],
+            }
+            memory.write_text(json.dumps(baseline), encoding="utf-8")
+            private_report = "PRIVATE_INVALID_REPORT_SENTINEL"
+            output = io.StringIO()
+
+            with (
+                patch.object(core, "METHOD_REGISTRY", registry),
+                patch.object(core, "MEMORY", memory),
+                patch.object(core, "ask_nvidia", return_value=private_report),
+                patch.dict(
+                    os.environ,
+                    {"GENERAL_SAVE_MEMORY": "1", "GENERAL_TARGET_DATE": ""},
+                    clear=False,
+                ),
+                redirect_stdout(output),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "not saved to shared memory"):
+                    core.run_agent("debug", "mode=code inspect the implementation.")
+
+            self.assertNotIn(private_report, output.getvalue())
+            saved = json.loads(memory.read_text(encoding="utf-8"))
+            self.assertEqual(saved["entries"], [])
+
     def test_prior_report_is_marked_unverified_and_answer_is_returned(self):
         captured = {}
         mock_report = "SCOPE_AND_EVIDENCE:\nSynthetic test fixture and supplied source context only.\n\nCHECKS_PERFORMED:\nOnly source-context prompt assembly was exercised; no repository commands were run.\n\nFINDINGS:\nUNVERIFIED: This mock report validates test plumbing only.\n\nLIMITATIONS:\nNo live model request or real code execution was performed.\n\nNEXT_OFFLINE_CHECK:\nRun the source-context unit tests.\n\nREPRODUCTION_OR_DIAGNOSTIC:\nNo production defect was reproduced by this mock.\n\nPROPOSED_FIX_AND_TEST:\nNo actual fix is claimed; run the named offline tests."
