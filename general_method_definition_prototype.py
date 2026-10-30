@@ -109,6 +109,9 @@ def score_a_to_t(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "current_antecedents_with_zero_exposure": sum(
                 exposures[a] == 0 for a in current_a
             ),
+            "exposure_count_by_antecedent": {
+                str(a): exposures[a] for a in current_a
+            },
         },
     })
     return result
