@@ -7,12 +7,14 @@ on:
       - "general_walkforward.py"
       - "general_walkforward_test.py"
       - "general_data_guard.py"
+      - "super_loto_archive.json"
       - ".github/workflows/walkforward-test.yml"
   pull_request:
     paths:
       - "general_walkforward.py"
       - "general_walkforward_test.py"
       - "general_data_guard.py"
+      - "super_loto_archive.json"
       - ".github/workflows/walkforward-test.yml"
 
 permissions:
@@ -33,3 +35,9 @@ jobs:
         run: python -m py_compile general_walkforward.py general_walkforward_test.py general_data_guard.py
       - name: Run synthetic unit tests (no real archive or target draw)
         run: python -m unittest -v general_walkforward_test
+      - name: Run offline baseline against committed canonical archive
+        run: >-
+          python -B general_walkforward.py
+          --archive super_loto_archive.json
+          --min-train 100
+          --folds 5
