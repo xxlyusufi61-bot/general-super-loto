@@ -11204,10 +11204,21 @@
         40,
         42
       ]
+    },
+    {
+      "date": "2026-10-29",
+      "numbers": [
+        12,
+        14,
+        40,
+        42,
+        52,
+        57
+      ]
     }
   ],
-  "archive_updated_at": "2026-10-29T15:03:03.818+00:00",
-  "archive_update_reason": "Incremental refresh on 2026-10-29: appended the 2026-10-25 and 2026-10-27 published draws after their date and sorted six-number sets matched across Lotoistatistik, Loto.gen, and Lotobil. The complete read-only multi-year audit then matched all compared year scopes and Lotobil R54/R60 scopes with no fetch failures, parse errors, date mismatches, or number mismatches. Existing historical draw rows were preserved; the latest target is isolated by date and its numbers are not included in audit metadata.",
+  "archive_updated_at": "2026-10-29T23:43:32.405Z",
+  "archive_update_reason": "Proposed incremental target update on 2026-10-30. Three indexed public result pages (Loto.gen, COM, and LotoPiyango) agree on the 2026-10-29 draw date and sorted number set. One conflicting third-party news report was excluded; the official page for this exact draw could not be confirmed during this check. The prior multi-year audit still covers the archive through 2026-10-27 and has not been rerun on this proposed revision. Do not use the new latest row for formula discovery or scoring; the full read-only archive audit must pass first.",
   "multi_year_cross_source_validation": {
     "audit_version": "1.1.0",
     "result": "PASS_AFTER_DOCUMENTED_SOURCE_NORMALIZATION",
@@ -11320,20 +11331,20 @@
     "note": "Full read-only multi-year audit completed successfully against this 1,008-record snapshot on 2026-10-29. Loto.gen coverage for the current year used paginated root-archive pages because the year-specific page can be incomplete. R60 year checks cover 2020-08-02 onward; the separate R54 check covers 2020-01-02 through 2020-07-30. Lotobil-only normalizations are documented and do not alter the canonical archive. The audit report contains no draw-number sets."
   },
   "recent_draw_source_check": {
-    "checked_at": "2026-10-29T14:42:57.008+00:00",
-    "status": "MATCH",
-    "records_checked": 2,
+    "checked_at": "2026-10-29T23:43:32.405Z",
+    "status": "MATCH_SELECTED_PUBLISHERS_PENDING_FULL_AUDIT",
+    "records_checked": 1,
     "checked_dates": [
-      "2026-10-25",
-      "2026-10-27"
+      "2026-10-29"
     ],
     "sources": [
-      "https://lotoistatistik.com/super-loto/super-loto-son-1-ay-sonuclari/",
-      "https://loto.gen.tr/super-loto/arsiv",
-      "https://www.lotobil.com/Super-Loto-Butun-Sonuc-Listesi"
+      "https://loto.gen.tr/super-loto/cekilis/20260130",
+      "https://com.com.tr/sans-oyunlari/super-loto/29-10-2026",
+      "https://lotopiyangosonuclari.com/piyango-loto-cekilis-sonuclari/29.10.2026"
     ],
     "date_and_number_set_mismatch_count": 0,
     "numbers_in_metadata": false,
-    "scope_note": "Publication-level agreement for the two appended rows only; the PR live-audit workflow independently checks the full current archive."
+    "excluded_conflicting_publication": "https://www.gazetearena.com/29-ekim-2026-super-loto-sonuclari-belli-oldu",
+    "scope_note": "Selected indexed result pages agree on this one record; this is not full-archive verification. A conflicting secondary report was not treated as authoritative. Require the full read-only multi-year audit before formula discovery."
   }
 }
