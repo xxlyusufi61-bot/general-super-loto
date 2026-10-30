@@ -11218,7 +11218,7 @@
     }
   ],
   "archive_updated_at": "2026-10-29T23:43:32.405Z",
-  "archive_update_reason": "Proposed incremental target update on 2026-10-30. Three indexed public result pages (Loto.gen, COM, and LotoPiyango) agree on the 2026-10-29 draw date and sorted number set. One conflicting third-party news report was excluded; the official page for this exact draw could not be confirmed during this check. The prior multi-year audit still covers the archive through 2026-10-27 and has not been rerun on this proposed revision. Do not use the new latest row for formula discovery or scoring; the full read-only archive audit must pass first.",
+  "archive_update_reason": "Proposed incremental target update on 2026-10-30. Three indexed public result pages (Loto.gen, COM, and LotoPiyango) agree on the 2026-10-29 draw date and sorted number set. One conflicting third-party news report was excluded; the official page for this exact draw could not be confirmed during this check. A full read-only cross-source audit subsequently passed against the 1,009-record archive on 2026-10-30; see latest_live_archive_audit. The new latest row remains an isolated target and must not be used for discovery, training, tuning, or scoring.",
   "multi_year_cross_source_validation": {
     "audit_version": "1.1.0",
     "result": "PASS_AFTER_DOCUMENTED_SOURCE_NORMALIZATION",
@@ -11345,6 +11345,109 @@
     "date_and_number_set_mismatch_count": 0,
     "numbers_in_metadata": false,
     "excluded_conflicting_publication": "https://www.gazetearena.com/29-ekim-2026-super-loto-sonuclari-belli-oldu",
-    "scope_note": "Selected indexed result pages agree on this one record; this is not full-archive verification. A conflicting secondary report was not treated as authoritative. Require the full read-only multi-year audit before formula discovery."
+    "scope_note": "Selected indexed result pages agree on this one record; this is not full-archive verification by itself. A conflicting secondary report was not treated as authoritative. A full read-only multi-year audit was subsequently completed successfully on 2026-10-30 for the 1,009-record archive; see latest_live_archive_audit. The official result page for this exact draw remained unconfirmed during this check."
+  },
+  "latest_live_archive_audit": {
+    "audit_version": "1.1.0",
+    "workflow_run_id": 40982053265,
+    "workflow_run_url": "https://github.com/xxlyusufi61-bot/general-super-loto/actions/runs/40982053265",
+    "checked_at": "2026-10-30T00:49:33Z",
+    "result": "PASS_WITH_ACCEPTED_LOTOBIL_TAIL_LAG",
+    "archive_records": 1009,
+    "archive_first_date": "2020-01-02",
+    "archive_last_date": "2026-10-29",
+    "loto_gen_by_year": {
+      "2020": {
+        "status": "MATCH",
+        "archive_count": 66,
+        "source_count": 66,
+        "date_mismatch_count": 0,
+        "number_mismatch_count": 0,
+        "parse_error_count": 0
+      },
+      "2021": {
+        "status": "MATCH",
+        "archive_count": 156,
+        "source_count": 156,
+        "date_mismatch_count": 0,
+        "number_mismatch_count": 0,
+        "parse_error_count": 0
+      },
+      "2022": {
+        "status": "MATCH",
+        "archive_count": 156,
+        "source_count": 156,
+        "date_mismatch_count": 0,
+        "number_mismatch_count": 0,
+        "parse_error_count": 0
+      },
+      "2023": {
+        "status": "MATCH",
+        "archive_count": 157,
+        "source_count": 157,
+        "date_mismatch_count": 0,
+        "number_mismatch_count": 0,
+        "parse_error_count": 0
+      },
+      "2024": {
+        "status": "MATCH",
+        "archive_count": 157,
+        "source_count": 157,
+        "date_mismatch_count": 0,
+        "number_mismatch_count": 0,
+        "parse_error_count": 0
+      },
+      "2025": {
+        "status": "MATCH",
+        "archive_count": 156,
+        "source_count": 156,
+        "date_mismatch_count": 0,
+        "number_mismatch_count": 0,
+        "parse_error_count": 0
+      },
+      "2026": {
+        "status": "MATCH",
+        "archive_count": 130,
+        "source_count": 130,
+        "date_mismatch_count": 0,
+        "number_mismatch_count": 0,
+        "parse_error_count": 0
+      }
+    },
+    "lotobil_r54": {
+      "status": "MATCH",
+      "archive_count": 31,
+      "source_count": 31,
+      "common_date_count": 31,
+      "archive_only_count": 0,
+      "independent_only_count": 0,
+      "number_mismatch_count": 0,
+      "source_parse_error_count": 0
+    },
+    "lotobil_r60": {
+      "raw_comparison_status": "SOURCE_LAG_AT_TAIL",
+      "status": "ACCEPTED_SOURCE_LAG_AT_TAIL",
+      "archive_count": 974,
+      "source_count": 973,
+      "common_date_count": 973,
+      "archive_only_count": 1,
+      "independent_only_count": 0,
+      "number_mismatch_count": 0,
+      "source_parse_error_count": 0,
+      "raw_source_parse_error_count": 0,
+      "unresolved_index_gap_count": 0,
+      "archive_last_date": "2026-10-29",
+      "archive_only_dates": [
+        "2026-10-29"
+      ],
+      "independent_last_date": "2026-10-27",
+      "acceptance_basis": "Exactly one latest archive row is missing from Lotobil; every common row matches; no date/number mismatch, parsing error, raw parsing error, or unresolved index gap exists; the complete Loto.gen 2026 comparison matches the same latest archive date."
+    },
+    "fetch_failure_count": 0,
+    "archive_modified_by_audit": false,
+    "target_numbers_exposed": false,
+    "draw_numbers_in_report": false,
+    "official_result_page_confirmed": false,
+    "official_result_page_note": "The exact official Milli Piyango result page was not confirmed during the 2026-10-29 source check. Three indexed public result pages agreed on the draw; this metadata does not claim official-page confirmation."
   }
 }
