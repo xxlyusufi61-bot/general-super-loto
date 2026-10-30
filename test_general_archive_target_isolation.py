@@ -156,6 +156,65 @@ class CanonicalArchiveTargetIsolationTests(unittest.TestCase):
         )
         self.assertEqual(validation["fetch_failures"], [])
 
+    def test_latest_live_archive_audit_covers_current_archive(self):
+        # Keep the older multi-year validation snapshot immutable; this
+        # separate live-audit record documents the newer full archive scope.
+        audit = self.payload.get("latest_live_archive_audit")
+        self.assertIsInstance(audit, dict)
+        self.assertEqual(
+            audit.get("result"),
+            "PASS_WITH_ACCEPTED_LOTOBIL_TAIL_LAG",
+        )
+        self.assertIsInstance(audit.get("workflow_run_id"), int)
+        self.assertGreater(audit.get("workflow_run_id"), 0)
+        self.assertEqual(audit.get("archive_records"), len(self.rows))
+        self.assertEqual(audit.get("archive_first_date"), self.dates[0])
+        self.assertEqual(audit.get("archive_last_date"), self.target_date)
+        self.assertEqual(audit.get("fetch_failure_count"), 0)
+        self.assertIs(audit.get("archive_modified_by_audit"), False)
+        self.assertIs(audit.get("target_numbers_exposed"), False)
+        self.assertIs(audit.get("draw_numbers_in_report"), False)
+
+        yearly = audit.get("loto_gen_by_year")
+        expected_years = {str(year) for year in range(2020, 2027)}
+        self.assertIsInstance(yearly, dict)
+        self.assertEqual(set(yearly), expected_years)
+        for details in yearly.values():
+            self.assertEqual(details.get("status"), "MATCH")
+            self.assertEqual(
+                details.get("archive_count"),
+                details.get("source_count"),
+            )
+            self.assertEqual(details.get("date_mismatch_count"), 0)
+            self.assertEqual(details.get("number_mismatch_count"), 0)
+            self.assertEqual(details.get("parse_error_count"), 0)
+
+        r54 = audit.get("lotobil_r54")
+        self.assertIsInstance(r54, dict)
+        self.assertEqual(r54.get("status"), "MATCH")
+        self.assertEqual(r54.get("archive_count"), r54.get("source_count"))
+        self.assertEqual(r54.get("number_mismatch_count"), 0)
+        self.assertEqual(r54.get("source_parse_error_count"), 0)
+
+        r60 = audit.get("lotobil_r60")
+        self.assertIsInstance(r60, dict)
+        self.assertEqual(
+            r60.get("status"),
+            "ACCEPTED_SOURCE_LAG_AT_TAIL",
+        )
+        self.assertEqual(r60.get("raw_comparison_status"), "SOURCE_LAG_AT_TAIL")
+        self.assertEqual(r60.get("archive_count"), r60.get("common_date_count") + 1)
+        self.assertEqual(r60.get("source_count"), r60.get("common_date_count"))
+        self.assertEqual(r60.get("archive_only_count"), 1)
+        self.assertEqual(r60.get("archive_only_dates"), [self.target_date])
+        self.assertEqual(r60.get("independent_only_count"), 0)
+        self.assertEqual(r60.get("number_mismatch_count"), 0)
+        self.assertEqual(r60.get("source_parse_error_count"), 0)
+        self.assertEqual(r60.get("raw_source_parse_error_count"), 0)
+        self.assertEqual(r60.get("unresolved_index_gap_count"), 0)
+
+        self.assertIs(audit.get("official_result_page_confirmed"), False)
+
     def test_r54_and_r60_periods_remain_separated(self):
         old_regime = [
             row for row in self.rows
