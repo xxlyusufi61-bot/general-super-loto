@@ -200,11 +200,60 @@ jobs:
               )
           )
 
+          # Accept only a single, strictly trailing Lotobil publication lag.
+          # All common rows must match, no parse/index/mismatch errors may exist,
+          # and the same newest archive draw must be independently confirmed by
+          # the complete Loto.gen current-year comparison above.
+          latest_loto_gen = (
+              report.get("loto_gen_by_year", {})
+              .get("2026", {})
+              .get("loto_gen", {})
+          )
+          accepted_lotobil_tail_lag = (
+              isinstance(lotobil_r60, dict)
+              and lotobil_r60.get("status") == "SOURCE_LAG_AT_TAIL"
+              and lotobil_r60.get("archive_only_count") == 1
+              and lotobil_r60.get("independent_only_count") == 0
+              and lotobil_r60.get("number_mismatch_count") == 0
+              and lotobil_r60.get("source_parse_error_count") == 0
+              and lotobil_r60.get("raw_source_parse_error_count") == 0
+              and lotobil_r60.get("unresolved_index_gap_count") == 0
+              and lotobil_r60.get("archive_count")
+                  == lotobil_r60.get("common_date_count") + 1
+              and lotobil_r60.get("independent_count")
+                  == lotobil_r60.get("common_date_count")
+              and lotobil_r60.get("archive_last_date")
+                  == report.get("archive_last_date")
+              and lotobil_r60.get("archive_only_dates_sample")
+                  == [report.get("archive_last_date")]
+              and lotobil_r60.get("independent_last_date")
+                  < lotobil_r60.get("archive_last_date")
+              and latest_loto_gen.get("status") == "MATCH"
+              and latest_loto_gen.get("archive_only_count") == 0
+              and latest_loto_gen.get("independent_only_count") == 0
+              and latest_loto_gen.get("number_mismatch_count") == 0
+              and latest_loto_gen.get("source_parse_error_count") == 0
+              and latest_loto_gen.get("archive_last_date")
+                  == report.get("archive_last_date")
+              and latest_loto_gen.get("independent_last_date")
+                  == report.get("archive_last_date")
+          )
+
+          if accepted_lotobil_tail_lag:
+              print(
+                  "Lotobil R60: ACCEPTED_SOURCE_LAG_AT_TAIL; exactly one "
+                  "latest archive draw is missing from Lotobil, while the "
+                  "complete Loto.gen comparison confirms that draw."
+              )
+
           blocking = {
               scope: status
               for scope, status in statuses.items()
               if status != "MATCH"
-              and not (scope == "Lotobil R60" and normalized_lotobil_pass)
+              and not (
+                  scope == "Lotobil R60"
+                  and (normalized_lotobil_pass or accepted_lotobil_tail_lag)
+              )
           }
 
           if fetch_failures:
