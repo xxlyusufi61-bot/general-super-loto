@@ -153,6 +153,38 @@ class MethodDefinitionSyntheticTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "at least three"):
             score_a_b_c(two)
 
+    def test_r54_history_is_accepted_with_its_own_universe(self):
+        history = [
+            draw("2020-07-25", A),
+            draw("2020-07-30", B),
+        ]
+        result = score_a_to_t(history)
+        self.assertEqual(result["regime"], "R54")
+        self.assertEqual(len(result["ranking"]), 54)
+        self.assertLessEqual(
+            max(item["number"] for item in result["ranking"]),
+            54,
+        )
+
+    def test_all_methods_leave_synthetic_inputs_unchanged(self):
+        history = [
+            draw("2026-08-01", A),
+            draw("2026-08-03", B),
+            draw("2026-08-05", C),
+            draw("2026-08-07", A),
+            draw("2026-08-09", B),
+            draw("2026-08-11", C),
+            draw("2026-08-13", A),
+            draw("2026-08-15", B),
+        ]
+        before = copy.deepcopy(history)
+        score_a_to_t(history)
+        self.assertEqual(history, before)
+        score_mod5_to_t(history)
+        self.assertEqual(history, before)
+        score_a_b_c(history)
+        self.assertEqual(history, before)
+
     def test_outputs_remain_explicitly_proposal_only(self):
         history = [
             draw("2026-07-01", A),
