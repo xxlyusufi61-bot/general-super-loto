@@ -75,6 +75,7 @@ class MethodDefinitionSyntheticTests(unittest.TestCase):
             draw("2026-03-07", target_two),
             draw("2026-03-09", multiples_of_five),
             draw("2026-03-11", target_one),
+            draw("2026-03-13", multiples_of_five),
         ]
         result = score_mod5_to_t(history)
 
