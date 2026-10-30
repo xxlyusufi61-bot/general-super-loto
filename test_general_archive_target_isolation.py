@@ -96,10 +96,51 @@ class CanonicalArchiveTargetIsolationTests(unittest.TestCase):
             validation.get("result"),
             "PASS_AFTER_DOCUMENTED_SOURCE_NORMALIZATION",
         )
-        self.assertEqual(validation.get("archive_records"), len(self.rows))
-        self.assertEqual(validation.get("archive_last_date"), self.target_date)
+
+        # The multi-year audit is a dated snapshot. It may legitimately predate
+        # the latest archive row; never silently relabel that older audit as
+        # covering a newly appended target draw.
+        validation_last_date = validation.get("archive_last_date")
+        self.assertIsInstance(validation_last_date, str)
+        datetime.fromisoformat(validation_last_date)
+        self.assertLessEqual(validation_last_date, self.target_date)
+
+        validated_rows = [
+            row for row in self.rows
+            if row["date"] <= validation_last_date
+        ]
+        self.assertTrue(validated_rows)
+        self.assertEqual(validated_rows[-1]["date"], validation_last_date)
+        self.assertEqual(
+            validation.get("archive_records"),
+            len(validated_rows),
+        )
         self.assertIs(validation.get("draw_numbers_in_report"), False)
         self.assertIs(validation.get("archive_modified_by_audit"), False)
+
+        # If the canonical archive has advanced beyond the last complete audit,
+        # require a separate, number-free, explicitly limited source check for
+        # the new target row. This check is not a substitute for full auditing.
+        if validation_last_date < self.target_date:
+            recent_check = self.payload.get("recent_draw_source_check")
+            self.assertIsInstance(recent_check, dict)
+            self.assertEqual(
+                recent_check.get("status"),
+                "MATCH_SELECTED_PUBLISHERS_PENDING_FULL_AUDIT",
+            )
+            self.assertEqual(recent_check.get("records_checked"), 1)
+            self.assertEqual(
+                recent_check.get("checked_dates"),
+                [self.target_date],
+            )
+            self.assertEqual(
+                recent_check.get("date_and_number_set_mismatch_count"),
+                0,
+            )
+            self.assertIs(recent_check.get("numbers_in_metadata"), False)
+        else:
+            self.assertEqual(validation.get("archive_records"), len(self.rows))
+
         self.assertEqual(set(validation.get("loto_gen_r60_by_year", {})),
                          {str(year) for year in range(2020, 2027)})
         for details in validation["loto_gen_r60_by_year"].values():
