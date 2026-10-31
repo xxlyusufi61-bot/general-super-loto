@@ -35,8 +35,8 @@
   "entries": [
     {
       "id": "PR63_REVISION_2026-10-31",
-      "status": "FIX_IN_PROGRESS_USER_APPROVED_2026-10-31",
-      "summary": "Final pre-merge audit found a repeat-run deadlock: fixed oldest/newest windows reused already-consumed dates. User approved the fix. PR branch is being updated so previously consumed holdout dates are excluded from later discovery and fresh windows advance through remaining unused rows; prior partition dates are stored with each claim for deterministic snapshot reconstruction. Regression tests cover a growing archive, fail-closed minimums, repeat claims, and discovery isolation. Do not merge until full CI is green.",
+      "status": "USER_APPROVED_PENDING_FINAL_CI_AND_MERGE",
+      "summary": "Final pre-merge audit identified and fixed a repeat-run deadlock: the original oldest/newest R60 windows could select dates already consumed by earlier claims. PR now filters all previously consumed holdout dates out of later discovery and fresh holdout partitions, advances reverse/forward windows through the remaining unused chronology, and fails closed until minimums are met. Each claim records its prior-consumption snapshot so its immutable archive partition can be reconstructed exactly. Regressions cover an insufficient one-new-draw case, fresh windows after archive growth, no reuse across directions, and old holdout exclusion from model discovery. Latest code CI passed 88/88 Blank-Slate tests and all 8 PR checks at the preceding head; no live NVIDIA request or real-archive evaluation was performed. User explicitly approved correction and merge, pending final green CI.",
       "constraints": [
         "Main branch unchanged",
         "Target draw isolated",
@@ -48,7 +48,7 @@
         "No target number set or predicted number values in shared reports",
         "A->B->C, A->T, MOD5->T and crossover semantics must not be guessed or silently approximated",
         "Do not merge without a new explicit user approval after the final CI review",
-        "Previously consumed directional holdout dates must be excluded from later discovery and fresh holdout windows; new windows advance through unconsumed dates and preserve all minimum history requirements."
+        "Previously consumed directional holdout dates are excluded from all later discovery and fresh holdout windows; new windows advance through unconsumed dates and preserve all minimum history requirements."
       ],
       "last_reviewed": "2026-10-31"
     }
