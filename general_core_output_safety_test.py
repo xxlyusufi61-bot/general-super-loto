@@ -37,6 +37,35 @@ class GeneralCoreOutputSafetyTests(unittest.TestCase):
             source,
         )
 
+    def test_agent_report_output_is_written_only_to_configured_workflow_path(self):
+        import os
+        import tempfile
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as tmp:
+            report_path = Path(tmp) / "reports" / "research.md"
+            with patch.dict(os.environ, {"GENERAL_AGENT_REPORT_PATH": str(report_path)}, clear=True):
+                result = general_core.persist_agent_report("A validated report.", "research")
+            self.assertEqual(result, str(report_path))
+            self.assertEqual(report_path.read_text(encoding="utf-8"), "A validated report.\\n")
+
+    def test_agent_report_output_rejects_two_output_modes(self):
+        import os
+        import tempfile
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict(
+                os.environ,
+                {
+                    "GENERAL_AGENT_REPORT_PATH": str(Path(tmp) / "one.md"),
+                    "GENERAL_AGENT_REPORT_DIR": str(Path(tmp) / "reports"),
+                },
+                clear=True,
+            ):
+                with self.assertRaisesRegex(RuntimeError, "Only one"):
+                    general_core.persist_agent_report("A report.", "research")
+
     def test_public_agent_workflow_never_artifacts_shared_memory_or_raw_fetch_log(self):
         workflow = (ROOT / ".github/workflows/general-agent.yml").read_text(
             encoding="utf-8"
