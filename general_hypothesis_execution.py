@@ -62,6 +62,8 @@ def _validate_node(
     if state["nodes"] > MAX_AST_NODES:
         _fail("expression contains too many nodes.")
 
+    if direction not in {"forward", "reverse"}:
+        _fail("ranking direction must be forward or reverse.")
     op = node["op"]
     if op == "const":
         if set(node) != {"op", "value"}:
@@ -216,6 +218,8 @@ def _evaluate_node(
     node: dict[str, Any],
     context: dict[str, float | int],
     history: list[dict[str, Any]],
+    *,
+    direction: str = "forward",
 ) -> bool | float | int:
     op = node["op"]
     if op == "const":
@@ -227,14 +231,14 @@ def _evaluate_node(
         expression = node["expression"]
         if aggregate == "count":
             total = 0
-            for draw_age, row in enumerate(reversed(history)):
+            for draw_age, row in enumerate(reversed(history) if direction == "forward" else history):
                 for number in row["numbers"]:
                     local = {
                         "candidate": context["candidate"],
                         "value": number,
                         "draw_age": draw_age,
                     }
-                    matched = _evaluate_node(expression, local, [])
+                    matched = _evaluate_node(expression, local, [], direction=direction)
                     if not isinstance(matched, bool):
                         _fail("count aggregate expression did not return a boolean.")
                     total += int(matched)
@@ -252,20 +256,20 @@ def _evaluate_node(
         return _checked_number(math.fsum(contributions))
 
     if op == "abs":
-        return _checked_number(abs(_evaluate_node(node["arg"], context, history)))
+        return _checked_number(abs(_evaluate_node(node["arg"], context, history, direction=direction)))
     if op == "not":
         value = _evaluate_node(node["arg"], context, history)
         if not isinstance(value, bool):
             _fail("not received a non-boolean value.")
         return not value
 
-    left = _evaluate_node(node["left"], context, history)
+    left = _evaluate_node(node["left"], context, history, direction=direction)
     if op == "and":
         if not isinstance(left, bool):
             _fail("and received a non-boolean left operand.")
         if not left:
             return False
-        right = _evaluate_node(node["right"], context, history)
+        right = _evaluate_node(node["right"], context, history, direction=direction)
         if not isinstance(right, bool):
             _fail("and received a non-boolean right operand.")
         return right
@@ -320,6 +324,7 @@ def _rank_checked_history(
     *,
     number_pool_size: int,
     spec: dict[str, Any],
+    direction: str = "forward",
 ) -> list[dict[str, Any]]:
     ranking = []
     for candidate in range(1, number_pool_size + 1):
@@ -327,6 +332,7 @@ def _rank_checked_history(
             spec["score_expression"],
             {"candidate": candidate},
             checked_history,
+            direction=direction,
         )
         ranking.append({"number": candidate, "score": _checked_number(score)})
     ranking.sort(key=lambda item: (-item["score"], item["number"]))
@@ -401,6 +407,7 @@ def rank_candidates_retrospective(
         checked_history,
         number_pool_size=number_pool_size,
         spec=spec,
+        direction="reverse",
     )
 
 
