@@ -173,7 +173,7 @@ def split_archive(
     regimes: dict[str, dict[str, Any]] = {}
     all_discovery: list[dict[str, Any]] = []
     for regime, history in by_regime.items():
-        pool_size = 54 if regime == "R54" else 60
+        pool_size = 60
         available_history = [row for row in history if row["date"] not in used_dates]
         previously_consumed_count = len(history) - len(available_history)
         regimes[regime] = {}
