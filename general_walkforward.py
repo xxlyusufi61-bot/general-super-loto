@@ -14,10 +14,11 @@ from typing import Any
 
 import general_data_guard as guard
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 DEFAULT_MIN_TRAIN = 100
 DEFAULT_CV_FOLDS = 5
-REGIME_NUMBER_POOL_SIZES = {"R54": 54, "R60": 60}
+NUMBER_POOL_SIZE = 60
+RESEARCH_SCOPE_START = "2020-08-02"
 METHOD_NAMES = (
     "frequency_top6",
     "frequency_bottom6",
@@ -243,19 +244,14 @@ def evaluate_rows(
     if history_dates != sorted(history_dates) or len(history_dates) != len(set(history_dates)):
         raise ValueError("Evaluation history is not strictly chronological and unique.")
 
-    # Evaluate R54 and R60 independently. A regime without enough history is
-    # reported as insufficient; its rows are never pooled into the other regime.
-    regimes = {
-        "R54": [row for row in history if row["date"] < "2020-08-02"],
-        "R60": [row for row in history if row["date"] >= "2020-08-02"],
-    }
-    if sum(len(values) for values in regimes.values()) != len(history):
-        raise ValueError("R54/R60 partition count mismatch; evaluation stopped.")
+    if any(row["date"] < RESEARCH_SCOPE_START for row in history):
+        raise ValueError("Evaluation history contains a record before the active research scope.")
+    regimes = {"R60": history}
 
     regime_reports: dict[str, Any] = {}
     evaluable_regimes = 0
     for name, regime_history in regimes.items():
-        number_pool_size = REGIME_NUMBER_POOL_SIZES[name]
+        number_pool_size = NUMBER_POOL_SIZE
         if any(
             number < 1 or number > number_pool_size
             for row in regime_history
@@ -281,10 +277,6 @@ def evaluate_rows(
         regime_dates = [row["date"] for row in regime_history]
         if regime_dates != sorted(regime_dates) or len(regime_dates) != len(set(regime_dates)):
             raise ValueError(name + " history is not strictly chronological and unique.")
-        if name == "R54" and any(day >= "2020-08-02" for day in regime_dates):
-            raise ValueError("R54 contains a date at or after the regime boundary.")
-        if name == "R60" and any(day < "2020-08-02" for day in regime_dates):
-            raise ValueError("R60 contains a date before the regime boundary.")
 
         regime_reports[name] = {
             "number_pool_size": number_pool_size,
@@ -300,7 +292,7 @@ def evaluate_rows(
         evaluable_regimes += 1
 
     if evaluable_regimes == 0:
-        raise ValueError("Neither R54 nor R60 has sufficient pre-target history for baseline evaluation.")
+        raise ValueError("The active research scope has insufficient pre-target history for baseline evaluation.")
 
     return {
         "engine_version": VERSION,
@@ -308,9 +300,9 @@ def evaluate_rows(
         "archive_records": checked["record_count"],
         "pre_target_history_records": len(history),
         "minimum_training_draws": min_train,
-        "regime_boundary": "2020-08-02",
-        "regime_counts": {name: len(values) for name, values in regimes.items()},
-        "regimes_evaluated_separately": True,
+        "research_scope_start_date": RESEARCH_SCOPE_START,
+        "regime_counts": {"R60": len(history)},
+        "only_active_scope_evaluated": True,
         "current_target_excluded_from_scoring": True,
         "current_target_numbers_used_for_scoring": False,
         "current_target_numbers_exposed": False,
@@ -318,9 +310,9 @@ def evaluate_rows(
         "implemented_baselines": list(METHOD_NAMES),
         "required_methods_not_implemented": ["A->B->C", "A->T", "MOD5->T"],
         "interpretation_limits": [
-            "The regime-specific random benchmark is the theoretical expected overlap 36/N for two uniform 6-of-N sets: R54 uses N=54 (0.666667), and R60 uses N=60 (0.600000); it is not an observed experiment.",
+            "The uniform random benchmark for the active 6-of-60 pool is the theoretical expected overlap 36/60 = 0.6; it is not an observed experiment.",
             "Baseline results are descriptive historical results, not proof of a predictive mechanism.",
-            "R54 and R60 scores are computed independently; no draw rows are pooled across the 2020-08-02 boundary.",
+            "Only active-scope history is evaluated; pre-scope rows are rejected by Data Guard.",
             "Reverse-time results use later historical draws within the same regime and are retrospective stress tests, not predictive evidence.",
             "A->B->C, A->T, and MOD5->T remain OPEN_DEFINITION and were not executed by this baseline engine.",
             "A regime with insufficient pre-target history is reported as such; no synthetic or cross-regime substitute is used.",
