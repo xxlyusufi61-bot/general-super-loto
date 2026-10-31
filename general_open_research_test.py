@@ -61,7 +61,7 @@ class OpenResearchIsolationTests(unittest.TestCase):
     def test_prompt_requires_user_approval_for_rule_changes(self):
         system = research.build_messages("2026-10-22", self.rows[:2])[0]["content"].lower()
         self.assertIn("explicit telegram user approval", system)
-        self.assertIn('"change_type":"ADD|REVISE|REMOVE"', system)
+        self.assertIn('"change_type":"add|revise|remove"', system)
         self.assertIn("<rule_change_request_json>", system)
         self.assertIn("separate reviewed implementation pull request is required", system)
         self.assertIn("telegram", system)
