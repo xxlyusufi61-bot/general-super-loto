@@ -210,7 +210,7 @@ class SealedEvaluationTests(unittest.TestCase):
         self.assertFalse(self.ledger_path.exists())
         self.assertFalse(self.snapshot_directory.exists())
 
-    def test_evaluation_is_aggregate_only_and_claim_cannot_be_reused(self):
+    def test_evaluation_reports_per_draw_column_hits_and_claim_cannot_be_reused(self):
         proposals, specs = write_candidate_documents(self.root)
         claim = sealed.create_claim(
             self.archive_path,
@@ -269,6 +269,14 @@ class SealedEvaluationTests(unittest.TestCase):
                 claim["claim_id"], self.ledger_path, proposals, specs,
                 output_path=output_path,
             )
+
+    def test_candidate_with_both_direction_label_cannot_bypass_isolation(self):
+        proposal_path, specs_path = write_candidate_documents(self.root)
+        proposals = json.loads(proposal_path.read_text(encoding="utf-8"))
+        proposals["proposals"][0]["discovery_direction"] = "both"
+        proposal_path.write_text(json.dumps(proposals), encoding="utf-8")
+        selected = sealed._select_one_frozen_candidate(proposal_path, specs_path)
+        self.assertIsNone(selected)
 
     def test_candidate_cannot_change_after_claim(self):
         proposals, specs = write_candidate_documents(self.root)
