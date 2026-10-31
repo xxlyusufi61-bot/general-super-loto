@@ -296,6 +296,8 @@ def build_messages(
     if direction == "reverse":
         r54 = list(reversed(r54))
         r60 = list(reversed(r60))
+    regime_history = {"R54": r54, "R60": r60} if direction == "forward" else {"R60": r60, "R54": r54}
+    regime_counts = {"R54": len(r54), "R60": len(r60)} if direction == "forward" else {"R60": len(r60), "R54": len(r54)}
     user = {
         "task": "Perform one isolated " + direction + " blank-slate hypothesis discovery pass. Do not output number predictions.",
         "discovery_direction": direction,
@@ -303,8 +305,8 @@ def build_messages(
         "user_research_focus_untrusted": str(focus)[:1000],
         "target_date_metadata_only": target,
         "pre_target_draw_count": len(train),
-        "discovery_history_by_regime": {"R54": r54, "R60": r60},
-        "discovery_counts_by_regime": {"R54": len(r54), "R60": len(r60)},
+        "discovery_history_by_regime": regime_history,
+        "discovery_counts_by_regime": regime_counts,
         "regime_boundary": "2020-08-02",
         "regimes_must_be_evaluated_separately": True,
         "target_numbers_included": False,
