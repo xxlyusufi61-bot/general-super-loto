@@ -7,7 +7,7 @@ interval, and sends only discovery rows plus governance rules to the research mo
 a verified formula or prediction.
 
 NVIDIA's account-level rate limit/quota is not queried here. The runner records
-only safe usage metadata returned by the same inference request, when provided.
+only safe usage metadata returned by each directional inference request, when provided.
 """
 from __future__ import annotations
 
@@ -605,6 +605,11 @@ def call_model(
 ) -> str:
     if request_label not in {None, "forward", "reverse"}:
         raise ValueError("Unknown NVIDIA request label.")
+    request_usage_name = (
+        USAGE_REPORT.name
+        if request_label is None
+        else USAGE_REPORT.stem + "_" + request_label + USAGE_REPORT.suffix
+    )
     if not has_explicit_live_consent(
         os.environ.get("GENERAL_CONFIRM_LIVE_CALLS", "")
     ):
@@ -673,7 +678,7 @@ def call_model(
         if exc.code == 429:
             raise RuntimeError(
                 "NVIDIA returned HTTP 429 (rate limit). No automatic retry was attempted; "
-                "inspect open_research_usage.json."
+                "inspect " + request_usage_name + "."
             ) from None
         if exc.code == 402:
             raise RuntimeError(
@@ -682,7 +687,7 @@ def call_model(
             ) from None
         raise RuntimeError(
             "Research model HTTP error " + str(exc.code) +
-            "; no automatic retry was attempted; inspect open_research_usage.json."
+            "; no automatic retry was attempted; inspect " + request_usage_name + "."
         ) from None
     except (urllib.error.URLError, TimeoutError):
         save_usage_observation(build_usage_observation(None, None, None), request_label=request_label)
@@ -695,7 +700,7 @@ def call_model(
     content = message.get("content")
     if not isinstance(content, str) or not content.strip():
         raise RuntimeError(
-            "Research model returned no final content. Inspect open_research_usage.json; "
+            "Research model returned no final content. Inspect " + request_usage_name + "; "
             "no automatic retry was attempted."
         )
     success_marker.write_text(
