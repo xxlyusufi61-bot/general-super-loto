@@ -308,6 +308,24 @@ def _evaluate_node(
     return _checked_number(result)
 
 
+def _rank_checked_history(
+    checked_history: list[dict[str, Any]],
+    *,
+    number_pool_size: int,
+    spec: dict[str, Any],
+) -> list[dict[str, Any]]:
+    ranking = []
+    for candidate in range(1, number_pool_size + 1):
+        score = _evaluate_node(
+            spec["score_expression"],
+            {"candidate": candidate},
+            checked_history,
+        )
+        ranking.append({"number": candidate, "score": _checked_number(score)})
+    ranking.sort(key=lambda item: (-item["score"], item["number"]))
+    return ranking
+
+
 def rank_candidates(
     history: list[dict[str, Any]],
     *,
@@ -328,17 +346,11 @@ def rank_candidates(
     if date.fromisoformat(checked_history[-1]["date"]) >= cutoff:
         _fail("history contains a draw on or after the scoring cutoff.")
     spec = validate_execution_spec(execution_spec)
-    ranking = []
-    for candidate in range(1, number_pool_size + 1):
-        score = _evaluate_node(
-            spec["score_expression"],
-            {"candidate": candidate},
-            checked_history,
-        )
-        ranking.append({"number": candidate, "score": _checked_number(score)})
-    # Deterministic order: higher score first; lower number breaks ties.
-    ranking.sort(key=lambda item: (-item["score"], item["number"]))
-    return ranking
+    return _rank_checked_history(
+        checked_history,
+        number_pool_size=number_pool_size,
+        spec=spec,
+    )
 
 
 def evaluate_holdout(
