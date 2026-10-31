@@ -75,17 +75,16 @@ class OpenResearchIsolationTests(unittest.TestCase):
         self.assertEqual(target, "2026-10-22")
         self.assertEqual(forward_payload["discovery_direction"], "forward")
         self.assertEqual(forward_payload["history_order"], "oldest_to_newest")
-        self.assertEqual(list(forward_payload["discovery_history_by_regime"]), ["R54", "R60"])
+        self.assertEqual(list(forward_payload["discovery_history_by_regime"]), ["R60"])
         self.assertEqual(
             [row["date"] for row in forward_payload["discovery_history_by_regime"]["R60"]],
             ["2026-10-18", "2026-10-20"],
         )
-        self.assertEqual(forward_payload["discovery_history_by_regime"]["R54"], [])
-        self.assertEqual(forward_payload["discovery_counts_by_regime"], {"R54": 0, "R60": 2})
+        self.assertEqual(forward_payload["discovery_counts_by_regime"], {"R60": 2})
         self.assertNotIn("reverse_discovery_history_by_regime", forward_payload)
         self.assertEqual(reverse_payload["discovery_direction"], "reverse")
         self.assertEqual(reverse_payload["history_order"], "newest_to_oldest")
-        self.assertEqual(list(reverse_payload["discovery_history_by_regime"]), ["R60", "R54"])
+        self.assertEqual(list(reverse_payload["discovery_history_by_regime"]), ["R60"])
         self.assertEqual(
             [row["date"] for row in reverse_payload["discovery_history_by_regime"]["R60"]],
             ["2026-10-20", "2026-10-18"],
@@ -141,7 +140,7 @@ class OpenResearchIsolationTests(unittest.TestCase):
         self.assertGreater(min(forward_dates), reverse_end)
         self.assertEqual(len(reverse_dates), 40)
         self.assertEqual(reverse_dates, list(reversed(forward_dates)))
-        self.assertEqual(forward_payload["discovery_counts_by_regime"]["R54"], 31)
+        self.assertEqual(forward_payload["discovery_counts_by_regime"]["R60"], 40)
         self.assertNotIn("reverse_discovery_history_by_regime", forward_payload)
         self.assertNotIn("forward_discovery_history_by_regime", reverse_payload)
         self.assertNotIn(sealed_start, forward_messages[1]["content"])
@@ -244,7 +243,7 @@ class OpenResearchIsolationTests(unittest.TestCase):
             self.assertIn("zero or one item only", system)
             self.assertIn("complete claim requires one valid spec from each independent direction", system)
             self.assertIn("not approved or canonical", system)
-            self.assertIn("fixed synthetic r54/r60 contract fixtures", system)
+            self.assertIn("fixed synthetic 6-of-60 active-scope fixtures", system)
             self.assertIn("not claim that it was real-archive backtested", system)
             self.assertNotIn("eval(", system)
             self.assertNotIn("exec(", system)
@@ -262,20 +261,13 @@ class OpenResearchIsolationTests(unittest.TestCase):
         self.assertIn("separate reviewed implementation pull request is required", system)
         self.assertIn("telegram", system)
 
-    def test_r54_and_r60_are_sent_as_disjoint_regime_partitions(self):
+    def test_pre_scope_rows_are_rejected_before_agent_payload(self):
         history = [
             {"date": "2020-07-30", "numbers": [1, 7, 13, 22, 34, 48]},
             {"date": "2020-08-02", "numbers": [2, 8, 14, 23, 35, 49]},
         ]
-        messages = research.build_messages("2020-08-05", history)
-        payload = json.loads(messages[1]["content"])
-        self.assertEqual([row["date"] for row in payload["discovery_history_by_regime"]["R54"]], ["2020-07-30"])
-        self.assertEqual([row["date"] for row in payload["discovery_history_by_regime"]["R60"]], ["2020-08-02"])
-        self.assertEqual(
-            set(row["date"] for row in payload["discovery_history_by_regime"]["R54"])
-            & set(row["date"] for row in payload["discovery_history_by_regime"]["R60"]),
-            set(),
-        )
+        with self.assertRaisesRegex(RuntimeError, "Data Guard rejected archive"):
+            research.load_archive_payload({"draws": history})
 
     def test_invalid_archive_stops_before_model_payload(self):
         bad = [
