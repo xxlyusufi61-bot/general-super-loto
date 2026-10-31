@@ -1,7 +1,7 @@
 """One-shot, leakage-free orchestration for a sealed chronological evaluation.
 
-The live research model receives discovery rows only. A fixed DSL specification
-can claim one non-overlapping R60 validation interval. The claim and immutable
+The forward and reverse discovery requests each receive only their direction-specific discovery view. Two independently frozen DSL specifications
+can claim disjoint R60 directional holdouts. The claim and immutable
 archive snapshot must be persisted before any real-archive scoring starts.
 This module never changes the method registry or emits draw-number sets.
 """
@@ -32,7 +32,7 @@ from general_hypothesis_execution import (
     validate_execution_spec,
 )
 
-VERSION = "0.3.0"
+VERSION = "0.3.1"
 REGIME_BOUNDARY = date(2020, 8, 2)
 DEFAULT_MIN_TRAIN_DRAWS = 40
 DEFAULT_MAX_VALIDATION_DRAWS = 30
@@ -418,16 +418,16 @@ def _select_one_frozen_candidate(
     if any(
         not isinstance(item, dict)
         or not isinstance(item.get("hypothesis_id"), str)
-        or item.get("discovery_direction") not in {"forward", "reverse", "both"}
+        or item.get("discovery_direction") not in {"forward", "reverse"}
         for item in items
     ):
         return None
     forward_proposal = next(
-        (item for item in items if item["discovery_direction"] in {"forward", "both"}),
+        (item for item in items if item["discovery_direction"] == "forward"),
         None,
     )
     reverse_proposal = next(
-        (item for item in items if item["discovery_direction"] in {"reverse", "both"}),
+        (item for item in items if item["discovery_direction"] == "reverse"),
         None,
     )
     if forward_proposal is None or reverse_proposal is None:
