@@ -61,8 +61,8 @@ class WalkForwardTests(unittest.TestCase):
 
     def test_pre_scope_record_is_rejected(self):
         rows = synthetic_rows(start="2020-08-02", count=106)
-        rows.insert(0, {"date": "2020-07-30", "numbers": [1, 2, 3, 4, 5, 54]})
-        with self.assertRaisesRegex(ValueError, "Data Guard rejected archive"):
+        rows.insert(0, {"date": "2020-07-30", "numbers": [1, 2, 3, 4, 5, 6]})
+        with self.assertRaisesRegex(ValueError, "before the active research scope"):
             engine.evaluate_rows(rows, min_train=10, cv_folds=5)
 
     def test_uniform_baseline_is_for_one_6_of_60_pool(self):
