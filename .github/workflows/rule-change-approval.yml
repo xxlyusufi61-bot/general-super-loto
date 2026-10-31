@@ -10,6 +10,9 @@ name: GENERAL Rule Change Approval
       - ".github/workflows/rule-change-approval.yml"
       - ".github/workflows/open-research.yml"
       - "general_open_research.py"
+      - "general_core.py"
+      - ".github/workflows/general-agent.yml"
+      - ".github/workflows/general-coordinator-execute.yml"
   pull_request:
     branches:
       - main
@@ -19,6 +22,9 @@ name: GENERAL Rule Change Approval
       - ".github/workflows/rule-change-approval.yml"
       - ".github/workflows/open-research.yml"
       - "general_open_research.py"
+      - "general_core.py"
+      - ".github/workflows/general-agent.yml"
+      - ".github/workflows/general-coordinator-execute.yml"
   schedule:
     - cron: "*/30 * * * *"
   workflow_dispatch:
