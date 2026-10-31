@@ -15,6 +15,7 @@ START_MARKER = "<HYPOTHESIS_EXECUTION_SPECS_JSON>"
 END_MARKER = "</HYPOTHESIS_EXECUTION_SPECS_JSON>"
 SCHEMA_VERSION = 1
 MAX_EXECUTION_SPECS = 5
+MAX_EXECUTION_BLOCK_CHARS = 16_384
 SPECIFICATION_KEYS = {"hypothesis_id", "execution_spec"}
 
 
@@ -57,6 +58,9 @@ def parse_execution_spec_block(
         base["rejection_reasons"] = ["Execution-specification markers are out of order."]
         return base
     raw = report[start:end].strip()
+    if len(raw) > MAX_EXECUTION_BLOCK_CHARS:
+        base["rejection_reasons"] = ["Execution-specification block exceeds the size limit."]
+        return base
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError:
