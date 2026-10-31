@@ -2,8 +2,8 @@
 
 This module intentionally does not import the legacy method registry, candidate
 implementations, evidence catalog, or project memory. It validates the archive,
-isolates the latest draw locally, and sends only strictly pre-target draws plus
-governance rules to the research model. Its output is a hypothesis report, not
+isolates the latest draw locally, withholds a separate chronological validation
+interval, and sends only discovery rows plus governance rules to the research model. Its output is a hypothesis report, not
 a verified formula or prediction.
 
 NVIDIA's account-level rate limit/quota is not queried here. The runner records
@@ -484,11 +484,9 @@ def main() -> int:
             "- Specifications executed against the real archive by discovery runner: NO\n"
             "- Sealed one-shot evaluator eligible only with one spec matching the first discovery-prioritized proposal: YES\n"
             "- Persistent claim required before scoring: YES; enforced by a separate workflow step\n"
-            "- Sealed R60 validation window (dates only): "
-            + str(sealed_plan["regimes"]["R60"]["validation_start_date"]) + " to "
-            + str(sealed_plan["regimes"]["R60"]["validation_end_date"]) + " ("
-            + str(sealed_plan["regimes"]["R60"]["validation_count"]) + " draws)\n"
-            "- R54 status: " + str(sealed_plan["regimes"]["R54"]["status"]) + "\n"
+            f"- Sealed R60 validation window (dates only): {sealed_plan['regimes']['R60']['validation_start_date']} to "
+            f"{sealed_plan['regimes']['R60']['validation_end_date']} ({sealed_plan['regimes']['R60']['validation_count']} draws)\n"
+            f"- R54 status: {sealed_plan['regimes']['R54']['status']}\n"
             "- Execution approval / method promotion: NO\n"
         )
         usage_note = (
