@@ -74,6 +74,10 @@ Callers must pass one regime at a time. R54 and R60 histories must never be pool
 
 The report contains aggregate hit statistics, a standard error, the uniform-random reference 36/N, and a hash of the exact specification. It omits per-draw target values and candidate rankings.
 
+evaluate_time_ordered_cv splits the same separate validation interval into contiguous time-ordered blocks, without shuffling. Earlier validation draws may enter the training history of later folds only after their dates have passed.
+
+evaluate_reverse_retrospective_stress intentionally scores earlier historical rows using later rows from the same regime. Its output is always marked EVALUATED_RETROSPECTIVE_ONLY with predictive_evidence false. It is a diagnostic only and never predictive evidence.
+
 ## 5. Interpretation and limits
 
 This v0.1 DSL can express only score functions based on one aggregate over prior draw numbers. It does not yet express every possible hypothesis involving whole draw states, linked state sequences, crossover, or more complex transformations. A proposal outside this grammar must remain PROPOSAL_ONLY; it must not be approximated silently or translated into arbitrary code.
