@@ -281,6 +281,98 @@ class SealedEvaluationTests(unittest.TestCase):
                 output_path=output_path,
             )
 
+
+    def test_fresh_directional_windows_advance_after_prior_claim_and_archive_growth(self):
+        proposals, specs = write_candidate_documents(self.root)
+        first = sealed.create_claim(
+            self.archive_path,
+            self.ledger_path,
+            proposals,
+            specs,
+            snapshot_directory=self.snapshot_directory,
+        )
+        self.assertTrue(first["claim_created"])
+        first_forward = set(
+            json.loads(self.ledger_path.read_text(encoding="utf-8"))["entries"][0]["validation_dates"]
+        )
+        first_reverse = set(
+            json.loads(self.ledger_path.read_text(encoding="utf-8"))["entries"][0]["reverse_validation_dates"]
+        )
+        first_used = first_forward | first_reverse
+
+        # One new target makes the previous target historical, but does not yet
+        # supply two fresh holdouts plus the required 40-row discovery middle.
+        one_new_target = {
+            "date": "2021-01-12",
+            "numbers": sorted({((11 + offset * 9 - 1) % 60) + 1 for offset in range(6)}),
+        }
+        self.archive_path.write_text(
+            json.dumps({"draws": self.rows + [one_new_target]}),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(sealed.SealedEvaluationError, "fresh forward sealed validation interval"):
+            sealed.preflight(self.archive_path, self.ledger_path)
+
+        # After enough additional rows, the next run must select unused dates;
+        # old holdouts stay out of both discovery and the new holdouts.
+        additions = []
+        for index in range(4):
+            draw_day = (date(2021, 1, 12) + timedelta(days=2 * index)).isoformat()
+            base = (index * 13 + 5) % 60 + 1
+            numbers = sorted({((base + offset * 11 - 1) % 60) + 1 for offset in range(6)})
+            additions.append({"date": draw_day, "numbers": numbers})
+        new_target = {
+            "date": "2021-01-20",
+            "numbers": sorted({((17 + offset * 7 - 1) % 60) + 1 for offset in range(6)}),
+        }
+        updated_rows = self.rows + additions + [new_target]
+        self.archive_path.write_text(
+            json.dumps({"draws": updated_rows}),
+            encoding="utf-8",
+        )
+
+        plan = sealed.preflight(self.archive_path, self.ledger_path)
+        self.assertEqual(plan["status"], "READY")
+        self.assertEqual(plan["previously_consumed_validation_draw_count"], len(first_used))
+        split = sealed.split_archive(
+            updated_rows,
+            used_validation_dates=first_used,
+        )
+        r60 = split["regimes"]["R60"]
+        second_forward = {row["date"] for row in r60["validation_rows"]}
+        second_reverse = {row["date"] for row in r60["reverse_validation_rows"]}
+        discovery_dates = {row["date"] for row in r60["discovery_rows"]}
+        self.assertGreaterEqual(r60["discovery_count"], sealed.DEFAULT_MIN_TRAIN_DRAWS)
+        self.assertFalse(first_used.intersection(second_forward | second_reverse | discovery_dates))
+        self.assertFalse(second_forward.intersection(second_reverse))
+        self.assertGreater(min(second_reverse), max(first_reverse))
+        self.assertGreater(min(second_forward), max(first_forward))
+        self.assertEqual(r60["previously_consumed_draw_count"], len(first_used))
+
+        second = sealed.create_claim(
+            self.archive_path,
+            self.ledger_path,
+            proposals,
+            specs,
+            snapshot_directory=self.snapshot_directory,
+        )
+        self.assertTrue(second["claim_created"])
+        ledger = json.loads(self.ledger_path.read_text(encoding="utf-8"))
+        self.assertEqual(len(ledger["entries"]), 2)
+        self.assertEqual(
+            ledger["entries"][1]["previously_consumed_validation_dates"],
+            sorted(first_used),
+        )
+        second_report = self.root / "second-evaluation.json"
+        evaluated = sealed.evaluate_claim(
+            second["claim_id"],
+            self.ledger_path,
+            proposals,
+            specs,
+            output_path=second_report,
+        )
+        self.assertEqual(evaluated["status"], "EVALUATED_EXPLORATORY_FIXED_SPEC")
+
     def test_candidate_with_both_direction_label_cannot_bypass_isolation(self):
         proposal_path, specs_path = write_candidate_documents(self.root)
         proposals = json.loads(proposal_path.read_text(encoding="utf-8"))
