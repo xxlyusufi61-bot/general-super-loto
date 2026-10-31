@@ -739,7 +739,8 @@ def run_audit(archive_path: Path = ARCHIVE_PATH) -> dict[str, Any]:
                 lotobil_r60_report["status"] = "MATCH_AFTER_DOCUMENTED_SOURCE_NORMALIZATION"
             lotobil_r60_report["normalized_match"] = True
         else:
-            lotobil_r60_report["normalized_match"] = False    except AuditSourceError:
+            lotobil_r60_report["normalized_match"] = False
+    except AuditSourceError:
         lotobil_r60_report = {"status": "FETCH_FAILED", "draw_numbers_in_report": False}
 
 
