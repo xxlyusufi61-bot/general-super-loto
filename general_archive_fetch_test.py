@@ -134,7 +134,8 @@ class MultiYearReconciliationTests(unittest.TestCase):
         merged, report = fetcher.reconcile_year_with_loto_gen(
             2020, primary, independent
         )
-        self.assertEqual(len(merged), 2)
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0]["date"], "2020-08-02")
         self.assertEqual(report["result"], "PASS")
         self.assertEqual(report["independent_source_count"], 1)
 
