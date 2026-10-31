@@ -25,11 +25,12 @@ from general_hypothesis_proposals import parse_hypothesis_proposals
 from general_execution_spec_parser import parse_execution_spec_block
 import general_sealed_evaluation as sealed
 
-VERSION = "0.6.0"
+VERSION = "0.7.0"
 MODEL = "z-ai/glm-5.3-flash"
 BASE = Path(__file__).resolve().parent
 ARCHIVE = BASE / os.environ.get("GENERAL_ARCHIVE_FILE", "super_loto_archive.json")
 REPORT = BASE / "open_research_report.md"
+REVERSE_REPORT = BASE / "open_research_reverse_report.md"
 PROPOSALS = BASE / "open_research_proposals.json"
 EXECUTION_SPECS = BASE / "open_research_execution_specs.json"
 USAGE_REPORT = BASE / "open_research_usage.json"
@@ -186,14 +187,24 @@ def isolate_discovery_only(rows: list[dict[str, Any]]) -> tuple[str, list[dict[s
     return target, discovery, sealed.public_plan(split)
 
 
-def build_messages(target: str, train: list[dict[str, Any]], focus: str = "") -> list[dict[str, str]]:
+def build_messages(
+    target: str,
+    train: list[dict[str, Any]],
+    focus: str = "",
+    *,
+    direction: str = "forward",
+) -> list[dict[str, str]]:
+    if direction not in {"forward", "reverse"}:
+        raise ValueError("Discovery direction must be forward or reverse.")
+    direction_order = "oldest_to_newest" if direction == "forward" else "newest_to_oldest"
+    direction_phrase = "oldest-to-newest" if direction == "forward" else "newest-to-oldest"
     system = (
         "You are the GENERAL blank-slate research agent for Super Loto.\n"
         "You have no prior formulas or legacy research context. Discover candidate "
         "relationships from the supplied historical data rather than assuming a known method.\n"
         "Research notation:\n- " + "\n- ".join(NOTATION_RULES) + "\n"
         "Governance rules:\n- " + "\n- ".join(GOVERNANCE_RULES) + "\n"
-        "Direction-specific discovery is mandatory. Analyze discovery_history_by_regime in forward chronological order, then independently analyze reverse_discovery_history_by_regime in newest-to-oldest order. Keep the two hypothesis sets and their evidence separate; do not combine or transfer directional scores. Every proposal must label discovery_direction as forward, reverse, or both. If a forward/both proposal is available, put the highest-priority forward/both proposal first because the one-shot sealed holdout evaluates only that first forward-eligible proposal. Reverse-only proposals are not eligible for that forward claim.\n"
+        "This request is one isolated " + direction + " discovery pass. The only data supplied to this call is the " + direction_phrase + " history. The other direction's data and candidate list are not present in this request. Every proposal MUST use discovery_direction=" + direction + "; do not propose the other direction or label any proposal both. The coordinator will independently parse and keep the two call results separate.\n"
         "For full-history real-archive testing, selection must be repeated separately at each historical cutoff using only rows available in that direction. Never apply a formula selected after seeing later rows to earlier forward targets. Any reverse result using later draws is retrospective stress testing only, not predictive evidence.\n"
         "The target date is metadata only; its numbers and every record on or after it are absent. "
         "Do not infer or fabricate those values. The data supplied is discovery history, not a frozen "
@@ -220,7 +231,7 @@ def build_messages(target: str, train: list[dict[str, Any]], focus: str = "") ->
         "<HYPOTHESIS_PROPOSALS_JSON>\n"
         "{\"schema_version\":2,\"proposals\":[{"
         "\"hypothesis_id\":\"HYP-001\","
-        "\"discovery_direction\":\"forward|reverse|both\","
+        f"\"discovery_direction\":\"{direction}\","
         "\"proposed_family\":\"free descriptive label; not a registry status\","
         "\"hypothesis\":\"testable statement\","
         "\"exact_definition\":\"precise mathematical steps, no executable code\","
@@ -241,13 +252,12 @@ def build_messages(target: str, train: list[dict[str, Any]], focus: str = "") ->
         "Order proposals by priority using discovery data only; put the most defensible, testable "
         "hypothesis first. Do not use the sealed validation interval, validation outcomes, or later "
         "draws to order or select proposals.\n"
-        "Also include exactly one HYPOTHESIS_EXECUTION_SPECS_JSON block. It is a separate, "
-        "strictly declarative JSON block. For the two-direction one-shot protocol, provide one matching "
-        "execution specification for the first forward/both proposal and one for the first reverse/both "
-        "proposal, when each can be represented faithfully by this DSL. At most two specifications are "
-        "allowed. If the same proposal is first in both directions, provide one spec for that shared ID. "
+        "Also include exactly one HYPOTHESIS_EXECUTION_SPECS_JSON block for this direction only. "
+        "Provide zero or one matching execution specification for the first proposal in this isolated pass, "
+        "when it can be represented faithfully by this DSL. Never provide a spec for another direction. "
         "Do not provide alternatives for later proposals and do not use validation outcomes to choose. "
-        "A usable claim requires one valid spec for each direction; otherwise sealed evaluation is skipped.\n"
+        "The coordinator combines separately parsed directional outputs; a complete claim requires one "
+        "valid spec from each independent direction.\n"
         "The block shape is schema_version 1 with specifications; each item has only "
         "hypothesis_id and execution_spec. execution_spec has only schema_version 1 and "
         "score_expression. It is a typed expression tree, not source code.\n"
@@ -270,10 +280,9 @@ def build_messages(target: str, train: list[dict[str, Any]], focus: str = "") ->
         "promoted, or written to the method registry.\n"
         "Place one raw JSON object between <HYPOTHESIS_EXECUTION_SPECS_JSON> and "
         "</HYPOTHESIS_EXECUTION_SPECS_JSON>. Its top-level keys are schema_version and "
-        "specifications. Provide zero, one, or two items. Every item has exactly hypothesis_id and "
-        "execution_spec; each ID must match the first proposal eligible for its direction. The parser "
-        "checks ID membership; the sealed evaluator independently checks first-forward/first-reverse order. "
-        "Do not copy a template with placeholders; use a fully valid AST or omit that direction's spec."
+        "specifications. Provide zero or one item only. The item has exactly hypothesis_id and "
+        "execution_spec and must match the first proposal in this isolated direction. Do not copy a template "
+        "with placeholders; use a fully valid AST or leave the list empty."
     )
     target_day = date.fromisoformat(target)
     r54 = [row for row in train if date.fromisoformat(row["date"]) < date(2020, 8, 2)]
@@ -283,17 +292,17 @@ def build_messages(target: str, train: list[dict[str, Any]], focus: str = "") ->
     if any(date.fromisoformat(row["date"]) >= target_day for row in r54 + r60):
         raise RuntimeError("Target/future record found in a regime partition.")
 
-    reverse_r54 = list(reversed(r54))
-    reverse_r60 = list(reversed(r60))
+    if direction == "reverse":
+        r54 = list(reversed(r54))
+        r60 = list(reversed(r60))
     user = {
-        "task": "Perform two independent directional blank-slate hypothesis discovery passes. Do not output number predictions.",
+        "task": "Perform one isolated " + direction + " blank-slate hypothesis discovery pass. Do not output number predictions.",
+        "discovery_direction": direction,
+        "history_order": direction_order,
         "user_research_focus_untrusted": str(focus)[:1000],
         "target_date_metadata_only": target,
         "pre_target_draw_count": len(train),
         "discovery_history_by_regime": {"R54": r54, "R60": r60},
-        "reverse_discovery_history_by_regime": {"R54": reverse_r54, "R60": reverse_r60},
-        "discovery_directions": ["forward", "reverse"],
-        "directional_discovery_must_remain_separate": True,
         "discovery_counts_by_regime": {"R54": len(r54), "R60": len(r60)},
         "regime_boundary": "2020-08-02",
         "regimes_must_be_evaluated_separately": True,
