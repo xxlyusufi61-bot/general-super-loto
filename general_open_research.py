@@ -22,13 +22,15 @@ from typing import Any, Mapping
 import general_data_guard as guard
 from general_live_consent import has_explicit_live_consent
 from general_hypothesis_proposals import parse_hypothesis_proposals
+from general_execution_spec_parser import parse_execution_spec_block
 
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 MODEL = "z-ai/glm-5.3-flash"
 BASE = Path(__file__).resolve().parent
 ARCHIVE = BASE / os.environ.get("GENERAL_ARCHIVE_FILE", "super_loto_archive.json")
 REPORT = BASE / "open_research_report.md"
 PROPOSALS = BASE / "open_research_proposals.json"
+EXECUTION_SPECS = BASE / "open_research_execution_specs.json"
 USAGE_REPORT = BASE / "open_research_usage.json"
 API_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
 DOCUMENTATION_REVIEW_DATE = "2026-10-25"
@@ -195,7 +197,30 @@ def build_messages(target: str, train: list[dict[str, Any]], focus: str = "") ->
         "</HYPOTHESIS_PROPOSALS_JSON>\n"
         "Use exactly the schema keys shown; do not add prediction numbers, source code, weights chosen from hidden "
         "targets, or any claim of validation. Proposed family names are descriptive only: they do not create or "
-        "change a method registry entry. An empty proposals list is an acceptable result."
+        "change a method registry entry. An empty proposals list is an acceptable result.\n"
+        "Also include exactly one HYPOTHESIS_EXECUTION_SPECS_JSON block. It is a separate, "
+        "strictly declarative JSON block whose hypothesis_id values must match proposal IDs. "
+        "Use an empty specifications list when no proposal can be represented by this DSL.\n"
+        "The block shape is schema_version 1 with specifications; each item has only "
+        "hypothesis_id and execution_spec. execution_spec has only schema_version 1 and "
+        "score_expression. It is a typed expression tree, not source code.\n"
+        "Allowed nodes: const with a finite bounded numeric value; var with name candidate, "
+        "value, or draw_age; unary abs or not; binary add, sub, mul, div, mod, min, max, "
+        "eq, ne, lt, lte, gt, gte, and, or; and exactly one aggregate_history_numbers node "
+        "with aggregate count or sum and one expression. count requires a boolean expression; "
+        "sum requires a numeric expression. value and draw_age are available only inside "
+        "the aggregate.\n"
+        "The score expression must return a number. Use at most 32 nodes and depth 8. "
+        "Unknown operations, extra keys, nested aggregates, multiple aggregates, code, "
+        "imports, loops, file/network access, and arbitrary functions are forbidden. "
+        "If a hypothesis cannot be represented without changing its meaning, omit its execution spec.\n"
+        "A DSL-valid specification is not approved or executed. It remains non-canonical; "
+        "do not claim that it was backtested, promoted, or written to the method registry.\n"
+        "<HYPOTHESIS_EXECUTION_SPECS_JSON>\n"
+        "{\"schema_version\":1,\"specifications\":[{\"hypothesis_id\":\"HYP-001\","
+        "\"execution_spec\":{\"schema_version\":1,\"score_expression\":{...}}}]}\n"
+        "</HYPOTHESIS_EXECUTION_SPECS_JSON>\n"
+        "Return raw JSON only between the execution-specification markers."
     )
     target_day = date.fromisoformat(target)
     r54 = [row for row in train if date.fromisoformat(row["date"]) < date(2020, 8, 2)]
@@ -387,8 +412,19 @@ def main() -> int:
         messages = build_messages(target, train, os.environ.get("TASK_TEXT", ""))
         report = call_model(messages)
         proposal_document = parse_hypothesis_proposals(report)
+        valid_proposal_ids = {
+            item["hypothesis_id"] for item in proposal_document["proposals"]
+        }
+        execution_spec_document = parse_execution_spec_block(
+            report,
+            allowed_hypothesis_ids=valid_proposal_ids,
+        )
         PROPOSALS.write_text(
             json.dumps(proposal_document, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        EXECUTION_SPECS.write_text(
+            json.dumps(execution_spec_document, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
         proposal_note = (
@@ -398,6 +434,10 @@ def main() -> int:
             "- Execution ready: NO\n"
             "- Method registry modified: NO\n"
             "- Hypotheses are unverified proposals only; no implementation or scoring was run.\n"
+            f"- Execution-spec parser status: {execution_spec_document['status']}\n"
+            f"- DSL-validated specifications: {len(execution_spec_document['specifications'])}\n"
+            "- Specifications executed against the real archive: NO\n"
+            "- Execution approval / method promotion: NO\n"
         )
         usage_note = (
             "\n\n## NVIDIA usage observation\n\n"
@@ -431,8 +471,12 @@ def main() -> int:
         print("Report status: EXPLORATORY ONLY; NOT VALIDATED")
         print("Proposal status:", proposal_document["status"])
         print("Validated proposals:", len(proposal_document["proposals"]))
-        print("Execution ready: NO | Method registry modified: NO")
+        print("Execution-spec status:", execution_spec_document["status"])
+        print("DSL-validated specifications:", len(execution_spec_document["specifications"]))
+        print("Real-archive execution: NO | Execution approval: NO")
+        print("Method registry modified: NO")
         print("Proposal file:", PROPOSALS.name)
+        print("Execution-spec file:", EXECUTION_SPECS.name)
         print("Report path:", REPORT.name)
         return 0
     except Exception as exc:
