@@ -75,8 +75,16 @@ class OpenResearchIsolationTests(unittest.TestCase):
         r60_dates = [row["date"] for row in payload["discovery_history_by_regime"]["R60"]]
         sealed_start = plan["regimes"]["R60"]["validation_start_date"]
         self.assertEqual(target, "2021-01-10")
-        self.assertEqual(len(r60_dates), 50)
+        self.assertEqual(len(r60_dates), 40)
         self.assertLess(max(r60_dates), sealed_start)
+        reverse_end = plan["regimes"]["R60"]["reverse_validation_end_date"]
+        self.assertGreater(min(r60_dates), reverse_end)
+        reverse_rows = payload["reverse_discovery_history_by_regime"]["R60"]
+        self.assertEqual(len(reverse_rows), 40)
+        self.assertEqual(
+            [row["date"] for row in reverse_rows],
+            list(reversed(r60_dates)),
+        )
         self.assertEqual(payload["discovery_counts_by_regime"]["R54"], 31)
         self.assertNotIn(sealed_start, messages[1]["content"])
         self.assertNotIn(target, r60_dates)
@@ -109,8 +117,10 @@ class OpenResearchIsolationTests(unittest.TestCase):
         self.assertIn("binary operators have only op,left,right", system)
         self.assertIn("nested aggregates", system)
         self.assertIn("if a hypothesis cannot be represented", system)
-        self.assertIn("at most one execution specification", system)
-        self.assertIn("first proposal's hypothesis_id", system)
+        self.assertIn("at most two specifications are allowed", system)
+        self.assertIn("first forward/both proposal", system)
+        self.assertIn("first reverse/both proposal", system)
+        self.assertIn("A usable claim requires one valid spec for each direction", system)
         self.assertIn("not approved or canonical", system)
         self.assertIn("fixed synthetic r54/r60 contract fixtures", system)
         self.assertIn("not claim that it was real-archive backtested", system)
