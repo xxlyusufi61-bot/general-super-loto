@@ -119,6 +119,15 @@ class WalkForwardTests(unittest.TestCase):
                     expected,
                 )
 
+    def test_r54_frequency_rankings_stay_inside_1_to_54(self):
+        training = [{"numbers": [1, 2, 3, 4, 5, 6]}]
+        for hottest in (True, False):
+            predicted = engine._frequency_rank(
+                training, hottest=hottest, number_pool_size=54
+            )
+            self.assertEqual(len(predicted), 6)
+            self.assertTrue(all(1 <= number <= 54 for number in predicted))
+
     def test_r54_out_of_pool_pre_target_value_is_rejected(self):
         rows = []
         start = date(2020, 7, 20)
