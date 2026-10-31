@@ -23,6 +23,52 @@ class MethodRegistryContextTests(unittest.TestCase):
             with self.subTest(marker=marker):
                 self.assertNotIn(marker, serialized)
 
+    def test_memory_context_excludes_pre_reset_and_non_fresh_reports(self):
+        entries = [
+            {
+                "category": "agent_report",
+                "source": "GENERAL/research",
+                "status": "unverified",
+                "research_epoch": "fresh-start-2026-10-29",
+                "timestamp": "2026-10-29T23:18:30+00:00",
+                "content": "BEFORE_RESET_REPORT",
+            },
+            {
+                "category": "agent_report",
+                "source": "GENERAL/research",
+                "status": "unverified",
+                "research_epoch": "legacy",
+                "timestamp": "2026-10-30T00:00:00+00:00",
+                "content": "LEGACY_EPOCH_REPORT",
+            },
+            {
+                "category": "agent_report",
+                "source": "GENERAL/research",
+                "status": "unverified",
+                "research_epoch": "fresh-start-2026-10-29",
+                "timestamp": "2026-10-30T00:00:00+00:00",
+                "content": "FRESH_START_REPORT",
+            },
+            {
+                "category": "agent_report",
+                "source": "GENERAL/research",
+                "status": "unverified",
+                "research_epoch": "fresh-start-2026-10-29",
+                "timestamp": "2026-10-31T00:00:00+00:00",
+                "content": "NOT_BEFORE_TARGET",
+            },
+            {
+                "category": "project_note",
+                "source": "GENERAL",
+                "status": "verified",
+                "research_epoch": "fresh-start-2026-10-29",
+                "timestamp": "2026-10-30T00:00:00+00:00",
+                "content": "NOT_AGENT_REPORT",
+            },
+        ]
+        selected = general_core.fresh_start_memory_entries(entries, "2026-10-31")
+        self.assertEqual([entry["content"] for entry in selected], ["FRESH_START_REPORT"])
+
     def test_missing_registry_fails_closed(self):
         with tempfile.TemporaryDirectory() as tmp:
             missing = Path(tmp) / "missing.json"
