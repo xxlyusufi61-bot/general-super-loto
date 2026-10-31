@@ -636,6 +636,7 @@ def _evaluate_full_reverse_history(
         raise SealedEvaluationError("Not enough later historical rows for reverse stress testing.")
 
     hit_distribution = {str(hits): 0 for hits in range(7)}
+    per_draw: list[dict[str, Any]] = []
     offset = 0
     first_test_date = None
     last_test_date = None
@@ -661,6 +662,23 @@ def _evaluate_full_reverse_history(
             raise SealedEvaluationError("Reverse-time batch returned a malformed aggregate histogram.")
         if sum(batch_distribution.values()) != batch_size:
             raise SealedEvaluationError("Reverse-time batch histogram count does not match its draw count.")
+        batch_details = batch.get("per_draw")
+        if not isinstance(batch_details, list) or len(batch_details) != batch_size:
+            raise SealedEvaluationError("Reverse-time batch per-draw details are incomplete.")
+        for detail in batch_details:
+            if (
+                not isinstance(detail, dict)
+                or not isinstance(detail.get("test_date"), str)
+                or detail.get("direction") != "reverse_retrospective"
+                or type(detail.get("hit_count")) is not int
+                or not 0 <= detail["hit_count"] <= 6
+                or not isinstance(detail.get("hit_column_positions_1_to_6"), list)
+                or len(detail["hit_column_positions_1_to_6"]) != detail["hit_count"]
+                or any(type(pos) is not int or not 1 <= pos <= 6 for pos in detail["hit_column_positions_1_to_6"])
+                or "numbers" in detail
+            ):
+                raise SealedEvaluationError("Reverse-time batch contains invalid per-draw detail.")
+        per_draw.extend(batch_details)
         if previous_batch_last_date is not None and batch["first_test_date"] >= previous_batch_last_date:
             raise SealedEvaluationError("Reverse-time batches overlap or are not strictly newest-to-oldest.")
         if first_test_date is None:
@@ -703,6 +721,10 @@ def _evaluate_full_reverse_history(
         "standard_error_of_mean_hits": round(standard_error, 6) if standard_error is not None else None,
         "uniform_random_expected_hits_out_of_6": round(36 / number_pool_size, 6),
         "hit_distribution": hit_distribution,
+        "per_draw": per_draw,
+        "per_draw_detail_present": True,
+        "target_number_sets_reported": False,
+        "predicted_number_values_reported": False,
         "current_isolated_target_included": False,
         "current_target_numbers_exposed": False,
         "per_draw_target_numbers_reported": False,
