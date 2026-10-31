@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import general_open_research as research
+import general_sealed_evaluation as sealed
 from general_live_consent import CONFIRMATION_PHRASE
 
 
@@ -151,6 +152,62 @@ class OpenResearchIsolationTests(unittest.TestCase):
         self.assertFalse(reverse_payload["target_numbers_included"])
         self.assertFalse(forward_payload["post_target_records_included"])
         self.assertFalse(reverse_payload["post_target_records_included"])
+
+    def test_previous_holdout_dates_are_excluded_from_later_discovery_payload(self):
+        rows = []
+        r54_start = date(2020, 1, 2)
+        for index in range(31):
+            draw_day = (r54_start + timedelta(days=6 * index)).isoformat()
+            base = (index * 7) % 54 + 1
+            numbers = sorted({((base + offset * 11 - 1) % 54) + 1 for offset in range(6)})
+            rows.append({"date": draw_day, "numbers": numbers})
+        r60_start = date(2020, 8, 2)
+        for index in range(80):
+            draw_day = (r60_start + timedelta(days=2 * index)).isoformat()
+            base = (index * 7) % 60 + 1
+            numbers = sorted({((base + offset * 11 - 1) % 60) + 1 for offset in range(6)})
+            rows.append({"date": draw_day, "numbers": numbers})
+        rows.append({
+            "date": "2021-01-10",
+            "numbers": sorted({((5 + offset * 11 - 1) % 60) + 1 for offset in range(6)}),
+        })
+        rows.sort(key=lambda row: row["date"])
+        first_split = sealed.split_archive(rows)
+        first_r60 = first_split["regimes"]["R60"]
+        consumed_forward = [row["date"] for row in first_r60["validation_rows"]]
+        consumed_reverse = [row["date"] for row in first_r60["reverse_validation_rows"]]
+        used_dates = set(consumed_forward + consumed_reverse)
+
+        ledger = {
+            "schema_version": 1,
+            "purpose": "test append-only validation ledger",
+            "entries": [{
+                "claim_id": "a" * 64,
+                "state": "EVALUATED",
+                "validation_dates": consumed_forward,
+                "reverse_validation_dates": consumed_reverse,
+            }],
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            ledger_path = Path(temp_dir) / "ledger.json"
+            ledger_path.write_text(json.dumps(ledger), encoding="utf-8")
+            target, discovery, plan = research.isolate_discovery_only(
+                rows,
+                ledger_path=ledger_path,
+            )
+
+        r60_discovery_dates = {
+            row["date"] for row in discovery
+            if date.fromisoformat(row["date"]) >= date(2020, 8, 2)
+        }
+        original_middle_dates = {
+            row["date"] for row in first_r60["discovery_rows"]
+        }
+        self.assertEqual(target, "2021-01-10")
+        self.assertEqual(r60_discovery_dates, original_middle_dates)
+        self.assertFalse(used_dates.intersection(r60_discovery_dates))
+        self.assertEqual(plan["regimes"]["R60"]["previously_consumed_draw_count"], len(used_dates))
+
     def test_prompt_requires_bounded_structured_proposal_block(self):
         target, train = research.isolate_pre_target(self.rows)
         messages = research.build_messages(target, train, direction="forward")
