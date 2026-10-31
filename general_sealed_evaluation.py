@@ -161,7 +161,8 @@ def split_archive(rows: list[dict[str, Any]], *, archive_sha256: str = "") -> di
                 status = "NOT_EVALUABLE_INSUFFICIENT_HISTORY"
                 reason = (
                     "R54 has fewer rows than the default minimum training history; "
-                    "R54 remains discovery-only and is not given AI-selected holdout windows."
+                    "the minimum was not lowered, and R54 remains discovery-only without "
+                    "AI-selected holdout windows."
                 )
             else:
                 status = "DISCOVERY_ONLY_NOT_EVALUATED"
