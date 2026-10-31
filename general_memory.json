@@ -35,8 +35,8 @@
   "entries": [
     {
       "id": "PR63_REVISION_2026-10-31",
-      "status": "USER_APPROVED_PENDING_FINAL_CI_AND_MERGE",
-      "summary": "Final pre-merge audit identified and fixed a repeat-run deadlock: the original oldest/newest R60 windows could select dates already consumed by earlier claims. PR now filters all previously consumed holdout dates out of later discovery and fresh holdout partitions, advances reverse/forward windows through the remaining unused chronology, and fails closed until minimums are met. Each claim records its prior-consumption snapshot so its immutable archive partition can be reconstructed exactly. Regressions cover an insufficient one-new-draw case, fresh windows after archive growth, no reuse across directions, and old holdout exclusion from model discovery. Latest code CI passed 88/88 Blank-Slate tests and all 8 PR checks at the preceding head; no live NVIDIA request or real-archive evaluation was performed. User explicitly approved correction and merge, pending final green CI.",
+      "status": "MERGED_2026-10-31",
+      "summary": "PR #63 was merged on 2026-10-31 in commit e1cb41082c15eaf8150b8d30c330587b41288e6b after explicit user approval and a final green CI review. The pre-merge audit found and fixed a repeat-run deadlock: previously consumed R60 directional holdout dates are now excluded from later discovery and fresh holdout selection; new windows advance through the remaining unused chronology and preserve minimums. Each claim stores its exact prior-consumption date snapshot so its immutable archive partition can be reconstructed. Regression tests cover the insufficient-one-new-draw case, successful fresh windows after archive growth, holdout exclusion from discovery, and repeat-claim reconstruction. Final Blank-Slate suite: 88/88 tests passed; all 8 PR checks passed. No hosted NVIDIA request or real-archive formula evaluation was performed.",
       "constraints": [
         "Main branch unchanged",
         "Target draw isolated",
