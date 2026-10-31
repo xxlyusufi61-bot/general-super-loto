@@ -74,10 +74,11 @@ def parse_execution_spec_block(
     if end <= start:
         base["rejection_reasons"] = ["Execution-specification markers are out of order."]
         return base
-    raw = report[start:end].strip()
-    if len(raw) > MAX_EXECUTION_BLOCK_CHARS:
+    raw_block = report[start:end]
+    if len(raw_block) > MAX_EXECUTION_BLOCK_CHARS:
         base["rejection_reasons"] = ["Execution-specification block exceeds the size limit."]
         return base
+    raw = raw_block.strip()
     try:
         payload = json.loads(
             raw,
