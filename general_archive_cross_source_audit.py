@@ -157,6 +157,8 @@ def parse_loto_gen_year_page(html: str, year: int) -> tuple[dict[str, tuple[int,
                 break
         if not draw_date or not draw_date.startswith(f"{year}-"):
             continue
+        if draw_date < R60_START:
+            continue
 
         number_cells = []
         attr_cells = []
@@ -217,11 +219,11 @@ def parse_lotobil_archive_detailed(
                     observed_date = None
                 date_index = index
                 break
-        if (
-            date_index is None
-            or observed_date is None
-            or len(cells) < date_index + 8
-        ):
+        if date_index is None or observed_date is None:
+            continue
+        if observed_date < R60_START:
+            continue
+        if len(cells) < date_index + 8:
             continue
 
         draw_index = None
@@ -372,6 +374,8 @@ def parse_loto_gen_root_archive_page(
         draw_date = get_turkish_date(text)
         if not draw_date or not draw_date.startswith(f"{draw_year}-"):
             errors.append((draw_year, draw_date or "UNKNOWN_DATE"))
+            continue
+        if draw_date < R60_START:
             continue
 
         number_text = _ROOT_ARCHIVE_DRAW_ID.sub(" ", text)
