@@ -629,7 +629,7 @@ def evaluate_reverse_retrospective_stress(
     reverse_indices = range(reverse_start, reverse_stop, -1)
     for index in reverse_indices:
         target = checked[index]
-        later_history = checked[index + 1:][-MAX_HISTORY_DRAWS:]
+        later_history = checked[index + 1:index + 1 + MAX_HISTORY_DRAWS]
         if len(later_history) < min_train_draws:
             _fail("reverse stress test has too few later historical training draws.")
         ranked = _rank_checked_history(
