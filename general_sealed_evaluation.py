@@ -397,6 +397,7 @@ def _select_one_frozen_candidate(
     specs_doc, _ = _read_json(Path(specs_path), "Execution specification document")
     if (
         not isinstance(proposals, dict)
+        or proposals.get("schema_version") != 2
         or proposals.get("status") != "VALID_PROPOSALS"
         or not isinstance(proposals.get("proposals"), list)
         or not proposals["proposals"]
