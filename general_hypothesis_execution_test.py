@@ -66,7 +66,7 @@ class SafeHypothesisExecutionTests(unittest.TestCase):
         )
         second = engine.rank_candidates(
             history,
-            cutoff_date="2020-07-09",
+            cutoff_date="2020-08-10",
             number_pool_size=54,
             execution_spec=constant_spec,
         )
