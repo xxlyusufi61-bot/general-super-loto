@@ -17,6 +17,9 @@ name: GENERAL Blank-Slate Research
       - "general_sealed_evaluation.py"
       - "general_sealed_evaluation_test.py"
       - "general_evaluation_ledger.json"
+      - "general_source_context.py"
+      - "general_source_context_test.py"
+      - "docs/sealed-evaluation-orchestration.md"
       - "general_hypothesis_proposals.py"
       - "general_hypothesis_proposals_test.py"
       - "docs/safe-hypothesis-execution.md"
@@ -36,6 +39,9 @@ name: GENERAL Blank-Slate Research
       - "general_sealed_evaluation.py"
       - "general_sealed_evaluation_test.py"
       - "general_evaluation_ledger.json"
+      - "general_source_context.py"
+      - "general_source_context_test.py"
+      - "docs/sealed-evaluation-orchestration.md"
       - "general_hypothesis_proposals.py"
       - "general_hypothesis_proposals_test.py"
       - "docs/safe-hypothesis-execution.md"
@@ -78,11 +84,11 @@ jobs:
           python-version: "3.12"
       - name: Compile and test blank-slate runner
         run: |
-          python3 -m py_compile general_open_research.py general_open_research_test.py general_hypothesis_proposals.py general_hypothesis_proposals_test.py general_hypothesis_execution.py general_hypothesis_execution_test.py general_execution_spec_parser.py general_execution_spec_parser_test.py general_sealed_evaluation.py general_sealed_evaluation_test.py
-          python3 -m unittest -v general_hypothesis_proposals_test general_open_research_test general_hypothesis_execution_test general_execution_spec_parser_test general_sealed_evaluation_test
+          python3 -m py_compile general_open_research.py general_open_research_test.py general_hypothesis_proposals.py general_hypothesis_proposals_test.py general_hypothesis_execution.py general_hypothesis_execution_test.py general_execution_spec_parser.py general_execution_spec_parser_test.py general_sealed_evaluation.py general_sealed_evaluation_test.py general_source_context.py general_source_context_test.py
+          python3 -m unittest -v general_hypothesis_proposals_test general_open_research_test general_hypothesis_execution_test general_execution_spec_parser_test general_sealed_evaluation_test general_source_context_test
 
   research:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.confirm_live_calls == 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_3_NVIDIA_REQUESTS' && inputs.confirm_free_usage_verified == true }}
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.confirm_live_calls == 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_3_NVIDIA_REQUESTS' && inputs.confirm_free_usage_verified == true }}
     needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 15
