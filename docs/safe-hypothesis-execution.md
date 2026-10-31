@@ -64,7 +64,7 @@ The aggregate visits the numbers in the supplied earlier-draw history. Its expre
 
 ## 3. Fixed safety limits
 
-- Number pool must be exactly R54 (1–54) or R60 (1–60).
+- The only supported number pool is 1–60; every input record and cutoff date must be on or after 2020-08-02.
 - At most 32 expression nodes and depth 8.
 - At most 64 prior draws per candidate-ranking operation.
 - At most 30 holdout draws per evaluation call.
@@ -82,7 +82,7 @@ evaluate_holdout receives two separate, strictly chronological inputs:
 
 For each validation draw, candidate scores are calculated only from the earlier discovery rows and validation rows that would already have occurred by that date. The current validation draw is used only after ranking, to count overlap. The current isolated target and all later draws are rejected by the date boundary.
 
-Callers must pass one regime at a time. R54 and R60 histories must never be pooled. The executor rejects R54 dates on or after 2020-08-02, R60 dates before that boundary, and values outside the corresponding number pool.
+The executor rejects all pre-2020-08-02 dates and all number pools other than 1–60. No earlier-period data is accepted by this engine.
 
 The report contains aggregate hit statistics, a standard error, the uniform-random reference 36/N, and a hash of the exact specification. It omits per-draw target values and candidate rankings.
 
