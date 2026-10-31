@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 import general_data_guard as guard
+from general_bidirectional_evaluation import evaluate_bidirectional_full_history
 from general_hypothesis_execution import (
     VERSION as ENGINE_VERSION,
     MAX_HISTORY_DRAWS,
@@ -381,6 +382,8 @@ def _select_one_frozen_candidate(
     only_spec = specs_doc["specifications"][0]
     if not isinstance(first, dict) or not isinstance(only_spec, dict):
         return None
+    if first.get("discovery_direction") not in {"forward", "both"}:
+        return None
     hypothesis_id = first.get("hypothesis_id")
     if not isinstance(hypothesis_id, str) or only_spec.get("hypothesis_id") != hypothesis_id:
         return None
@@ -677,6 +680,20 @@ def evaluate_claim(
         min_train_draws=DEFAULT_MIN_TRAIN_DRAWS,
     )
     r54 = split["regimes"]["R54"]
+    full_r54_history = sorted(
+        r54["discovery_rows"] + r54["validation_rows"],
+        key=lambda row: row["date"],
+    )
+    full_r60_history = sorted(
+        r60["discovery_rows"] + r60["validation_rows"],
+        key=lambda row: row["date"],
+    )
+    bidirectional = evaluate_bidirectional_full_history(
+        {"R54": full_r54_history, "R60": full_r60_history},
+        isolated_target_date=split["target_date"],
+        min_train_draws=DEFAULT_MIN_TRAIN_DRAWS,
+    )
+    bidirectional_r60 = bidirectional["regimes"]["R60"]
     report = {
         "schema_version": 1,
         "status": "EVALUATED_EXPLORATORY_FIXED_SPEC",
@@ -701,6 +718,7 @@ def evaluate_claim(
         "forward_walk_forward": forward,
         "time_ordered_cross_validation": cv,
         "reverse_retrospective_stress_test": reverse,
+        "bidirectional_full_history_adaptive_diagnostic": bidirectional,
         "candidate_selection": {
             "rule": "First discovery-prioritized proposal only; exactly one matching execution specification.",
             "evaluated_specification_count": 1,
@@ -715,7 +733,11 @@ def evaluate_claim(
             "The uniform-random expected overlap is 36/60 = 0.6 hits per six-number set; report uncertainty and do not infer an advantage from mean hits alone.",
             "Only one candidate is evaluated; no model-selected alternatives are scored on this interval.",
             "R54 is not evaluated because the current archive does not meet the default 40-draw training minimum plus a separate validation window. That minimum was not reduced.",
-            "No number-level target outcomes or candidate rankings are included in this report.",
+            "The full-history bidirectional adaptive diagnostic is a separate pre-registered safe-DSL baseline; it does not implement or approve A->B->C, A->T, or MOD5->T.",
+            "For that diagnostic, each forward target is selected/scored using only earlier draws; each reverse target uses only later draws and is strictly retrospective.",
+            "Its per-draw report records the target date, selected safe-catalog ID, hit count, and matched top-six column positions 1-6, but no target or predicted number values.",
+            "The full-history adaptive diagnostic uses repeated overlapping selection windows; results are exploratory and are not independent confirmations.",
+            "No number-level target outcomes or complete candidate rankings are included in this report.",
         ],
         "method_registry_modified": False,
         "canonical_method_promoted": False,
@@ -735,6 +757,11 @@ def evaluate_claim(
         "cv_mean_hits_out_of_6": cv["mean_hits_out_of_6"],
         "reverse_mean_hits_out_of_6": reverse["mean_hits_out_of_6"],
         "reverse_predictive_evidence": reverse["predictive_evidence"],
+        "bidirectional_catalog_forward_mean_hits_out_of_6": bidirectional_r60["forward"]["mean_hits_out_of_6"],
+        "bidirectional_catalog_forward_draw_count": bidirectional_r60["forward"]["evaluated_draw_count"],
+        "bidirectional_catalog_reverse_mean_hits_out_of_6": bidirectional_r60["reverse_retrospective"]["mean_hits_out_of_6"],
+        "bidirectional_catalog_reverse_draw_count": bidirectional_r60["reverse_retrospective"]["evaluated_draw_count"],
+        "bidirectional_catalog_reverse_predictive_evidence": False,
     }
     entry["per_draw_values_stored"] = False
     _write_json_atomic(Path(ledger_path), ledger)
