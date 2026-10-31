@@ -30,6 +30,7 @@ MODEL = "z-ai/glm-5.3-flash"
 BASE = Path(__file__).resolve().parent
 ARCHIVE = BASE / os.environ.get("GENERAL_ARCHIVE_FILE", "super_loto_archive.json")
 REPORT = BASE / "open_research_report.md"
+FORWARD_REPORT = BASE / "open_research_forward_report.md"
 REVERSE_REPORT = BASE / "open_research_reverse_report.md"
 PROPOSALS = BASE / "open_research_proposals.json"
 EXECUTION_SPECS = BASE / "open_research_execution_specs.json"
@@ -714,16 +715,32 @@ def main() -> int:
         sealed_plan = sealed.public_plan(partition)
         if partition["target_date"] != target or partition["discovery_rows"] != train:
             raise RuntimeError("Sealed discovery split changed before prompt construction.")
-        messages = build_messages(target, train, os.environ.get("TASK_TEXT", ""))
-        report = call_model(messages)
-        proposal_document = parse_hypothesis_proposals(report)
-        valid_proposal_ids = {
-            item["hypothesis_id"] for item in proposal_document["proposals"]
-        }
-        execution_spec_document = parse_execution_spec_block(
-            report,
-            allowed_hypothesis_ids=valid_proposal_ids,
+        (BASE / "open_research_sealed_plan.json").write_text(
+            json.dumps(sealed_plan, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
         )
+
+        # Each direction gets its own request and data payload. The reverse request
+        # never receives the forward-ordered payload, and vice versa.
+        forward_messages = build_messages(
+            target, train, os.environ.get("TASK_TEXT", ""), direction="forward"
+        )
+        report_forward = call_model(forward_messages, request_label="forward")
+        FORWARD_REPORT.write_text(report_forward.strip() + "\n", encoding="utf-8")
+
+        reverse_messages = build_messages(
+            target, train, os.environ.get("TASK_TEXT", ""), direction="reverse"
+        )
+        report_reverse = call_model(reverse_messages, request_label="reverse")
+        REVERSE_REPORT.write_text(report_reverse.strip() + "\n", encoding="utf-8")
+
+        forward_result = parse_directional_result(report_forward, "forward")
+        reverse_result = parse_directional_result(report_reverse, "reverse")
+        proposal_document, execution_spec_document = combine_directional_results(
+            forward_result, reverse_result
+        )
+        usage_summary = write_combined_usage_summary()
+
         PROPOSALS.write_text(
             json.dumps(proposal_document, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
@@ -732,81 +749,109 @@ def main() -> int:
             json.dumps(execution_spec_document, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
-        forward_proposal_count = sum(
-            item.get("discovery_direction") in {"forward", "both"}
-            for item in proposal_document["proposals"]
-        )
-        reverse_proposal_count = sum(
-            item.get("discovery_direction") in {"reverse", "both"}
-            for item in proposal_document["proposals"]
-        )
+
+        forward_proposals = forward_result["proposal_document"]["proposals"]
+        reverse_proposals = reverse_result["proposal_document"]["proposals"]
+        forward_specs = forward_result["execution_spec_document"]["specifications"]
+        reverse_specs = reverse_result["execution_spec_document"]["specifications"]
         proposal_note = (
-            "\n\n## Structured hypothesis proposals\n\n"
-            f"- Proposal parser status: {proposal_document['status']}\n"
-            f"- Validated proposal count: {len(proposal_document['proposals'])}\n"
-            f"- Forward/both discovery labels: {forward_proposal_count}\n"
-            f"- Reverse/both discovery labels: {reverse_proposal_count}\n"
-            "- Execution ready: NO\n"
-            "- Method registry modified: NO\n"
-            "- Hypotheses remain unverified proposals; no real-archive backtest was run.\n"
-            f"- Execution-spec parser status: {execution_spec_document['status']}\n"
-            f"- DSL-validated specifications: {len(execution_spec_document['specifications'])}\n"
-            f"- Synthetic contract tests passed: {execution_spec_document['synthetic_tests_passed']}\n"
-            "- Specifications executed against the real archive by discovery runner: NO\n"
-            "- Sealed one-shot evaluator requires the first eligible candidate and a matching spec in each direction: YES\n"
-            "- Persistent claim required before scoring: YES; enforced by a separate workflow step\n"
-            f"- Forward sealed R60 validation window: {sealed_plan['regimes']['R60']['validation_start_date']} to "
-            f"{sealed_plan['regimes']['R60']['validation_end_date']} ({sealed_plan['regimes']['R60']['validation_count']} draws)\n"
-            f"- Reverse sealed R60 validation window: {sealed_plan['regimes']['R60']['reverse_validation_start_date']} to "
-            f"{sealed_plan['regimes']['R60']['reverse_validation_end_date']} ({sealed_plan['regimes']['R60']['reverse_validation_count']} draws)\n"
-            f"- R54 status: {sealed_plan['regimes']['R54']['status']}\n"
-            "- Execution approval / method promotion: NO\n"
+            "\n\n## Directional discovery and sealed preflight metadata\n\n"
+            "- Forward discovery request data: forward chronological rows only.\n"
+            "- Reverse discovery request data: reverse-ordered rows only; no forward payload was included.\n"
+            "- The two requests were parsed independently before their direction-namespaced IDs were combined.\n"
+            f"- Forward proposal parser status: {forward_result['proposal_document']['status']}\n"
+            f"- Forward validated proposal count: {len(forward_proposals)}\n"
+            f"- Forward validated spec count: {len(forward_specs)}\n"
+            f"- Reverse proposal parser status: {reverse_result['proposal_document']['status']}\n"
+            f"- Reverse validated proposal count: {len(reverse_proposals)}\n"
+            f"- Reverse validated spec count: {len(reverse_specs)}\n"
+            f"- Combined proposal status: {proposal_document['status']}\n"
+            f"- Combined directional spec status: {execution_spec_document['status']}\n"
+            f"- Both directional DSL specs passed synthetic tests: {execution_spec_document['synthetic_tests_passed']}\n"
+            "- Real-archive ranking was not executed by discovery.\n"
+            "- Method registry modified: NO.\n"
+            "- Candidate promotion/approval: NO; hypotheses remain unverified.\n"
+            "- Forward sealed R60 validation window: "
+            f"{sealed_plan['regimes']['R60']['validation_start_date']} to "
+            f"{sealed_plan['regimes']['R60']['validation_end_date']} "
+            f"({sealed_plan['regimes']['R60']['validation_count']} draws).\n"
+            "- Reverse sealed R60 validation window: "
+            f"{sealed_plan['regimes']['R60']['reverse_validation_start_date']} to "
+            f"{sealed_plan['regimes']['R60']['reverse_validation_end_date']} "
+            f"({sealed_plan['regimes']['R60']['reverse_validation_count']} draws).\n"
+            f"- R54 status: {sealed_plan['regimes']['R54']['status']}.\n"
+            "- Reverse results remain retrospective stress tests, never predictive evidence.\n"
+            "- Rule-change requests from the reverse report are saved separately and are not automatically submitted.\n"
         )
         usage_note = (
             "\n\n## NVIDIA usage observation\n\n"
-            "- Provider quota checked before request: NO; no account-level remaining-quota API "
-            "was identified in the reviewed public documentation.\n"
-            "- Request count made by this run: 1; automatic retries: 0.\n"
-            "- Provider rate-limit headers/token usage, if returned, are in "
-            "`open_research_usage.json`.\n"
+            "- Provider account-level quota was not queried; remaining quota is UNKNOWN.\n"
+            "- Directional requests made by this run: "
+            f"{usage_summary['inference_requests_made_by_this_run']}; automatic retries: 0.\n"
+            "- Forward/reverse response usage and safe headers are recorded separately in "
+            "open_research_usage_forward.json and open_research_usage_reverse.json.\n"
+            "- Combined metadata is in open_research_usage.json.\n"
             "- Missing usage/limit data is UNKNOWN, not unlimited or proof of free use.\n"
         )
         header = (
-            "# GENERAL Blank-Slate Research Report\n\n"
+            "# GENERAL Bidirectional Blank-Slate Research Report\n\n"
             f"- Runner version: {VERSION}\n"
             f"- Generated (UTC): {datetime.now(timezone.utc).isoformat()}\n"
             f"- Isolated target date: {target}\n"
-            f"- Pre-target discovery draws supplied: {len(train)}\n"
-            "- Sealed validation rows sent to model: NO\n"
-            "- Target numbers sent to model: NO\n"
-            "- Target/future records sent to model: NO\n"
-            "- Legacy method registry, candidate files, evidence catalog, and project memory loaded: NO\n"
-            "- Status: EXPLORATORY HYPOTHESES ONLY; NOT VALIDATED; NOT CANONICAL\n\n"
+            f"- Pre-target discovery rows available before directional partitioning: {len(train)}\n"
+            "- Hosted discovery requests: two separate direction-isolated calls.\n"
+            "- Sealed validation rows sent to either model request: NO.\n"
+            "- Target numbers sent to either model request: NO.\n"
+            "- Target/future records sent to either model request: NO.\n"
+            "- Legacy method registry, candidate files, evidence catalog, and project memory loaded: NO.\n"
+            "- Status: EXPLORATORY HYPOTHESES ONLY; NOT VALIDATED; NOT CANONICAL.\n\n"
         )
-        REPORT.write_text(header + report + proposal_note + usage_note, encoding="utf-8")
-        (BASE / "open_research_sealed_plan.json").write_text(
-            json.dumps(sealed_plan, ensure_ascii=False, indent=2) + "\n",
+        REPORT.write_text(
+            header
+            + "## Forward-direction report\n\n"
+            + report_forward
+            + proposal_note
+            + usage_note,
             encoding="utf-8",
         )
-        print("OPEN RESEARCH: completed")
+        reverse_header = (
+            "# GENERAL Reverse-Direction Research Report\n\n"
+            f"- Runner version: {VERSION}\n"
+            f"- Generated (UTC): {datetime.now(timezone.utc).isoformat()}\n"
+            f"- Isolated target date: {target}\n"
+            "- Input: only reverse-ordered discovery rows; forward-ordered data was not included.\n"
+            "- This direction is retrospective stress testing, not predictive evidence.\n"
+            "- Rule-change requests in this report are not automatically submitted.\n\n"
+        )
+        REVERSE_REPORT.write_text(
+            reverse_header
+            + report_reverse
+            + "\n\n## Parsed directional status\n\n"
+            + f"- Proposal status: {reverse_result['proposal_document']['status']}\n"
+            + f"- Validated proposal count: {len(reverse_proposals)}\n"
+            + f"- Validated execution-spec count: {len(reverse_specs)}\n",
+            encoding="utf-8",
+        )
+        print("OPEN RESEARCH: completed two isolated directional calls")
         print("Target date isolated:", target)
-        print("Pre-target discovery draws supplied:", len(train))
-        print("Sealed validation rows sent to model: NO")
+        print("Pre-target discovery rows supplied per directional view:", len(train))
+        print("Sealed validation rows sent to either model request: NO")
         print("Target numbers exposed: NO")
-        print("Legacy research context loaded: NO")
-        print("Provider quota checked before request: NO; no documented account quota API was identified")
-        print("Request count:", 1, "| automatic retries:", 0)
+        print("Reverse report is retrospective only: YES")
+        print("Provider quota checked before request: NO; account-level quota remains UNKNOWN")
+        print("Requests:", usage_summary["inference_requests_made_by_this_run"], "| automatic retries: 0")
         print("Usage observation:", USAGE_REPORT.name)
-        print("Report status: EXPLORATORY ONLY; NOT VALIDATED")
         print("Proposal status:", proposal_document["status"])
-        print("Validated proposals:", len(proposal_document["proposals"]))
+        print("Validated directional proposals:", len(proposal_document["proposals"]))
         print("Execution-spec status:", execution_spec_document["status"])
-        print("DSL-validated specifications:", len(execution_spec_document["specifications"]))
-        print("Synthetic contract tests passed:", execution_spec_document["synthetic_tests_passed"])
+        print("DSL-validated directional specifications:", len(execution_spec_document["specifications"]))
+        print("Both directional synthetic tests passed:", execution_spec_document["synthetic_tests_passed"])
         print("Real-archive execution: NO | Execution approval: NO")
         print("Method registry modified: NO")
         print("Proposal file:", PROPOSALS.name)
         print("Execution-spec file:", EXECUTION_SPECS.name)
+        print("Forward report path:", FORWARD_REPORT.name)
+        print("Reverse report path:", REVERSE_REPORT.name)
         print("Report path:", REPORT.name)
         return 0
     except Exception as exc:
