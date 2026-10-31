@@ -380,7 +380,7 @@ def rank_candidates_retrospective(
     not predictive evidence. The target row itself must not be included.
     """
     if type(number_pool_size) is not int or number_pool_size not in ALLOWED_POOL_SIZES:
-        _fail("number pool must be R54 (54) or R60 (60).")
+        _fail("only the 6-of-60 number pool is supported.")
     if type(min_train_draws) is not int or not 2 <= min_train_draws <= MAX_HISTORY_DRAWS:
         _fail("minimum later-history draws are outside the supported range.")
     cutoff = _canonical_date(target_date, "target_date")
@@ -421,7 +421,7 @@ def evaluate_holdout(
     because they are then chronologically observed.
     """
     if type(number_pool_size) is not int or number_pool_size not in ALLOWED_POOL_SIZES:
-        _fail("number pool must be R54 (54) or R60 (60).")
+        _fail("only the 6-of-60 number pool is supported.")
     if type(min_train_draws) is not int or not 2 <= min_train_draws <= MAX_HISTORY_DRAWS:
         _fail("minimum training draws are outside the supported range.")
     cutoff = _canonical_date(cutoff_date, "cutoff_date")
@@ -591,7 +591,7 @@ def evaluate_reverse_retrospective_stress(
 ) -> dict[str, Any]:
     """Run one reverse-time batch; skip_recent_test_draws enables contiguous batching."""
     if type(number_pool_size) is not int or number_pool_size not in ALLOWED_POOL_SIZES:
-        _fail("number pool must be R54 (54) or R60 (60).")
+        _fail("only the 6-of-60 number pool is supported.")
     if type(test_draw_count) is not int or not 1 <= test_draw_count <= MAX_VALIDATION_DRAWS:
         _fail("reverse stress test draw count is outside the configured limit.")
     if type(skip_recent_test_draws) is not int or not 0 <= skip_recent_test_draws <= MAX_INPUT_HISTORY_DRAWS:
