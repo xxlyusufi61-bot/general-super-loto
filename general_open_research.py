@@ -152,10 +152,17 @@ def isolate_pre_target(rows: list[dict[str, Any]]) -> tuple[str, list[dict[str, 
     clean_train = [{"date": row["date"], "numbers": list(row["numbers"])} for row in train]
     return target, clean_train
 
-def isolate_discovery_only(rows: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
-    """Return only the discovery partition; never include sealed validation rows."""
+def isolate_discovery_only(
+    rows: list[dict[str, Any]],
+    *,
+    ledger_path: str | Path | None = None,
+) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
+    """Return only fresh discovery rows; previously consumed holdouts stay excluded."""
     target, _pre_target = isolate_pre_target(rows)
-    split = sealed.split_archive(rows)
+    resolved_ledger = Path(ledger_path) if ledger_path is not None else BASE / "general_evaluation_ledger.json"
+    ledger = sealed.load_ledger(resolved_ledger)
+    used_dates = sealed.get_used_validation_dates(ledger)
+    split = sealed.split_archive(rows, used_validation_dates=used_dates)
     if split.get("target_date") != target:
         raise RuntimeError("Sealed split target disagrees with Data Guard.")
     discovery = split.get("discovery_rows")
@@ -181,6 +188,8 @@ def isolate_discovery_only(rows: list[dict[str, Any]]) -> tuple[str, list[dict[s
     discovery_dates = {row["date"] for row in discovery}
     if discovery_dates.intersection(validation_dates):
         raise RuntimeError("Discovery and sealed validation dates overlap.")
+    if discovery_dates.intersection(used_dates):
+        raise RuntimeError("A previously consumed holdout date entered model discovery.")
     if target in discovery_dates or target in validation_dates:
         raise RuntimeError("Isolated target entered the discovery or validation partition.")
     if any(row["date"] >= target for row in discovery):
@@ -712,13 +721,23 @@ def call_model(
 
 def main() -> int:
     try:
+        ledger_path = BASE / "general_evaluation_ledger.json"
+        # Repeat preflight inside the runner so a direct invocation cannot bypass
+        # the workflow's no-request gate after validation dates have been consumed.
+        sealed.preflight(ARCHIVE, ledger_path)
         rows = parse_archive()
-        target, train, _initial_plan = isolate_discovery_only(rows)
+        target, train, _initial_plan = isolate_discovery_only(rows, ledger_path=ledger_path)
         # Bind the plan to exact archive bytes, then recheck it has not changed.
         archive_proof = sealed.load_archive(ARCHIVE)
         if archive_proof["rows"] != rows:
             raise RuntimeError("Archive changed between validation and sealed split.")
-        partition = sealed.split_archive(rows, archive_sha256=archive_proof["archive_sha256"])
+        current_ledger = sealed.load_ledger(ledger_path)
+        used_dates = sealed.get_used_validation_dates(current_ledger)
+        partition = sealed.split_archive(
+            rows,
+            archive_sha256=archive_proof["archive_sha256"],
+            used_validation_dates=used_dates,
+        )
         sealed_plan = sealed.public_plan(partition)
         if partition["target_date"] != target or partition["discovery_rows"] != train:
             raise RuntimeError("Sealed discovery split changed before prompt construction.")
