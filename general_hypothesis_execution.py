@@ -14,7 +14,7 @@ from datetime import date, timedelta
 from typing import Any
 
 VERSION = "0.2.1"
-ALLOWED_POOL_SIZES = {54, 60}
+ALLOWED_POOL_SIZES = {60}
 MAX_AST_NODES = 32
 MAX_AST_DEPTH = 8
 MAX_ABS_LITERAL = 100_000
@@ -23,7 +23,7 @@ MAX_HISTORY_DRAWS = 64
 MAX_INPUT_HISTORY_DRAWS = 10_000
 MAX_VALIDATION_DRAWS = 30
 DEFAULT_MIN_TRAIN_DRAWS = 40
-REGIME_BOUNDARY = date(2020, 8, 2)
+RESEARCH_SCOPE_START = date(2020, 8, 2)
 
 NUMERIC_BINARY_OPS = {"add", "sub", "mul", "div", "mod", "min", "max"}
 COMPARISON_OPS = {"eq", "ne", "lt", "lte", "gt", "gte"}
@@ -186,10 +186,8 @@ def _validate_rows(
         current = _canonical_date(row.get("date"), field + " date")
         if previous is not None and current <= previous:
             _fail(field + " must be strictly chronological with unique dates.")
-        if pool_size == 54 and current >= REGIME_BOUNDARY:
-            _fail(field + " contains a date outside the R54 regime.")
-        if pool_size == 60 and current < REGIME_BOUNDARY:
-            _fail(field + " contains a date outside the R60 regime.")
+        if pool_size != 60 or current < RESEARCH_SCOPE_START:
+            _fail(field + " contains a record outside the active 6-of-60 research scope.")
         numbers = row.get("numbers")
         if (
             not isinstance(numbers, list)
@@ -348,12 +346,10 @@ def rank_candidates(
 ) -> list[dict[str, Any]]:
     """Rank a regime's candidate numbers using only rows strictly before cutoff."""
     if type(number_pool_size) is not int or number_pool_size not in ALLOWED_POOL_SIZES:
-        _fail("number pool must be R54 (54) or R60 (60).")
+        _fail("only the 6-of-60 number pool is supported.")
     cutoff = _canonical_date(cutoff_date, "cutoff_date")
-    if number_pool_size == 54 and cutoff >= REGIME_BOUNDARY:
-        _fail("R54 scoring cutoff must be before 2020-08-02.")
-    if number_pool_size == 60 and cutoff < REGIME_BOUNDARY:
-        _fail("R60 scoring cutoff must be on or after 2020-08-02.")
+    if cutoff < RESEARCH_SCOPE_START:
+        _fail("scoring cutoff is before the active research scope.")
     checked_history = _validate_rows(
         history,
         pool_size=number_pool_size,
@@ -388,10 +384,8 @@ def rank_candidates_retrospective(
     if type(min_train_draws) is not int or not 2 <= min_train_draws <= MAX_HISTORY_DRAWS:
         _fail("minimum later-history draws are outside the supported range.")
     cutoff = _canonical_date(target_date, "target_date")
-    if number_pool_size == 54 and cutoff >= REGIME_BOUNDARY:
-        _fail("R54 retrospective cutoff must be before 2020-08-02.")
-    if number_pool_size == 60 and cutoff < REGIME_BOUNDARY:
-        _fail("R60 retrospective cutoff must be on or after 2020-08-02.")
+    if cutoff < RESEARCH_SCOPE_START:
+        _fail("retrospective cutoff is before the active research scope.")
     checked_history = _validate_rows(
         later_history,
         pool_size=number_pool_size,
@@ -431,10 +425,8 @@ def evaluate_holdout(
     if type(min_train_draws) is not int or not 2 <= min_train_draws <= MAX_HISTORY_DRAWS:
         _fail("minimum training draws are outside the supported range.")
     cutoff = _canonical_date(cutoff_date, "cutoff_date")
-    if number_pool_size == 54 and cutoff >= REGIME_BOUNDARY:
-        _fail("R54 validation cutoff must be before 2020-08-02.")
-    if number_pool_size == 60 and cutoff < REGIME_BOUNDARY:
-        _fail("R60 validation cutoff must be on or after 2020-08-02.")
+    if cutoff < RESEARCH_SCOPE_START:
+        _fail("validation cutoff is before the active research scope.")
     discovery = _validate_rows(
         discovery_history,
         pool_size=number_pool_size,
@@ -607,10 +599,8 @@ def evaluate_reverse_retrospective_stress(
     if type(min_train_draws) is not int or not 2 <= min_train_draws <= MAX_HISTORY_DRAWS:
         _fail("minimum training draws are outside the supported range.")
     cutoff = _canonical_date(cutoff_date, "cutoff_date")
-    if number_pool_size == 54 and cutoff >= REGIME_BOUNDARY:
-        _fail("R54 reverse-stress cutoff must be before 2020-08-02.")
-    if number_pool_size == 60 and cutoff < REGIME_BOUNDARY:
-        _fail("R60 reverse-stress cutoff must be on or after 2020-08-02.")
+    if cutoff < RESEARCH_SCOPE_START:
+        _fail("reverse-stress cutoff is before the active research scope.")
     checked = _validate_rows(
         pre_target_history,
         pool_size=number_pool_size,
@@ -702,12 +692,9 @@ def evaluate_reverse_retrospective_stress(
 
 
 def run_synthetic_contract_tests(execution_spec: dict[str, Any]) -> dict[str, Any]:
-    """Execute a spec twice on deterministic synthetic R54/R60 fixtures."""
+    """Execute a spec twice on deterministic synthetic 6-of-60 fixtures."""
     spec = validate_execution_spec(execution_spec)
-    cases = (
-        (54, date(2020, 7, 20)),
-        (60, date(2020, 8, 2)),
-    )
+    cases = ((60, RESEARCH_SCOPE_START),)
     checked_cases = 0
     total_ranked_values = 0
     for pool_size, start_day in cases:
@@ -758,7 +745,8 @@ def run_synthetic_contract_tests(execution_spec: dict[str, Any]) -> dict[str, An
         "status": "PASS",
         "synthetic_cases": checked_cases,
         "ranked_values_checked": total_ranked_values,
-        "regimes_checked": ["R54", "R60"],
+        "number_pools_checked": [60],
+        "research_scope_start_date": RESEARCH_SCOPE_START.isoformat(),
         "deterministic": True,
         "input_mutated": False,
         "real_archive_used": False,
