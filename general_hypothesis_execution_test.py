@@ -301,6 +301,47 @@ class SafeHypothesisExecutionTests(unittest.TestCase):
             report["fold_reports"][1]["validation_start_date"],
         )
 
+    def test_draw_age_uses_direction_relative_chronological_order(self):
+        history = [
+            {"date": "2024-01-01", "numbers": [1, 2, 3, 4, 5, 6]},
+            {"date": "2024-01-02", "numbers": [55, 56, 57, 58, 59, 60]},
+        ]
+        spec = {
+            "schema_version": 1,
+            "score_expression": {
+                "op": "aggregate_history_numbers",
+                "aggregate": "count",
+                "expression": {
+                    "op": "and",
+                    "left": {
+                        "op": "eq",
+                        "left": {"op": "var", "name": "value"},
+                        "right": {"op": "var", "name": "candidate"},
+                    },
+                    "right": {
+                        "op": "lt",
+                        "left": {"op": "var", "name": "draw_age"},
+                        "right": {"op": "const", "value": 1},
+                    },
+                },
+            },
+        }
+        from general_hypothesis_execution import _rank_checked_history, _validate_rows
+        checked = _validate_rows(
+            history,
+            pool_size=60,
+            field="directional_test_history",
+            maximum=engine.MAX_HISTORY_DRAWS,
+        )
+        forward = _rank_checked_history(
+            checked, number_pool_size=60, spec=spec, direction="forward"
+        )
+        reverse = _rank_checked_history(
+            checked, number_pool_size=60, spec=spec, direction="reverse"
+        )
+        self.assertEqual([item["number"] for item in forward[:6]], [55, 56, 57, 58, 59, 60])
+        self.assertEqual([item["number"] for item in reverse[:6]], [1, 2, 3, 4, 5, 6])
+
     def test_retrospective_ranker_requires_only_strictly_later_history(self):
         later = synthetic_rows(45, start="2021-01-02", pool_size=60)
         ranking = engine.rank_candidates_retrospective(
