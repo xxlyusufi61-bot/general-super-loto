@@ -88,7 +88,7 @@ The report contains aggregate hit statistics, a standard error, the uniform-rand
 
 evaluate_time_ordered_cv splits the same separate validation interval into contiguous time-ordered blocks, without shuffling. Earlier validation draws may enter the training history of later folds only after their dates have passed.
 
-evaluate_reverse_retrospective_stress intentionally scores earlier historical rows using later rows from the same regime. Its output is always marked EVALUATED_RETROSPECTIVE_ONLY with predictive_evidence false. It is a diagnostic only and never predictive evidence.
+evaluate_reverse_retrospective_stress starts at the newest testable pre-target draw and moves backward toward older draws. Each score uses only later historical rows from the same regime as its reference history. Its output is always marked EVALUATED_RETROSPECTIVE_ONLY with predictive_evidence false. It is a diagnostic only and never predictive evidence.
 
 ## 5. Interpretation and limits
 
