@@ -59,6 +59,17 @@ class SourceContextBuilderTests(unittest.TestCase):
         self.assertNotIn("PRIVATE_API_TOKEN_SENTINEL", serialized)
         self.assertNotIn("UNLISTED_SOURCE_SENTINEL", serialized)
 
+    def test_fresh_notation_is_allowlisted_but_old_semantics_are_not(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.make_file(root, "general_core.py", "SAFE_CORE_SENTINEL")
+            self.make_file(root, "docs/research-notation-and-governance.md", "FRESH_NOTATION_SENTINEL")
+            self.make_file(root, "docs/legacy-method-semantics.md", "OLD_FORMULA_SEMANTICS_SENTINEL")
+            context = build_source_context("agent research formula notation governance", root)
+            serialized = repr(context)
+        self.assertIn("FRESH_NOTATION_SENTINEL", serialized)
+        self.assertNotIn("OLD_FORMULA_SEMANTICS_SENTINEL", serialized)
+
     def test_context_stays_within_size_limit_and_marks_truncation(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
