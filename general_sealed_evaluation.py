@@ -508,23 +508,34 @@ def create_claim(
     ledger = load_ledger(ledger_path)
     r60 = split["regimes"]["R60"]
     validation = r60["validation_rows"]
+    reverse_validation = r60["reverse_validation_rows"]
     validation_dates = [row["date"] for row in validation]
+    reverse_validation_dates = [row["date"] for row in reverse_validation]
     if len(validation_dates) < MIN_VALIDATION_DRAWS:
-        raise SealedEvaluationError("No sufficiently sized R60 validation interval is available.")
-    overlap = set(validation_dates).intersection(_used_validation_dates(ledger))
+        raise SealedEvaluationError("No sufficiently sized forward R60 validation interval is available.")
+    if len(reverse_validation_dates) < MIN_VALIDATION_DRAWS:
+        raise SealedEvaluationError("No sufficiently sized reverse R60 validation interval is available.")
+    if set(validation_dates).intersection(reverse_validation_dates):
+        raise SealedEvaluationError("Forward and reverse validation intervals overlap.")
+    overlap = (set(validation_dates) | set(reverse_validation_dates)).intersection(_used_validation_dates(ledger))
     if overlap:
-        raise SealedEvaluationError("Validation interval overlaps already-consumed dates; claim denied.")
+        raise SealedEvaluationError("Directional validation interval overlaps already-consumed dates; claim denied.")
     if len(r60["discovery_rows"]) < DEFAULT_MIN_TRAIN_DRAWS:
-        raise SealedEvaluationError("R60 discovery history is too short for the default minimum.")
+        raise SealedEvaluationError("R60 discovery history is shorter than the default minimum.")
     if candidate["synthetic_test_summary"].get("real_archive_used") is not False:
-        raise SealedEvaluationError("Synthetic preflight did not certify its non-real-archive status.")
+        raise SealedEvaluationError("Forward synthetic preflight did not certify its non-real-archive status.")
+    if candidate["reverse_synthetic_test_summary"].get("real_archive_used") is not False:
+        raise SealedEvaluationError("Reverse synthetic preflight did not certify its non-real-archive status.")
 
     claim_material = {
         "archive_sha256": archive["archive_sha256"],
         "target_date": split["target_date"],
         "validation_dates": validation_dates,
+        "reverse_validation_dates": reverse_validation_dates,
         "hypothesis_id": candidate["hypothesis_id"],
         "spec_sha256": candidate["spec_sha256"],
+        "reverse_hypothesis_id": candidate["reverse_hypothesis_id"],
+        "reverse_spec_sha256": candidate["reverse_spec_sha256"],
         "engine_version": ENGINE_VERSION,
     }
     claim_id = _sha256_bytes(_canonical_json(claim_material))
@@ -552,6 +563,8 @@ def create_claim(
         "archive_snapshot_path": str(snapshot_path).replace("\\", "/"),
         "hypothesis_id": candidate["hypothesis_id"],
         "spec_sha256": candidate["spec_sha256"],
+        "reverse_hypothesis_id": candidate["reverse_hypothesis_id"],
+        "reverse_spec_sha256": candidate["reverse_spec_sha256"],
         "regime": "R60",
         "number_pool_size": 60,
         "discovery_count": split["discovery_count"],
@@ -562,9 +575,13 @@ def create_claim(
         "validation_start_date": validation[0]["date"],
         "validation_end_date": validation[-1]["date"],
         "validation_count": len(validation),
+        "reverse_validation_dates": reverse_validation_dates,
+        "reverse_validation_start_date": reverse_validation[0]["date"],
+        "reverse_validation_end_date": reverse_validation[-1]["date"],
+        "reverse_validation_count": len(reverse_validation),
         "minimum_training_draws": DEFAULT_MIN_TRAIN_DRAWS,
         "maximum_validation_draws": DEFAULT_MAX_VALIDATION_DRAWS,
-        "candidate_selection_rule": "Only the first discovery-prioritized proposal is eligible; exactly one matching DSL specification is required.",
+        "candidate_selection_rule": "Freeze exactly the first eligible proposal independently in each direction; require one matching safe DSL specification per direction. Do not select alternatives after validation.",
         "numbers_stored_in_ledger": False,
     }
     ledger["entries"].append(entry)
@@ -580,6 +597,11 @@ def create_claim(
         "validation_start_date": validation[0]["date"],
         "validation_end_date": validation[-1]["date"],
         "validation_draw_count": len(validation),
+        "reverse_validation_start_date": reverse_validation[0]["date"],
+        "reverse_validation_end_date": reverse_validation[-1]["date"],
+        "reverse_validation_draw_count": len(reverse_validation),
+        "forward_hypothesis_id": candidate["hypothesis_id"],
+        "reverse_hypothesis_id": candidate["reverse_hypothesis_id"],
         "archive_snapshot_path": str(snapshot_path).replace("\\", "/"),
         "ledger_entry_must_be_persisted_before_evaluation": True,
         "current_target_included": False,
