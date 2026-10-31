@@ -567,14 +567,19 @@ def evaluate_reverse_retrospective_stress(
     )
     if date.fromisoformat(checked[-1]["date"]) >= cutoff:
         _fail("pre-target history contains the isolated target or a later date.")
-    if len(checked) <= test_draw_count:
+    if len(checked) < min_train_draws + test_draw_count:
         _fail("not enough later historical rows for the requested reverse stress test.")
     spec = validate_execution_spec(execution_spec)
 
     scores: list[int] = []
-    for index in range(test_draw_count):
+    reverse_indices = range(
+        len(checked) - min_train_draws - 1,
+        len(checked) - min_train_draws - test_draw_count - 1,
+        -1,
+    )
+    for index in reverse_indices:
         target = checked[index]
-        later_history = checked[index + 1:index + 1 + MAX_HISTORY_DRAWS]
+        later_history = checked[index + 1:][-MAX_HISTORY_DRAWS:]
         if len(later_history) < min_train_draws:
             _fail("reverse stress test has too few later historical training draws.")
         ranked = _rank_checked_history(
@@ -597,8 +602,9 @@ def evaluate_reverse_retrospective_stress(
         "predictive_evidence": False,
         "number_pool_size": number_pool_size,
         "evaluated_draw_count": len(scores),
-        "first_test_date": checked[0]["date"],
-        "last_test_date": checked[test_draw_count - 1]["date"],
+        "evaluation_order": "newest_to_oldest",
+        "first_test_date": checked[len(checked) - min_train_draws - 1]["date"],
+        "last_test_date": checked[len(checked) - min_train_draws - test_draw_count]["date"],
         "minimum_later_training_draws": min_train_draws,
         "maximum_later_history_window_draws": MAX_HISTORY_DRAWS,
         "mean_hits_out_of_6": round(mean_hits, 6),
