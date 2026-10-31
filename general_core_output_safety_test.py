@@ -29,6 +29,15 @@ class GeneralCoreOutputSafetyTests(unittest.TestCase):
             {"report_received": False, "character_count": 0},
         )
 
+    def test_core_source_contains_neutral_notation_and_rule_request_contract(self):
+        source = (ROOT / "general_core.py").read_text(encoding="utf-8")
+        self.assertIn("A, B, and C are neutral labels", source)
+        self.assertIn("T is an abstract transition", source)
+        self.assertIn("MOD5 names a modulo-five research view", source)
+        self.assertIn("<RULE_CHANGE_REQUEST_JSON>", source)
+        self.assertIn("change_type", source)
+        self.assertNotIn("T[i] = B[i] - A[i]", source)
+
     def test_core_does_not_print_raw_agent_report(self):
         source = (ROOT / "general_core.py").read_text(encoding="utf-8")
         self.assertNotIn("--- AGENT REPORT ---", source)
