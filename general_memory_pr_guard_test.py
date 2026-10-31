@@ -52,6 +52,7 @@ def report_entry(entry_id=2, agent="research", content="Hypothesis is unverified
         "content_hash": hashlib.sha256(content.encode("utf-8")).hexdigest(),
         "source": "GENERAL/" + agent,
         "status": "unverified",
+        "research_epoch": "fresh-start-2026-10-29",
     }
 
 
@@ -97,6 +98,13 @@ class MemoryDeltaGuardTests(unittest.TestCase):
         entry["status"] = "verified"
         candidate = self.candidate_with(entry)
         with self.assertRaisesRegex(MemoryProposalError, "remain unverified"):
+            validate_memory_delta(baseline_memory(), candidate)
+
+    def test_rejects_report_without_fresh_start_epoch(self):
+        entry = report_entry()
+        entry["research_epoch"] = "legacy"
+        candidate = self.candidate_with(entry)
+        with self.assertRaisesRegex(MemoryProposalError, "fresh-start research epoch"):
             validate_memory_delta(baseline_memory(), candidate)
 
     def test_rejects_bad_content_hash(self):
