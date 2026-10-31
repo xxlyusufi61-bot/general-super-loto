@@ -807,7 +807,6 @@ def main() -> int:
             f"{sealed_plan['regimes']['R60']['reverse_validation_start_date']} to "
             f"{sealed_plan['regimes']['R60']['reverse_validation_end_date']} "
             f"({sealed_plan['regimes']['R60']['reverse_validation_count']} draws).\n"
-            f"- R54 status: {sealed_plan['regimes']['R54']['status']}.\n"
             "- Reverse results remain retrospective stress tests, never predictive evidence.\n"
             "- Rule-change requests from the reverse report are saved separately and are not automatically submitted.\n"
         )
