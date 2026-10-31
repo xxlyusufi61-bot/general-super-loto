@@ -262,6 +262,7 @@ def _direction_summary(
 ) -> dict[str, Any]:
     draw_count = len(rows)
     total_hits = sum(row["hit_count"] for row in rows)
+    missed_dates = [row["test_date"] for row in rows if row["hit_count"] == 0]
     hit_histogram = {str(hits): 0 for hits in range(7)}
     selected_spec_counts: dict[str, int] = {}
     for row in rows:
@@ -278,6 +279,8 @@ def _direction_summary(
         "mean_hits_out_of_6": round(total_hits / draw_count, 6) if draw_count else None,
         "uniform_random_expected_hits_out_of_6": round(36 / pool_size, 6),
         "hit_distribution": hit_histogram,
+        "missed_draw_count": len(missed_dates),
+        "missed_draw_dates": missed_dates,
         "selected_spec_counts": selected_spec_counts,
         "minimum_training_or_later_history_draws": DEFAULT_MIN_TRAIN_DRAWS,
         "maximum_scoring_history_draws": MAX_HISTORY_DRAWS,
