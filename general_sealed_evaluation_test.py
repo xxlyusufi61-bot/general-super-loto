@@ -42,13 +42,16 @@ def count_candidate_matches_spec():
     }
 
 
-def write_candidate_documents(directory, *, specification_count=1):
+def write_candidate_documents(directory, *, specification_count=2):
     proposal_path = directory / "proposals.json"
     specs_path = directory / "specs.json"
     proposal_path.write_text(json.dumps({
         "schema_version": 1,
         "status": "VALID_PROPOSALS",
-        "proposals": [{"hypothesis_id": "HYP-001", "discovery_direction": "forward"}],
+        "proposals": [
+            {"hypothesis_id": "HYP-001", "discovery_direction": "forward"},
+            {"hypothesis_id": "HYP-002", "discovery_direction": "reverse"},
+        ],
     }), encoding="utf-8")
     specifications = [
         {
@@ -59,9 +62,7 @@ def write_candidate_documents(directory, *, specification_count=1):
         }
         for index in range(specification_count)
     ]
-    # Ensure a multi-spec test is actually multi-spec and the first matches the first proposal.
-    if specification_count > 1:
-        specifications[1]["hypothesis_id"] = "HYP-002"
+    # HYP-001 is the forward candidate; HYP-002 is the separate reverse candidate.
     specs_path.write_text(json.dumps({
         "schema_version": 1,
         "status": "VALIDATED_SPECS",
@@ -100,14 +101,20 @@ class SealedEvaluationTests(unittest.TestCase):
         split = sealed.split_archive(archive["rows"], archive_sha256=archive["archive_sha256"])
         r60 = split["regimes"]["R60"]
         self.assertEqual(split["target_date"], "2021-01-10")
-        self.assertEqual(r60["discovery_count"], 50)
-        self.assertEqual(r60["validation_count"], 30)
+        self.assertEqual(r60["discovery_count"], 40)
+        self.assertEqual(r60["validation_count"], 20)
+        self.assertEqual(r60["reverse_validation_count"], 20)
         discovery_dates = {row["date"] for row in r60["discovery_rows"]}
         validation_dates = {row["date"] for row in r60["validation_rows"]}
+        reverse_dates = {row["date"] for row in r60["reverse_validation_rows"]}
         self.assertFalse(discovery_dates.intersection(validation_dates))
+        self.assertFalse(discovery_dates.intersection(reverse_dates))
+        self.assertFalse(validation_dates.intersection(reverse_dates))
+        self.assertLess(max(reverse_dates), min(discovery_dates))
         self.assertLess(max(discovery_dates), min(validation_dates))
         self.assertNotIn(split["target_date"], discovery_dates)
         self.assertNotIn(split["target_date"], validation_dates)
+        self.assertNotIn(split["target_date"], reverse_dates)
         self.assertNotIn("numbers", split)
 
     def test_split_rejects_unsorted_number_sets_even_in_isolated_target(self):
@@ -152,7 +159,8 @@ class SealedEvaluationTests(unittest.TestCase):
         self.assertFalse(plan["target_numbers_exposed"])
         self.assertFalse(plan["target_in_discovery"])
         self.assertFalse(plan["target_in_validation"])
-        self.assertEqual(plan["regimes"]["R60"]["validation_count"], 30)
+        self.assertEqual(plan["regimes"]["R60"]["validation_count"], 20)
+        self.assertEqual(plan["regimes"]["R60"]["reverse_validation_count"], 20)
 
     def test_preflight_is_offline_and_ready_before_model_request(self):
         result = sealed.preflight(self.archive_path, self.ledger_path)
@@ -176,13 +184,20 @@ class SealedEvaluationTests(unittest.TestCase):
             ledger = json.load(stream)
         self.assertEqual(len(ledger["entries"]), 1)
         self.assertEqual(ledger["entries"][0]["state"], "CLAIMED")
-        self.assertEqual(len(ledger["entries"][0]["validation_dates"]), 30)
+        self.assertEqual(len(ledger["entries"][0]["validation_dates"]), 20)
+        self.assertEqual(len(ledger["entries"][0]["reverse_validation_dates"]), 20)
+        self.assertFalse(
+            set(ledger["entries"][0]["validation_dates"]).intersection(
+                ledger["entries"][0]["reverse_validation_dates"]
+            )
+        )
+        self.assertEqual(ledger["entries"][0]["reverse_hypothesis_id"], "HYP-002")
         assert_no_draw_number_sets(self, ledger)
         with self.assertRaises(sealed.SealedEvaluationError):
             sealed.preflight(self.archive_path, self.ledger_path)
 
-    def test_only_one_spec_matching_first_discovery_proposal_can_claim(self):
-        proposals, specs = write_candidate_documents(self.root, specification_count=2)
+    def test_more_than_two_or_unmatched_directional_specs_cannot_claim(self):
+        proposals, specs = write_candidate_documents(self.root, specification_count=3)
         result = sealed.create_claim(
             self.archive_path,
             self.ledger_path,
@@ -215,9 +230,21 @@ class SealedEvaluationTests(unittest.TestCase):
         assert_no_draw_number_sets(self, payload)
         self.assertFalse(payload["current_isolated_target_included"])
         self.assertFalse(payload["current_target_numbers_exposed"])
-        self.assertEqual(payload["forward_walk_forward"]["validation_draw_count"], 30)
+        self.assertEqual(payload["forward_walk_forward"]["validation_draw_count"], 20)
+        self.assertEqual(payload["reverse_discovered_candidate_holdout"]["test_draw_count"], 20)
+        self.assertFalse(payload["reverse_discovered_candidate_holdout"]["predictive_evidence"])
+        self.assertEqual(payload["reverse_discovered_candidate_holdout"]["evaluation_order"], "newest_to_oldest")
+        self.assertEqual(len(payload["reverse_discovered_candidate_holdout"]["per_draw"]), 20)
+        for draw in payload["reverse_discovered_candidate_holdout"]["per_draw"]:
+            self.assertTrue(draw["test_date"] <= payload["reverse_discovered_candidate_holdout"]["first_test_date"])
+            self.assertEqual(draw["hit_count"], len(draw["hit_column_positions_1_to_6"]))
+            self.assertTrue(all(1 <= position <= 6 for position in draw["hit_column_positions_1_to_6"]))
+            self.assertFalse(draw["target_numbers_reported"])
+            self.assertFalse(draw["predicted_number_values_reported"])
         self.assertEqual(payload["forward_walk_forward"]["uniform_random_expected_hits_out_of_6"], 0.6)
-        self.assertEqual(payload["candidate_selection"]["evaluated_specification_count"], 1)
+        self.assertEqual(payload["candidate_selection"]["evaluated_directional_specification_count"], 2)
+        self.assertEqual(payload["candidate_selection"]["forward_hypothesis_id"], "HYP-001")
+        self.assertEqual(payload["candidate_selection"]["reverse_hypothesis_id"], "HYP-002")
         self.assertFalse(payload["time_ordered_cross_validation"]["automatic_candidate_selection"])
         self.assertFalse(payload["reverse_retrospective_stress_test"]["predictive_evidence"])
         self.assertEqual(payload["reverse_retrospective_stress_test"]["evaluated_draw_count"], 40)
