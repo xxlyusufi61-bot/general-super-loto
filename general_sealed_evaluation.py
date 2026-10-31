@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import sys
 from datetime import date, datetime, timezone
@@ -19,6 +20,8 @@ from typing import Any
 import general_data_guard as guard
 from general_hypothesis_execution import (
     VERSION as ENGINE_VERSION,
+    MAX_HISTORY_DRAWS,
+    MAX_VALIDATION_DRAWS,
     evaluate_holdout,
     evaluate_reverse_retrospective_stress,
     evaluate_time_ordered_cv,
@@ -517,6 +520,101 @@ def _find_claim(ledger: dict[str, Any], claim_id: str) -> dict[str, Any]:
     return found[0]
 
 
+def _evaluate_full_reverse_history(
+    pre_target_history: list[dict[str, Any]],
+    *,
+    cutoff_date: str,
+    number_pool_size: int,
+    execution_spec: dict[str, Any],
+    min_train_draws: int = DEFAULT_MIN_TRAIN_DRAWS,
+) -> dict[str, Any]:
+    """Evaluate every reverse-eligible row in bounded batches; return aggregates only."""
+    eligible_count = len(pre_target_history) - min_train_draws
+    if eligible_count < 1:
+        raise SealedEvaluationError("Not enough later historical rows for reverse stress testing.")
+
+    hit_distribution = {str(hits): 0 for hits in range(7)}
+    offset = 0
+    first_test_date = None
+    last_test_date = None
+    previous_batch_last_date = None
+
+    while offset < eligible_count:
+        batch_size = min(MAX_VALIDATION_DRAWS, eligible_count - offset)
+        batch = evaluate_reverse_retrospective_stress(
+            pre_target_history,
+            cutoff_date=cutoff_date,
+            number_pool_size=number_pool_size,
+            execution_spec=execution_spec,
+            test_draw_count=batch_size,
+            min_train_draws=min_train_draws,
+            skip_recent_test_draws=offset,
+        )
+        if batch.get("status") != "EVALUATED_RETROSPECTIVE_ONLY":
+            raise SealedEvaluationError("Reverse-time batch did not return its expected diagnostic status.")
+        if batch.get("evaluated_draw_count") != batch_size:
+            raise SealedEvaluationError("Reverse-time batch returned an incomplete draw count.")
+        batch_distribution = batch.get("hit_distribution")
+        if not isinstance(batch_distribution, dict) or set(batch_distribution) != set(hit_distribution):
+            raise SealedEvaluationError("Reverse-time batch returned a malformed aggregate histogram.")
+        if sum(batch_distribution.values()) != batch_size:
+            raise SealedEvaluationError("Reverse-time batch histogram count does not match its draw count.")
+        if previous_batch_last_date is not None and batch["first_test_date"] >= previous_batch_last_date:
+            raise SealedEvaluationError("Reverse-time batches overlap or are not strictly newest-to-oldest.")
+        if first_test_date is None:
+            first_test_date = batch["first_test_date"]
+        last_test_date = batch["last_test_date"]
+        previous_batch_last_date = last_test_date
+
+        for hits in range(7):
+            count = batch_distribution[str(hits)]
+            if type(count) is not int or count < 0:
+                raise SealedEvaluationError("Reverse-time batch histogram contains an invalid count.")
+            hit_distribution[str(hits)] += count
+        offset += batch_size
+
+    total_draws = sum(hit_distribution.values())
+    if total_draws != eligible_count:
+        raise SealedEvaluationError("Full reverse-time evaluation did not cover every eligible historical row.")
+    total_hits = sum(int(hits) * count for hits, count in hit_distribution.items())
+    sum_squares = sum((int(hits) ** 2) * count for hits, count in hit_distribution.items())
+    mean_hits = total_hits / total_draws
+    if total_draws > 1:
+        sample_variance = max(0.0, (sum_squares - (total_hits * total_hits / total_draws)) / (total_draws - 1))
+        standard_error = math.sqrt(sample_variance / total_draws)
+    else:
+        standard_error = None
+
+    return {
+        "engine_version": ENGINE_VERSION,
+        "status": "EVALUATED_RETROSPECTIVE_ONLY",
+        "protocol": "full available reverse-time retrospective stress test; bounded batches; later draws are used",
+        "predictive_evidence": False,
+        "number_pool_size": number_pool_size,
+        "evaluated_draw_count": total_draws,
+        "evaluation_order": "newest_to_oldest",
+        "first_test_date": first_test_date,
+        "last_test_date": last_test_date,
+        "minimum_later_training_draws": min_train_draws,
+        "maximum_later_history_window_draws": MAX_HISTORY_DRAWS,
+        "mean_hits_out_of_6": round(mean_hits, 6),
+        "standard_error_of_mean_hits": round(standard_error, 6) if standard_error is not None else None,
+        "uniform_random_expected_hits_out_of_6": round(36 / number_pool_size, 6),
+        "hit_distribution": hit_distribution,
+        "current_isolated_target_included": False,
+        "current_target_numbers_exposed": False,
+        "per_draw_target_numbers_reported": False,
+        "candidate_rankings_reported": False,
+        "automatic_candidate_selection": False,
+        "method_registry_modified": False,
+        "interpretation": (
+            "Every historical row with at least the configured later-training history is included, "
+            "from newest to oldest. Later historical draws are intentionally used. This is retrospective "
+            "stress testing only, not forward predictive evidence or a basis for claiming future advantage."
+        ),
+    }
+
+
 def evaluate_claim(
     claim_id: str,
     ledger_path: str | Path,
@@ -568,12 +666,11 @@ def evaluate_claim(
         folds=folds,
         min_train_draws=DEFAULT_MIN_TRAIN_DRAWS,
     )
-    reverse = evaluate_reverse_retrospective_stress(
+    reverse = _evaluate_full_reverse_history(
         discovery + validation,
         cutoff_date=split["target_date"],
         number_pool_size=60,
         execution_spec=spec,
-        test_draw_count=min(DEFAULT_MAX_VALIDATION_DRAWS, len(validation)),
         min_train_draws=DEFAULT_MIN_TRAIN_DRAWS,
     )
     r54 = split["regimes"]["R54"]
