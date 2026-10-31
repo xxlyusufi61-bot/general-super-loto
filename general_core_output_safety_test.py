@@ -56,7 +56,7 @@ class GeneralCoreOutputSafetyTests(unittest.TestCase):
             with patch.dict(os.environ, {"GENERAL_AGENT_REPORT_PATH": str(report_path)}, clear=True):
                 result = general_core.persist_agent_report("A validated report.", "research")
             self.assertEqual(result, str(report_path))
-            self.assertEqual(report_path.read_text(encoding="utf-8"), "A validated report.\\n")
+            self.assertEqual(report_path.read_text(encoding="utf-8"), "A validated report.\n")
 
     def test_agent_report_output_rejects_two_output_modes(self):
         import os
