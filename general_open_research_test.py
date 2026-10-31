@@ -3,6 +3,7 @@ import os
 import tempfile
 import unittest
 import urllib.error
+from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -44,6 +45,38 @@ class OpenResearchIsolationTests(unittest.TestCase):
         for legacy_marker in ("v8.6", "v19", "v0.3.1", "t[i] = b[i] - a[i]", "historical formula semantics"):
             self.assertNotIn(legacy_marker, system)
 
+    def test_research_payload_uses_only_discovery_rows_for_long_history(self):
+        rows = []
+        r54_start = date(2020, 1, 2)
+        for index in range(31):
+            draw_day = (r54_start + timedelta(days=6 * index)).isoformat()
+            base = (index * 7) % 54 + 1
+            numbers = sorted({((base + offset * 11 - 1) % 54) + 1 for offset in range(6)})
+            rows.append({"date": draw_day, "numbers": numbers})
+        r60_start = date(2020, 8, 2)
+        for index in range(80):
+            draw_day = (r60_start + timedelta(days=2 * index)).isoformat()
+            base = (index * 7) % 60 + 1
+            numbers = sorted({((base + offset * 11 - 1) % 60) + 1 for offset in range(6)})
+            rows.append({"date": draw_day, "numbers": numbers})
+        target_numbers = sorted({((5 + offset * 11 - 1) % 60) + 1 for offset in range(6)})
+        rows.append({"date": "2021-01-10", "numbers": target_numbers})
+        rows.sort(key=lambda row: row["date"])
+
+        target, discovery, plan = research.isolate_discovery_only(rows)
+        messages = research.build_messages(target, discovery)
+        payload = json.loads(messages[1]["content"])
+        r60_dates = [row["date"] for row in payload["pre_target_history_by_regime"]["R60"]]
+        sealed_start = plan["regimes"]["R60"]["validation_start_date"]
+        self.assertEqual(target, "2021-01-10")
+        self.assertEqual(len(r60_dates), 50)
+        self.assertLess(max(r60_dates), sealed_start)
+        self.assertEqual(payload["regime_counts"]["R54"], 31)
+        self.assertNotIn(sealed_start, messages[1]["content"])
+        self.assertNotIn(target, r60_dates)
+        self.assertFalse(payload["target_numbers_included"])
+        self.assertFalse(payload["post_target_records_included"])
+
     def test_prompt_requires_bounded_structured_proposal_block(self):
         target, train = research.isolate_pre_target(self.rows)
         system = research.build_messages(target, train)[0]["content"]
@@ -67,6 +100,8 @@ class OpenResearchIsolationTests(unittest.TestCase):
         self.assertIn("binary operators have only op,left,right", system)
         self.assertIn("nested aggregates", system)
         self.assertIn("if a hypothesis cannot be represented", system)
+        self.assertIn("at most one execution specification", system)
+        self.assertIn("first proposal's hypothesis_id", system)
         self.assertIn("not approved or canonical", system)
         self.assertIn("fixed synthetic r54/r60 contract fixtures", system)
         self.assertIn("not claim that it was real-archive backtested", system)
