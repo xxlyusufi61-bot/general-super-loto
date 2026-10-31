@@ -218,7 +218,7 @@ def build_messages(target: str, train: list[dict[str, Any]], focus: str = "") ->
         "not an approved or executable formula. If no testable hypothesis is supported, use an empty proposals "
         "list. At most five proposals; provide no source code and no winning-number predictions.\n"
         "<HYPOTHESIS_PROPOSALS_JSON>\n"
-        "{\"schema_version\":1,\"proposals\":[{"
+        "{\"schema_version\":2,\"proposals\":[{"
         "\"hypothesis_id\":\"HYP-001\","
         "\"discovery_direction\":\"forward|reverse|both\","
         "\"proposed_family\":\"free descriptive label; not a registry status\","
