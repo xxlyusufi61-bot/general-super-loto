@@ -448,3 +448,155 @@ def evaluate_holdout(
             "holdout for any later confirmatory evaluation."
         ),
     }
+
+
+def evaluate_time_ordered_cv(
+    discovery_history: list[dict[str, Any]],
+    validation_draws: list[dict[str, Any]],
+    *,
+    cutoff_date: str,
+    number_pool_size: int,
+    execution_spec: dict[str, Any],
+    folds: int = 5,
+    min_train_draws: int = DEFAULT_MIN_TRAIN_DRAWS,
+) -> dict[str, Any]:
+    """Evaluate one fixed specification over contiguous chronological folds."""
+    if type(folds) is not int or folds < 2:
+        _fail("cross-validation requires at least two folds.")
+    validation = _validate_rows(
+        validation_draws,
+        pool_size=number_pool_size,
+        field="validation_draws",
+        maximum=MAX_VALIDATION_DRAWS,
+    )
+    if folds > len(validation):
+        _fail("cross-validation fold count exceeds the validation draw count.")
+
+    base_size, extra = divmod(len(validation), folds)
+    fold_reports = []
+    start = 0
+    for fold_index in range(folds):
+        block_size = base_size + (1 if fold_index < extra else 0)
+        end = start + block_size
+        # Earlier validation rows are chronologically observable by later folds.
+        fold_discovery = discovery_history + validation[:start]
+        fold_validation = validation[start:end]
+        report = evaluate_holdout(
+            fold_discovery,
+            fold_validation,
+            cutoff_date=cutoff_date,
+            number_pool_size=number_pool_size,
+            execution_spec=execution_spec,
+            min_train_draws=min_train_draws,
+        )
+        fold_reports.append({
+            "fold": fold_index + 1,
+            "validation_start_date": fold_validation[0]["date"],
+            "validation_end_date": fold_validation[-1]["date"],
+            "validation_draw_count": report["validation_draw_count"],
+            "mean_hits_out_of_6": report["mean_hits_out_of_6"],
+            "standard_error_of_mean_hits": report["standard_error_of_mean_hits"],
+        })
+        start = end
+
+    total_draws = sum(item["validation_draw_count"] for item in fold_reports)
+    weighted_hits = sum(
+        item["mean_hits_out_of_6"] * item["validation_draw_count"]
+        for item in fold_reports
+    )
+    return {
+        "engine_version": VERSION,
+        "status": "EVALUATED",
+        "protocol": "blocked chronological cross-validation; no shuffling; fixed specification",
+        "folds": folds,
+        "validation_draw_count": total_draws,
+        "number_pool_size": number_pool_size,
+        "mean_hits_out_of_6": round(weighted_hits / total_draws, 6),
+        "uniform_random_expected_hits_out_of_6": round(36 / number_pool_size, 6),
+        "fold_reports": fold_reports,
+        "current_isolated_target_included": False,
+        "current_target_numbers_exposed": False,
+        "automatic_candidate_selection": False,
+        "method_registry_modified": False,
+        "interpretation": (
+            "Chronological fold results describe one fixed specification only. "
+            "They do not prove a predictive mechanism or authorize tuning on this same interval."
+        ),
+    }
+
+
+def evaluate_reverse_retrospective_stress(
+    pre_target_history: list[dict[str, Any]],
+    *,
+    cutoff_date: str,
+    number_pool_size: int,
+    execution_spec: dict[str, Any],
+    test_draw_count: int = MAX_VALIDATION_DRAWS,
+    min_train_draws: int = DEFAULT_MIN_TRAIN_DRAWS,
+) -> dict[str, Any]:
+    """Run a separately labelled reverse-time diagnostic using later historical rows."""
+    if type(number_pool_size) is not int or number_pool_size not in ALLOWED_POOL_SIZES:
+        _fail("number pool must be R54 (54) or R60 (60).")
+    if type(test_draw_count) is not int or not 1 <= test_draw_count <= MAX_VALIDATION_DRAWS:
+        _fail("reverse stress test draw count is outside the configured limit.")
+    if type(min_train_draws) is not int or not 2 <= min_train_draws <= MAX_HISTORY_DRAWS:
+        _fail("minimum training draws are outside the supported range.")
+    cutoff = _canonical_date(cutoff_date, "cutoff_date")
+    checked = _validate_rows(
+        pre_target_history,
+        pool_size=number_pool_size,
+        field="pre_target_history",
+        maximum=MAX_INPUT_HISTORY_DRAWS,
+    )
+    if date.fromisoformat(checked[-1]["date"]) >= cutoff:
+        _fail("pre-target history contains the isolated target or a later date.")
+    if len(checked) <= test_draw_count:
+        _fail("not enough later historical rows for the requested reverse stress test.")
+    spec = validate_execution_spec(execution_spec)
+
+    scores: list[int] = []
+    for index in range(test_draw_count):
+        target = checked[index]
+        later_history = checked[index + 1:index + 1 + MAX_HISTORY_DRAWS]
+        if len(later_history) < min_train_draws:
+            _fail("reverse stress test has too few later historical training draws.")
+        ranked = _rank_checked_history(
+            later_history,
+            number_pool_size=number_pool_size,
+            spec=spec,
+        )
+        selected = {item["number"] for item in ranked[:6]}
+        scores.append(len(selected.intersection(target["numbers"])))
+
+    mean_hits = statistics.fmean(scores)
+    standard_error = (
+        statistics.stdev(scores) / math.sqrt(len(scores))
+        if len(scores) > 1 else None
+    )
+    return {
+        "engine_version": VERSION,
+        "status": "EVALUATED_RETROSPECTIVE_ONLY",
+        "protocol": "reverse-time retrospective stress test; later draws are used",
+        "predictive_evidence": False,
+        "number_pool_size": number_pool_size,
+        "evaluated_draw_count": len(scores),
+        "first_test_date": checked[0]["date"],
+        "last_test_date": checked[test_draw_count - 1]["date"],
+        "minimum_later_training_draws": min_train_draws,
+        "maximum_later_history_window_draws": MAX_HISTORY_DRAWS,
+        "mean_hits_out_of_6": round(mean_hits, 6),
+        "standard_error_of_mean_hits": (
+            round(standard_error, 6) if standard_error is not None else None
+        ),
+        "uniform_random_expected_hits_out_of_6": round(36 / number_pool_size, 6),
+        "current_isolated_target_included": False,
+        "current_target_numbers_exposed": False,
+        "per_draw_target_numbers_reported": False,
+        "candidate_rankings_reported": False,
+        "automatic_candidate_selection": False,
+        "method_registry_modified": False,
+        "interpretation": (
+            "Later historical draws are intentionally used. This is retrospective stress testing only, "
+            "not forward predictive evidence and not a basis for claiming a future advantage."
+        ),
+    }
