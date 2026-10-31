@@ -64,10 +64,12 @@ class SourceContextBuilderTests(unittest.TestCase):
             root = Path(tmp)
             self.make_file(root, "general_core.py", "SAFE_CORE_SENTINEL")
             self.make_file(root, "docs/research-notation-and-governance.md", "FRESH_NOTATION_SENTINEL")
+            self.make_file(root, "docs/safe-hypothesis-execution.md", "SAFE_DSL_GOVERNANCE_SENTINEL")
             self.make_file(root, "docs/legacy-method-semantics.md", "OLD_FORMULA_SEMANTICS_SENTINEL")
             context = build_source_context("agent research formula notation governance", root)
             serialized = repr(context)
         self.assertIn("FRESH_NOTATION_SENTINEL", serialized)
+        self.assertIn("SAFE_DSL_GOVERNANCE_SENTINEL", serialized)
         self.assertNotIn("OLD_FORMULA_SEMANTICS_SENTINEL", serialized)
 
     def test_context_stays_within_size_limit_and_marks_truncation(self):
