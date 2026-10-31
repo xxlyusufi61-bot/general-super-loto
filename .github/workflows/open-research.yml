@@ -131,12 +131,12 @@ jobs:
         id: sealed-claim
         if: ${{ success() }}
         run: |
-          python3 general_sealed_evaluation.py claim \\
-            --archive super_loto_archive.json \\
-            --ledger general_evaluation_ledger.json \\
-            --proposals open_research_proposals.json \\
-            --specs open_research_execution_specs.json \\
-            --output open_research_evaluation_claim.json \\
+          python3 general_sealed_evaluation.py claim \
+            --archive super_loto_archive.json \
+            --ledger general_evaluation_ledger.json \
+            --proposals open_research_proposals.json \
+            --specs open_research_execution_specs.json \
+            --output open_research_evaluation_claim.json \
             --github-output "$GITHUB_OUTPUT"
       - name: Persist sealed claim and immutable archive snapshot before evaluation
         if: ${{ steps.sealed-claim.outputs.claim_created == 'true' }}
@@ -152,11 +152,11 @@ jobs:
         env:
           SEALED_CLAIM_ID: ${{ steps.sealed-claim.outputs.claim_id }}
         run: |
-          python3 general_sealed_evaluation.py evaluate \\
-            --claim-id "$SEALED_CLAIM_ID" \\
-            --ledger general_evaluation_ledger.json \\
-            --proposals open_research_proposals.json \\
-            --specs open_research_execution_specs.json \\
+          python3 general_sealed_evaluation.py evaluate \
+            --claim-id "$SEALED_CLAIM_ID" \
+            --ledger general_evaluation_ledger.json \
+            --proposals open_research_proposals.json \
+            --specs open_research_execution_specs.json \
             --output open_research_evaluation_report.json
       - name: Persist evaluation completion without draw-level values
         if: ${{ success() && steps.sealed-claim.outputs.claim_created == 'true' }}
