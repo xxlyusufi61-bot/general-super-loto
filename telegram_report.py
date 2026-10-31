@@ -75,12 +75,34 @@ def format_message(title, status, run_url, branch, kind="status", report=None):
         count = report.get("pre_target_history_records")
         if isinstance(count, int):
             lines.append(f"Hedef öncesi geçmiş kayıt sayısı: {count}")
-        forward = report.get("forward_walk_forward", {})
-        lines.append("İleriye dönük temel yöntemler:")
-        lines.extend(metric_lines(forward.get("baselines") if isinstance(forward, dict) else None))
-        cv = report.get("time_ordered_cross_validation", {})
-        lines.append("Kronolojik çapraz doğrulama:")
-        lines.extend(metric_lines(cv.get("baselines") if isinstance(cv, dict) else None))
+        regimes = report.get("regimes", {})
+        if not isinstance(regimes, dict):
+            regimes = {}
+        for regime in ("R54", "R60"):
+            details = regimes.get(regime, {})
+            lines.append(regime + " rejimi:")
+            if not isinstance(details, dict):
+                lines.append("- Rapor bilgisi yok.")
+                continue
+            if details.get("status") == "INSUFFICIENT_PRETARGET_HISTORY":
+                lines.append(
+                    "- Yetersiz hedef-öncesi geçmiş: "
+                    + str(details.get("pre_target_history_records", 0))
+                    + " kayıt; gerekli başlangıç penceresi "
+                    + str(details.get("minimum_training_draws", "bilinmiyor"))
+                    + "."
+                )
+                continue
+            if details.get("status") != "EVALUATED":
+                lines.append("- Değerlendirme durumu doğrulanamadı.")
+                continue
+            lines.append("- İleriye dönük temel yöntemler:")
+            forward = details.get("forward_walk_forward", {})
+            lines.extend(metric_lines(forward.get("baselines") if isinstance(forward, dict) else None))
+            lines.append("- Zaman sıralı çapraz doğrulama:")
+            cv = details.get("time_ordered_cross_validation", {})
+            lines.extend(metric_lines(cv.get("baselines") if isinstance(cv, dict) else None))
+        lines.append("R54 ve R60 ayrı değerlendirildi; rejimler arasında veri havuzlama yapılmadı.")
         lines.append("A->B->C, A->T ve MOD5->T bu temel değerlendirme motorunda uygulanmış değil.")
         lines.append("Ters kronolojik sonuçlar geriye dönük incelemedir; tahmin kanıtı değildir.")
     if run_url:
