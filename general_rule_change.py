@@ -18,7 +18,7 @@ from typing import Any
 VERSION = "0.1.0"
 MARKER = re.compile(r"\A\s*<!-- GENERAL_RULE_CHANGE_STATUS:([A-Z_]+) -->")
 BLOCK = re.compile(r"<RULE_CHANGE_REQUEST_JSON>\s*(\{.*?\})\s*</RULE_CHANGE_REQUEST_JSON>", re.DOTALL)
-FIELDS = ("rule_id", "current_rule", "proposed_rule", "reason", "evidence", "risk_assessment", "tests_required", "rollback_plan")
+FIELDS = ("change_type", "rule_id", "current_rule", "proposed_rule", "reason", "evidence", "risk_assessment", "tests_required", "rollback_plan")
 MAX_FIELD_LENGTH = 2500
 
 def extract_request(report: str) -> dict[str, str] | None:
@@ -47,8 +47,17 @@ def extract_request(report: str) -> dict[str, str] | None:
         if len(value) > limit:
             raise ValueError("Rule-change field exceeds length limit: " + name)
         clean[name] = value
-    if clean["current_rule"] == clean["proposed_rule"]:
-        raise ValueError("Proposed rule is identical to the current rule.")
+    if clean["change_type"] not in {"ADD", "REVISE", "REMOVE"}:
+        raise ValueError("change_type must be ADD, REVISE, or REMOVE.")
+    if clean["change_type"] == "ADD":
+        if clean["current_rule"] != "NONE" or clean["proposed_rule"] == "REMOVE":
+            raise ValueError("ADD requests must use current_rule NONE and include new wording.")
+    elif clean["change_type"] == "REMOVE":
+        if clean["current_rule"] == "NONE" or clean["proposed_rule"] != "REMOVE":
+            raise ValueError("REMOVE requests must identify the current rule and set proposed_rule to REMOVE.")
+    else:
+        if clean["current_rule"] == "NONE" or clean["current_rule"] == clean["proposed_rule"]:
+            raise ValueError("REVISE requests must change an existing rule.")
     return clean
 
 def status_from_body(body: str) -> str | None:
@@ -70,6 +79,7 @@ def build_issue_body(request: dict[str, str], source: dict[str, str]) -> str:
         "it does not edit the main branch or merge code.\n\n"
         "## Provenance\n" + provenance + "\n"
         "## Proposed change\n\n"
+        "Change type: " + request["change_type"] + "\n"
         "Rule ID: " + request["rule_id"] + "\n\n"
         "### Current rule\n" + request["current_rule"] + "\n\n"
         "### Proposed rule\n" + request["proposed_rule"] + "\n\n"
@@ -226,7 +236,7 @@ def submit_report(path: str) -> int:
     issue_url = os.environ.get("GITHUB_SERVER_URL", "https://github.com").rstrip("/") + "/" + os.environ["GITHUB_REPOSITORY"] + "/issues/" + str(number)
     message = (
         "GENERAL — KURAL DEĞİŞİKLİĞİ TALEBİ\n"
-        f"Talep no: #{number}\nKural: {request['rule_id']}\nÖneri: {preview}\n"
+        f"Talep no: #{number}\nTür: {request['change_type']}\nKural: {request['rule_id']}\nÖneri: {preview}\n"
         f"Talep ayrıntısı: {issue_url}\n\n"
         f"Onaylamak için bu sohbete /approve {number} yaz.\n"
         f"Reddetmek için bu sohbete /reject {number} yaz.\n\n"
