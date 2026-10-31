@@ -31,7 +31,7 @@ from general_hypothesis_execution import (
     validate_execution_spec,
 )
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 REGIME_BOUNDARY = date(2020, 8, 2)
 DEFAULT_MIN_TRAIN_DRAWS = 40
 DEFAULT_MAX_VALIDATION_DRAWS = 30
@@ -502,7 +502,7 @@ def create_claim(
             "status": "SKIPPED_NO_SINGLE_FROZEN_CANDIDATE",
             "claim_created": False,
             "real_archive_evaluation_performed": False,
-            "reason": "Need exactly one DSL-valid specification matching the first discovery-prioritized proposal.",
+            "reason": "Need one DSL-valid specification for the first eligible proposal in each direction, with no alternatives.",
         }
     archive = load_archive(archive_path)
     split = split_archive(archive["rows"], archive_sha256=archive["archive_sha256"])
