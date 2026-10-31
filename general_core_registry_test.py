@@ -100,40 +100,29 @@ class MethodRegistryContextTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "contains an inherited or invalid method"):
                     general_core.load_method_registry_context()
 
-    def test_real_archive_regime_partition_is_explicit_and_disjoint(self):
+    def test_real_archive_history_is_scope_limited(self):
         archive_rows = [
-            {"date": "2020-07-30", "numbers": [1, 2, 3, 4, 5, 6]},
             {"date": "2020-08-02", "numbers": [7, 8, 9, 10, 11, 12]},
             {"date": "2020-08-05", "numbers": [13, 14, 15, 16, 17, 18]},
+            {"date": "2020-08-08", "numbers": [19, 20, 21, 22, 23, 24]},
         ]
         with tempfile.TemporaryDirectory() as tmp:
             archive_path = Path(tmp) / "archive.json"
-            archive_path.write_text(
-                json.dumps({"draws": archive_rows}), encoding="utf-8"
-            )
+            archive_path.write_text(json.dumps({"draws": archive_rows}), encoding="utf-8")
             with patch.object(general_core, "ARCHIVE", archive_path):
-                data = general_core.prepare_data("2020-08-05")
+                data = general_core.prepare_data("2020-08-08")
+        self.assertEqual(data["research_scope_start_date"], "2020-08-02")
+        self.assertEqual(data["training_count"], 2)
+        self.assertTrue(all(row["date"] >= "2020-08-02" for row in data["training_data"]))
+        self.assertNotIn("training_by_regime", data)
 
-        regimes = data["training_by_regime"]
-        self.assertEqual(data["regime_boundary"], "2020-08-02")
-        self.assertEqual(data["regime_counts"], {"R54": 1, "R60": 1})
-        self.assertEqual(
-            [row["date"] for row in regimes["R54"]], ["2020-07-30"]
-        )
-        self.assertEqual(
-            [row["date"] for row in regimes["R60"]], ["2020-08-02"]
-        )
-        self.assertFalse(
-            set(row["date"] for row in regimes["R54"])
-            & set(row["date"] for row in regimes["R60"])
-        )
-        self.assertTrue(
-            all(
-                row["date"] < "2020-08-05"
-                for rows in regimes.values()
-                for row in rows
-            )
-        )
+        archive_rows.insert(0, {"date": "2020-07-30", "numbers": [1, 2, 3, 4, 5, 54]})
+        with tempfile.TemporaryDirectory() as tmp:
+            archive_path = Path(tmp) / "archive.json"
+            archive_path.write_text(json.dumps({"draws": archive_rows}), encoding="utf-8")
+            with patch.object(general_core, "ARCHIVE", archive_path):
+                with self.assertRaisesRegex(RuntimeError, "Data Guard rejected archive"):
+                    general_core.prepare_data("2020-08-08")
 
 
 if __name__ == "__main__":
