@@ -98,6 +98,49 @@ def fixed_candidate_catalog() -> list[dict[str, Any]]:
     return catalog
 
 
+def _rank_catalog_history(
+    history: list[dict[str, Any]],
+    *,
+    number_pool_size: int,
+    candidate: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Fast deterministic implementation, contract-tested against the DSL interpreter."""
+    spec_id = candidate["spec_id"]
+    counts = [0] * (number_pool_size + 1)
+    recent_counts = [0] * (number_pool_size + 1)
+    mod5_counts = [0] * 5
+    recent_mod5_counts = [0] * 5
+    unit_counts = [0] * 10
+    for age, row in enumerate(reversed(history)):
+        is_recent = age < 5
+        for value in row["numbers"]:
+            counts[value] += 1
+            mod5_counts[value % 5] += 1
+            unit_counts[value % 10] += 1
+            if is_recent:
+                recent_counts[value] += 1
+                recent_mod5_counts[value % 5] += 1
+    ranking = []
+    for number in range(1, number_pool_size + 1):
+        if spec_id == "EXACT_FREQUENCY_ALL":
+            score = counts[number]
+        elif spec_id == "EXACT_FREQUENCY_RECENT_5_DRAWS":
+            score = recent_counts[number]
+        elif spec_id == "MOD5_CLASS_FREQUENCY":
+            score = mod5_counts[number % 5]
+        elif spec_id == "UNIT_DIGIT_FREQUENCY":
+            score = unit_counts[number % 10]
+        elif spec_id == "ADJACENT_NUMBER_FREQUENCY":
+            score = counts[number - 1] + (counts[number + 1] if number < number_pool_size else 0)
+        elif spec_id == "MOD5_CLASS_RECENT_5_DRAWS":
+            score = recent_mod5_counts[number % 5]
+        else:
+            raise ValueError("Candidate is not in the pre-registered safe catalog.")
+        ranking.append({"number": number, "score": score})
+    ranking.sort(key=lambda item: (-item["score"], item["number"]))
+    return ranking
+
+
 def _matched_positions(ranking: list[dict[str, Any]], target_numbers: list[int]) -> list[int]:
     actual = set(target_numbers)
     return [
@@ -153,12 +196,10 @@ def _choose_forward_spec(
             training = (training_base + selection_rows[:index])[-MAX_HISTORY_DRAWS:]
             if len(training) < min_train_draws:
                 raise ValueError("Forward inner selection fell below the minimum training history.")
-            from general_hypothesis_execution import rank_candidates
-            ranking = rank_candidates(
+            ranking = _rank_catalog_history(
                 training,
-                cutoff_date=validation_target["date"],
                 number_pool_size=number_pool_size,
-                execution_spec=candidate["execution_spec"],
+                candidate=candidate,
             )
             hits.append(len(_matched_positions(ranking, validation_target["numbers"])))
         scored.append((statistics.fmean(hits), -catalog_index, candidate))
@@ -189,11 +230,18 @@ def _choose_reverse_spec(
             reference = later_history[index + 1:][-MAX_HISTORY_DRAWS:]
             if len(reference) < min_train_draws:
                 raise ValueError("Reverse inner selection fell below the minimum later-history size.")
-            ranking = _checked_rank_from_later_history(
+            _checked_rows = _validate_rows(
                 reference,
-                target_date=validation_target["date"],
+                pool_size=number_pool_size,
+                field="reverse_selection_reference",
+                maximum=MAX_HISTORY_DRAWS,
+            )
+            if any(date.fromisoformat(row["date"]) <= date.fromisoformat(validation_target["date"]) for row in _checked_rows):
+                raise ValueError("Reverse selection reference contains the target or an earlier draw.")
+            ranking = _rank_catalog_history(
+                _checked_rows,
                 number_pool_size=number_pool_size,
-                execution_spec=candidate["execution_spec"],
+                candidate=candidate,
             )
             hits.append(len(_matched_positions(ranking, validation_target["numbers"])))
         scored.append((statistics.fmean(hits), -catalog_index, candidate))
@@ -302,10 +350,10 @@ def evaluate_bidirectional_full_history(
                 min_train_draws=min_train_draws,
             )
             scoring_history = history[-MAX_HISTORY_DRAWS:]
-            ranking = _rank_checked_history(
+            ranking = _rank_catalog_history(
                 scoring_history,
                 number_pool_size=pool_size,
-                spec=chosen["execution_spec"],
+                candidate=chosen,
             )
             matched = _matched_positions(ranking, target["numbers"])
             forward_details.append({
@@ -336,11 +384,18 @@ def evaluate_bidirectional_full_history(
                 min_train_draws=min_train_draws,
             )
             scoring_history = later_history[-MAX_HISTORY_DRAWS:]
-            ranking = _checked_rank_from_later_history(
+            scoring_history = _validate_rows(
                 scoring_history,
-                target_date=target["date"],
+                pool_size=pool_size,
+                field="reverse_scoring_history",
+                maximum=MAX_HISTORY_DRAWS,
+            )
+            if any(date.fromisoformat(row["date"]) <= date.fromisoformat(target["date"]) for row in scoring_history):
+                raise ValueError("Reverse scoring history contains the target or an earlier draw.")
+            ranking = _rank_catalog_history(
+                scoring_history,
                 number_pool_size=pool_size,
-                execution_spec=chosen["execution_spec"],
+                candidate=chosen,
             )
             matched = _matched_positions(ranking, target["numbers"])
             reverse_details.append({
@@ -404,14 +459,9 @@ def evaluate_bidirectional_full_history(
         "r54_r60_kept_separate": True,
         "regime_boundary": REGIME_BOUNDARY.isoformat(),
         "regimes": results,
-        "overall": {
-            "forward": _direction_summary("forward", all_forward_rows, pool_size=60, predictive_evidence=True)
-            if all_forward_rows else _direction_summary("forward", [], pool_size=60, predictive_evidence=True),
-            "reverse_retrospective": _direction_summary(
-                "reverse_retrospective", all_reverse_rows, pool_size=60, predictive_evidence=False
-            ) if all_reverse_rows else _direction_summary(
-                "reverse_retrospective", [], pool_size=60, predictive_evidence=False
-            ),
+        "overall_cross_regime_pooling": {
+            "performed": False,
+            "reason": "R54 and R60 use different number-pool sizes and must be reported separately.",
         },
         "binding_limitations": [
             "This pre-registered generic DSL catalog is a separate exploratory baseline, not an implementation or approval of A->B->C, A->T, or MOD5->T.",
