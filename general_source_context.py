@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 
-SOURCE_CONTEXT_VERSION = "0.1.0"
+SOURCE_CONTEXT_VERSION = "0.2.0"
 MAX_CONTEXT_CHARS = 55_000
 MAX_FILE_CHARS = 34_000
 MAX_FILES = 6
