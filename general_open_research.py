@@ -162,8 +162,20 @@ def isolate_discovery_only(rows: list[dict[str, Any]]) -> tuple[str, list[dict[s
     validation_dates = {
         row["date"]
         for regime in split["regimes"].values()
+        for row in regime["validation_rows"] + regime["reverse_validation_rows"]
+    }
+    forward_validation_dates = {
+        row["date"]
+        for regime in split["regimes"].values()
         for row in regime["validation_rows"]
     }
+    reverse_validation_dates = {
+        row["date"]
+        for regime in split["regimes"].values()
+        for row in regime["reverse_validation_rows"]
+    }
+    if forward_validation_dates.intersection(reverse_validation_dates):
+        raise RuntimeError("Forward and reverse sealed validation dates overlap.")
     discovery_dates = {row["date"] for row in discovery}
     if discovery_dates.intersection(validation_dates):
         raise RuntimeError("Discovery and sealed validation dates overlap.")
