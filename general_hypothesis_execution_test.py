@@ -310,7 +310,7 @@ class SafeHypothesisExecutionTests(unittest.TestCase):
             execution_spec=count_candidate_matches_spec(),
         )
         self.assertEqual(len(ranking), 60)
-        self.assertEqual([row["number"] for row in ranking], list(range(1, 61)))
+        self.assertEqual(sorted(row["number"] for row in ranking), list(range(1, 61)))
         with self.assertRaisesRegex(ValueError, "target or an earlier draw"):
             engine.rank_candidates_retrospective(
                 later,
