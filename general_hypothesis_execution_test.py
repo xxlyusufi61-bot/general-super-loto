@@ -300,6 +300,8 @@ class SafeHypothesisExecutionTests(unittest.TestCase):
         self.assertFalse(report["current_isolated_target_included"])
         self.assertFalse(report["current_target_numbers_exposed"])
         self.assertEqual(report["uniform_random_expected_hits_out_of_6"], 0.6)
+        self.assertEqual(report["evaluation_order"], "newest_to_oldest")
+        self.assertGreater(report["first_test_date"], report["last_test_date"])
 
     def test_holdout_reports_regime_specific_random_reference(self):
         discovery = synthetic_rows(20, start="2020-07-01", pool_size=54)
