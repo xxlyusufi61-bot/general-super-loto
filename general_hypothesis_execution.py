@@ -636,6 +636,7 @@ def evaluate_reverse_retrospective_stress(
             later_history,
             number_pool_size=number_pool_size,
             spec=spec,
+            direction="reverse",
         )
         selected = {item["number"] for item in ranked[:6]}
         scores.append(len(selected.intersection(target["numbers"])))
