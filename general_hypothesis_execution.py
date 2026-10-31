@@ -13,7 +13,7 @@ import statistics
 from datetime import date, timedelta
 from typing import Any
 
-VERSION = "0.1.1"
+VERSION = "0.2.0"
 ALLOWED_POOL_SIZES = {54, 60}
 MAX_AST_NODES = 32
 MAX_AST_DEPTH = 8
