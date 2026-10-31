@@ -17,7 +17,7 @@ import general_data_guard as guard
 VERSION = "0.2.0"
 DEFAULT_MIN_TRAIN = 100
 DEFAULT_CV_FOLDS = 5
-RANDOM_EXPECTED_HITS_6_OF_60 = 0.6
+REGIME_NUMBER_POOL_SIZES = {"R54": 54, "R60": 60}
 METHOD_NAMES = (
     "frequency_top6",
     "frequency_bottom6",
@@ -76,8 +76,15 @@ def _summarize_score_sets(score_sets: dict[str, list[int]]) -> dict[str, Any]:
     return {name: _score_summary(scores) for name, scores in score_sets.items()}
 
 
+def _random_uniform_expected_hits(number_pool_size: int) -> float:
+    if type(number_pool_size) is not int or number_pool_size < 6:
+        raise ValueError("Number-pool size must be an integer of at least 6.")
+    # The expected overlap of two independent uniform 6-of-N sets is 36/N.
+    return round(36 / number_pool_size, 6)
+
+
 def _forward_walk_forward(
-    history: list[dict[str, Any]], min_train: int
+    history: list[dict[str, Any]], min_train: int, number_pool_size: int
 ) -> dict[str, Any]:
     scores = {name: [] for name in METHOD_NAMES}
     tested_dates: list[str] = []
@@ -103,13 +110,14 @@ def _forward_walk_forward(
         "evaluated_draws": len(tested_dates),
         "first_test_date": tested_dates[0],
         "last_test_date": tested_dates[-1],
-        "random_uniform_expected_hits_out_of_6": RANDOM_EXPECTED_HITS_6_OF_60,
+        "number_pool_size": number_pool_size,
+        "random_uniform_expected_hits_out_of_6": _random_uniform_expected_hits(number_pool_size),
         "baselines": _summarize_score_sets(scores),
     }
 
 
 def _reverse_retrospective_stress(
-    history: list[dict[str, Any]], min_train: int
+    history: list[dict[str, Any]], min_train: int, number_pool_size: int
 ) -> dict[str, Any]:
     scores = {name: [] for name in METHOD_NAMES}
     tested_dates: list[str] = []
@@ -137,13 +145,14 @@ def _reverse_retrospective_stress(
         "evaluated_draws": len(tested_dates),
         "first_test_date_in_reverse_order": tested_dates[0],
         "last_test_date_in_reverse_order": tested_dates[-1],
-        "random_uniform_expected_hits_out_of_6": RANDOM_EXPECTED_HITS_6_OF_60,
+        "number_pool_size": number_pool_size,
+        "random_uniform_expected_hits_out_of_6": _random_uniform_expected_hits(number_pool_size),
         "baselines": _summarize_score_sets(scores),
     }
 
 
 def _blocked_time_cv(
-    history: list[dict[str, Any]], min_train: int, folds: int
+    history: list[dict[str, Any]], min_train: int, folds: int, number_pool_size: int
 ) -> dict[str, Any]:
     evaluation_count = len(history) - min_train
     if folds < 2 or folds > evaluation_count:
@@ -192,7 +201,8 @@ def _blocked_time_cv(
         "protocol": "blocked chronological cross-validation; no shuffling",
         "folds": folds,
         "evaluated_draws": evaluation_count,
-        "random_uniform_expected_hits_out_of_6": RANDOM_EXPECTED_HITS_6_OF_60,
+        "number_pool_size": number_pool_size,
+        "random_uniform_expected_hits_out_of_6": _random_uniform_expected_hits(number_pool_size),
         "baselines": _summarize_score_sets(scores),
         "fold_summaries": fold_summaries,
     }
@@ -243,8 +253,12 @@ def evaluate_rows(
     regime_reports: dict[str, Any] = {}
     evaluable_regimes = 0
     for name, regime_history in regimes.items():
+        number_pool_size = REGIME_NUMBER_POOL_SIZES[name]
+        expected_random_hits = _random_uniform_expected_hits(number_pool_size)
         if len(regime_history) <= min_train:
             regime_reports[name] = {
+                "number_pool_size": number_pool_size,
+                "random_uniform_expected_hits_out_of_6": expected_random_hits,
                 "status": "INSUFFICIENT_PRETARGET_HISTORY",
                 "pre_target_history_records": len(regime_history),
                 "minimum_training_draws": min_train,
@@ -262,13 +276,15 @@ def evaluate_rows(
             raise ValueError("R60 contains a date before the regime boundary.")
 
         regime_reports[name] = {
+            "number_pool_size": number_pool_size,
+            "random_uniform_expected_hits_out_of_6": expected_random_hits,
             "status": "EVALUATED",
             "pre_target_history_records": len(regime_history),
             "minimum_training_draws": min_train,
             "evaluated": True,
-            "forward_walk_forward": _forward_walk_forward(regime_history, min_train),
-            "reverse_retrospective_stress_test": _reverse_retrospective_stress(regime_history, min_train),
-            "time_ordered_cross_validation": _blocked_time_cv(regime_history, min_train, cv_folds),
+            "forward_walk_forward": _forward_walk_forward(regime_history, min_train, number_pool_size),
+            "reverse_retrospective_stress_test": _reverse_retrospective_stress(regime_history, min_train, number_pool_size),
+            "time_ordered_cross_validation": _blocked_time_cv(regime_history, min_train, cv_folds, number_pool_size),
         }
         evaluable_regimes += 1
 
@@ -291,7 +307,7 @@ def evaluate_rows(
         "implemented_baselines": list(METHOD_NAMES),
         "required_methods_not_implemented": ["A->B->C", "A->T", "MOD5->T"],
         "interpretation_limits": [
-            "The 0.6 random benchmark is the theoretical expected overlap for two uniform 6-of-60 sets, not an observed experiment.",
+            "The regime-specific random benchmark is the theoretical expected overlap 36/N for two uniform 6-of-N sets: R54 uses N=54 (0.666667), and R60 uses N=60 (0.600000); it is not an observed experiment.",
             "Baseline results are descriptive historical results, not proof of a predictive mechanism.",
             "R54 and R60 scores are computed independently; no draw rows are pooled across the 2020-08-02 boundary.",
             "Reverse-time results use later historical draws within the same regime and are retrospective stress tests, not predictive evidence.",
