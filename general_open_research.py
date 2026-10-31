@@ -23,7 +23,7 @@ import general_data_guard as guard
 from general_live_consent import has_explicit_live_consent
 from general_hypothesis_proposals import parse_hypothesis_proposals
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 MODEL = "z-ai/glm-5.3-flash"
 BASE = Path(__file__).resolve().parent
 ARCHIVE = BASE / os.environ.get("GENERAL_ARCHIVE_FILE", "super_loto_archive.json")
@@ -40,6 +40,13 @@ QUOTA_LIMITATION_NOTE = (
     "that NVIDIA has no private or newly introduced endpoint."
 )
 
+NOTATION_RULES = (
+    "A, B, and C are neutral labels for consecutive chronological draw states: A is earlier, B follows A, and C follows B within one regime.",
+    "T is an abstract transition or derived representation that each new hypothesis must define explicitly; no formula or encoding is preselected.",
+    "MOD5 names a modulo-five research view; every new hypothesis must state its exact representation convention.",
+    "A->B->C, A->T, and MOD5->T are user-authorized research-family labels only, not inherited algorithms or approved equations.",
+)
+
 GOVERNANCE_RULES = (
     "Keep the target draw hidden: do not use target or later draw values for discovery, "
     "training, feature construction, tuning, or selection.",
@@ -47,8 +54,14 @@ GOVERNANCE_RULES = (
     "Stop if archive structure, dates, chronology, number sets, or target partition fail validation.",
     "Explore the data without presupposing any previously known formula, feature family, transform, "
     "legacy implementation, prior weight, or historical result.",
-    "Do not read or rely on legacy formula files, method registries, candidate implementations, "
-    "evidence catalogs, or previous project-memory reports.",
+    "Do not read or rely on legacy formula files, historical semantics, candidate implementations, "
+    "evidence catalogs, earlier user experiments, or previous project-memory reports.",
+    "Use the neutral research notation only; define every symbol, transformation, input, output, parameter, "
+    "and tie-break rule from scratch. The three research-family labels remain OPEN_DEFINITION.",
+    "Keep R54 (before 2020-08-02) and R60 (from 2020-08-02) separate. Do not pool their draw rows; "
+    "any cross-regime comparison must be separately identified and justified.",
+    "Use only free resources. Do not use Pydroid, card-required services, or services that may automatically "
+    "convert to paid use. Block live model requests unless free-use and no-billing status are independently verified.",
     "Treat all ideas as hypotheses until tested with reproducible code and chronological evaluation.",
     "Do not invent data, tests, results, or mathematical definitions; say when a test has not been run.",
     "Separate discovery/selection data from a frozen chronological evaluation interval.",
@@ -139,6 +152,7 @@ def build_messages(target: str, train: list[dict[str, Any]], focus: str = "") ->
         "You are the GENERAL blank-slate research agent for Super Loto.\n"
         "You have no prior formulas or legacy research context. Discover candidate "
         "relationships from the supplied historical data rather than assuming a known method.\n"
+        "Research notation:\n- " + "\n- ".join(NOTATION_RULES) + "\n"
         "Governance rules:\n- " + "\n- ".join(GOVERNANCE_RULES) + "\n"
         "The target date is metadata only; its numbers and every record on or after it are absent. "
         "Do not infer or fabricate those values. The data supplied is discovery history, not a frozen "
@@ -150,8 +164,8 @@ def build_messages(target: str, train: list[dict[str, Any]], focus: str = "") ->
         "the markers shown below, with every field filled by a factual, concise string. Do not state that "
         "the request was sent or approved. No rule changes during this research call.\n"
         "<RULE_CHANGE_REQUEST_JSON>\n"
-        "{\"rule_id\":\"stable rule identifier\",\"current_rule\":\"exact current wording\","
-        "\"proposed_rule\":\"proposed wording\",\"reason\":\"why change is needed\","
+        "{\"change_type\":\"ADD|REVISE|REMOVE\",\"rule_id\":\"stable rule identifier\",\"current_rule\":\"exact current wording or NONE for ADD\","
+        "\"proposed_rule\":\"proposed wording or exactly REMOVE for REMOVE\",\"reason\":\"why change is needed\","
         "\"evidence\":\"available evidence and its limitations\","
         "\"risk_assessment\":\"risks and safeguards\","
         "\"tests_required\":\"tests required before implementation\","
@@ -183,12 +197,23 @@ def build_messages(target: str, train: list[dict[str, Any]], focus: str = "") ->
         "targets, or any claim of validation. Proposed family names are descriptive only: they do not create or "
         "change a method registry entry. An empty proposals list is an acceptable result."
     )
+    target_day = date.fromisoformat(target)
+    r54 = [row for row in train if date.fromisoformat(row["date"]) < date(2020, 8, 2)]
+    r60 = [row for row in train if date.fromisoformat(row["date"]) >= date(2020, 8, 2)]
+    if len(r54) + len(r60) != len(train):
+        raise RuntimeError("R54/R60 partition count mismatch; open research stopped.")
+    if any(date.fromisoformat(row["date"]) >= target_day for row in r54 + r60):
+        raise RuntimeError("Target/future record found in a regime partition.")
+
     user = {
         "task": "Perform exploratory, blank-slate hypothesis discovery only. Do not output number predictions.",
         "user_research_focus_untrusted": str(focus)[:1000],
         "target_date_metadata_only": target,
         "pre_target_draw_count": len(train),
-        "pre_target_history": train,
+        "pre_target_history_by_regime": {"R54": r54, "R60": r60},
+        "regime_counts": {"R54": len(r54), "R60": len(r60)},
+        "regime_boundary": "2020-08-02",
+        "regimes_must_be_evaluated_separately": True,
         "target_numbers_included": False,
         "post_target_records_included": False,
     }

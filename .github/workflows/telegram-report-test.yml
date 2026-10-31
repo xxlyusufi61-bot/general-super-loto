@@ -7,6 +7,11 @@ on:
       - "telegram_report.py"
       - "telegram_report_test.py"
       - ".github/workflows/telegram-report-test.yml"
+  pull_request:
+    paths:
+      - "telegram_report.py"
+      - "telegram_report_test.py"
+      - ".github/workflows/telegram-report-test.yml"
 
 permissions:
   contents: read

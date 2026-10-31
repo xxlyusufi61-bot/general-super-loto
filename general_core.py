@@ -11,7 +11,7 @@ from general_source_context import build_source_context
 from general_live_consent import has_explicit_live_consent
 from general_agent_report_guard import report_contract_prompt, validate_agent_report
 
-VERSION = "0.5.6"
+VERSION = "0.6.0"
 MODEL = "z-ai/glm-5.3-flash"
 NVIDIA_TIMEOUT_SECONDS = 240
 BASE = Path(__file__).resolve().parent
@@ -21,6 +21,37 @@ ARCHIVE = BASE / os.environ.get(
 )
 
 METHOD_REGISTRY = BASE / "general_method_registry.json"
+
+FRESH_START_CUTOFF_UTC = "2026-10-29T23:18:31+00:00"
+FRESH_START_EPOCH = "fresh-start-2026-10-29"
+
+NOTATION_RULES = [
+    "A, B, and C are neutral labels for consecutive chronological draw states: A is earlier, B follows A, and C follows B within one regime.",
+    "T is an abstract transition or derived representation. Every new hypothesis must define T explicitly; no formula or encoding is preselected.",
+    "MOD5 names a modulo-five research view. Each new hypothesis must state its exact representation convention; none is inherited.",
+    "The arrows in A->B->C, A->T, and MOD5->T mark relationships to investigate, not approved equations or executable methods.",
+    "Keep all three research families OPEN_DEFINITION until exact definitions are independently proposed, synthetically tested, chronologically evaluated, reviewed, and explicitly approved.",
+]
+
+FRESH_START_RULES = [
+    "Do not load, reuse, reconstruct from, or cite the user's earlier formula algorithms, implementations, tests, results, rankings, scores, weights, thresholds, or parameter choices.",
+    "Use only the neutral notation, binding research rules, blank method labels, validated archive data allowed by target isolation, and GENERAL's own fresh-start research produced after the reset.",
+    "Keep R54 and R60 separate; the boundary is 2020-08-02. Report cross-regime comparisons separately.",
+    "Do not use Pydroid, card-required services, or services that may automatically convert to paid use.",
+    "Do not make a live hosted-model request unless free-use and no-billing status have been independently verified; otherwise stop before network access.",
+    "Agents may request adding, revising, or removing a binding rule through the structured Telegram request flow. They must never change rules themselves.",
+]
+
+RULE_CHANGE_REQUEST_PROMPT = (
+    "When a rule change is genuinely justified, include exactly one "
+    "<RULE_CHANGE_REQUEST_JSON> block with the keys change_type, rule_id, "
+    "current_rule, proposed_rule, reason, evidence, risk_assessment, "
+    "tests_required, and rollback_plan. change_type must be ADD, REVISE, "
+    "or REMOVE. For ADD, current_rule must be NONE. For REMOVE, proposed_rule "
+    "must be exactly REMOVE. Do not propose a change merely to avoid a difficult "
+    "test. Do not change any rule in this run. The request is only a proposal "
+    "for the authorized Telegram approval flow; approval does not implement it."
+)
 
 
 def load_method_registry_context(target=None):
@@ -154,6 +185,53 @@ def load_memory():
     return m
 
 
+def fresh_start_memory_entries(entries, target):
+    """Return only post-reset GENERAL reports eligible for this pre-target task."""
+    if not isinstance(entries, list):
+        raise RuntimeError("Memory entries are invalid.")
+
+    try:
+        target_day = date.fromisoformat(target) if target is not None else None
+        cutoff = datetime.fromisoformat(FRESH_START_CUTOFF_UTC)
+    except (TypeError, ValueError):
+        raise RuntimeError("Fresh-start memory boundary or target date is invalid.") from None
+
+    if target_day is not None and target_day.isoformat() != target:
+        raise RuntimeError("Fresh-start memory target date is invalid.")
+
+    eligible = []
+    allowed_sources = {"GENERAL/" + name for name in AGENTS}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("category") != "agent_report":
+            continue
+        if entry.get("source") not in allowed_sources:
+            continue
+        if entry.get("research_epoch") != FRESH_START_EPOCH:
+            continue
+        if entry.get("status") != "unverified":
+            continue
+        content = entry.get("content")
+        if not isinstance(content, str) or not content.strip():
+            continue
+        try:
+            stamp = datetime.fromisoformat(
+                str(entry.get("timestamp", "")).replace("Z", "+00:00")
+            )
+        except ValueError:
+            continue
+        if stamp.tzinfo is None:
+            continue
+        stamp = stamp.astimezone(timezone.utc)
+        if stamp < cutoff:
+            continue
+        if target_day is not None and stamp.date() >= target_day:
+            continue
+        eligible.append(entry)
+    return eligible
+
+
 def save_memory(m):
     m["binding_rules"] = RULES
     m["updated_at"] = now()
@@ -184,7 +262,8 @@ def add_memory(agent, content):
         "content": content,
         "content_hash": digest,
         "source": source,
-        "status": "unverified"
+        "status": "unverified",
+        "research_epoch": FRESH_START_EPOCH
     })
     m["entries"] = m["entries"][-200:]
     save_memory(m)
@@ -526,6 +605,10 @@ def ask_nvidia(messages):
         raise RuntimeError(
             "Live NVIDIA request blocked: global safety-lock preflight was not confirmed."
         )
+    if os.environ.get("GENERAL_NVIDIA_FREE_USAGE_VERIFIED", "").strip().lower() != "true":
+        raise RuntimeError(
+            "Live NVIDIA request blocked: free-use and no-billing status was not independently verified."
+        )
 
     key = os.environ.get("NVIDIA_API_KEY")
     if not key:
@@ -599,6 +682,25 @@ def ask_nvidia(messages):
     return answer.strip()
 
 
+def persist_agent_report(answer, agent):
+    """Write a validated report to a workflow-local path for rule-request parsing."""
+    report_path = os.environ.get("GENERAL_AGENT_REPORT_PATH", "").strip()
+    report_dir = os.environ.get("GENERAL_AGENT_REPORT_DIR", "").strip()
+    if report_path and report_dir:
+        raise RuntimeError("Only one GENERAL agent report output mode may be configured.")
+    if not report_path and not report_dir:
+        return None
+    if not isinstance(answer, str) or not answer.strip():
+        raise RuntimeError("Cannot persist an empty agent report.")
+    if agent not in AGENTS:
+        raise RuntimeError("Cannot persist a report for an unknown agent.")
+
+    path = Path(report_path) if report_path else Path(report_dir) / (agent + ".md")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(answer.strip() + "\n", encoding="utf-8")
+    return str(path)
+
+
 def safe_report_metadata(answer):
     """Return non-content metadata for logs without exposing the report body."""
     if not isinstance(answer, str):
@@ -662,29 +764,13 @@ def run_agent(agent, task, coordinator_context=None):
     # Validate and isolate before any AI request.
     data = prepare_data(target) if mode == "data" else None
 
-    # No-target sessions must not load potentially unfiltered project reports.
-    entries = load_memory()["entries"] if target else []
-
-    if target:
-        target_day = date.fromisoformat(target)
-        eligible = []
-
-        for entry in entries:
-            try:
-                stamp = datetime.fromisoformat(
-                    str(entry["timestamp"]).replace("Z", "+00:00")
-                )
-
-                if stamp.tzinfo is None:
-                    stamp = stamp.replace(tzinfo=timezone.utc)
-
-                if stamp.astimezone(timezone.utc).date() < target_day:
-                    eligible.append(entry)
-
-            except (KeyError, ValueError, TypeError):
-                continue
-
-        entries = eligible
+    # No-target sessions must not load project reports. Data tasks may use
+    # only reports created by GENERAL after the fresh-start reset and strictly
+    # before the isolated target date; all other history is excluded.
+    entries = (
+        fresh_start_memory_entries(load_memory()["entries"], target)
+        if target else []
+    )
 
     words = set(task.lower().split())
     ranked = []
@@ -784,6 +870,9 @@ def run_agent(agent, task, coordinator_context=None):
         "You are GENERAL Super Loto agent: " + agent + ".\n"
         "Role: " + role + "\n"
         "Binding rules:\n- " + "\n- ".join(RULES) + "\n"
+        "Neutral research notation:\n- " + "\n- ".join(NOTATION_RULES) + "\n"
+        "Fresh-start boundaries:\n- " + "\n- ".join(FRESH_START_RULES) + "\n"
+        + RULE_CHANGE_REQUEST_PROMPT + "\n"
         "Memory reports are not proof. Distinguish hypotheses from verified "
         "results. Never invent data or tests.\n"
         + report_contract_prompt(agent)
@@ -906,6 +995,9 @@ def run_agent(agent, task, coordinator_context=None):
 
     print("AGENT_REPORT_GUARD: PASS (structure only; semantic truth is not verified)")
     print("AGENT_REPORT_METADATA: " + json.dumps(safe_report_metadata(answer), sort_keys=True))
+    report_path = persist_agent_report(answer, agent)
+    if report_path:
+        print("AGENT_REPORT_OUTPUT: configured; content suppressed")
 
     if os.environ.get("GENERAL_SAVE_MEMORY") == "1":
         add_memory(agent, answer)

@@ -10,6 +10,9 @@ name: GENERAL Rule Change Approval
       - ".github/workflows/rule-change-approval.yml"
       - ".github/workflows/open-research.yml"
       - "general_open_research.py"
+      - "general_core.py"
+      - ".github/workflows/general-agent.yml"
+      - ".github/workflows/general-coordinator-execute.yml"
   pull_request:
     branches:
       - main
@@ -19,6 +22,9 @@ name: GENERAL Rule Change Approval
       - ".github/workflows/rule-change-approval.yml"
       - ".github/workflows/open-research.yml"
       - "general_open_research.py"
+      - "general_core.py"
+      - ".github/workflows/general-agent.yml"
+      - ".github/workflows/general-coordinator-execute.yml"
   schedule:
     - cron: "*/30 * * * *"
   workflow_dispatch:
@@ -63,7 +69,8 @@ jobs:
           python-version: "3.12"
       - name: Process authorized Telegram approval/rejection commands
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           TELEGRAM_APPROVER_USER_ID: ${{ secrets.TELEGRAM_APPROVER_USER_ID }}

@@ -478,10 +478,12 @@ class _FakeResponse:
 old_api_key = os.environ.get("NVIDIA_API_KEY")
 old_confirmation = os.environ.get("GENERAL_CONFIRM_LIVE_CALLS")
 old_guard_passed = os.environ.get("GENERAL_NVIDIA_GUARD_PASSED")
+old_free_usage_verified = os.environ.get("GENERAL_NVIDIA_FREE_USAGE_VERIFIED")
 try:
     os.environ["NVIDIA_API_KEY"] = "unit-test-key"
     os.environ["GENERAL_CONFIRM_LIVE_CALLS"] = CONFIRMATION_PHRASE
     os.environ["GENERAL_NVIDIA_GUARD_PASSED"] = "1"
+    os.environ["GENERAL_NVIDIA_FREE_USAGE_VERIFIED"] = "true"
     reasoning_only = {
         "choices": [{
             "message": {
@@ -561,6 +563,10 @@ finally:
         os.environ.pop("GENERAL_NVIDIA_GUARD_PASSED", None)
     else:
         os.environ["GENERAL_NVIDIA_GUARD_PASSED"] = old_guard_passed
+    if old_free_usage_verified is None:
+        os.environ.pop("GENERAL_NVIDIA_FREE_USAGE_VERIFIED", None)
+    else:
+        os.environ["GENERAL_NVIDIA_FREE_USAGE_VERIFIED"] = old_free_usage_verified
     for marker_name in ("/tmp/general_nvidia_api_attempted", "/tmp/general_nvidia_api_succeeded"):
         try:
             Path(marker_name).unlink()

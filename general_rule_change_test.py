@@ -3,6 +3,7 @@ import unittest
 import general_rule_change as rules
 
 VALID_REQUEST = {
+    "change_type": "REVISE",
     "rule_id": "RULE-EXAMPLE",
     "current_rule": "Current wording",
     "proposed_rule": "Proposed wording",
@@ -32,6 +33,30 @@ class RuleChangeRequestTests(unittest.TestCase):
         data = dict(VALID_REQUEST)
         del data["rollback_plan"]
         with self.assertRaises(ValueError):
+            rules.extract_request(self.make_report(data))
+
+    def test_add_request_requires_none_as_current_rule(self):
+        data = dict(VALID_REQUEST)
+        data["change_type"] = "ADD"
+        data["current_rule"] = "NONE"
+        self.assertEqual(rules.extract_request(self.make_report(data))["change_type"], "ADD")
+
+    def test_remove_request_requires_explicit_remove_action(self):
+        data = dict(VALID_REQUEST)
+        data["change_type"] = "REMOVE"
+        data["proposed_rule"] = "REMOVE"
+        self.assertEqual(rules.extract_request(self.make_report(data))["change_type"], "REMOVE")
+
+    def test_remove_request_rejects_replacement_wording(self):
+        data = dict(VALID_REQUEST)
+        data["change_type"] = "REMOVE"
+        with self.assertRaisesRegex(ValueError, "proposed_rule to REMOVE"):
+            rules.extract_request(self.make_report(data))
+
+    def test_unknown_change_type_is_rejected(self):
+        data = dict(VALID_REQUEST)
+        data["change_type"] = "DELETE_SILENTLY"
+        with self.assertRaisesRegex(ValueError, "change_type must be"):
             rules.extract_request(self.make_report(data))
 
     def test_same_current_and_proposed_rule_is_rejected(self):
@@ -70,6 +95,7 @@ class RuleChangeRequestTests(unittest.TestCase):
         approved = rules.decision_status(body, "APPROVED", 123456, "approver", "message-1")
         self.assertEqual(rules.status_from_body(approved), "APPROVED_PENDING_IMPLEMENTATION")
         self.assertIn("Telegram command reference: message-1", approved)
+        self.assertIn("Change type: REVISE", body)
         self.assertIn("does not modify binding rules", approved)
         rejected = rules.decision_status(body, "REJECTED", 123456, "approver", "message-2")
         self.assertEqual(rules.status_from_body(rejected), "REJECTED")

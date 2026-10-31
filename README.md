@@ -18,7 +18,7 @@ GENERAL coordinates specialized tasks for Super Loto archive integrity, target-d
 - `general_method_registry.json` contains only three open research-family labels and experiment safeguards. It must not contain old formula implementations, source pointers, tuned weights, or historical formula scores.
 - `general_walkforward.py` implements separate chronology-aware baseline evaluation. It does not define the three open formula families.
 - `general_nvidia_guard.py` enforces live-inference safety and consent controls. Offline tests should be preferred when they answer the question.
-- `general_memory.json` stores agent reports, but reports are evidence to inspect rather than proof. Current runtime prompts do not load the historical shared-memory report entries.
+- `general_memory.json` stores agent reports, but reports are evidence to inspect rather than proof. Data-mode prompts may include only unverified agent reports tagged with the post-reset research epoch and timestamped strictly before the isolated target; pre-reset, untagged, non-agent, and post-target entries are excluded.
 - `.github/workflows/nvidia-safety-tests.yml` runs offline NVIDIA timeout/guard regression checks. It does not make a live inference request.
 - `.github/workflows/general.yml` is the Telegram heartbeat path. Its success is not proof that the GENERAL core or autonomous agents are continuously working.
 
@@ -59,11 +59,11 @@ The active repository contains no inherited formula-source files, old experiment
 
 A method is not approved merely because a family label exists. Before a new method can be tested on the real archive, its mathematical definition must be written from scratch, deterministic synthetic tests must pass, archive/target boundaries must be checked, and the agreed chronology-aware protocols and null baseline must be run. Promotion still requires explicit user approval.
 
-### Historical method-semantics reference (non-operative)
+### Active research notation and governance reference
 
-`docs/legacy-method-semantics.md` archives source-backed observations about how names such as `T`, `A->T`, `MOD5->T`, and `*_T` were used in older code versions. The historical variants differ and must not be collapsed into one definition.
+`docs/research-notation-and-governance.md` defines only the neutral meanings of A, B, C, T, MOD5, the three open research-family labels, and the binding research/service rules. It contains no historical formula algorithms, prior test results, scores, weights, or candidate rankings.
 
-This file is **archival only**: it does not change `OPEN_DEFINITION`, is not a canonical specification, and must not authorize reusing a legacy implementation, score, or weight. The current `general_source_context.py` allowlist does not load this document into agent prompts. Its presence in the repository must not be described as proof that an agent has read or learned it. Any change to load it at runtime or promote a method requires separate review and the required user approval.
+The notation and research rules may be supplied to agents. The three families remain `OPEN_DEFINITION`; every mathematical definition must be developed and tested from scratch. Historical formula documents and old experiment outputs must not be loaded as agent context.
 
 ## 6. Interpretation of checks
 

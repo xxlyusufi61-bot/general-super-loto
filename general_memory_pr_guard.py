@@ -17,6 +17,7 @@ from typing import Any
 MAX_ENTRIES = 200
 MAX_NEW_REPORTS = 3
 MAX_REPORT_CHARS = 12_000
+FRESH_START_EPOCH = "fresh-start-2026-10-29"
 ALLOWED_AGENTS = {"research", "debug", "validation", "crossover"}
 
 
@@ -66,6 +67,8 @@ def _validate_new_report(entry: dict[str, Any], baseline_max_id: int) -> None:
         raise MemoryProposalError("New report title does not match its source agent.")
     if entry.get("status") != "unverified":
         raise MemoryProposalError("New agent reports must remain unverified.")
+    if entry.get("research_epoch") != FRESH_START_EPOCH:
+        raise MemoryProposalError("New agent reports must belong to the fresh-start research epoch.")
 
     text = entry.get("content")
     digest = entry.get("content_hash")

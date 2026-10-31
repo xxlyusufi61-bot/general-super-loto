@@ -24,6 +24,11 @@ name: GENERAL Agent
         required: true
         type: string
         default: "NO"
+      confirm_free_usage_verified:
+        description: "Set true only after independently verifying this request is free with no billing or automatic paid conversion risk. Otherwise leave false."
+        required: true
+        type: boolean
+        default: false
       publish_memory_pr:
         description: "When YES, publish the new report in a public review-only PR before it can enter shared memory. The report text will be publicly visible. Default NO."
         required: true
@@ -36,6 +41,7 @@ name: GENERAL Agent
 permissions:
   contents: write
   pull-requests: write
+  issues: write
 
 concurrency:
   group: general-nvidia-api
@@ -56,7 +62,7 @@ jobs:
           python-version: "3.12"
 
       - name: Check global NVIDIA safety lock
-        if: ${{ inputs.agent != 'archive' && inputs.agent != 'isolation-test' && inputs.confirm_live_calls == 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_3_NVIDIA_REQUESTS' }}
+        if: ${{ inputs.agent != 'archive' && inputs.agent != 'isolation-test' && inputs.confirm_live_calls == 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_3_NVIDIA_REQUESTS' && inputs.confirm_free_usage_verified == true }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
@@ -202,7 +208,7 @@ jobs:
 
       - name: Snapshot shared-memory baseline for optional review PR
         id: memory-baseline
-        if: ${{ inputs.agent != 'archive' && inputs.agent != 'isolation-test' && inputs.confirm_live_calls == 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_3_NVIDIA_REQUESTS' && inputs.publish_memory_pr == 'YES' }}
+        if: ${{ inputs.agent != 'archive' && inputs.agent != 'isolation-test' && inputs.confirm_live_calls == 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_3_NVIDIA_REQUESTS' && inputs.confirm_free_usage_verified == true && inputs.publish_memory_pr == 'YES' }}
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/general-agent-memory"
@@ -211,18 +217,29 @@ jobs:
 
       - name: Run selected GENERAL agent
         id: run-agent
-        if: ${{ inputs.agent != 'archive' && inputs.agent != 'isolation-test' && inputs.confirm_live_calls == 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_3_NVIDIA_REQUESTS' }}
+        if: ${{ inputs.agent != 'archive' && inputs.agent != 'isolation-test' && inputs.confirm_live_calls == 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_3_NVIDIA_REQUESTS' && inputs.confirm_free_usage_verified == true }}
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           AGENT_ID: ${{ inputs.agent }}
           TASK_TEXT: ${{ inputs.task }}
           GENERAL_SAVE_MEMORY: ${{ inputs.publish_memory_pr == 'YES' && '1' || '0' }}
           GENERAL_CONFIRM_LIVE_CALLS: ${{ inputs.confirm_live_calls }}
+          GENERAL_NVIDIA_FREE_USAGE_VERIFIED: ${{ inputs.confirm_free_usage_verified && 'true' || 'false' }}
+          GENERAL_AGENT_REPORT_PATH: general-agent-report.md
         run: |
           python3 general_core.py "$AGENT_ID" "$TASK_TEXT"
 
+      - name: Submit structured agent rule-change request for Telegram approval
+        if: ${{ success() && steps.run-agent.outcome == 'success' && inputs.agent != 'archive' && inputs.agent != 'isolation-test' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python3 general_rule_change.py submit-report --report general-agent-report.md
+
       - name: Skip live agent call without explicit free-only confirmation
-        if: ${{ inputs.agent != 'archive' && inputs.agent != 'isolation-test' && inputs.confirm_live_calls != 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_3_NVIDIA_REQUESTS' }}
+        if: ${{ inputs.agent != 'archive' && inputs.agent != 'isolation-test' && (inputs.confirm_live_calls != 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_3_NVIDIA_REQUESTS' || inputs.confirm_free_usage_verified != true) }}
         run: |
           echo "::notice::Live agent execution was not authorized; no NVIDIA request was made."
           echo "Supply the exact confirmation phrase only after verifying free-only provider settings."

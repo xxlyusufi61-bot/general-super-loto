@@ -28,14 +28,37 @@ class TelegramReportTests(unittest.TestCase):
             "current_target_numbers_used_for_scoring": False,
             "current_target_numbers_exposed": False,
             "pre_target_history_records": 100,
-            "forward_walk_forward": {
-                "baselines": {"frequency_top6": {"evaluated_draws": 5, "mean_hits_out_of_6": 0.6}}
+            "regime_counts": {"R54": 30, "R60": 69},
+            "regimes_evaluated_separately": True,
+            "regimes": {
+                "R54": {
+                    "status": "INSUFFICIENT_PRETARGET_HISTORY",
+                    "pre_target_history_records": 30,
+                    "minimum_training_draws": 100,
+                    "number_pool_size": 54,
+                    "random_uniform_expected_hits_out_of_6": 0.666667,
+                },
+                "R60": {
+                    "status": "EVALUATED",
+                    "pre_target_history_records": 69,
+                    "number_pool_size": 60,
+                    "random_uniform_expected_hits_out_of_6": 0.6,
+                    "forward_walk_forward": {
+                        "baselines": {"frequency_top6": {"evaluated_draws": 5, "mean_hits_out_of_6": 0.6}}
+                    },
+                    "time_ordered_cross_validation": {"baselines": {}},
+                },
             },
-            "time_ordered_cross_validation": {"baselines": {}},
         }
         message = format_message("Kronolojik Değerlendirme", "success", "https://github.com/example/run", "main", "walkforward", report)
         self.assertIn("Hedef çekiliş izolasyonu: BAŞARILI", message)
         self.assertIn("uygulanmış değil", message)
+        self.assertIn("R54 rejimi:", message)
+        self.assertIn("Yetersiz hedef-öncesi geçmiş", message)
+        self.assertIn("R60 rejimi:", message)
+        self.assertIn("0.667/6 (1–54 sayı havuzu; 36/54)", message)
+        self.assertIn("0.600/6 (1–60 sayı havuzu; 36/60)", message)
+        self.assertIn("R54 ve R60 ayrı değerlendirildi", message)
         self.assertIn("tahmin kanıtı değildir", message)
         self.assertNotIn("Target isolation", message)
 
