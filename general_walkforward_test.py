@@ -32,9 +32,24 @@ class WalkForwardTests(unittest.TestCase):
         self.assertEqual(report_a["target_date"], first[-1]["date"])
         self.assertEqual(report_a["archive_records"], len(first))
         self.assertEqual(report_a["pre_target_history_records"], len(first) - 1)
-        self.assertEqual(report_a["forward_walk_forward"], report_b["forward_walk_forward"])
-        self.assertEqual(report_a["reverse_retrospective_stress_test"], report_b["reverse_retrospective_stress_test"])
-        self.assertEqual(report_a["time_ordered_cross_validation"], report_b["time_ordered_cross_validation"])
+        self.assertTrue(report_a["regimes_evaluated_separately"])
+        self.assertEqual(report_a["regime_counts"], report_b["regime_counts"])
+        self.assertEqual(
+            report_a["regimes"]["R60"]["forward_walk_forward"],
+            report_b["regimes"]["R60"]["forward_walk_forward"],
+        )
+        self.assertEqual(
+            report_a["regimes"]["R60"]["reverse_retrospective_stress_test"],
+            report_b["regimes"]["R60"]["reverse_retrospective_stress_test"],
+        )
+        self.assertEqual(
+            report_a["regimes"]["R60"]["time_ordered_cross_validation"],
+            report_b["regimes"]["R60"]["time_ordered_cross_validation"],
+        )
+        self.assertEqual(
+            report_a["regimes"]["R54"]["status"],
+            "INSUFFICIENT_PRETARGET_HISTORY",
+        )
 
     def test_duplicate_date_is_rejected(self):
         rows = synthetic_rows()
@@ -47,6 +62,28 @@ class WalkForwardTests(unittest.TestCase):
         rows[5], rows[6] = rows[6], rows[5]
         with self.assertRaises(ValueError):
             engine.evaluate_rows(rows, min_train=10, cv_folds=5)
+
+    def test_r54_and_r60_are_evaluated_independently(self):
+        rows = []
+        start_r54 = date(2020, 7, 20)
+        for index in range(8):
+            day = (start_r54 + timedelta(days=index)).isoformat()
+            base = (index * 7) % 55 + 1
+            nums = sorted({((base + offset * 9 - 1) % 60) + 1 for offset in range(6)})
+            rows.append({"date": day, "numbers": nums})
+        start_r60 = date(2020, 8, 2)
+        for index in range(8):
+            day = (start_r60 + timedelta(days=index)).isoformat()
+            base = (index * 11) % 55 + 1
+            nums = sorted({((base + offset * 7 - 1) % 60) + 1 for offset in range(6)})
+            rows.append({"date": day, "numbers": nums})
+
+        report = engine.evaluate_rows(rows, min_train=4, cv_folds=2)
+        self.assertEqual(report["regime_counts"], {"R54": 8, "R60": 7})
+        self.assertEqual(report["regimes"]["R54"]["status"], "EVALUATED")
+        self.assertEqual(report["regimes"]["R60"]["status"], "EVALUATED")
+        self.assertLess(report["regimes"]["R54"]["forward_walk_forward"]["first_test_date"], "2020-08-02")
+        self.assertGreaterEqual(report["regimes"]["R60"]["forward_walk_forward"]["first_test_date"], "2020-08-02")
 
     def test_invalid_fold_count_is_rejected(self):
         rows = synthetic_rows()
