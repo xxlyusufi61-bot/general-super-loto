@@ -17,6 +17,8 @@ MAX_FILES = 6
 # (repository-relative path, task markers that make the file relevant)
 SOURCE_MANIFEST: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("general_core.py", ()),
+    ("docs/research-notation-and-governance.md",
+     ("formula", "method", "research", "discovery", "notation", "hypothesis", "cross-validation", "walk-forward")),
     (".github/workflows/general-agent.yml",
      ("agent", "workflow", "system", "architecture", "orchestrat", "coordinator", "research", "debug", "validation", "crossover")),
     ("general_coordinator.py",
