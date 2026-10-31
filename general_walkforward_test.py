@@ -119,6 +119,16 @@ class WalkForwardTests(unittest.TestCase):
                     expected,
                 )
 
+    def test_r54_out_of_pool_pre_target_value_is_rejected(self):
+        rows = []
+        start = date(2020, 7, 20)
+        for index in range(5):
+            day = (start + timedelta(days=index)).isoformat()
+            numbers = [1, 2, 3, 4, 5, 55] if index == 0 else [1, 2, 3, 4, 5, 6]
+            rows.append({"date": day, "numbers": numbers})
+        with self.assertRaisesRegex(ValueError, "R54 contains a pre-target value"):
+            engine.evaluate_rows(rows, min_train=2, cv_folds=2)
+
     def test_invalid_fold_count_is_rejected(self):
         rows = synthetic_rows()
         with self.assertRaises(ValueError):
