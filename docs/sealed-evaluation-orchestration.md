@@ -49,7 +49,7 @@ The per-draw details record:
 - hit count from zero to six;
 - the one-based position(s) among the six selected columns that matched.
 
-Reports omit target number sets, predicted number values and full candidate rankings. They include separate forward/reverse summaries and per-regime summaries, tested date ranges, hit distributions, uniform-random expectations, hashes, protocol limits, and explicit caveats. No candidate is automatically promoted, no method registry status changes, and no formula is called proven.
+Reports omit target number sets, predicted number values and full candidate rankings. They include separate forward/reverse summaries and per-regime summaries, tested date ranges, hit distributions, uniform-random expectations, hashes, protocol limits, and explicit caveats. Historical dates that cannot be scored because the direction-appropriate minimum reference history is unavailable are listed with a skip reason and available-versus-required history count; they are never silently dropped or counted as zero-hit tests. No candidate is automatically promoted, no method registry status changes, and no formula is called proven.
 
 The append-only ledger stores both directional holdout dates, candidate/specification hashes, archive snapshot hash, and evaluation status. A date consumed by either holdout in either direction cannot be reused as a fresh validation date in a later claim. The claim and snapshot must be committed before scores are calculated. If evaluation later fails, the claimed dates remain consumed; the system fails closed.
 
