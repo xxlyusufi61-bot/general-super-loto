@@ -16,9 +16,8 @@ CROSS_URLS = (
     "https://loto.gen.tr/super-loto/arsiv/2025?sayfa=2",
 )
 OUT = Path(__file__).resolve().parent / "super_loto_archive.json"
-# Raw primary-site counts. These checks remain intentionally separate from
-# the final archive counts: older source pages omit records found in Loto.gen.
-EXPECTED = {2020: 97, 2021: 154, 2022: 155, 2023: 150, 2024: 157, 2025: 156}
+# Active-scope primary-site counts after dates before 2020-08-02 are discarded.
+EXPECTED = {2020: 66, 2021: 154, 2022: 155, 2023: 150, 2024: 157, 2025: 156}
 CROSS_EXPECTED = 156
 VERIFIED_ARCHIVE_EXPECTED = {
     2020: 66,
@@ -195,6 +194,8 @@ def parse_primary_year(year, html=None):
             draw_date = date(row_year, month, day).isoformat()
         except ValueError as exc:
             raise RuntimeError(f"Invalid primary date: {first}") from exc
+        if draw_date < R60_START:
+            continue
         text_parts = [cell["text"] for cell in cells[1:]]
         nums = [int(x) for x in re.findall(r"(?<!\d)\d{1,2}(?!\d)", " ".join(text_parts))]
         if len(nums) != 6 or len(set(nums)) != 6 or any(n < 1 or n > 60 for n in nums):
