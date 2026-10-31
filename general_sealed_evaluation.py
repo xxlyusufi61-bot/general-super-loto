@@ -32,7 +32,7 @@ from general_hypothesis_execution import (
     validate_execution_spec,
 )
 
-VERSION = "0.3.1"
+VERSION = "0.3.2"
 REGIME_BOUNDARY = date(2020, 8, 2)
 DEFAULT_MIN_TRAIN_DRAWS = 40
 DEFAULT_MAX_VALIDATION_DRAWS = 30
@@ -101,13 +101,17 @@ def _copy_row(row: dict[str, Any]) -> dict[str, Any]:
     return {"date": row["date"], "numbers": list(row["numbers"])}
 
 
-def split_archive(rows: list[dict[str, Any]], *, archive_sha256: str = "") -> dict[str, Any]:
-    """Create disjoint discovery and directional holdouts, per regime.
+def split_archive(
+    rows: list[dict[str, Any]],
+    *,
+    archive_sha256: str = "",
+    used_validation_dates: set[str] | None = None,
+) -> dict[str, Any]:
+    """Create fresh disjoint discovery and directional holdouts, per regime.
 
-    The latest row is isolated as the current target. For R60, the oldest
-    eligible pre-target rows are reserved for reverse-retrospective testing,
-    the newest are reserved for forward walk-forward testing, and only the
-    non-overlapping middle rows go to discovery. R54 remains discovery-only.
+    Dates already consumed by either directional holdout are excluded from every
+    later discovery/validation partition. New reverse and forward holdouts are
+    selected from the oldest and newest remaining eligible rows respectively.
     """
     try:
         checked = guard.validate_archive(rows)
@@ -138,6 +142,25 @@ def split_archive(rows: list[dict[str, Any]], *, archive_sha256: str = "") -> di
     if any(date.fromisoformat(row["date"]) >= target_day for row in pre_target):
         raise SealedEvaluationError("Target/future row leaked into the pre-target partition.")
 
+    if used_validation_dates is None:
+        used_dates: set[str] = set()
+    elif isinstance(used_validation_dates, (set, list, tuple)):
+        used_dates = set(used_validation_dates)
+    else:
+        raise SealedEvaluationError("Previously consumed validation dates must be a set/list/tuple.")
+    for value in used_dates:
+        if not isinstance(value, str):
+            raise SealedEvaluationError("Previously consumed validation date is not text.")
+        try:
+            parsed = date.fromisoformat(value)
+        except ValueError:
+            raise SealedEvaluationError("Previously consumed validation date is invalid.") from None
+        if parsed.isoformat() != value or parsed >= target_day:
+            raise SealedEvaluationError("Previously consumed validation date is not a canonical pre-target date.")
+    archive_dates = {row["date"] for row in rows}
+    if not used_dates.issubset(archive_dates):
+        raise SealedEvaluationError("Archive is missing one or more previously consumed validation dates.")
+
     by_regime: dict[str, list[dict[str, Any]]] = {"R54": [], "R60": []}
     for row in pre_target:
         day = date.fromisoformat(row["date"])
@@ -151,16 +174,19 @@ def split_archive(rows: list[dict[str, Any]], *, archive_sha256: str = "") -> di
     all_discovery: list[dict[str, Any]] = []
     for regime, history in by_regime.items():
         pool_size = 54 if regime == "R54" else 60
+        available_history = [row for row in history if row["date"] not in used_dates]
+        previously_consumed_count = len(history) - len(available_history)
+        regimes[regime] = {}
         if regime == "R54":
             # This version deliberately does not run R54 real-archive evaluation.
-            # Keep it as discovery context, even if a future archive grows longer.
-            discovery = list(history)
+            # Keep its unconsumed rows as discovery context only.
+            discovery = list(available_history)
             validation: list[dict[str, Any]] = []
             reverse_validation: list[dict[str, Any]] = []
-            if len(history) < DEFAULT_MIN_TRAIN_DRAWS + MIN_VALIDATION_DRAWS:
+            if len(available_history) < DEFAULT_MIN_TRAIN_DRAWS + MIN_VALIDATION_DRAWS:
                 status = "NOT_EVALUABLE_INSUFFICIENT_HISTORY"
                 reason = (
-                    "R54 has fewer rows than the default minimum training history; "
+                    "R54 has fewer unconsumed rows than the default minimum training history; "
                     "the minimum was not lowered, and R54 remains discovery-only without "
                     "AI-selected holdout windows."
                 )
@@ -168,32 +194,32 @@ def split_archive(rows: list[dict[str, Any]], *, archive_sha256: str = "") -> di
                 status = "DISCOVERY_ONLY_NOT_EVALUATED"
                 reason = (
                     "R54 real-archive evaluation is not enabled in this version; "
-                    "its rows remain discovery context only."
+                    "its unconsumed rows remain discovery context only."
                 )
-        elif len(history) < DEFAULT_MIN_TRAIN_DRAWS + 2 * MIN_VALIDATION_DRAWS:
-            discovery = list(history)
+        elif len(available_history) < DEFAULT_MIN_TRAIN_DRAWS + 2 * MIN_VALIDATION_DRAWS:
+            discovery = list(available_history)
             validation = []
             reverse_validation = []
             status = "NOT_EVALUABLE_INSUFFICIENT_HISTORY"
             reason = (
-                "The regime does not have enough rows for default training history plus "
+                "The regime does not have enough unconsumed rows for default training history plus "
                 "two disjoint directional holdouts; the minimum was not lowered."
             )
         else:
             validation_count = min(
                 DEFAULT_MAX_VALIDATION_DRAWS,
-                (len(history) - DEFAULT_MIN_TRAIN_DRAWS) // 2,
+                (len(available_history) - DEFAULT_MIN_TRAIN_DRAWS) // 2,
             )
             if validation_count < MIN_VALIDATION_DRAWS:
-                discovery = list(history)
+                discovery = list(available_history)
                 validation = []
                 reverse_validation = []
                 status = "NOT_EVALUABLE_INSUFFICIENT_HISTORY"
-                reason = "Insufficient rows remain after preserving the default training minimum and two disjoint holdouts."
+                reason = "Insufficient unconsumed rows remain after preserving the default training minimum and two disjoint holdouts."
             else:
-                reverse_validation = history[:validation_count]
-                discovery = history[validation_count:-validation_count]
-                validation = history[-validation_count:]
+                reverse_validation = available_history[:validation_count]
+                discovery = available_history[validation_count:-validation_count]
+                validation = available_history[-validation_count:]
                 status = "READY"
                 reason = None
         if discovery and reverse_validation and discovery[0]["date"] <= reverse_validation[-1]["date"]:
@@ -204,12 +230,16 @@ def split_archive(rows: list[dict[str, Any]], *, archive_sha256: str = "") -> di
             raise SealedEvaluationError(regime + " directional validation windows overlap.")
         if any(row["date"] >= target_date for row in discovery + validation + reverse_validation):
             raise SealedEvaluationError(regime + " includes the isolated target or a later date.")
+        if any(row["date"] in used_dates for row in discovery + validation + reverse_validation):
+            raise SealedEvaluationError(regime + " reused a previously consumed holdout date.")
         regimes[regime] = {
             "regime": regime,
             "number_pool_size": pool_size,
             "status": status,
             "reason": reason,
             "pre_target_draw_count": len(history),
+            "available_pre_target_draw_count": len(available_history),
+            "previously_consumed_draw_count": previously_consumed_count,
             "discovery_rows": discovery,
             "validation_rows": validation,
             "reverse_validation_rows": reverse_validation,
@@ -228,6 +258,8 @@ def split_archive(rows: list[dict[str, Any]], *, archive_sha256: str = "") -> di
     all_discovery.sort(key=lambda row: row["date"])
     if any(row["date"] >= target_date for row in all_discovery):
         raise SealedEvaluationError("Discovery rows include the target or a later record.")
+    if any(row["date"] in used_dates for row in all_discovery):
+        raise SealedEvaluationError("Discovery rows include a previously consumed holdout date.")
     return {
         "schema_version": 1,
         "orchestrator_version": VERSION,
@@ -236,6 +268,7 @@ def split_archive(rows: list[dict[str, Any]], *, archive_sha256: str = "") -> di
         "archive_sha256": archive_sha256,
         "archive_record_count": len(rows),
         "pre_target_draw_count": len(pre_target),
+        "previously_consumed_validation_draw_count": len(used_dates),
         "target_numbers_exposed": False,
         "target_in_discovery": False,
         "target_in_validation": False,
@@ -245,7 +278,7 @@ def split_archive(rows: list[dict[str, Any]], *, archive_sha256: str = "") -> di
         "discovery_count": len(all_discovery),
         "regimes": regimes,
     }
-
+}
 
 def _ledger_empty() -> dict[str, Any]:
     return {
@@ -307,6 +340,16 @@ def load_ledger(path: str | Path) -> dict[str, Any]:
         parsed_reverse = reverse_dates
         if parsed_forward != sorted(set(parsed_forward)) or parsed_reverse != sorted(set(parsed_reverse)):
             raise SealedEvaluationError("Evaluation ledger validation dates are not sorted and unique.")
+        recorded_prior = entry.get("previously_consumed_validation_dates")
+        if recorded_prior is not None:
+            if (
+                not isinstance(recorded_prior, list)
+                or recorded_prior != sorted(set(recorded_prior))
+                or set(recorded_prior) != used_dates
+            ):
+                raise SealedEvaluationError(
+                    "Evaluation ledger prior-consumption snapshot does not match preceding claims."
+                )
         if set(parsed_forward).intersection(parsed_reverse):
             raise SealedEvaluationError("Forward and reverse validation dates overlap within a ledger entry.")
         overlap = used_dates.intersection(parsed_dates)
@@ -325,7 +368,8 @@ def public_plan(split: dict[str, Any]) -> dict[str, Any]:
             key: item[key]
             for key in (
                 "regime", "number_pool_size", "status", "reason",
-                "pre_target_draw_count", "discovery_count", "validation_count",
+                "pre_target_draw_count", "available_pre_target_draw_count",
+                "previously_consumed_draw_count", "discovery_count", "validation_count",
                 "reverse_validation_count",
                 "discovery_start_date", "discovery_end_date",
                 "validation_start_date", "validation_end_date",
@@ -337,8 +381,8 @@ def public_plan(split: dict[str, Any]) -> dict[str, Any]:
         for key in (
             "schema_version", "orchestrator_version", "engine_version",
             "target_date", "archive_sha256", "archive_record_count",
-            "pre_target_draw_count", "target_numbers_exposed",
-            "target_in_discovery", "target_in_validation",
+            "pre_target_draw_count", "previously_consumed_validation_draw_count",
+            "target_numbers_exposed", "target_in_discovery", "target_in_validation",
             "discovery_count",
         )
     } | {"regimes": regimes}
@@ -352,24 +396,40 @@ def _used_validation_dates(ledger: dict[str, Any]) -> set[str]:
     }
 
 
+def get_used_validation_dates(ledger: dict[str, Any]) -> set[str]:
+    """Return all dates permanently consumed by either directional holdout."""
+    return set(_used_validation_dates(ledger))
+
+
 def preflight(
     archive_path: str | Path,
     ledger_path: str | Path,
 ) -> dict[str, Any]:
     """Fail before any hosted-model request if no fresh validation interval exists."""
     archive = load_archive(archive_path)
-    split = split_archive(archive["rows"], archive_sha256=archive["archive_sha256"])
     ledger = load_ledger(ledger_path)
+    used_dates = _used_validation_dates(ledger)
+    split = split_archive(
+        archive["rows"],
+        archive_sha256=archive["archive_sha256"],
+        used_validation_dates=used_dates,
+    )
     r60 = split["regimes"]["R60"]
     validation_dates = [row["date"] for row in r60["validation_rows"]]
     reverse_validation_dates = [row["date"] for row in r60["reverse_validation_rows"]]
     if len(validation_dates) < MIN_VALIDATION_DRAWS:
-        raise SealedEvaluationError("R60 has no sufficiently sized forward sealed validation interval.")
+        raise SealedEvaluationError(
+            "R60 has no sufficiently sized fresh forward sealed validation interval; "
+            "preserve the minimum history and wait for more unconsumed draws."
+        )
     if len(reverse_validation_dates) < MIN_VALIDATION_DRAWS:
-        raise SealedEvaluationError("R60 has no sufficiently sized reverse sealed validation interval.")
+        raise SealedEvaluationError(
+            "R60 has no sufficiently sized fresh reverse sealed validation interval; "
+            "preserve the minimum history and wait for more unconsumed draws."
+        )
     if set(validation_dates).intersection(reverse_validation_dates):
         raise SealedEvaluationError("Forward and reverse validation intervals overlap.")
-    overlap = sorted((set(validation_dates) | set(reverse_validation_dates)).intersection(_used_validation_dates(ledger)))
+    overlap = sorted((set(validation_dates) | set(reverse_validation_dates)).intersection(used_dates))
     if overlap:
         raise SealedEvaluationError(
             "Current sealed validation window overlaps already-consumed dates; stop before any model request."
@@ -381,6 +441,7 @@ def preflight(
         "status": "READY",
         "ledger_entry_count": len(ledger["entries"]),
         "validation_dates_previously_consumed": False,
+        "previously_consumed_validation_draw_count": len(used_dates),
         "forward_validation_dates": validation_dates,
         "reverse_validation_dates": reverse_validation_dates,
         "hosted_model_request_performed": False,
@@ -508,8 +569,13 @@ def create_claim(
             "reason": "Need one DSL-valid specification for the first eligible proposal in each direction, with no alternatives.",
         }
     archive = load_archive(archive_path)
-    split = split_archive(archive["rows"], archive_sha256=archive["archive_sha256"])
     ledger = load_ledger(ledger_path)
+    used_dates = _used_validation_dates(ledger)
+    split = split_archive(
+        archive["rows"],
+        archive_sha256=archive["archive_sha256"],
+        used_validation_dates=used_dates,
+    )
     r60 = split["regimes"]["R60"]
     validation = r60["validation_rows"]
     reverse_validation = r60["reverse_validation_rows"]
@@ -536,6 +602,7 @@ def create_claim(
         "target_date": split["target_date"],
         "validation_dates": validation_dates,
         "reverse_validation_dates": reverse_validation_dates,
+        "previously_consumed_validation_dates": sorted(used_dates),
         "hypothesis_id": candidate["hypothesis_id"],
         "spec_sha256": candidate["spec_sha256"],
         "reverse_hypothesis_id": candidate["reverse_hypothesis_id"],
@@ -564,6 +631,7 @@ def create_claim(
         "target_date": split["target_date"],
         "archive_sha256": archive["archive_sha256"],
         "archive_record_count": archive["record_count"],
+        "previously_consumed_validation_dates": sorted(used_dates),
         "archive_snapshot_path": str(snapshot_path).replace("\\", "/"),
         "hypothesis_id": candidate["hypothesis_id"],
         "spec_sha256": candidate["spec_sha256"],
@@ -930,6 +998,18 @@ def evaluate_claim(
     """Evaluate one already-persisted claim against its immutable archive snapshot."""
     ledger = load_ledger(ledger_path)
     entry = _find_claim(ledger, claim_id)
+    entry_index = next(
+        index for index, item in enumerate(ledger["entries"])
+        if item.get("claim_id") == claim_id
+    )
+    expected_prior_dates = sorted({
+        day
+        for prior in ledger["entries"][:entry_index]
+        for day in prior["validation_dates"] + prior.get("reverse_validation_dates", [])
+    })
+    recorded_prior_dates = entry.get("previously_consumed_validation_dates", expected_prior_dates)
+    if recorded_prior_dates != expected_prior_dates:
+        raise SealedEvaluationError("Claim prior-consumption snapshot does not match the append-only ledger.")
     candidate = _select_one_frozen_candidate(proposals_path, specs_path)
     if candidate is None:
         raise SealedEvaluationError("Frozen candidate disappeared or no longer matches the parsed proposal.")
@@ -939,7 +1019,11 @@ def evaluate_claim(
     archive = load_archive(snapshot_path)
     if archive["archive_sha256"] != entry["archive_sha256"]:
         raise SealedEvaluationError("Immutable archive snapshot hash does not match the ledger.")
-    split = split_archive(archive["rows"], archive_sha256=archive["archive_sha256"])
+    split = split_archive(
+        archive["rows"],
+        archive_sha256=archive["archive_sha256"],
+        used_validation_dates=set(recorded_prior_dates),
+    )
     if split["target_date"] != entry["target_date"]:
         raise SealedEvaluationError("Snapshot target cutoff does not match the ledger.")
     r60 = split["regimes"]["R60"]
