@@ -110,6 +110,9 @@ def split_archive(rows: list[dict[str, Any]], *, archive_sha256: str = "") -> di
         checked = guard.validate_archive(rows)
     except Exception:
         raise SealedEvaluationError("Data Guard rejected the archive before splitting.") from None
+    for row in rows:
+        if row.get("numbers") != sorted(row.get("numbers", [])):
+            raise SealedEvaluationError("Archive number sets must be sorted; no silent normalization is allowed.")
     target_date = checked.get("last_date")
     if not isinstance(target_date, str):
         raise SealedEvaluationError("Data Guard did not provide a target date.")
