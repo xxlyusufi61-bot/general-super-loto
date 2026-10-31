@@ -358,7 +358,7 @@ def evaluate_bidirectional_full_history(
                 scoring_history,
                 number_pool_size=pool_size,
                 candidate=chosen,
-                direction="reverse",
+                direction="forward",
             )
             matched = _matched_positions(ranking, target["numbers"])
             forward_details.append({
@@ -401,6 +401,7 @@ def evaluate_bidirectional_full_history(
                 scoring_history,
                 number_pool_size=pool_size,
                 candidate=chosen,
+                direction="reverse",
             )
             matched = _matched_positions(ranking, target["numbers"])
             reverse_details.append({
@@ -418,9 +419,48 @@ def evaluate_bidirectional_full_history(
                 "predicted_number_values_reported": False,
             })
 
+        # Report every row that could not be scored because the direction-appropriate
+        # minimum history was unavailable. These rows are not counted as zero-hit results.
+        required_history_count = min_train_draws + MIN_SELECTION_DRAWS
+        forward_skipped = [
+            {
+                "test_date": target["date"],
+                "direction": "forward",
+                "status": "SKIPPED_INSUFFICIENT_PRIOR_HISTORY",
+                "available_prior_history_draw_count": index,
+                "required_prior_history_draw_count": required_history_count,
+                "hit_count": None,
+                "target_numbers_reported": False,
+                "predicted_number_values_reported": False,
+            }
+            for index, target in enumerate(rows)
+            if index < required_history_count
+        ]
+        reverse_skipped = [
+            {
+                "test_date": rows[index]["date"],
+                "direction": "reverse_retrospective",
+                "status": "SKIPPED_INSUFFICIENT_LATER_HISTORY",
+                "available_later_history_draw_count": len(rows) - index - 1,
+                "required_later_history_draw_count": required_history_count,
+                "hit_count": None,
+                "target_numbers_reported": False,
+                "predicted_number_values_reported": False,
+            }
+            for index in range(len(rows) - 1, -1, -1)
+            if len(rows) - index - 1 < required_history_count
+        ]
         # Forward is oldest->newest; reverse is newest->oldest, matching the required protocol.
         forward_details.sort(key=lambda item: item["test_date"])
         reverse_details.sort(key=lambda item: item["test_date"], reverse=True)
+        forward_summary = _direction_summary("forward", forward_details, pool_size=pool_size, predictive_evidence=True)
+        forward_summary["eligible_input_draw_count"] = len(rows)
+        forward_summary["skipped_draw_count"] = len(forward_skipped)
+        reverse_summary = _direction_summary(
+            "reverse_retrospective", reverse_details, pool_size=pool_size, predictive_evidence=False
+        )
+        reverse_summary["eligible_input_draw_count"] = len(rows)
+        reverse_summary["skipped_draw_count"] = len(reverse_skipped)
         results[regime] = {
             "regime": regime,
             "number_pool_size": pool_size,
@@ -429,12 +469,12 @@ def evaluate_bidirectional_full_history(
                 {"spec_id": item["spec_id"], "spec_sha256": item["spec_sha256"]}
                 for item in catalog
             ],
-            "forward": _direction_summary("forward", forward_details, pool_size=pool_size, predictive_evidence=True),
-            "reverse_retrospective": _direction_summary(
-                "reverse_retrospective", reverse_details, pool_size=pool_size, predictive_evidence=False
-            ),
+            "forward": forward_summary,
+            "reverse_retrospective": reverse_summary,
             "forward_per_draw": forward_details,
             "reverse_per_draw": reverse_details,
+            "forward_skipped_due_to_insufficient_history": forward_skipped,
+            "reverse_skipped_due_to_insufficient_history": reverse_skipped,
             "forward_and_reverse_tested_date_intersection_count": len(
                 {row["test_date"] for row in forward_details}.intersection(
                     {row["test_date"] for row in reverse_details}
