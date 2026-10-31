@@ -14,7 +14,7 @@ from typing import Any
 
 import general_data_guard as guard
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 DEFAULT_MIN_TRAIN = 100
 DEFAULT_CV_FOLDS = 5
 RANDOM_EXPECTED_HITS_6_OF_60 = 0.6
