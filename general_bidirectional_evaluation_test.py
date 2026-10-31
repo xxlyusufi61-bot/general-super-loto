@@ -110,6 +110,15 @@ class BidirectionalFullHistoryTests(unittest.TestCase):
             r60_report["forward_per_draw"][0]["test_date"],
             r60[42]["date"],
         )
+        for direction_key, details_key in (
+            ("forward", "forward_per_draw"),
+            ("reverse_retrospective", "reverse_per_draw"),
+        ):
+            summary = r60_report[direction_key]
+            details = r60_report[details_key]
+            expected_missed = [row["test_date"] for row in details if row["hit_count"] == 0]
+            self.assertEqual(summary["missed_draw_dates"], expected_missed)
+            self.assertEqual(summary["missed_draw_count"], len(expected_missed))
         self.assertEqual(
             r60_report["reverse_per_draw"][0]["test_date"],
             r60[-43]["date"],
