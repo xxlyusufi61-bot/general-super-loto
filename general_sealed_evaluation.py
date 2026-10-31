@@ -100,12 +100,12 @@ def _copy_row(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def split_archive(rows: list[dict[str, Any]], *, archive_sha256: str = "") -> dict[str, Any]:
-    """Create disjoint chronological discovery/validation rows, per regime.
+    """Create disjoint discovery and directional holdouts, per regime.
 
-    The current latest row is the isolated target and is excluded from both
-    discovery and evaluation. R54 is not forced below the engine's 40-row
-    default training requirement. With the current short R54 history it remains
-    discovery-only and is explicitly marked not evaluable.
+    The latest row is isolated as the current target. For R60, the oldest
+    eligible pre-target rows are reserved for reverse-retrospective testing,
+    the newest are reserved for forward walk-forward testing, and only the
+    non-overlapping middle rows go to discovery. R54 remains discovery-only.
     """
     try:
         checked = guard.validate_archive(rows)
@@ -154,11 +154,12 @@ def split_archive(rows: list[dict[str, Any]], *, archive_sha256: str = "") -> di
             # Keep it as discovery context, even if a future archive grows longer.
             discovery = list(history)
             validation: list[dict[str, Any]] = []
-            if len(history) < DEFAULT_MIN_TRAIN_DRAWS + MIN_VALIDATION_DRAWS:
+            reverse_validation: list[dict[str, Any]] = []
+            if len(history) < DEFAULT_MIN_TRAIN_DRAWS + 2 * MIN_VALIDATION_DRAWS:
                 status = "NOT_EVALUABLE_INSUFFICIENT_HISTORY"
                 reason = (
                     "R54 has fewer rows than the default minimum training history plus "
-                    "the minimum validation interval; the minimum was not lowered."
+                    "two separate directional holdouts; the minimum was not lowered."
                 )
             else:
                 status = "DISCOVERY_ONLY_NOT_EVALUATED"
@@ -166,32 +167,39 @@ def split_archive(rows: list[dict[str, Any]], *, archive_sha256: str = "") -> di
                     "R54 real-archive evaluation is not enabled in this version; "
                     "its rows remain discovery context only."
                 )
-        elif len(history) < DEFAULT_MIN_TRAIN_DRAWS + MIN_VALIDATION_DRAWS:
+        elif len(history) < DEFAULT_MIN_TRAIN_DRAWS + 2 * MIN_VALIDATION_DRAWS:
             discovery = list(history)
             validation = []
+            reverse_validation = []
             status = "NOT_EVALUABLE_INSUFFICIENT_HISTORY"
             reason = (
-                "The regime does not have the default minimum training history plus "
-                "the minimum validation interval; the minimum was not lowered."
+                "The regime does not have enough rows for default training history plus "
+                "two disjoint directional holdouts; the minimum was not lowered."
             )
         else:
             validation_count = min(
                 DEFAULT_MAX_VALIDATION_DRAWS,
-                len(history) - DEFAULT_MIN_TRAIN_DRAWS,
+                (len(history) - DEFAULT_MIN_TRAIN_DRAWS) // 2,
             )
             if validation_count < MIN_VALIDATION_DRAWS:
                 discovery = list(history)
                 validation = []
+                reverse_validation = []
                 status = "NOT_EVALUABLE_INSUFFICIENT_HISTORY"
-                reason = "Insufficient rows remain after preserving the default minimum training history."
+                reason = "Insufficient rows remain after preserving the default training minimum and two disjoint holdouts."
             else:
-                discovery = history[:-validation_count]
+                reverse_validation = history[:validation_count]
+                discovery = history[validation_count:-validation_count]
                 validation = history[-validation_count:]
                 status = "READY"
                 reason = None
+        if discovery and reverse_validation and discovery[0]["date"] <= reverse_validation[-1]["date"]:
+            raise SealedEvaluationError(regime + " discovery and reverse validation windows overlap.")
         if discovery and validation and discovery[-1]["date"] >= validation[0]["date"]:
-            raise SealedEvaluationError(regime + " discovery and validation windows overlap.")
-        if any(row["date"] >= target_date for row in discovery + validation):
+            raise SealedEvaluationError(regime + " discovery and forward validation windows overlap.")
+        if reverse_validation and validation and reverse_validation[-1]["date"] >= validation[0]["date"]:
+            raise SealedEvaluationError(regime + " directional validation windows overlap.")
+        if any(row["date"] >= target_date for row in discovery + validation + reverse_validation):
             raise SealedEvaluationError(regime + " includes the isolated target or a later date.")
         regimes[regime] = {
             "regime": regime,
@@ -201,12 +209,16 @@ def split_archive(rows: list[dict[str, Any]], *, archive_sha256: str = "") -> di
             "pre_target_draw_count": len(history),
             "discovery_rows": discovery,
             "validation_rows": validation,
+            "reverse_validation_rows": reverse_validation,
             "discovery_count": len(discovery),
             "validation_count": len(validation),
+            "reverse_validation_count": len(reverse_validation),
             "discovery_start_date": discovery[0]["date"] if discovery else None,
             "discovery_end_date": discovery[-1]["date"] if discovery else None,
             "validation_start_date": validation[0]["date"] if validation else None,
             "validation_end_date": validation[-1]["date"] if validation else None,
+            "reverse_validation_start_date": reverse_validation[0]["date"] if reverse_validation else None,
+            "reverse_validation_end_date": reverse_validation[-1]["date"] if reverse_validation else None,
         }
         all_discovery.extend(discovery)
 
@@ -224,6 +236,8 @@ def split_archive(rows: list[dict[str, Any]], *, archive_sha256: str = "") -> di
         "target_numbers_exposed": False,
         "target_in_discovery": False,
         "target_in_validation": False,
+        "target_in_reverse_validation": False,
+        "directional_validation_windows_disjoint": True,
         "discovery_rows": all_discovery,
         "discovery_count": len(all_discovery),
         "regimes": regimes,
@@ -272,8 +286,11 @@ def load_ledger(path: str | Path) -> dict[str, Any]:
             or state not in ALLOWED_CLAIM_STATES
         ):
             raise SealedEvaluationError("Evaluation ledger entry is malformed; failing closed.")
+        reverse_dates = entry.get("reverse_validation_dates", [])
+        if not isinstance(reverse_dates, list):
+            raise SealedEvaluationError("Evaluation ledger reverse validation dates are malformed.")
         parsed_dates = []
-        for value in dates:
+        for value in dates + reverse_dates:
             if not isinstance(value, str):
                 raise SealedEvaluationError("Evaluation ledger contains an invalid validation date.")
             try:
@@ -283,11 +300,15 @@ def load_ledger(path: str | Path) -> dict[str, Any]:
             if day.isoformat() != value:
                 raise SealedEvaluationError("Evaluation ledger contains a non-canonical date.")
             parsed_dates.append(value)
-        if parsed_dates != sorted(set(parsed_dates)):
+        parsed_forward = dates
+        parsed_reverse = reverse_dates
+        if parsed_forward != sorted(set(parsed_forward)) or parsed_reverse != sorted(set(parsed_reverse)):
             raise SealedEvaluationError("Evaluation ledger validation dates are not sorted and unique.")
+        if set(parsed_forward).intersection(parsed_reverse):
+            raise SealedEvaluationError("Forward and reverse validation dates overlap within a ledger entry.")
         overlap = used_dates.intersection(parsed_dates)
         if overlap:
-            raise SealedEvaluationError("Evaluation ledger already contains overlapping validation dates.")
+            raise SealedEvaluationError("Evaluation ledger already contains overlapping directional validation dates.")
         seen_claims.add(claim_id)
         used_dates.update(parsed_dates)
     return payload
@@ -302,8 +323,10 @@ def public_plan(split: dict[str, Any]) -> dict[str, Any]:
             for key in (
                 "regime", "number_pool_size", "status", "reason",
                 "pre_target_draw_count", "discovery_count", "validation_count",
+                "reverse_validation_count",
                 "discovery_start_date", "discovery_end_date",
                 "validation_start_date", "validation_end_date",
+                "reverse_validation_start_date", "reverse_validation_end_date",
             )
         }
     return {
@@ -322,7 +345,7 @@ def _used_validation_dates(ledger: dict[str, Any]) -> set[str]:
     return {
         day
         for entry in ledger["entries"]
-        for day in entry["validation_dates"]
+        for day in entry["validation_dates"] + entry.get("reverse_validation_dates", [])
     }
 
 
@@ -336,9 +359,14 @@ def preflight(
     ledger = load_ledger(ledger_path)
     r60 = split["regimes"]["R60"]
     validation_dates = [row["date"] for row in r60["validation_rows"]]
+    reverse_validation_dates = [row["date"] for row in r60["reverse_validation_rows"]]
     if len(validation_dates) < MIN_VALIDATION_DRAWS:
-        raise SealedEvaluationError("R60 has no sufficiently sized sealed validation interval.")
-    overlap = sorted(set(validation_dates).intersection(_used_validation_dates(ledger)))
+        raise SealedEvaluationError("R60 has no sufficiently sized forward sealed validation interval.")
+    if len(reverse_validation_dates) < MIN_VALIDATION_DRAWS:
+        raise SealedEvaluationError("R60 has no sufficiently sized reverse sealed validation interval.")
+    if set(validation_dates).intersection(reverse_validation_dates):
+        raise SealedEvaluationError("Forward and reverse validation intervals overlap.")
+    overlap = sorted((set(validation_dates) | set(reverse_validation_dates)).intersection(_used_validation_dates(ledger)))
     if overlap:
         raise SealedEvaluationError(
             "Current sealed validation window overlaps already-consumed dates; stop before any model request."
@@ -350,6 +378,8 @@ def preflight(
         "status": "READY",
         "ledger_entry_count": len(ledger["entries"]),
         "validation_dates_previously_consumed": False,
+        "forward_validation_dates": validation_dates,
+        "reverse_validation_dates": reverse_validation_dates,
         "hosted_model_request_performed": False,
         "real_archive_evaluation_performed": False,
     })
