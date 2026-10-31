@@ -410,6 +410,10 @@ class SafeHypothesisExecutionTests(unittest.TestCase):
         )
         self.assertEqual(report["evaluated_draw_count"], 1)
         self.assertEqual(report["mean_hits_out_of_6"], 6.0)
+        self.assertEqual(len(report["per_draw"]), 1)
+        self.assertEqual(report["per_draw"][0]["hit_column_positions_1_to_6"], [1, 2, 3, 4, 5, 6])
+        self.assertFalse(report["per_draw"][0]["target_numbers_reported"])
+        self.assertFalse(report["per_draw"][0]["predicted_number_values_reported"])
         self.assertFalse(report["predictive_evidence"])
 
     def test_reverse_stress_is_explicitly_not_predictive_evidence(self):
