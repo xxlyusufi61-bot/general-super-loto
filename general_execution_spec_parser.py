@@ -9,7 +9,10 @@ import json
 import re
 from typing import Any
 
-from general_hypothesis_execution import validate_execution_spec
+from general_hypothesis_execution import (
+    run_synthetic_contract_tests,
+    validate_execution_spec,
+)
 
 START_MARKER = "<HYPOTHESIS_EXECUTION_SPECS_JSON>"
 END_MARKER = "</HYPOTHESIS_EXECUTION_SPECS_JSON>"
@@ -24,6 +27,7 @@ def _base(status: str = "REJECTED") -> dict[str, Any]:
         "schema_version": SCHEMA_VERSION,
         "status": status,
         "dsl_validated": False,
+        "synthetic_tests_passed": False,
         "execution_ready": False,
         "method_registry_modified": False,
         "specifications": [],
@@ -96,10 +100,13 @@ def parse_execution_spec_block(
                 raise ValueError("Execution specification does not match a validated proposal ID.")
             seen.add(hypothesis_id)
             spec = validate_execution_spec(item.get("execution_spec"))
+            synthetic_result = run_synthetic_contract_tests(spec)
             validated.append({
                 "hypothesis_id": hypothesis_id,
                 "execution_spec": spec,
                 "dsl_validated": True,
+                "synthetic_tests_passed": synthetic_result["status"] == "PASS",
+                "synthetic_test_summary": synthetic_result,
                 "execution_ready": False,
                 "registry_write_allowed": False,
             })
@@ -109,5 +116,8 @@ def parse_execution_spec_block(
 
     base["specifications"] = validated
     base["dsl_validated"] = True
+    base["synthetic_tests_passed"] = bool(validated) and all(
+        item["synthetic_tests_passed"] for item in validated
+    )
     base["status"] = "VALID_EMPTY" if not validated else "VALIDATED_SPECS"
     return base
