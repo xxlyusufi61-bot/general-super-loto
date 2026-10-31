@@ -256,9 +256,20 @@ class SealedEvaluationTests(unittest.TestCase):
         self.assertEqual(payload["candidate_selection"]["reverse_hypothesis_id"], "HYP-002")
         self.assertFalse(payload["time_ordered_cross_validation"]["automatic_candidate_selection"])
         self.assertFalse(payload["reverse_retrospective_stress_test_of_forward_candidate"]["predictive_evidence"])
-        self.assertEqual(payload["reverse_retrospective_stress_test_of_forward_candidate"]["evaluated_draw_count"], 40)
-        self.assertEqual(payload["reverse_retrospective_stress_test_of_forward_candidate"]["last_test_date"], "2020-08-02")
-        self.assertEqual(sum(payload["reverse_retrospective_stress_test_of_forward_candidate"]["hit_distribution"].values()), 40)
+        full_reverse = payload["reverse_retrospective_stress_test_of_forward_candidate"]
+        self.assertEqual(full_reverse["evaluated_draw_count"], 40)
+        self.assertEqual(full_reverse["last_test_date"], "2020-08-02")
+        self.assertEqual(sum(full_reverse["hit_distribution"].values()), 40)
+        self.assertEqual(len(full_reverse["per_draw"]), 40)
+        self.assertTrue(full_reverse["per_draw_detail_present"])
+        self.assertEqual(full_reverse["hypothesis_id"], "HYP-001")
+        self.assertTrue(all(row["spec_sha256"] == payload["candidate_selection"]["forward_spec_sha256"] for row in full_reverse["per_draw"]))
+        for draw in full_reverse["per_draw"]:
+            self.assertEqual(draw["direction"], "reverse_retrospective")
+            self.assertEqual(draw["hit_count"], len(draw["hit_column_positions_1_to_6"]))
+            self.assertTrue(all(1 <= position <= 6 for position in draw["hit_column_positions_1_to_6"]))
+            self.assertFalse(draw["target_numbers_reported"])
+            self.assertFalse(draw["predicted_number_values_reported"])
         self.assertIn("correlated summaries", " ".join(payload["interpretation_limits"]))
         with self.ledger_path.open(encoding="utf-8") as stream:
             ledger = json.load(stream)
