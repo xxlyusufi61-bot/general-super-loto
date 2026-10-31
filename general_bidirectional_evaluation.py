@@ -26,7 +26,7 @@ from general_hypothesis_execution import (
     validate_execution_spec,
 )
 
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 REGIME_BOUNDARY = date(2020, 8, 2)
 MIN_SELECTION_DRAWS = 2
 MAX_SELECTION_DRAWS = 5
