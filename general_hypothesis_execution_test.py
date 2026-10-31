@@ -137,7 +137,7 @@ class SafeHypothesisExecutionTests(unittest.TestCase):
                 },
             },
         }
-        with self.assertRaisesRegex(ValueError, "Nested history aggregates"):
+        with self.assertRaisesRegex(ValueError, "nested history aggregates"):
             engine.validate_execution_spec(nested)
 
         multiple = {
@@ -208,7 +208,7 @@ class SafeHypothesisExecutionTests(unittest.TestCase):
     def test_holdout_rejects_overlap_or_current_target(self):
         discovery = synthetic_rows(20, start="2024-01-01")
         validation = synthetic_rows(2, start="2024-01-21")
-        with self.assertRaisesRegex(ValueError, "strictly earlier than the isolated target"):
+        with self.assertRaisesRegex(ValueError, "validation window contains the isolated target"):
             engine.evaluate_holdout(
                 discovery,
                 validation,
@@ -226,6 +226,44 @@ class SafeHypothesisExecutionTests(unittest.TestCase):
                 execution_spec=count_candidate_matches_spec(),
                 min_train_draws=10,
             )
+
+    def test_time_ordered_cv_uses_contiguous_blocks_without_shuffling(self):
+        discovery = synthetic_rows(45, start="2024-01-01", pool_size=60)
+        validation = synthetic_rows(6, start="2024-02-15", pool_size=60)
+        report = engine.evaluate_time_ordered_cv(
+            discovery,
+            validation,
+            cutoff_date="2024-02-21",
+            number_pool_size=60,
+            execution_spec=count_candidate_matches_spec(),
+            folds=3,
+            min_train_draws=20,
+        )
+        self.assertEqual(report["status"], "EVALUATED")
+        self.assertEqual(report["folds"], 3)
+        self.assertEqual(report["validation_draw_count"], 6)
+        self.assertFalse(report["current_target_numbers_exposed"])
+        self.assertFalse(report["automatic_candidate_selection"])
+        self.assertLess(
+            report["fold_reports"][0]["validation_end_date"],
+            report["fold_reports"][1]["validation_start_date"],
+        )
+
+    def test_reverse_stress_is_explicitly_not_predictive_evidence(self):
+        history = synthetic_rows(45, start="2024-01-01", pool_size=60)
+        report = engine.evaluate_reverse_retrospective_stress(
+            history,
+            cutoff_date="2024-02-15",
+            number_pool_size=60,
+            execution_spec=count_candidate_matches_spec(),
+            test_draw_count=5,
+            min_train_draws=20,
+        )
+        self.assertEqual(report["status"], "EVALUATED_RETROSPECTIVE_ONLY")
+        self.assertFalse(report["predictive_evidence"])
+        self.assertFalse(report["current_isolated_target_included"])
+        self.assertFalse(report["current_target_numbers_exposed"])
+        self.assertEqual(report["uniform_random_expected_hits_out_of_6"], 0.6)
 
     def test_holdout_reports_regime_specific_random_reference(self):
         discovery = synthetic_rows(20, start="2020-07-01", pool_size=54)
