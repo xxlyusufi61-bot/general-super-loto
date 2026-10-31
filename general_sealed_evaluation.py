@@ -390,6 +390,7 @@ def _select_one_frozen_candidate(
     proposals_path: str | Path,
     specs_path: str | Path,
 ) -> dict[str, Any] | None:
+    """Freeze the first eligible discovery proposal independently in each direction."""
     proposals, _ = _read_json(Path(proposals_path), "Proposal document")
     specs_doc, _ = _read_json(Path(specs_path), "Execution specification document")
     if (
@@ -405,30 +406,69 @@ def _select_one_frozen_candidate(
         or specs_doc.get("dsl_validated") is not True
         or specs_doc.get("synthetic_tests_passed") is not True
         or not isinstance(specs_doc.get("specifications"), list)
-        or len(specs_doc["specifications"]) != 1
+        or not 1 <= len(specs_doc["specifications"]) <= 2
     ):
         return None
-    first = proposals["proposals"][0]
-    only_spec = specs_doc["specifications"][0]
-    if not isinstance(first, dict) or not isinstance(only_spec, dict):
-        return None
-    if first.get("discovery_direction") not in {"forward", "both"}:
-        return None
-    hypothesis_id = first.get("hypothesis_id")
-    if not isinstance(hypothesis_id, str) or only_spec.get("hypothesis_id") != hypothesis_id:
-        return None
-    spec = validate_execution_spec(only_spec.get("execution_spec"))
-    synthetic = run_synthetic_contract_tests(spec)
-    if synthetic.get("status") != "PASS":
-        raise SealedEvaluationError("The frozen specification failed its synthetic contract test.")
-    spec_sha256 = _sha256_bytes(_canonical_json(spec))
-    return {
-        "hypothesis_id": hypothesis_id,
-        "execution_spec": spec,
-        "spec_sha256": spec_sha256,
-        "synthetic_test_summary": synthetic,
-    }
 
+    items = proposals["proposals"]
+    if any(
+        not isinstance(item, dict)
+        or not isinstance(item.get("hypothesis_id"), str)
+        or item.get("discovery_direction") not in {"forward", "reverse", "both"}
+        for item in items
+    ):
+        return None
+    forward_proposal = next(
+        (item for item in items if item["discovery_direction"] in {"forward", "both"}),
+        None,
+    )
+    reverse_proposal = next(
+        (item for item in items if item["discovery_direction"] in {"reverse", "both"}),
+        None,
+    )
+    if forward_proposal is None or reverse_proposal is None:
+        return None
+
+    specs_by_id: dict[str, dict[str, Any]] = {}
+    for item in specs_doc["specifications"]:
+        if not isinstance(item, dict) or not isinstance(item.get("hypothesis_id"), str):
+            return None
+        hypothesis_id = item["hypothesis_id"]
+        if hypothesis_id in specs_by_id:
+            return None
+        specs_by_id[hypothesis_id] = item
+
+    forward_id = forward_proposal["hypothesis_id"]
+    reverse_id = reverse_proposal["hypothesis_id"]
+    required_ids = {forward_id, reverse_id}
+    if set(specs_by_id) != required_ids:
+        return None
+
+    def freeze(item: dict[str, Any]) -> dict[str, Any]:
+        if item.get("dsl_validated") is not True or item.get("synthetic_tests_passed") is not True:
+            raise SealedEvaluationError("A directional specification did not pass DSL/synthetic validation.")
+        spec = validate_execution_spec(item.get("execution_spec"))
+        synthetic = run_synthetic_contract_tests(spec)
+        if synthetic.get("status") != "PASS" or synthetic.get("real_archive_used") is not False:
+            raise SealedEvaluationError("A directional specification failed its synthetic-only contract test.")
+        return {
+            "execution_spec": spec,
+            "spec_sha256": _sha256_bytes(_canonical_json(spec)),
+            "synthetic_test_summary": synthetic,
+        }
+
+    forward = freeze(specs_by_id[forward_id])
+    reverse = freeze(specs_by_id[reverse_id])
+    return {
+        "hypothesis_id": forward_id,
+        "discovery_direction": forward_proposal["discovery_direction"],
+        **forward,
+        "reverse_hypothesis_id": reverse_id,
+        "reverse_discovery_direction": reverse_proposal["discovery_direction"],
+        "reverse_execution_spec": reverse["execution_spec"],
+        "reverse_spec_sha256": reverse["spec_sha256"],
+        "reverse_synthetic_test_summary": reverse["synthetic_test_summary"],
+    }
 
 def _write_json_atomic(path: Path, payload: Any) -> bytes:
     path.parent.mkdir(parents=True, exist_ok=True)
