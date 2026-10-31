@@ -216,11 +216,10 @@ def build_messages(target: str, train: list[dict[str, Any]], focus: str = "") ->
         "If a hypothesis cannot be represented without changing its meaning, omit its execution spec.\n"
         "A DSL-valid specification is not approved or executed. It remains non-canonical; "
         "do not claim that it was backtested, promoted, or written to the method registry.\n"
-        "<HYPOTHESIS_EXECUTION_SPECS_JSON>\n"
-        "{\"schema_version\":1,\"specifications\":[{\"hypothesis_id\":\"HYP-001\","
-        "\"execution_spec\":{\"schema_version\":1,\"score_expression\":{...}}}]}\n"
-        "</HYPOTHESIS_EXECUTION_SPECS_JSON>\n"
-        "Return raw JSON only between the execution-specification markers."
+        "Place one raw JSON object between <HYPOTHESIS_EXECUTION_SPECS_JSON> and "
+        "</HYPOTHESIS_EXECUTION_SPECS_JSON>. Its top-level keys are schema_version and "
+        "specifications. Each specification has exactly hypothesis_id and execution_spec. "
+        "Do not copy a template with placeholders; provide a fully valid AST or leave the list empty."
     )
     target_day = date.fromisoformat(target)
     r54 = [row for row in train if date.fromisoformat(row["date"]) < date(2020, 8, 2)]
