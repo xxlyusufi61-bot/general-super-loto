@@ -21,7 +21,7 @@ OUT = Path(__file__).resolve().parent / "super_loto_archive.json"
 EXPECTED = {2020: 97, 2021: 154, 2022: 155, 2023: 150, 2024: 157, 2025: 156}
 CROSS_EXPECTED = 156
 VERIFIED_ARCHIVE_EXPECTED = {
-    2020: 97,
+    2020: 66,
     2021: 156,
     2022: 156,
     2023: 157,
@@ -385,7 +385,6 @@ def reconcile_year_with_loto_gen(year, primary_rows, independent_rows, source_pa
     final_dates = {
         row["date"]: tuple(sorted(row["numbers"]))
         for row in merged
-        if year != 2020 or row["date"] >= R60_START
     }
     if (
         set(final_dates) != set(independent_scope)
@@ -421,7 +420,7 @@ def reconcile_archive_with_loto_gen(
 
     through_year = through_year or datetime.now(timezone.utc).year
     html_pages_by_year = html_pages_by_year or {}
-    reconciled = list(rows)
+    reconciled = [row for row in rows if row.get("date", "") >= R60_START]
     reports = {}
 
     for year in range(start_year, through_year + 1):
@@ -519,7 +518,9 @@ def build_archive(
             check = compare_2025(rows, independent)
         if year in EXPECTED and len({r["date"] for r in rows}) != EXPECTED[year]:
             raise RuntimeError(f"{year}: unexpected number of unique primary-source dates; archive not saved")
-        all_rows.extend(rows)
+        all_rows.extend(
+            row for row in rows if row["date"] >= R60_START
+        )
 
     if check is None:
         raise RuntimeError("Required independent 2025 check did not run; archive not saved")
@@ -530,6 +531,8 @@ def build_archive(
         through_year=through_year,
     )
     dates = [r["date"] for r in all_rows]
+    if any(day < R60_START for day in dates):
+        raise RuntimeError("Archive contains a record before the active research scope; archive not saved")
     if not all_rows or len(dates) != len(set(dates)):
         raise RuntimeError("Archive empty or contains duplicate dates; archive not saved")
 
