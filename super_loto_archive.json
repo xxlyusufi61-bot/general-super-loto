@@ -10877,7 +10877,7 @@
     }
   ],
   "archive_updated_at": "2026-10-29T23:43:32.405Z",
-  "archive_update_reason": "Proposed incremental target update on 2026-10-30. Three indexed public result pages (Loto.gen, COM, and LotoPiyango) agree on the 2026-10-29 draw date and sorted number set. One conflicting third-party news report was excluded; the official page for this exact draw could not be confirmed during this check. A full read-only cross-source audit subsequently passed against the 1,009-record archive on 2026-10-30; see latest_live_archive_audit. The new latest row remains an isolated target and must not be used for discovery, training, tuning, or scoring.",
+  "archive_update_reason": "Canonical archive restricted to the active research scope beginning 2020-08-02; earlier records removed.",
   "multi_year_cross_source_validation": {
     "audit_version": "1.1.0",
     "result": "PASS_AFTER_DOCUMENTED_SOURCE_NORMALIZATION",
@@ -11002,8 +11002,8 @@
     "workflow_run_url": "https://github.com/xxlyusufi61-bot/general-super-loto/actions/runs/40982053265",
     "checked_at": "2026-10-30T00:49:33Z",
     "result": "PASS_WITH_ACCEPTED_LOTOBIL_TAIL_LAG",
-    "archive_records": 1009,
-    "archive_first_date": "2020-01-02",
+    "archive_records": 978,
+    "archive_first_date": "2020-08-02",
     "archive_last_date": "2026-10-29",
     "loto_gen_by_year": {
       "2020": {
