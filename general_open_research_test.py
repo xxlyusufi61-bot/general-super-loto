@@ -251,7 +251,7 @@ class OpenResearchIsolationTests(unittest.TestCase):
 
     def test_pre_scope_rows_are_rejected_before_agent_payload(self):
         history = [
-            {"date": "2020-07-30", "numbers": [1, 7, 13, 22, 34, 48]},
+            {"date": "2020-07-30", "numbers": [1, 2, 3, 4, 5, 6]},
             {"date": "2020-08-02", "numbers": [2, 8, 14, 23, 35, 49]},
         ]
         with self.assertRaisesRegex(Exception, "Data Guard rejected archive"):
