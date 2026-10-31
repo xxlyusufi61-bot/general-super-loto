@@ -130,7 +130,6 @@ class SealedEvaluationTests(unittest.TestCase):
             additions.append({"date": day, "numbers": numbers})
         rows.extend(additions)
         rows.sort(key=lambda row: row["date"])
-        archive = sealed.load_archive_from_rows if hasattr(sealed, "load_archive_from_rows") else None
         split = sealed.split_archive(rows)
         r54 = split["regimes"]["R54"]
         self.assertEqual(r54["pre_target_draw_count"], 42)
