@@ -440,6 +440,15 @@ def prepare_data(target):
         raise RuntimeError("Data Guard archive validation failed.")
 
     try:
+        target_day = date.fromisoformat(target)
+    except (TypeError, ValueError):
+        raise RuntimeError("Target date is invalid; analysis stopped.") from None
+    if target_day.isoformat() != target:
+        raise RuntimeError("Target date is not canonical; analysis stopped.")
+    if target_day < RESEARCH_SCOPE_START:
+        raise RuntimeError("Target date is before the active research scope.")
+
+    try:
         split = guard.isolate_target(rows, target)
     except Exception:
         raise RuntimeError(
@@ -469,9 +478,6 @@ def prepare_data(target):
             "Target date is missing from archive; analysis stopped."
         )
 
-    target_day = date.fromisoformat(target)
-    if target_day < RESEARCH_SCOPE_START:
-        raise RuntimeError("Target date is before the active research scope.")
     training = []
 
     for row in training_raw:
