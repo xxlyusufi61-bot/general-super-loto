@@ -30,6 +30,12 @@ class OpenResearchIsolationTests(unittest.TestCase):
         )
         self.assertEqual(payload["discovery_history_by_regime"]["R54"], [])
         self.assertEqual(payload["discovery_counts_by_regime"], {"R54": 0, "R60": 2})
+        self.assertEqual(
+            [r["date"] for r in payload["reverse_discovery_history_by_regime"]["R60"]],
+            ["2026-10-20", "2026-10-18"],
+        )
+        self.assertEqual(payload["discovery_directions"], ["forward", "reverse"])
+        self.assertTrue(payload["directional_discovery_must_remain_separate"])
         self.assertTrue(payload["regimes_must_be_evaluated_separately"])
         self.assertNotIn("[3,9,15,24,36,50]", messages[1]["content"])
         self.assertFalse(payload["target_numbers_included"])
@@ -86,6 +92,9 @@ class OpenResearchIsolationTests(unittest.TestCase):
         self.assertIn('"falsification_criterion"', system)
         self.assertIn('"forward_walk_forward"', system)
         self.assertIn("An empty proposals list is an acceptable result.", system)
+        self.assertIn("reverse_discovery_history_by_regime", system)
+        self.assertIn('"discovery_direction":"forward|reverse|both"', system)
+        self.assertIn("Keep the two hypothesis sets and their evidence separate", system)
         for label in ("a->b->c", "a->t", "mod5->t"):
             self.assertIn(label, system.lower())
         self.assertNotIn("v8.6", system.lower())
