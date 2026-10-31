@@ -193,7 +193,7 @@ def build_messages(target: str, train: list[dict[str, Any]], focus: str = "") ->
         "\"evaluation_protocols\":[\"forward_walk_forward\","
         "\"reverse_retrospective_stress_test\","
         "\"time_ordered_cross_validation\","
-        "\"uniform_random_6_of_60\"]}]}\n"
+        "\"uniform_random_6_of_N\"]}]}\n"
         "</HYPOTHESIS_PROPOSALS_JSON>\n"
         "Use exactly the schema keys shown; do not add prediction numbers, source code, weights chosen from hidden "
         "targets, or any claim of validation. Proposed family names are descriptive only: they do not create or "
