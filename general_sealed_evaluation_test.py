@@ -46,7 +46,7 @@ def write_candidate_documents(directory, *, specification_count=2):
     proposal_path = directory / "proposals.json"
     specs_path = directory / "specs.json"
     proposal_path.write_text(json.dumps({
-        "schema_version": 1,
+        "schema_version": 2,
         "status": "VALID_PROPOSALS",
         "proposals": [
             {"hypothesis_id": "HYP-001", "discovery_direction": "forward"},
@@ -96,7 +96,7 @@ class SealedEvaluationTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def test_split_is_disjoint_and_keeps_latest_target_out(self):
+    def test_split_has_disjoint_directional_holdouts_and_isolates_latest_target(self):
         archive = sealed.load_archive(self.archive_path)
         split = sealed.split_archive(archive["rows"], archive_sha256=archive["archive_sha256"])
         r60 = split["regimes"]["R60"]
