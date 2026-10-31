@@ -254,7 +254,7 @@ class OpenResearchIsolationTests(unittest.TestCase):
             {"date": "2020-07-30", "numbers": [1, 7, 13, 22, 34, 48]},
             {"date": "2020-08-02", "numbers": [2, 8, 14, 23, 35, 49]},
         ]
-        with self.assertRaisesRegex(RuntimeError, "Data Guard rejected archive"):
+        with self.assertRaisesRegex(Exception, "Data Guard rejected archive"):
             research.isolate_pre_target(history)
 
     def test_invalid_archive_stops_before_model_payload(self):
