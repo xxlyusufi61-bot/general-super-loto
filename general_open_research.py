@@ -426,6 +426,177 @@ def write_combined_usage_summary() -> dict[str, Any]:
         raise RuntimeError("Could not write combined NVIDIA usage summary.") from exc
     return summary
 
+def parse_directional_result(
+    report: str,
+    direction: str,
+) -> dict[str, Any]:
+    """Validate one direction's model output and namespace its IDs before merging."""
+    if direction not in {"forward", "reverse"}:
+        raise ValueError("Directional output must be forward or reverse.")
+    proposals = parse_hypothesis_proposals(report)
+    if proposals["status"] in {"VALID_PROPOSALS", "VALID_EMPTY"}:
+        wrong_direction = [
+            item.get("hypothesis_id")
+            for item in proposals["proposals"]
+            if item.get("discovery_direction") != direction
+        ]
+        if wrong_direction:
+            proposals["status"] = "REJECTED_DIRECTION_MISMATCH"
+            proposals["rejection_reasons"] = [
+                "Every proposal in this isolated " + direction +
+                " call must use the same discovery_direction; mismatched IDs: "
+                + ", ".join(str(item) for item in wrong_direction)
+            ]
+            proposals["proposals"] = []
+
+    original_ids = [item["hypothesis_id"] for item in proposals["proposals"]]
+    offset = 0 if direction == "forward" else 500
+    remap = {
+        old_id: "HYP-" + str(offset + index + 1).zfill(3)
+        for index, old_id in enumerate(original_ids)
+    }
+    mapped_proposals = []
+    for item in proposals["proposals"]:
+        mapped = dict(item)
+        mapped["source_hypothesis_id"] = item["hypothesis_id"]
+        mapped["hypothesis_id"] = remap[item["hypothesis_id"]]
+        mapped_proposals.append(mapped)
+    proposals["proposals"] = mapped_proposals
+    proposals["direction"] = direction
+    proposals["source_hypothesis_ids"] = original_ids
+
+    execution = parse_execution_spec_block(
+        report,
+        allowed_hypothesis_ids=set(original_ids),
+    )
+    if len(execution["specifications"]) > 1:
+        execution["status"] = "REJECTED_DIRECTIONAL_SPEC_COUNT"
+        execution["dsl_validated"] = False
+        execution["synthetic_tests_passed"] = False
+        execution["execution_ready"] = False
+        execution["rejection_reasons"] = [
+            "An isolated directional response may provide at most one execution specification."
+        ]
+        execution["specifications"] = []
+    mapped_specs = []
+    for item in execution["specifications"]:
+        mapped = dict(item)
+        source_id = item["hypothesis_id"]
+        if source_id not in remap:
+            execution["status"] = "REJECTED_DIRECTIONAL_SPEC_ID"
+            execution["dsl_validated"] = False
+            execution["synthetic_tests_passed"] = False
+            execution["execution_ready"] = False
+            execution["rejection_reasons"] = [
+                "Execution specification is not attached to a validated proposal from this direction."
+            ]
+            mapped_specs = []
+            break
+        mapped["source_hypothesis_id"] = source_id
+        mapped["hypothesis_id"] = remap[source_id]
+        mapped_specs.append(mapped)
+    execution["specifications"] = mapped_specs
+    execution["direction"] = direction
+    execution["source_hypothesis_ids"] = original_ids
+    return {
+        "direction": direction,
+        "proposal_document": proposals,
+        "execution_spec_document": execution,
+    }
+
+
+def combine_directional_results(
+    forward_result: dict[str, Any],
+    reverse_result: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Merge already-isolated results, preserving direction labels and fail-closed readiness."""
+    if forward_result.get("direction") != "forward" or reverse_result.get("direction") != "reverse":
+        raise ValueError("Directional results must be supplied in forward, reverse order.")
+    directional_results = {"forward": forward_result, "reverse": reverse_result}
+    merged_proposals = []
+    merged_specs = []
+    proposal_statuses = {}
+    spec_statuses = {}
+    ready_each_direction = {}
+    rejection_reasons = []
+
+    for direction in ("forward", "reverse"):
+        result = directional_results[direction]
+        proposal_doc = result["proposal_document"]
+        spec_doc = result["execution_spec_document"]
+        proposal_statuses[direction] = {
+            "status": proposal_doc["status"],
+            "proposal_count": len(proposal_doc["proposals"]),
+            "source_hypothesis_ids": proposal_doc.get("source_hypothesis_ids", []),
+            "rejection_reasons": proposal_doc.get("rejection_reasons", []),
+        }
+        spec_statuses[direction] = {
+            "status": spec_doc["status"],
+            "specification_count": len(spec_doc["specifications"]),
+            "dsl_validated": spec_doc.get("dsl_validated") is True,
+            "synthetic_tests_passed": spec_doc.get("synthetic_tests_passed") is True,
+            "rejection_reasons": spec_doc.get("rejection_reasons", []),
+        }
+        eligible = [
+            item for item in proposal_doc["proposals"]
+            if item.get("discovery_direction") == direction
+        ]
+        first = eligible[0] if eligible else None
+        matching_specs = spec_doc["specifications"]
+        has_one_matching_spec = (
+            proposal_doc["status"] == "VALID_PROPOSALS"
+            and spec_doc["status"] == "VALIDATED_SPECS"
+            and len(matching_specs) == 1
+            and first is not None
+            and matching_specs[0].get("hypothesis_id") == first.get("hypothesis_id")
+            and matching_specs[0].get("source_hypothesis_id") == first.get("source_hypothesis_id")
+            and spec_doc.get("dsl_validated") is True
+            and spec_doc.get("synthetic_tests_passed") is True
+            and matching_specs[0].get("synthetic_tests_passed") is True
+            and matching_specs[0].get("synthetic_test_summary", {}).get("real_archive_used") is False
+        )
+        ready_each_direction[direction] = has_one_matching_spec
+        if not has_one_matching_spec:
+            rejection_reasons.append(
+                direction + " direction does not have exactly one DSL/synthetic-tested specification "
+                "matching its first validated proposal."
+            )
+        merged_proposals.extend(proposal_doc["proposals"])
+        merged_specs.extend(matching_specs)
+
+    proposal_document = {
+        "schema_version": 2,
+        "status": "VALID_PROPOSALS" if merged_proposals else "VALID_EMPTY",
+        "execution_ready": False,
+        "registry_modified": False,
+        "proposals": merged_proposals,
+        "directional_results": proposal_statuses,
+        "directional_independence": {
+            "separate_model_requests": True,
+            "forward_data_sent_to_reverse_request": False,
+            "reverse_data_sent_to_forward_request": False,
+        },
+        "rejection_reasons": rejection_reasons,
+    }
+    all_specs_ready = all(ready_each_direction.values()) and len(merged_specs) == 2
+    execution_document = {
+        "schema_version": 1,
+        "status": "VALIDATED_SPECS" if all_specs_ready else "INCOMPLETE_DIRECTIONAL_SPECS",
+        "dsl_validated": all_specs_ready,
+        "synthetic_tests_passed": all_specs_ready and all(
+            item.get("synthetic_tests_passed") is True for item in merged_specs
+        ),
+        "execution_ready": False,
+        "method_registry_modified": False,
+        "specifications": merged_specs,
+        "directional_results": spec_statuses,
+        "separate_directional_specs_required": True,
+        "real_archive_used": False,
+        "rejection_reasons": [] if all_specs_ready else rejection_reasons,
+    }
+    return proposal_document, execution_document
+
+
 def call_model(
     messages: list[dict[str, str]],
     *,
