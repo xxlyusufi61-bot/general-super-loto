@@ -14,7 +14,7 @@
     "For mechanism/formula discovery and testing, evaluate both forward (2020 to latest pre-target) and reverse (latest pre-target/2026 toward 2020) chronology; reverse discovery is retrospective stress testing, not predictive evidence.",
     "Lottery outcomes are uncertain; never promise predictions.",
     "The current target draw must be hidden from discovery, training, model selection, formula tuning, and scoring. Exclude the target row and every row on or after its date from pre-target discovery and training.",
-    "Validate archive integrity before every analysis: canonical chronology, unique dates, valid six-number sets, regime-specific number ranges, exact target isolation, archive hash, and immutable snapshot when a claim is made.",
+    "Validate archive integrity before every analysis: canonical chronology, unique dates, valid six-number sets, sorted ascending number sets, date-specific R54/R60 number ranges, exact target isolation, archive hash, and immutable snapshot when a claim is made.",
     "Preserve A->B->C, A->T, MOD5->T, and crossover research families, but do not silently assign or assume their mathematical semantics. Their exact definitions remain unconfirmed until the user explicitly approves them; an open PR such as PR #59 is not an approval.",
     "Forward discovery and testing must run chronologically from the selected 2020 starting draw through the latest pre-target draw. At each historical cutoff, discover/select using only earlier draws and score only the next eligible target; replay selection at every cutoff. Never apply a formula selected after seeing later rows to older forward targets and label that result leakage-free.",
     "Reverse discovery and testing must independently run from the latest pre-target draw toward 2020, use reverse-ordered discovery context, and use only strictly later historical rows for each reverse target. Report this direction separately and label it retrospective stress testing only, never predictive evidence.",
@@ -29,7 +29,7 @@
     "Do not let a DSL-safe generic baseline stand in for the formally approved meaning of A->B->C, A->T, MOD5->T, or crossover. Unsupported semantics must remain untested rather than being approximated silently.",
     "All paid services, credit-card-required setups, paid conversion, and automatic billing transitions are prohibited. Hosted NVIDIA calls require the existing explicit user consent, verified free-only/no-billing status, and global safety lock; offline tests must not make live calls.",
     "Never promise winning numbers, predictive certainty, or an edge. Reverse-time results cannot be used as evidence that a formula predicts future draws.",
-    "PR #63 must remain unmerged until two-direction discovery, full eligible-history per-cutoff forward evaluation, reverse retrospective testing, cross-validation, and per-draw column-hit reports are verified by CI and the user explicitly approves merging.",
+    "PR #63 was merged on 2026-10-31 only after two-direction discovery, full eligible-history per-cutoff forward evaluation, reverse retrospective testing, cross-validation, per-draw column-hit reports, green CI, and explicit user approval; preserve these validated safeguards in all follow-up work.",
     "Code edits should be made on a feature branch, not main. Use no more than three declared development steps, provide complete verified artifacts rather than implying partial completion is final, and do not report a step complete before its tests pass."
   ],
   "entries": [
@@ -38,7 +38,7 @@
       "status": "MERGED_2026-10-31",
       "summary": "PR #63 was merged on 2026-10-31 in commit e1cb41082c15eaf8150b8d30c330587b41288e6b after explicit user approval and a final green CI review. The pre-merge audit found and fixed a repeat-run deadlock: previously consumed R60 directional holdout dates are now excluded from later discovery and fresh holdout selection; new windows advance through the remaining unused chronology and preserve minimums. Each claim stores its exact prior-consumption date snapshot so its immutable archive partition can be reconstructed. Regression tests cover the insufficient-one-new-draw case, successful fresh windows after archive growth, holdout exclusion from discovery, and repeat-claim reconstruction. Final Blank-Slate suite: 88/88 tests passed; all 8 PR checks passed. No hosted NVIDIA request or real-archive formula evaluation was performed.",
       "constraints": [
-        "Main branch unchanged",
+        "PR #63 merge commit e1cb41082c15eaf8150b8d30c330587b41288e6b and post-merge memory commit bca1ca208b5540997e899ed9de04bc321f44e045 are present on main.",
         "Target draw isolated",
         "No live hosted requests in tests",
         "R54/R60 remain separate",
@@ -47,10 +47,19 @@
         "Per-draw report includes date, candidate/spec hash, direction-appropriate history count, hit count, matched columns 1-6, and zero-hit dates",
         "No target number set or predicted number values in shared reports",
         "A->B->C, A->T, MOD5->T and crossover semantics must not be guessed or silently approximated",
-        "Do not merge without a new explicit user approval after the final CI review",
-        "Previously consumed directional holdout dates are excluded from all later discovery and fresh holdout windows; new windows advance through unconsumed dates and preserve all minimum history requirements."
+        "Any future PR requires its own explicit user approval after final CI review; PR #63 approval applies only to PR #63.",
+        "Previously consumed directional holdout dates are excluded from all later discovery and fresh holdout windows; new windows advance through unconsumed dates and preserve all minimum history requirements.",
+        "All archive rows, including the isolated target and excluded future rows, must obey the date-specific R54/R60 upper bound and sorted ascending six-number order before any model request."
       ],
-      "last_reviewed": "2026-10-31"
+      "last_reviewed": "2026-10-31",
+      "post_merge_audit": {
+        "status": "FIX_IMPLEMENTED_ON_FEATURE_BRANCH_CI_PENDING",
+        "reviewed_at": "2026-10-31",
+        "finding": "The normal GENERAL Core prepare_data path previously enforced the global 1-60 range but did not enforce date-specific R54/R60 upper bounds or ascending number order on every archive row.",
+        "observed_archive_state": "The 1,009-record canonical archive was inspected; no invalid range, duplicate date, malformed six-number set, or chronology issue was found. Existing rows are covered by the archive integrity tests.",
+        "remediation": "Add a local pre-model validation pass across the entire archive, including excluded target/future rows, and synthetic regressions for the R54 boundary, maximum values, out-of-pool numbers, and unsorted hidden target rows.",
+        "scope_limit": "No live NVIDIA request, archive rewrite, target-number disclosure, or real-archive formula evaluation."
+      }
     }
   ]
 }
