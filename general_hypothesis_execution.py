@@ -23,6 +23,7 @@ MAX_HISTORY_DRAWS = 64
 MAX_INPUT_HISTORY_DRAWS = 10_000
 MAX_VALIDATION_DRAWS = 30
 DEFAULT_MIN_TRAIN_DRAWS = 40
+REGIME_BOUNDARY = date(2020, 8, 2)
 
 NUMERIC_BINARY_OPS = {"add", "sub", "mul", "div", "mod", "min", "max"}
 COMPARISON_OPS = {"eq", "ne", "lt", "lte", "gt", "gte"}
@@ -183,6 +184,10 @@ def _validate_rows(
         current = _canonical_date(row.get("date"), field + " date")
         if previous is not None and current <= previous:
             _fail(field + " must be strictly chronological with unique dates.")
+        if pool_size == 54 and current >= REGIME_BOUNDARY:
+            _fail(field + " contains a date outside the R54 regime.")
+        if pool_size == 60 and current < REGIME_BOUNDARY:
+            _fail(field + " contains a date outside the R60 regime.")
         numbers = row.get("numbers")
         if (
             not isinstance(numbers, list)
@@ -337,6 +342,10 @@ def rank_candidates(
     if type(number_pool_size) is not int or number_pool_size not in ALLOWED_POOL_SIZES:
         _fail("number pool must be R54 (54) or R60 (60).")
     cutoff = _canonical_date(cutoff_date, "cutoff_date")
+    if number_pool_size == 54 and cutoff >= REGIME_BOUNDARY:
+        _fail("R54 scoring cutoff must be before 2020-08-02.")
+    if number_pool_size == 60 and cutoff < REGIME_BOUNDARY:
+        _fail("R60 scoring cutoff must be on or after 2020-08-02.")
     checked_history = _validate_rows(
         history,
         pool_size=number_pool_size,
@@ -373,6 +382,10 @@ def evaluate_holdout(
     if type(min_train_draws) is not int or not 2 <= min_train_draws <= MAX_HISTORY_DRAWS:
         _fail("minimum training draws are outside the supported range.")
     cutoff = _canonical_date(cutoff_date, "cutoff_date")
+    if number_pool_size == 54 and cutoff >= REGIME_BOUNDARY:
+        _fail("R54 validation cutoff must be before 2020-08-02.")
+    if number_pool_size == 60 and cutoff < REGIME_BOUNDARY:
+        _fail("R60 validation cutoff must be on or after 2020-08-02.")
     discovery = _validate_rows(
         discovery_history,
         pool_size=number_pool_size,
@@ -542,6 +555,10 @@ def evaluate_reverse_retrospective_stress(
     if type(min_train_draws) is not int or not 2 <= min_train_draws <= MAX_HISTORY_DRAWS:
         _fail("minimum training draws are outside the supported range.")
     cutoff = _canonical_date(cutoff_date, "cutoff_date")
+    if number_pool_size == 54 and cutoff >= REGIME_BOUNDARY:
+        _fail("R54 reverse-stress cutoff must be before 2020-08-02.")
+    if number_pool_size == 60 and cutoff < REGIME_BOUNDARY:
+        _fail("R60 reverse-stress cutoff must be on or after 2020-08-02.")
     checked = _validate_rows(
         pre_target_history,
         pool_size=number_pool_size,
