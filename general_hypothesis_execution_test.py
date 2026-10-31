@@ -367,6 +367,51 @@ class SafeHypothesisExecutionTests(unittest.TestCase):
                 execution_spec=count_candidate_matches_spec(),
             )
 
+    def test_reverse_stress_uses_nearest_later_draw_as_draw_age_zero(self):
+        rows = []
+        for index in range(42):
+            if index in {1, 2}:
+                numbers = [1, 2, 3, 4, 5, 6]
+            elif index == 0:
+                numbers = [7, 8, 9, 10, 11, 12]
+            else:
+                numbers = [55, 56, 57, 58, 59, 60]
+            rows.append({
+                "date": (date(2024, 1, 1) + timedelta(days=index)).isoformat(),
+                "numbers": numbers,
+            })
+        spec = {
+            "schema_version": 1,
+            "score_expression": {
+                "op": "aggregate_history_numbers",
+                "aggregate": "count",
+                "expression": {
+                    "op": "and",
+                    "left": {
+                        "op": "eq",
+                        "left": {"op": "var", "name": "value"},
+                        "right": {"op": "var", "name": "candidate"},
+                    },
+                    "right": {
+                        "op": "lt",
+                        "left": {"op": "var", "name": "draw_age"},
+                        "right": {"op": "const", "value": 1},
+                    },
+                },
+            },
+        }
+        report = engine.evaluate_reverse_retrospective_stress(
+            rows,
+            cutoff_date="2024-03-01",
+            number_pool_size=60,
+            execution_spec=spec,
+            test_draw_count=1,
+            min_train_draws=40,
+        )
+        self.assertEqual(report["evaluated_draw_count"], 1)
+        self.assertEqual(report["mean_hits_out_of_6"], 6.0)
+        self.assertFalse(report["predictive_evidence"])
+
     def test_reverse_stress_is_explicitly_not_predictive_evidence(self):
         history = synthetic_rows(45, start="2024-01-01", pool_size=60)
         report = engine.evaluate_reverse_retrospective_stress(
