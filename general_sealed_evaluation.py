@@ -278,7 +278,7 @@ def split_archive(
         "discovery_count": len(all_discovery),
         "regimes": regimes,
     }
-}
+
 
 def _ledger_empty() -> dict[str, Any]:
     return {
