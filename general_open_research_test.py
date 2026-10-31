@@ -41,7 +41,7 @@ class OpenResearchIsolationTests(unittest.TestCase):
         system = messages[0]["content"].lower()
         for label in ("a->b->c", "a->t", "mod5->t"):
             self.assertIn(label, system)
-        for legacy_marker in ("v8.6", "v19", "v0.3.1", "t[i] = b[i] - a[i]", "legacy implementation"):
+        for legacy_marker in ("v8.6", "v19", "v0.3.1", "t[i] = b[i] - a[i]", "historical formula semantics"):
             self.assertNotIn(legacy_marker, system)
 
     def test_prompt_requires_bounded_structured_proposal_block(self):
