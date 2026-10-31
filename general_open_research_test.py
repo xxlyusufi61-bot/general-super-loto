@@ -96,7 +96,8 @@ class OpenResearchIsolationTests(unittest.TestCase):
         system = research.build_messages(target, train)[0]["content"]
         self.assertIn("<HYPOTHESIS_PROPOSALS_JSON>", system)
         self.assertIn("</HYPOTHESIS_PROPOSALS_JSON>", system)
-        self.assertIn('"schema_version":1', system)
+        self.assertIn('"schema_version":2', system)
+        self.assertIn("schema_version 1", system.lower())
         self.assertIn('"falsification_criterion"', system)
         self.assertIn('"forward_walk_forward"', system)
         self.assertIn("An empty proposals list is an acceptable result.", system)
