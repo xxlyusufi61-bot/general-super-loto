@@ -230,7 +230,7 @@ def _choose_reverse_spec(
     for catalog_index, candidate in enumerate(catalog):
         hits: list[int] = []
         for index, validation_target in enumerate(selection_rows):
-            reference = later_history[index + 1:][-MAX_HISTORY_DRAWS:]
+            reference = later_history[index + 1:index + 1 + MAX_HISTORY_DRAWS]
             if len(reference) < min_train_draws:
                 raise ValueError("Reverse inner selection fell below the minimum later-history size.")
             _checked_rows = _validate_rows(
@@ -388,7 +388,7 @@ def evaluate_bidirectional_full_history(
                 catalog=catalog,
                 min_train_draws=min_train_draws,
             )
-            scoring_history = later_history[-MAX_HISTORY_DRAWS:]
+            scoring_history = later_history[:MAX_HISTORY_DRAWS]
             scoring_history = _validate_rows(
                 scoring_history,
                 pool_size=pool_size,
