@@ -144,7 +144,7 @@ RULES = [
     "For mechanism/formula discovery and testing, evaluate both forward (2020 to latest pre-target) and reverse (latest pre-target/2026 toward 2020) chronology; reverse discovery is retrospective stress testing, not predictive evidence.",
     "Lottery outcomes are uncertain; never promise predictions.",
     "The current target draw must be hidden from discovery, training, model selection, formula tuning, and scoring. Exclude the target row and every row on or after its date from pre-target discovery and training.",
-    "Validate archive integrity before every analysis: canonical chronology, unique dates, valid six-number sets, regime-specific number ranges, exact target isolation, archive hash, and immutable snapshot when a claim is made.",
+    "Validate archive integrity before every analysis: canonical chronology, unique dates, valid six-number sets, sorted ascending number sets, date-specific R54/R60 number ranges, exact target isolation, archive hash, and immutable snapshot when a claim is made.",
     "Preserve A->B->C, A->T, MOD5->T, and crossover research families, but do not silently assign or assume their mathematical semantics. Their exact definitions remain unconfirmed until the user explicitly approves them; an open PR such as PR #59 is not an approval.",
     "Forward discovery and testing must run chronologically from the selected 2020 starting draw through the latest pre-target draw. At each historical cutoff, discover/select using only earlier draws and score only the next eligible target; replay selection at every cutoff. Never apply a formula selected after seeing later rows to older forward targets and label that result leakage-free.",
     "Reverse discovery and testing must independently run from the latest pre-target draw toward 2020, use reverse-ordered discovery context, and use only strictly later historical rows for each reverse target. Report this direction separately and label it retrospective stress testing only, never predictive evidence.",
@@ -159,7 +159,7 @@ RULES = [
     "Do not let a DSL-safe generic baseline stand in for the formally approved meaning of A->B->C, A->T, MOD5->T, or crossover. Unsupported semantics must remain untested rather than being approximated silently.",
     "All paid services, credit-card-required setups, paid conversion, and automatic billing transitions are prohibited. Hosted NVIDIA calls require the existing explicit user consent, verified free-only/no-billing status, and global safety lock; offline tests must not make live calls.",
     "Never promise winning numbers, predictive certainty, or an edge. Reverse-time results cannot be used as evidence that a formula predicts future draws.",
-    "PR #63 must remain unmerged until two-direction discovery, full eligible-history per-cutoff forward evaluation, reverse retrospective testing, cross-validation, and per-draw column-hit reports are verified by CI and the user explicitly approves merging.",
+    "PR #63 was merged on 2026-10-31 only after two-direction discovery, full eligible-history per-cutoff forward evaluation, reverse retrospective testing, cross-validation, per-draw column-hit reports, green CI, and explicit user approval; preserve these validated safeguards in all follow-up work.",
     "Code edits should be made on a feature branch, not main. Use no more than three declared development steps, provide complete verified artifacts rather than implying partial completion is final, and do not report a step complete before its tests pass."
 ]
 
@@ -343,6 +343,47 @@ def is_data_task(task):
 
 
 
+R60_REGIME_START = date(2020, 8, 2)
+
+
+def validate_regime_archive(rows):
+    """Validate date-specific R54/R60 pools and canonical ascending number order."""
+    if not isinstance(rows, list):
+        raise RuntimeError("Archive rows must be a list before regime validation.")
+
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            raise RuntimeError("Archive contains an invalid row during regime validation.")
+
+        draw_date = row.get("date")
+        try:
+            parsed_date = date.fromisoformat(draw_date)
+        except (TypeError, ValueError):
+            raise RuntimeError("Archive contains an invalid date during regime validation.") from None
+        if parsed_date.isoformat() != draw_date:
+            raise RuntimeError("Archive contains a non-canonical date during regime validation.")
+
+        regime = "R54" if parsed_date < R60_REGIME_START else "R60"
+        maximum = 54 if regime == "R54" else 60
+        numbers = row.get("numbers")
+        if (
+            not isinstance(numbers, (list, tuple))
+            or len(numbers) != 6
+            or any(type(number) is not int or not 1 <= number <= maximum for number in numbers)
+            or len(set(numbers)) != 6
+        ):
+            raise RuntimeError(
+                "Archive contains an invalid number set for " + regime
+                + " at " + draw_date + "; analysis stopped."
+            )
+        if list(numbers) != sorted(numbers):
+            raise RuntimeError(
+                "Archive number sets must be sorted ascending for "
+                + regime + " at " + draw_date + "; analysis stopped."
+            )
+
+
+
 def latest_archive_target_date():
     """Validate the current archive and select its latest valid draw date."""
     try:
@@ -430,14 +471,22 @@ def prepare_data(target):
 
     try:
         checked = guard.validate_archive(rows)
+    except Exception:
+        raise RuntimeError("Data Guard rejected archive.") from None
+
+    if not isinstance(checked, dict) or checked.get("valid") is not True:
+        raise RuntimeError("Data Guard archive validation failed.")
+
+    # Validate every archive row locally before target isolation/model access.
+    # This includes the hidden target and any later excluded rows.
+    validate_regime_archive(rows)
+
+    try:
         split = guard.isolate_target(rows, target)
     except Exception:
         raise RuntimeError(
             "Data Guard rejected archive or target isolation."
         ) from None
-
-    if not isinstance(checked, dict) or checked.get("valid") is not True:
-        raise RuntimeError("Data Guard archive validation failed.")
 
     if not isinstance(split, dict) or split.get("isolation_pass") is not True:
         raise RuntimeError("Data Guard target isolation failed.")
@@ -574,10 +623,9 @@ def prepare_data(target):
 
     # R54 and R60 are separate regimes. R60 starts on 2020-08-02;
     # no draw is duplicated or silently reclassified.
-    r60_start = date(2020, 8, 2)
     training_by_regime = {"R54": [], "R60": []}
     for row in training:
-        regime = "R60" if date.fromisoformat(row["date"]) >= r60_start else "R54"
+        regime = "R60" if date.fromisoformat(row["date"]) >= R60_REGIME_START else "R54"
         training_by_regime[regime].append(row)
 
     if (
