@@ -48,7 +48,7 @@ def write_candidate_documents(directory, *, specification_count=1):
     proposal_path.write_text(json.dumps({
         "schema_version": 1,
         "status": "VALID_PROPOSALS",
-        "proposals": [{"hypothesis_id": "HYP-001"}],
+        "proposals": [{"hypothesis_id": "HYP-001", "discovery_direction": "forward"}],
     }), encoding="utf-8")
     specifications = [
         {
