@@ -39,6 +39,8 @@ Time-ordered cross-validation is reported separately for the forward interval an
 
 A separate, pre-registered GENERAL-SAFE-DSL-CATALOG-v1 baseline replays each eligible historical target independently in both directions across the full available history. For each forward target, selection/scoring uses only earlier draws; for each reverse target, selection/scoring uses only later draws and is marked retrospective-only. The catalog is fixed in source before viewing archive outcomes, is independent of the AI-selected candidates, and contains six explicitly named generic scoring baselines. This full-history baseline is not an implementation/approval of A→B→C, A→T or MOD5→T. Replaying the same historical window on future runs is a reproducibility audit, not a newly untouched independent holdout.
 
+For DSL variables such as `draw_age` and generic candidates such as the recent-five-draw baselines, ranking age is direction-relative: forward evaluation starts age zero at the latest prior draw, while reverse retrospective evaluation starts age zero at the nearest strictly later draw. The safe DSL engine and fixed-catalog baseline are tested against this distinction.
+
 ## Per-draw reports and interpretation
 
 The per-draw details record:
