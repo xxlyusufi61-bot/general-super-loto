@@ -1,4 +1,4 @@
-# GENERAL bidirectional sealed evaluation orchestration v0.3
+# GENERAL bidirectional sealed evaluation orchestration v0.4
 
 ## Purpose and boundaries
 
@@ -14,12 +14,12 @@ The labels A→B→C, A→T and MOD5→T remain open method families unless thei
 
 R54 and R60 are validated and reported separately. The boundary remains 2020-08-02; number pools or scores are not pooled across the boundary.
 
-For R60, the pre-target history is split into three chronological, non-overlapping pieces:
-- Reverse holdout: up to 30 oldest eligible pre-target rows.
-- Discovery: only the middle rows after the reverse holdout and before the forward holdout.
-- Forward holdout: up to 30 newest pre-target rows.
+For R60, each run partitions the still-unconsumed pre-target rows into three chronological, non-overlapping pieces:
+- Reverse holdout: up to 30 oldest eligible rows not previously consumed by either direction.
+- Discovery: only the middle unconsumed rows after the reverse holdout and before the forward holdout.
+- Forward holdout: up to 30 newest eligible rows not previously consumed by either direction.
 
-The two holdouts are sized symmetrically and do not overlap. A minimum of 40 middle discovery rows plus at least two rows for each holdout is required; the minimum is never silently reduced. With 80 pre-target R60 rows, for example, the split is 20 reverse / 40 discovery / 20 forward. With a longer archive, each directional holdout is capped at 30 rows and the remainder stays in discovery. Dates/counts may be shown in the public plan; draw-number sets may not.
+A date consumed by either directional holdout is excluded from every later discovery and fresh holdout partition. It remains in the immutable source archive and append-only ledger, but is not silently recycled as training/discovery evidence or a new validation target. New windows advance through the remaining unused chronology: the reverse window takes the oldest unused rows, and the forward window takes the newest unused rows. A minimum of 40 unconsumed middle discovery rows plus at least two rows for each fresh holdout is required; the minimum is never silently reduced. If new rows do not yet satisfy all three minimums, preflight stops before either hosted request. With 80 initially unused pre-target R60 rows, for example, the first split is 20 reverse / 40 discovery / 20 forward. Subsequent splits use only dates not consumed by earlier claims. Dates/counts may be shown in the public plan; draw-number sets may not.
 
 R54 remains discovery-only in this orchestration version, preserving its existing restriction. The independent per-cutoff safe-catalog diagnostic can still report each R54 direction separately for the rows where enough direction-appropriate history exists. That diagnostic does not authorize a R54 AI-selected holdout claim.
 
@@ -51,7 +51,7 @@ The per-draw details record:
 
 Reports omit target number sets, predicted number values and full candidate rankings. They include separate forward/reverse summaries and per-regime summaries, tested date ranges, hit distributions, uniform-random expectations, hashes, protocol limits, and explicit caveats. Historical dates that cannot be scored because the direction-appropriate minimum reference history is unavailable are listed with a skip reason and available-versus-required history count; they are never silently dropped or counted as zero-hit tests. No candidate is automatically promoted, no method registry status changes, and no formula is called proven.
 
-The append-only ledger stores both directional holdout dates, candidate/specification hashes, archive snapshot hash, and evaluation status. A date consumed by either holdout in either direction cannot be reused as a fresh validation date in a later claim. The claim and snapshot must be committed before scores are calculated. If evaluation later fails, the claimed dates remain consumed; the system fails closed.
+The append-only ledger stores both directional holdout dates, the exact set of dates consumed before each claim, candidate/specification hashes, archive snapshot hash, and evaluation status. Later preflights reconstruct the remaining unconsumed chronology from that ledger and fail closed if a consumed date is missing from the current archive. A date consumed by either holdout in either direction cannot re-enter later discovery or be reused as a fresh validation date. The claim and snapshot must be committed before scores are calculated. If evaluation later fails, the claimed dates remain consumed; the system fails closed. A regression test adds new draws after a prior claim, checks that one new draw is insufficient, then verifies that fresh non-overlapping windows become available once the original history minimums are met.
 
 ## Billing and operational safeguards
 
