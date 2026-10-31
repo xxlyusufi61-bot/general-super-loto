@@ -23,7 +23,7 @@ import general_data_guard as guard
 from general_live_consent import has_explicit_live_consent
 from general_hypothesis_proposals import parse_hypothesis_proposals
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 MODEL = "z-ai/glm-5.3-flash"
 BASE = Path(__file__).resolve().parent
 ARCHIVE = BASE / os.environ.get("GENERAL_ARCHIVE_FILE", "super_loto_archive.json")
