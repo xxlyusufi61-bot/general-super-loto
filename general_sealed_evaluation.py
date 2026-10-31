@@ -24,6 +24,7 @@ from general_hypothesis_execution import (
     MAX_HISTORY_DRAWS,
     MAX_VALIDATION_DRAWS,
     evaluate_holdout,
+    rank_candidates,
     rank_candidates_retrospective,
     evaluate_reverse_retrospective_stress,
     evaluate_time_ordered_cv,
@@ -797,6 +798,103 @@ def _evaluate_reverse_validation_with_frozen_spec(
     }
 
 
+def _evaluate_forward_validation_with_details(
+    discovery: list[dict[str, Any]],
+    validation: list[dict[str, Any]],
+    *,
+    hypothesis_id: str,
+    spec_sha256: str,
+    execution_spec: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Return per-draw column hits while reusing only history before each forward target."""
+    details = []
+    for index, target in enumerate(validation):
+        training = (discovery + validation[:index])[-MAX_HISTORY_DRAWS:]
+        if len(training) < DEFAULT_MIN_TRAIN_DRAWS:
+            raise SealedEvaluationError("Forward per-draw report fell below the training minimum.")
+        ranking = rank_candidates(
+            training,
+            cutoff_date=target["date"],
+            number_pool_size=60,
+            execution_spec=execution_spec,
+        )
+        actual = set(target["numbers"])
+        matched_positions = [
+            position
+            for position, item in enumerate(ranking[:6], start=1)
+            if item["number"] in actual
+        ]
+        details.append({
+            "test_date": target["date"],
+            "direction": "forward",
+            "hypothesis_id": hypothesis_id,
+            "spec_sha256": spec_sha256,
+            "training_draw_count": len(training),
+            "hit_column_positions_1_to_6": matched_positions,
+            "hit_count": len(matched_positions),
+            "target_numbers_reported": False,
+            "predicted_number_values_reported": False,
+        })
+    return details
+
+
+def _summarize_blocked_reverse_cv(
+    reverse_holdout: dict[str, Any],
+    *,
+    folds: int = 5,
+) -> dict[str, Any]:
+    """Summarize contiguous newest-to-oldest blocks of the same reverse sealed interval."""
+    rows = reverse_holdout.get("per_draw")
+    if not isinstance(rows, list) or len(rows) < MIN_VALIDATION_DRAWS:
+        raise SealedEvaluationError("Reverse CV requires a valid reverse holdout detail list.")
+    fold_count = min(folds, len(rows))
+    base_size, extra = divmod(len(rows), fold_count)
+    fold_reports = []
+    start = 0
+    for fold_index in range(fold_count):
+        size = base_size + (1 if fold_index < extra else 0)
+        block = rows[start:start + size]
+        fold_reports.append({
+            "fold": fold_index + 1,
+            "validation_order": "newest_to_oldest",
+            "validation_start_date": block[0]["test_date"],
+            "validation_end_date": block[-1]["test_date"],
+            "validation_draw_count": len(block),
+            "mean_hits_out_of_6": round(
+                sum(row["hit_count"] for row in block) / len(block), 6
+            ),
+            "hit_distribution": {
+                str(hits): sum(row["hit_count"] == hits for row in block)
+                for hits in range(7)
+            },
+        })
+        start += size
+    total_draws = sum(item["validation_draw_count"] for item in fold_reports)
+    weighted = sum(
+        item["mean_hits_out_of_6"] * item["validation_draw_count"]
+        for item in fold_reports
+    )
+    return {
+        "status": "EVALUATED_RETROSPECTIVE_ONLY",
+        "protocol": "blocked reverse-time folds over one frozen specification; later historical draws are used",
+        "direction": "reverse_retrospective",
+        "predictive_evidence": False,
+        "folds": fold_count,
+        "validation_draw_count": total_draws,
+        "mean_hits_out_of_6": round(weighted / total_draws, 6),
+        "uniform_random_expected_hits_out_of_6": 0.6,
+        "fold_reports": fold_reports,
+        "same_sealed_reverse_interval_as_candidate_holdout": True,
+        "independent_confirmation": False,
+        "automatic_candidate_selection": False,
+        "interpretation": (
+            "These contiguous blocks reuse the exact reverse holdout already reported above. "
+            "They are correlated descriptive diagnostics, not independent confirmation. The reverse "
+            "direction uses later dates and is never predictive evidence."
+        ),
+    }
+
+
 def evaluate_claim(
     claim_id: str,
     ledger_path: str | Path,
@@ -851,6 +949,22 @@ def evaluate_claim(
         execution_spec=spec,
         min_train_draws=DEFAULT_MIN_TRAIN_DRAWS,
     )
+    forward_details = _evaluate_forward_validation_with_details(
+        discovery,
+        validation,
+        hypothesis_id=candidate["hypothesis_id"],
+        spec_sha256=candidate["spec_sha256"],
+        execution_spec=spec,
+    )
+    detail_mean = round(
+        sum(item["hit_count"] for item in forward_details) / len(forward_details), 6
+    )
+    if detail_mean != forward["mean_hits_out_of_6"]:
+        raise SealedEvaluationError("Forward per-column detail does not reconcile to aggregate walk-forward score.")
+    forward["per_draw"] = forward_details
+    forward["per_draw_detail_present"] = True
+    forward["per_draw_target_numbers_reported"] = False
+    forward["predicted_number_values_reported"] = False
     folds = min(5, len(validation))
     cv = evaluate_time_ordered_cv(
         discovery,
@@ -874,6 +988,7 @@ def evaluate_claim(
         execution_spec=reverse_spec,
         min_train_draws=DEFAULT_MIN_TRAIN_DRAWS,
     )
+    reverse_cv = _summarize_blocked_reverse_cv(reverse_candidate_holdout)
     reverse = _evaluate_full_reverse_history(
         full_r60_history,
         cutoff_date=split["target_date"],
@@ -917,6 +1032,7 @@ def evaluate_claim(
         "time_ordered_cross_validation": cv,
         "reverse_retrospective_stress_test_of_forward_candidate": reverse,
         "reverse_discovered_candidate_holdout": reverse_candidate_holdout,
+        "reverse_time_ordered_cross_validation": reverse_cv,
         "bidirectional_full_history_adaptive_diagnostic": bidirectional,
         "candidate_selection": {
             "rule": "Freeze the first eligible forward/both proposal and the first eligible reverse/both proposal independently; one exact matching DSL spec for each direction.",
@@ -934,6 +1050,7 @@ def evaluate_claim(
             "The blocked CV folds reuse the same sealed validation interval and are correlated summaries, not independent confirmation.",
             "The forward candidate's full-history reverse result uses later historical draws and is retrospective stress testing only, not predictive evidence.",
             "The separately reverse-discovered candidate is evaluated only on the disjoint oldest R60 holdout, using strictly later history; this is retrospective only and not predictive evidence.",
+            "The reverse blocked-CV folds reuse that same sealed reverse interval and are correlated descriptive summaries, not independent confirmation.",
             "The uniform-random expected overlap is 36/60 = 0.6 hits per six-number set; report uncertainty and do not infer an advantage from mean hits alone.",
             "Only one candidate is evaluated; no model-selected alternatives are scored on this interval.",
             "R54 is not evaluated because the current archive does not meet the default 40-draw training minimum plus a separate validation window. That minimum was not reduced.",
@@ -964,6 +1081,8 @@ def evaluate_claim(
         "reverse_predictive_evidence": reverse["predictive_evidence"],
         "reverse_candidate_holdout_mean_hits_out_of_6": reverse_candidate_holdout["mean_hits_out_of_6"],
         "reverse_candidate_holdout_draw_count": reverse_candidate_holdout["test_draw_count"],
+        "reverse_time_ordered_cv_mean_hits_out_of_6": reverse_cv["mean_hits_out_of_6"],
+        "reverse_time_ordered_cv_fold_count": reverse_cv["folds"],
         "reverse_candidate_holdout_predictive_evidence": False,
         "reverse_candidate_holdout_spec_sha256": reverse_candidate_holdout["spec_sha256"],
         "bidirectional_catalog_forward_mean_hits_out_of_6": bidirectional_r60["forward"]["mean_hits_out_of_6"],
