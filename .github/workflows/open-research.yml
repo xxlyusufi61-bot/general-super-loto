@@ -14,6 +14,9 @@ name: GENERAL Blank-Slate Research
       - "general_hypothesis_execution_test.py"
       - "general_execution_spec_parser.py"
       - "general_execution_spec_parser_test.py"
+      - "general_sealed_evaluation.py"
+      - "general_sealed_evaluation_test.py"
+      - "general_evaluation_ledger.json"
       - "general_hypothesis_proposals.py"
       - "general_hypothesis_proposals_test.py"
       - "docs/safe-hypothesis-execution.md"
@@ -30,6 +33,9 @@ name: GENERAL Blank-Slate Research
       - "general_hypothesis_execution_test.py"
       - "general_execution_spec_parser.py"
       - "general_execution_spec_parser_test.py"
+      - "general_sealed_evaluation.py"
+      - "general_sealed_evaluation_test.py"
+      - "general_evaluation_ledger.json"
       - "general_hypothesis_proposals.py"
       - "general_hypothesis_proposals_test.py"
       - "docs/safe-hypothesis-execution.md"
@@ -72,8 +78,8 @@ jobs:
           python-version: "3.12"
       - name: Compile and test blank-slate runner
         run: |
-          python3 -m py_compile general_open_research.py general_open_research_test.py general_hypothesis_proposals.py general_hypothesis_proposals_test.py general_hypothesis_execution.py general_hypothesis_execution_test.py general_execution_spec_parser.py general_execution_spec_parser_test.py
-          python3 -m unittest -v general_hypothesis_proposals_test general_open_research_test general_hypothesis_execution_test general_execution_spec_parser_test
+          python3 -m py_compile general_open_research.py general_open_research_test.py general_hypothesis_proposals.py general_hypothesis_proposals_test.py general_hypothesis_execution.py general_hypothesis_execution_test.py general_execution_spec_parser.py general_execution_spec_parser_test.py general_sealed_evaluation.py general_sealed_evaluation_test.py
+          python3 -m unittest -v general_hypothesis_proposals_test general_open_research_test general_hypothesis_execution_test general_execution_spec_parser_test general_sealed_evaluation_test
 
   research:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.confirm_live_calls == 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_3_NVIDIA_REQUESTS' && inputs.confirm_free_usage_verified == true }}
@@ -108,6 +114,9 @@ jobs:
             echo "Archive retrieval failed; research stopped."
             exit 1
           fi
+      - name: Preflight one-shot sealed interval before hosted inference
+        run: |
+          python3 general_sealed_evaluation.py preflight --archive super_loto_archive.json --ledger general_evaluation_ledger.json
       - name: Run isolated blank-slate exploration
         id: nvidia-research
         env:
@@ -118,6 +127,43 @@ jobs:
           GENERAL_NVIDIA_FREE_USAGE_VERIFIED: "true"
         run: |
           python3 general_open_research.py
+      - name: Claim one sealed interval before real-archive scoring
+        id: sealed-claim
+        if: ${{ success() }}
+        run: |
+          python3 general_sealed_evaluation.py claim \\
+            --archive super_loto_archive.json \\
+            --ledger general_evaluation_ledger.json \\
+            --proposals open_research_proposals.json \\
+            --specs open_research_execution_specs.json \\
+            --output open_research_evaluation_claim.json \\
+            --github-output "$GITHUB_OUTPUT"
+      - name: Persist sealed claim and immutable archive snapshot before evaluation
+        if: ${{ steps.sealed-claim.outputs.claim_created == 'true' }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add general_evaluation_ledger.json general_evaluation_snapshots/
+          git commit -m "Reserve one-shot Super Loto validation interval"
+          git push origin HEAD:main
+      - name: Run one-shot chronological evaluation
+        id: sealed-evaluation
+        if: ${{ steps.sealed-claim.outputs.claim_created == 'true' }}
+        env:
+          SEALED_CLAIM_ID: ${{ steps.sealed-claim.outputs.claim_id }}
+        run: |
+          python3 general_sealed_evaluation.py evaluate \\
+            --claim-id "$SEALED_CLAIM_ID" \\
+            --ledger general_evaluation_ledger.json \\
+            --proposals open_research_proposals.json \\
+            --specs open_research_execution_specs.json \\
+            --output open_research_evaluation_report.json
+      - name: Persist evaluation completion without draw-level values
+        if: ${{ success() && steps.sealed-claim.outputs.claim_created == 'true' }}
+        run: |
+          git add general_evaluation_ledger.json
+          git commit -m "Record sealed evaluation completion"
+          git push origin HEAD:main
       - name: Activate global lock after an incomplete NVIDIA research request
         if: ${{ failure() && steps.nvidia-research.outcome == 'failure' }}
         env:
@@ -150,5 +196,9 @@ jobs:
             open_research_proposals.json
             open_research_execution_specs.json
             open_research_usage.json
+            open_research_sealed_plan.json
+            open_research_evaluation_claim.json
+            open_research_evaluation_report.json
+            general_evaluation_ledger.json
           if-no-files-found: ignore
           retention-days: 14
