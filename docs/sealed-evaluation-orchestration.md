@@ -1,49 +1,64 @@
-# GENERAL sealed evaluation orchestration v0.1
+# GENERAL bidirectional sealed evaluation orchestration v0.3
 
 ## Purpose and boundaries
 
-The discovery agent must receive only the discovery partition. The current latest draw is isolated by Data Guard and is excluded from both discovery and evaluation. The sealed evaluator is a separate deterministic program; it never calls NVIDIA or executes model-supplied source code.
+The latest archive draw is the isolated current target. Its number set and any record on or after its date are excluded from discovery, training, candidate selection, validation, and scoring. The archive is validated by Data Guard before any split. The exact archive bytes are hashed and copied to a content-addressed snapshot before a claim is evaluated.
 
-The three user-authorized method labels remain open definitions. A DSL-valid score expression is not a canonical method and cannot edit or promote the method registry. Hypotheses that cannot be represented faithfully by the restricted DSL remain proposal-only.
+The discovery agent receives two views of the same discovery-only rows: one ordered oldest-to-newest and one newest-to-oldest. These are two independent discovery directions. Candidate hypotheses must explicitly label their discovery direction as forward, reverse, or both; forward and reverse discoveries/results are not silently combined.
 
-## Fixed split
+A successful one-shot claim requires one safe DSL specification matching the first eligible forward/both proposal and one matching the first eligible reverse/both proposal. If either directional candidate is missing, mismatched, unrepresentable, or fails synthetic preflight, evaluation is skipped. The evaluator may not select an alternative after validation outcomes are seen. A proposal/spec is not a method registry entry or proof of a mechanism.
 
-The archive is validated before splitting. Rows are sorted chronologically and kept in separate R54 and R60 partitions; the regime boundary remains 2020-08-02. The latest row is the isolated target. For each regime, a separate validation interval is taken from the most recent pre-target rows only when enough history remains for the default 40-draw initial training requirement plus at least two validation draws. The maximum reserved interval is 30 draws.
+The labels A→B→C, A→T and MOD5→T remain open method families unless their exact mathematical definitions have been formally approved. The generic safe catalog described below is a separate exploratory baseline and must not be treated as silently defining those methods or any proposal in open PR #59.
 
-R54 currently has fewer than 42 pre-target rows, so it remains discovery-only and its status is `NOT_EVALUABLE_INSUFFICIENT_HISTORY`. The minimum training requirement is not silently reduced. R60 uses its own discovery rows and a separate validation interval. Regime histories are never pooled by the scoring engine.
+## Regimes and disjoint windows
 
-The model receives discovery rows, not the validation rows. The public split plan records dates, counts, hashes, and statuses only; it has no draw-number sets.
+R54 and R60 are validated and reported separately. The boundary remains 2020-08-02; number pools or scores are not pooled across the boundary.
 
-## Candidate freeze
+For R60, the pre-target history is split into three chronological, non-overlapping pieces:
+- Reverse holdout: up to 30 oldest eligible pre-target rows.
+- Discovery: only the middle rows after the reverse holdout and before the forward holdout.
+- Forward holdout: up to 30 newest pre-target rows.
 
-The model orders at most five textual proposals using discovery data only. For the one-shot real-archive evaluation, it may provide at most one DSL specification and that specification must match the first proposal. If zero or multiple specifications are emitted, or the specification does not match the first proposal, real-archive evaluation is skipped rather than selecting an alternative after the fact.
+The two holdouts are sized symmetrically and do not overlap. A minimum of 40 middle discovery rows plus at least two rows for each holdout is required; the minimum is never silently reduced. With 80 pre-target R60 rows, for example, the split is 20 reverse / 40 discovery / 20 forward. With a longer archive, each directional holdout is capped at 30 rows and the remainder stays in discovery. Dates/counts may be shown in the public plan; draw-number sets may not.
 
-The fixed candidate is validated again and run through synthetic R54/R60 contract tests before a claim is created. Synthetic tests are not evidence of predictive value.
+R54 remains discovery-only in this orchestration version, preserving its existing restriction. The independent per-cutoff safe-catalog diagnostic can still report each R54 direction separately for the rows where enough direction-appropriate history exists. That diagnostic does not authorize a R54 AI-selected holdout claim.
 
-## One-shot claim, snapshot, and ledger
+## Candidate freeze and safe DSL
 
-Before any real-archive score is calculated, the orchestrator:
-1. checks that the validation dates have not been consumed by an earlier claim;
-2. writes an append-only ledger entry containing the target cutoff, archive and specification hashes, validation dates, protocol settings, and candidate ID;
-3. writes an immutable content-addressed copy of the exact archive bytes used by the claim; and
-4. requires the workflow to commit the ledger and snapshot to the repository before evaluation can run.
+The research agent can propose at most five textual hypotheses. The strict proposal parser requires a directional label. The agent can emit at most two execution specs: the first eligible forward/both proposal and the first eligible reverse/both proposal. One both-direction proposal may cover both directions with one spec. There is no post-validation substitution. Every spec is checked by the restricted JSON expression DSL and deterministic synthetic R54/R60 tests before any claim.
 
-The ledger does not store draw-number sets or per-draw scores. A claimed interval is considered consumed even if a later step fails, which intentionally fails closed. Any later interval that overlaps a consumed date is rejected before the hosted research request is made. A fresh interval is required before another evaluation can run.
+The DSL executes no model-provided Python, code, imports, file/network access, or dynamic functions. A DSL-valid expression is still not canonical, does not change the registry, and is not evidence of predictive ability. If a hypothesis cannot be represented faithfully by the DSL, its spec must be omitted; meanings of A→B→C, A→T and MOD5→T are never approximated silently.
 
-The evaluation runner reads the immutable snapshot and verifies the archive hash, target cutoff, validation dates, frozen candidate hash, and persisted claim ID. It refuses a missing, altered, duplicated, or already evaluated claim.
+## Forward candidate evaluation and two-way chronological testing
 
-## Reports
+The frozen forward candidate is tested on the newest sealed R60 forward holdout. Each row is ranked using only the discovery rows and prior validation rows that had already occurred before that row. The report includes one line per test date with training count, hit count, and matched top-six column positions 1 through 6; it never exposes either the target number set or the actual predicted number values.
 
-A valid claim runs three separately labelled diagnostics for one frozen specification:
+The frozen reverse candidate is tested on the oldest, disjoint R60 reverse holdout. For each test date, ranking uses only strictly later historical draws. Rows are evaluated newest-to-oldest. The report again records date, hit count and matched top-six column positions without revealing target numbers or predicted number values. Because later draws are used for this direction, this result and its blocked reverse-time folds are retrospective stress tests only—not evidence of predicting future draws.
 
-- **Forward chronological walk-forward:** each draw in the reserved, recent validation interval is scored with only earlier discovery rows and validation rows that would already have occurred by that date. The interval is capped at 30 draws by the current engine limit.
-- **Blocked time-ordered cross-validation:** contiguous blocks of that same validation interval; no shuffling. It reuses the same sealed interval, so fold summaries are correlated and are not independent confirmation.
-- **Full available reverse retrospective stress test:** the engine evaluates every R60 pre-target historical row that has at least 40 later rows available, batching at most 30 test rows per call and checking adjacent batches for gaps or overlap. It proceeds newest-to-oldest, using later historical draws as reference history. The result is explicitly retrospective and is never predictive evidence.
+Time-ordered cross-validation is reported separately for the forward interval and the reverse interval. The folds reuse their respective sealed interval, so fold results are correlated summaries and are not independent confirmation. No shuffling is performed. Mean overlap must be compared with the uniform-random expectation of 36/N hits per six-number set (0.6 for R60); scores alone cannot establish a mechanism.
 
-The report includes the exact uniform-random expectation (36/N hits per six-number selection), mean overlap and standard error, hashes, date ranges, protocol and search limits. It excludes per-draw target values and candidate rankings. It does not automatically choose a winner, alter registry status, or claim a proven mechanism.
+A separate, pre-registered GENERAL-SAFE-DSL-CATALOG-v1 baseline replays each eligible historical target independently in both directions across the full available history. For each forward target, selection/scoring uses only earlier draws; for each reverse target, selection/scoring uses only later draws and is marked retrospective-only. The catalog is fixed in source before viewing archive outcomes, is independent of the AI-selected candidates, and contains six explicitly named generic scoring baselines. This full-history baseline is not an implementation/approval of A→B→C, A→T or MOD5→T. Replaying the same historical window on future runs is a reproducibility audit, not a newly untouched independent holdout.
 
-This orchestration does not currently evaluate R54 because the archive does not meet the default 40-draw training minimum plus a separate validation interval; even if R54 grows, this version keeps it discovery-only. The forward confirmatory report covers the reserved recent interval only. It does not claim a full 2020→latest leakage-free forward replay: selecting a hypothesis after seeing later discovery data and then scoring it on earlier rows would leak selection information. A future full historical forward replay must re-run or freeze hypothesis discovery separately at each historical cutoff rather than mislabel such scores as independent evidence. It also does not define or execute every whole-state, A→B→C, A→T, MOD5→T, or crossover hypothesis; unsupported semantics must not be approximated silently.
+## Per-draw reports and interpretation
+
+The per-draw details record:
+- direction, date and frozen/canonical candidate identifier and SHA-256;
+- the number of rows in the direction-appropriate reference history;
+- hit count from zero to six;
+- the one-based position(s) among the six selected columns that matched.
+
+Reports omit target number sets, predicted number values and full candidate rankings. They include separate forward/reverse summaries and per-regime summaries, tested date ranges, hit distributions, uniform-random expectations, hashes, protocol limits, and explicit caveats. No candidate is automatically promoted, no method registry status changes, and no formula is called proven.
+
+The append-only ledger stores both directional holdout dates, candidate/specification hashes, archive snapshot hash, and evaluation status. A date consumed by either holdout in either direction cannot be reused as a fresh validation date in a later claim. The claim and snapshot must be committed before scores are calculated. If evaluation later fails, the claimed dates remain consumed; the system fails closed.
 
 ## Billing and operational safeguards
 
-Automated tests and preflight use no hosted-model requests. The live research workflow remains behind the existing explicit free-only/no-billing confirmations and global safety lock. The sealed scoring step makes no additional hosted request. A failed or overlapping preflight stops before the research request.
+Unit tests and offline preflight do not send hosted inference requests or score the real archive. A live hosted call remains blocked unless the existing exact free-only/no-billing confirmation, independently verified free-use status, and global NVIDIA safety lock all pass. No paid service, credit-card-required setup or automatic billing transition is authorized. A provider rate limit is not proof of free allowance. The evaluator makes no additional hosted request.
+
+## Known limits
+
+- The direction-specific AI one-shot protocol is available only in R60; R54 remains discovery-only for the AI candidate test in this version.
+- The generic full-history baseline is a fixed, bounded catalog, not an exhaustive search across every possible formula.
+- The restricted DSL cannot faithfully express every conceivable state transition/crossover rule. Unsupported semantics remain untested rather than approximated.
+- The reverse direction is inherently retrospective because it uses later data. It must never be combined with forward results as evidence of future prediction.
+- Lottery draws are uncertain; no prediction guarantee or advantage claim is made.
