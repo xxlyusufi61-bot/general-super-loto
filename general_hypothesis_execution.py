@@ -624,6 +624,7 @@ def evaluate_reverse_retrospective_stress(
     spec = validate_execution_spec(execution_spec)
 
     scores: list[int] = []
+    per_draw: list[dict[str, Any]] = []
     reverse_start = len(checked) - min_train_draws - 1 - skip_recent_test_draws
     reverse_stop = reverse_start - test_draw_count
     reverse_indices = range(reverse_start, reverse_stop, -1)
@@ -639,7 +640,22 @@ def evaluate_reverse_retrospective_stress(
             direction="reverse",
         )
         selected = {item["number"] for item in ranked[:6]}
-        scores.append(len(selected.intersection(target["numbers"])))
+        matched_positions = [
+            position
+            for position, item in enumerate(ranked[:6], start=1)
+            if item["number"] in set(target["numbers"])
+        ]
+        hit_count = len(matched_positions)
+        scores.append(hit_count)
+        per_draw.append({
+            "test_date": target["date"],
+            "direction": "reverse_retrospective",
+            "later_training_draw_count": len(later_history),
+            "hit_column_positions_1_to_6": matched_positions,
+            "hit_count": hit_count,
+            "target_numbers_reported": False,
+            "predicted_number_values_reported": False,
+        })
 
     mean_hits = statistics.fmean(scores)
     standard_error = (
@@ -661,6 +677,10 @@ def evaluate_reverse_retrospective_stress(
             str(hits): sum(score == hits for score in scores)
             for hits in range(7)
         },
+        "per_draw": per_draw,
+        "per_draw_detail_present": True,
+        "target_number_sets_reported": False,
+        "predicted_number_values_reported": False,
         "minimum_later_training_draws": min_train_draws,
         "maximum_later_history_window_draws": MAX_HISTORY_DRAWS,
         "mean_hits_out_of_6": round(mean_hits, 6),
