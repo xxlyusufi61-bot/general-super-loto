@@ -118,347 +118,6 @@
   ],
   "draws": [
     {
-      "date": "2020-01-02",
-      "numbers": [
-        13,
-        14,
-        32,
-        35,
-        38,
-        41
-      ]
-    },
-    {
-      "date": "2020-01-09",
-      "numbers": [
-        13,
-        14,
-        26,
-        41,
-        46,
-        48
-      ]
-    },
-    {
-      "date": "2020-01-16",
-      "numbers": [
-        3,
-        26,
-        30,
-        33,
-        36,
-        49
-      ]
-    },
-    {
-      "date": "2020-01-23",
-      "numbers": [
-        19,
-        23,
-        26,
-        38,
-        46,
-        47
-      ]
-    },
-    {
-      "date": "2020-01-30",
-      "numbers": [
-        4,
-        10,
-        12,
-        20,
-        29,
-        44
-      ]
-    },
-    {
-      "date": "2020-02-06",
-      "numbers": [
-        15,
-        24,
-        33,
-        36,
-        38,
-        49
-      ]
-    },
-    {
-      "date": "2020-02-13",
-      "numbers": [
-        11,
-        13,
-        20,
-        27,
-        38,
-        44
-      ]
-    },
-    {
-      "date": "2020-02-20",
-      "numbers": [
-        16,
-        24,
-        25,
-        30,
-        39,
-        42
-      ]
-    },
-    {
-      "date": "2020-02-27",
-      "numbers": [
-        15,
-        18,
-        29,
-        32,
-        41,
-        42
-      ]
-    },
-    {
-      "date": "2020-03-05",
-      "numbers": [
-        20,
-        22,
-        28,
-        37,
-        47,
-        54
-      ]
-    },
-    {
-      "date": "2020-03-12",
-      "numbers": [
-        5,
-        24,
-        25,
-        26,
-        32,
-        49
-      ]
-    },
-    {
-      "date": "2020-03-19",
-      "numbers": [
-        12,
-        17,
-        19,
-        35,
-        44,
-        49
-      ]
-    },
-    {
-      "date": "2020-03-26",
-      "numbers": [
-        5,
-        6,
-        10,
-        33,
-        35,
-        47
-      ]
-    },
-    {
-      "date": "2020-04-02",
-      "numbers": [
-        1,
-        8,
-        40,
-        43,
-        44,
-        46
-      ]
-    },
-    {
-      "date": "2020-04-09",
-      "numbers": [
-        14,
-        24,
-        25,
-        26,
-        32,
-        47
-      ]
-    },
-    {
-      "date": "2020-04-16",
-      "numbers": [
-        18,
-        40,
-        44,
-        50,
-        52,
-        54
-      ]
-    },
-    {
-      "date": "2020-04-23",
-      "numbers": [
-        9,
-        17,
-        19,
-        20,
-        38,
-        52
-      ]
-    },
-    {
-      "date": "2020-04-30",
-      "numbers": [
-        3,
-        6,
-        7,
-        8,
-        46,
-        47
-      ]
-    },
-    {
-      "date": "2020-05-07",
-      "numbers": [
-        12,
-        15,
-        28,
-        29,
-        37,
-        42
-      ]
-    },
-    {
-      "date": "2020-05-14",
-      "numbers": [
-        3,
-        7,
-        24,
-        38,
-        40,
-        46
-      ]
-    },
-    {
-      "date": "2020-05-21",
-      "numbers": [
-        7,
-        11,
-        23,
-        37,
-        41,
-        48
-      ]
-    },
-    {
-      "date": "2020-05-28",
-      "numbers": [
-        3,
-        16,
-        26,
-        34,
-        38,
-        43
-      ]
-    },
-    {
-      "date": "2020-06-04",
-      "numbers": [
-        2,
-        24,
-        28,
-        35,
-        44,
-        48
-      ]
-    },
-    {
-      "date": "2020-06-11",
-      "numbers": [
-        2,
-        9,
-        15,
-        19,
-        29,
-        51
-      ]
-    },
-    {
-      "date": "2020-06-18",
-      "numbers": [
-        7,
-        8,
-        20,
-        37,
-        43,
-        46
-      ]
-    },
-    {
-      "date": "2020-06-25",
-      "numbers": [
-        11,
-        16,
-        18,
-        35,
-        39,
-        43
-      ]
-    },
-    {
-      "date": "2020-07-02",
-      "numbers": [
-        1,
-        9,
-        17,
-        21,
-        36,
-        39
-      ]
-    },
-    {
-      "date": "2020-07-09",
-      "numbers": [
-        1,
-        2,
-        12,
-        20,
-        28,
-        35
-      ]
-    },
-    {
-      "date": "2020-07-16",
-      "numbers": [
-        2,
-        12,
-        19,
-        22,
-        33,
-        38
-      ]
-    },
-    {
-      "date": "2020-07-23",
-      "numbers": [
-        8,
-        10,
-        15,
-        16,
-        17,
-        47
-      ]
-    },
-    {
-      "date": "2020-07-30",
-      "numbers": [
-        5,
-        11,
-        31,
-        40,
-        45,
-        53
-      ]
-    },
-    {
       "date": "2020-08-02",
       "numbers": [
         9,
@@ -11223,12 +10882,12 @@
     "audit_version": "1.1.0",
     "result": "PASS_AFTER_DOCUMENTED_SOURCE_NORMALIZATION",
     "checked_at": "2026-10-29T15:01:16.7401256+00:00",
-    "archive_records": 1008,
-    "archive_first_date": "2020-01-02",
+    "archive_records": 977,
+    "archive_first_date": "2020-08-02",
     "archive_last_date": "2026-10-27",
     "loto_gen_r60_by_year": {
       "2020": {
-        "scope": "R60 only; R54 is verified separately",
+        "scope": "active research scope only",
         "status": "MATCH",
         "archive_count": 66,
         "independent_count": 66,
@@ -11299,16 +10958,6 @@
         "source_parse_error_count": 0
       }
     },
-    "lotobil_r54": {
-      "status": "MATCH",
-      "archive_count": 31,
-      "independent_count": 31,
-      "common_date_count": 31,
-      "archive_only_count": 0,
-      "independent_only_count": 0,
-      "number_mismatch_count": 0,
-      "source_parse_error_count": 0
-    },
     "lotobil_r60": {
       "status": "MATCH_AFTER_DOCUMENTED_SOURCE_NORMALIZATION",
       "archive_count": 973,
@@ -11328,7 +10977,7 @@
     "fetch_failures": [],
     "draw_numbers_in_report": false,
     "archive_modified_by_audit": false,
-    "note": "Full read-only multi-year audit completed successfully against this 1,008-record snapshot on 2026-10-29. Loto.gen coverage for the current year used paginated root-archive pages because the year-specific page can be incomplete. R60 year checks cover 2020-08-02 onward; the separate R54 check covers 2020-01-02 through 2020-07-30. Lotobil-only normalizations are documented and do not alter the canonical archive. The audit report contains no draw-number sets."
+    "note": "Full read-only multi-year audit completed successfully against the historical active-scope snapshot on 2026-10-29. Loto.gen coverage for the current year used paginated root-archive pages because the year-specific page can be incomplete. All checks cover only the active research scope beginning 2020-08-02. Lotobil-only normalizations are documented and do not alter the canonical archive. The audit report contains no draw-number sets."
   },
   "recent_draw_source_check": {
     "checked_at": "2026-10-29T23:43:32.405Z",
@@ -11413,16 +11062,6 @@
         "number_mismatch_count": 0,
         "parse_error_count": 0
       }
-    },
-    "lotobil_r54": {
-      "status": "MATCH",
-      "archive_count": 31,
-      "source_count": 31,
-      "common_date_count": 31,
-      "archive_only_count": 0,
-      "independent_only_count": 0,
-      "number_mismatch_count": 0,
-      "source_parse_error_count": 0
     },
     "lotobil_r60": {
       "raw_comparison_status": "SOURCE_LAG_AT_TAIL",
