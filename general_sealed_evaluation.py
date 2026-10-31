@@ -157,11 +157,11 @@ def split_archive(rows: list[dict[str, Any]], *, archive_sha256: str = "") -> di
             discovery = list(history)
             validation: list[dict[str, Any]] = []
             reverse_validation: list[dict[str, Any]] = []
-            if len(history) < DEFAULT_MIN_TRAIN_DRAWS + 2 * MIN_VALIDATION_DRAWS:
+            if len(history) < DEFAULT_MIN_TRAIN_DRAWS + MIN_VALIDATION_DRAWS:
                 status = "NOT_EVALUABLE_INSUFFICIENT_HISTORY"
                 reason = (
-                    "R54 has fewer rows than the default minimum training history plus "
-                    "two separate directional holdouts; the minimum was not lowered."
+                    "R54 has fewer rows than the default minimum training history; "
+                    "R54 remains discovery-only and is not given AI-selected holdout windows."
                 )
             else:
                 status = "DISCOVERY_ONLY_NOT_EVALUATED"
