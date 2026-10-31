@@ -283,7 +283,7 @@ def _evaluate_node(
             _fail("or received a non-boolean right operand.")
         return right
 
-    right = _evaluate_node(node["right"], context, history)
+    right = _evaluate_node(node["right"], context, history, direction=direction)
     if op == "add":
         result = left + right
     elif op == "sub":
