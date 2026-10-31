@@ -39,10 +39,16 @@ class ExecutionSpecParserTests(unittest.TestCase):
         )
         self.assertEqual(result["status"], "VALIDATED_SPECS")
         self.assertTrue(result["dsl_validated"])
+        self.assertTrue(result["synthetic_tests_passed"])
         self.assertFalse(result["execution_ready"])
         self.assertFalse(result["method_registry_modified"])
         self.assertEqual(len(result["specifications"]), 1)
         self.assertTrue(result["specifications"][0]["dsl_validated"])
+        self.assertTrue(result["specifications"][0]["synthetic_tests_passed"])
+        self.assertEqual(
+            result["specifications"][0]["synthetic_test_summary"]["regimes_checked"],
+            ["R54", "R60"],
+        )
         self.assertFalse(result["specifications"][0]["execution_ready"])
         self.assertFalse(result["specifications"][0]["registry_write_allowed"])
 
@@ -88,6 +94,30 @@ class ExecutionSpecParserTests(unittest.TestCase):
         item["execution_spec"]["score_expression"]["source"] = "exec('x')"
         result = parse_execution_spec_block(wrapped([item]))
         self.assertEqual(result["status"], "REJECTED")
+        self.assertEqual(result["specifications"], [])
+
+    def test_dynamic_runtime_fault_fails_synthetic_preflight(self):
+        item = specification()
+        item["execution_spec"]["score_expression"] = {
+            "op": "div",
+            "left": {
+                "op": "aggregate_history_numbers",
+                "aggregate": "count",
+                "expression": {
+                    "op": "eq",
+                    "left": {"op": "const", "value": 1},
+                    "right": {"op": "const", "value": 2},
+                },
+            },
+            "right": {
+                "op": "sub",
+                "left": {"op": "var", "name": "candidate"},
+                "right": {"op": "const", "value": 2},
+            },
+        }
+        result = parse_execution_spec_block(wrapped([item]))
+        self.assertEqual(result["status"], "REJECTED")
+        self.assertFalse(result["synthetic_tests_passed"])
         self.assertEqual(result["specifications"], [])
 
     def test_more_than_five_specs_is_rejected(self):
