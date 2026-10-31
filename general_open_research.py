@@ -426,7 +426,13 @@ def write_combined_usage_summary() -> dict[str, Any]:
         raise RuntimeError("Could not write combined NVIDIA usage summary.") from exc
     return summary
 
-def call_model(messages: list[dict[str, str]]) -> str:
+def call_model(
+    messages: list[dict[str, str]],
+    *,
+    request_label: str | None = None,
+) -> str:
+    if request_label not in {None, "forward", "reverse"}:
+        raise ValueError("Unknown NVIDIA request label.")
     if not has_explicit_live_consent(
         os.environ.get("GENERAL_CONFIRM_LIVE_CALLS", "")
     ):
@@ -442,10 +448,10 @@ def call_model(messages: list[dict[str, str]]) -> str:
         raise RuntimeError(
             "NVIDIA inference was not explicitly approved; no provider request was sent."
         )
-    # Fail closed unless the operator has independently verified that this
-    # single hosted request is within the currently documented free terms.
-    # If NVIDIA exposes only rate limits and no remaining-free-usage status,
-    # this gate must remain closed: rate limits are not proof of free allowance.
+    # Every individual hosted request is blocked unless the operator has
+    # independently verified its free-only/no-billing status. The orchestrator
+    # uses separate directional calls and never retries automatically. Rate limits
+    # alone are not proof of free allowance.
     if os.environ.get("GENERAL_NVIDIA_FREE_USAGE_VERIFIED", "").strip().lower() != "true":
         raise RuntimeError(
             "Free-use status was not independently verified; NVIDIA inference blocked. "
@@ -485,13 +491,13 @@ def call_model(messages: list[dict[str, str]]) -> str:
         try:
             result = json.loads(raw)
         except json.JSONDecodeError:
-            save_usage_observation(build_usage_observation(status, headers, None))
+            save_usage_observation(build_usage_observation(status, headers, None), request_label=request_label)
             raise RuntimeError(
                 "Research model returned invalid JSON; usage observation was saved; no retry attempted."
             ) from None
-        save_usage_observation(build_usage_observation(status, headers, result))
+        save_usage_observation(build_usage_observation(status, headers, result), request_label=request_label)
     except urllib.error.HTTPError as exc:
-        save_usage_observation(build_usage_observation(exc.code, exc.headers, None))
+        save_usage_observation(build_usage_observation(exc.code, exc.headers, None), request_label=request_label)
         if exc.code == 429:
             raise RuntimeError(
                 "NVIDIA returned HTTP 429 (rate limit). No automatic retry was attempted; "
@@ -507,7 +513,7 @@ def call_model(messages: list[dict[str, str]]) -> str:
             "; no automatic retry was attempted; inspect open_research_usage.json."
         ) from None
     except (urllib.error.URLError, TimeoutError):
-        save_usage_observation(build_usage_observation(None, None, None))
+        save_usage_observation(build_usage_observation(None, None, None), request_label=request_label)
         raise RuntimeError(
             "Research model connection/timeout error. Whether the provider received the request "
             "is unknown; no automatic retry was attempted."
