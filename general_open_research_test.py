@@ -63,6 +63,8 @@ class OpenResearchIsolationTests(unittest.TestCase):
         self.assertIn("<hypothesis_execution_specs_json>", system)
         self.assertIn("</hypothesis_execution_specs_json>", system)
         self.assertIn("aggregate_history_numbers", system)
+        self.assertIn("const has only op,value", system)
+        self.assertIn("binary operators have only op,left,right", system)
         self.assertIn("nested aggregates", system)
         self.assertIn("if a hypothesis cannot be represented", system)
         self.assertIn("not approved or canonical", system)
