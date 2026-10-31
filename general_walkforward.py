@@ -43,8 +43,10 @@ def _read_rows(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def _frequency_rank(rows: list[dict[str, Any]], hottest: bool) -> list[int]:
-    counts = {number: 0 for number in range(1, 61)}
+def _frequency_rank(
+    rows: list[dict[str, Any]], hottest: bool, number_pool_size: int
+) -> list[int]:
+    counts = {number: 0 for number in range(1, number_pool_size + 1)}
     for row in rows:
         for number in row["numbers"]:
             counts[number] += 1
@@ -95,10 +97,10 @@ def _forward_walk_forward(
         training = history[:index]
         target = history[index]
         scores["frequency_top6"].append(
-            _hit_count(_frequency_rank(training, hottest=True), target["numbers"])
+            _hit_count(_frequency_rank(training, hottest=True, number_pool_size=number_pool_size), target["numbers"])
         )
         scores["frequency_bottom6"].append(
-            _hit_count(_frequency_rank(training, hottest=False), target["numbers"])
+            _hit_count(_frequency_rank(training, hottest=False, number_pool_size=number_pool_size), target["numbers"])
         )
         scores["adjacent_draw_overlap"].append(
             _hit_count(history[index - 1]["numbers"], target["numbers"])
@@ -129,10 +131,10 @@ def _reverse_retrospective_stress(
         training = history[index + 1:]
         target = history[index]
         scores["frequency_top6"].append(
-            _hit_count(_frequency_rank(training, hottest=True), target["numbers"])
+            _hit_count(_frequency_rank(training, hottest=True, number_pool_size=number_pool_size), target["numbers"])
         )
         scores["frequency_bottom6"].append(
-            _hit_count(_frequency_rank(training, hottest=False), target["numbers"])
+            _hit_count(_frequency_rank(training, hottest=False, number_pool_size=number_pool_size), target["numbers"])
         )
         scores["adjacent_draw_overlap"].append(
             _hit_count(history[index + 1]["numbers"], target["numbers"])
@@ -167,8 +169,8 @@ def _blocked_time_cv(
         block_size = base_size + (1 if fold_index < extra else 0)
         end = start + block_size
         training = history[:start]
-        hot_prediction = _frequency_rank(training, hottest=True)
-        cold_prediction = _frequency_rank(training, hottest=False)
+        hot_prediction = _frequency_rank(training, hottest=True, number_pool_size=number_pool_size)
+        cold_prediction = _frequency_rank(training, hottest=False, number_pool_size=number_pool_size)
         fold_scores = {name: [] for name in METHOD_NAMES}
 
         for index in range(start, end):
