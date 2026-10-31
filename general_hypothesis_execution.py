@@ -548,12 +548,15 @@ def evaluate_reverse_retrospective_stress(
     execution_spec: dict[str, Any],
     test_draw_count: int = MAX_VALIDATION_DRAWS,
     min_train_draws: int = DEFAULT_MIN_TRAIN_DRAWS,
+    skip_recent_test_draws: int = 0,
 ) -> dict[str, Any]:
-    """Run a separately labelled reverse-time diagnostic using later historical rows."""
+    """Run one reverse-time batch; skip_recent_test_draws enables contiguous batching."""
     if type(number_pool_size) is not int or number_pool_size not in ALLOWED_POOL_SIZES:
         _fail("number pool must be R54 (54) or R60 (60).")
     if type(test_draw_count) is not int or not 1 <= test_draw_count <= MAX_VALIDATION_DRAWS:
         _fail("reverse stress test draw count is outside the configured limit.")
+    if type(skip_recent_test_draws) is not int or not 0 <= skip_recent_test_draws <= MAX_INPUT_HISTORY_DRAWS:
+        _fail("reverse stress test offset is outside the configured range.")
     if type(min_train_draws) is not int or not 2 <= min_train_draws <= MAX_HISTORY_DRAWS:
         _fail("minimum training draws are outside the supported range.")
     cutoff = _canonical_date(cutoff_date, "cutoff_date")
@@ -569,16 +572,14 @@ def evaluate_reverse_retrospective_stress(
     )
     if date.fromisoformat(checked[-1]["date"]) >= cutoff:
         _fail("pre-target history contains the isolated target or a later date.")
-    if len(checked) < min_train_draws + test_draw_count:
-        _fail("not enough later historical rows for the requested reverse stress test.")
+    if len(checked) < min_train_draws + test_draw_count + skip_recent_test_draws:
+        _fail("not enough later historical rows for the requested reverse stress test batch.")
     spec = validate_execution_spec(execution_spec)
 
     scores: list[int] = []
-    reverse_indices = range(
-        len(checked) - min_train_draws - 1,
-        len(checked) - min_train_draws - test_draw_count - 1,
-        -1,
-    )
+    reverse_start = len(checked) - min_train_draws - 1 - skip_recent_test_draws
+    reverse_stop = reverse_start - test_draw_count
+    reverse_indices = range(reverse_start, reverse_stop, -1)
     for index in reverse_indices:
         target = checked[index]
         later_history = checked[index + 1:][-MAX_HISTORY_DRAWS:]
@@ -605,8 +606,13 @@ def evaluate_reverse_retrospective_stress(
         "number_pool_size": number_pool_size,
         "evaluated_draw_count": len(scores),
         "evaluation_order": "newest_to_oldest",
-        "first_test_date": checked[len(checked) - min_train_draws - 1]["date"],
-        "last_test_date": checked[len(checked) - min_train_draws - test_draw_count]["date"],
+        "first_test_date": checked[reverse_start]["date"],
+        "last_test_date": checked[reverse_stop + 1]["date"],
+        "skip_recent_test_draws": skip_recent_test_draws,
+        "hit_distribution": {
+            str(hits): sum(score == hits for score in scores)
+            for hits in range(7)
+        },
         "minimum_later_training_draws": min_train_draws,
         "maximum_later_history_window_draws": MAX_HISTORY_DRAWS,
         "mean_hits_out_of_6": round(mean_hits, 6),
