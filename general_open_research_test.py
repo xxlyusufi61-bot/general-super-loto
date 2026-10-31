@@ -121,7 +121,7 @@ class OpenResearchIsolationTests(unittest.TestCase):
         self.assertIn("at most two specifications are allowed", system)
         self.assertIn("first forward/both proposal", system)
         self.assertIn("first reverse/both proposal", system)
-        self.assertIn("A usable claim requires one valid spec for each direction", system)
+        self.assertIn("a usable claim requires one valid spec for each direction", system.lower())
         self.assertIn("not approved or canonical", system)
         self.assertIn("fixed synthetic r54/r60 contract fixtures", system)
         self.assertIn("not claim that it was real-archive backtested", system)
