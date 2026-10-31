@@ -142,9 +142,26 @@ def split_archive(rows: list[dict[str, Any]], *, archive_sha256: str = "") -> di
     all_discovery: list[dict[str, Any]] = []
     for regime, history in by_regime.items():
         pool_size = 54 if regime == "R54" else 60
-        if len(history) < DEFAULT_MIN_TRAIN_DRAWS + MIN_VALIDATION_DRAWS:
+        if regime == "R54":
+            # This version deliberately does not run R54 real-archive evaluation.
+            # Keep it as discovery context, even if a future archive grows longer.
             discovery = list(history)
             validation: list[dict[str, Any]] = []
+            if len(history) < DEFAULT_MIN_TRAIN_DRAWS + MIN_VALIDATION_DRAWS:
+                status = "NOT_EVALUABLE_INSUFFICIENT_HISTORY"
+                reason = (
+                    "R54 has fewer rows than the default minimum training history plus "
+                    "the minimum validation interval; the minimum was not lowered."
+                )
+            else:
+                status = "DISCOVERY_ONLY_NOT_EVALUATED"
+                reason = (
+                    "R54 real-archive evaluation is not enabled in this version; "
+                    "its rows remain discovery context only."
+                )
+        elif len(history) < DEFAULT_MIN_TRAIN_DRAWS + MIN_VALIDATION_DRAWS:
+            discovery = list(history)
+            validation = []
             status = "NOT_EVALUABLE_INSUFFICIENT_HISTORY"
             reason = (
                 "The regime does not have the default minimum training history plus "
@@ -163,14 +180,12 @@ def split_archive(rows: list[dict[str, Any]], *, archive_sha256: str = "") -> di
             else:
                 discovery = history[:-validation_count]
                 validation = history[-validation_count:]
-                status = "READY" if regime == "R60" else "REGIME_PARTITIONED"
+                status = "READY"
                 reason = None
         if discovery and validation and discovery[-1]["date"] >= validation[0]["date"]:
             raise SealedEvaluationError(regime + " discovery and validation windows overlap.")
         if any(row["date"] >= target_date for row in discovery + validation):
             raise SealedEvaluationError(regime + " includes the isolated target or a later date.")
-        if regime == "R54" and validation:
-            raise SealedEvaluationError("R54 must remain unevaluated until sufficient history is available.")
         regimes[regime] = {
             "regime": regime,
             "number_pool_size": pool_size,
@@ -246,6 +261,7 @@ def load_ledger(path: str | Path) -> dict[str, Any]:
             or claim_id in seen_claims
             or not isinstance(dates, list)
             or not dates
+            or not isinstance(state, str)
             or state not in ALLOWED_CLAIM_STATES
         ):
             raise SealedEvaluationError("Evaluation ledger entry is malformed; failing closed.")
@@ -459,7 +475,8 @@ def create_claim(
         "spec_sha256": candidate["spec_sha256"],
         "regime": "R60",
         "number_pool_size": 60,
-        "discovery_count": r60["discovery_count"],
+        "discovery_count": split["discovery_count"],
+        "r60_discovery_count": r60["discovery_count"],
         "discovery_start_date": r60["discovery_start_date"],
         "discovery_end_date": r60["discovery_end_date"],
         "validation_dates": validation_dates,
