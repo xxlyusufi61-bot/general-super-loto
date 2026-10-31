@@ -22,6 +22,19 @@ MAX_EXECUTION_BLOCK_CHARS = 16_384
 SPECIFICATION_KEYS = {"hypothesis_id", "execution_spec"}
 
 
+def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("Duplicate JSON object key: " + key)
+        result[key] = value
+    return result
+
+
+def _reject_nonstandard_json_constant(value: str) -> None:
+    raise ValueError("Non-standard JSON numeric constant: " + value)
+
+
 def _base(status: str = "REJECTED") -> dict[str, Any]:
     return {
         "schema_version": SCHEMA_VERSION,
@@ -66,9 +79,15 @@ def parse_execution_spec_block(
         base["rejection_reasons"] = ["Execution-specification block exceeds the size limit."]
         return base
     try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError:
-        base["rejection_reasons"] = ["Execution-specification block is not valid JSON."]
+        payload = json.loads(
+            raw,
+            object_pairs_hook=_unique_json_object,
+            parse_constant=_reject_nonstandard_json_constant,
+        )
+    except (json.JSONDecodeError, ValueError):
+        base["rejection_reasons"] = [
+            "Execution-specification block is invalid JSON, contains duplicate keys, or uses non-standard numeric constants."
+        ]
         return base
 
     if not isinstance(payload, dict) or set(payload) != {"schema_version", "specifications"}:
