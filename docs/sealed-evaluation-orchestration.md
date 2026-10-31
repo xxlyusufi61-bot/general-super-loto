@@ -36,13 +36,13 @@ The evaluation runner reads the immutable snapshot and verifies the archive hash
 
 A valid claim runs three separately labelled diagnostics for one frozen specification:
 
-- **Forward chronological walk-forward:** each validation draw is scored with only earlier discovery rows and validation rows that would already have occurred by that date.
-- **Blocked time-ordered cross-validation:** contiguous validation blocks; no shuffling. It reuses the same sealed interval, so fold summaries are correlated and are not independent confirmation.
-- **Reverse retrospective stress test:** tests are traversed newest-to-oldest using later historical draws as reference history. The result is explicitly retrospective and is never predictive evidence.
+- **Forward chronological walk-forward:** each draw in the reserved, recent validation interval is scored with only earlier discovery rows and validation rows that would already have occurred by that date. The interval is capped at 30 draws by the current engine limit.
+- **Blocked time-ordered cross-validation:** contiguous blocks of that same validation interval; no shuffling. It reuses the same sealed interval, so fold summaries are correlated and are not independent confirmation.
+- **Full available reverse retrospective stress test:** the engine evaluates every R60 pre-target historical row that has at least 40 later rows available, batching at most 30 test rows per call and checking adjacent batches for gaps or overlap. It proceeds newest-to-oldest, using later historical draws as reference history. The result is explicitly retrospective and is never predictive evidence.
 
 The report includes the exact uniform-random expectation (36/N hits per six-number selection), mean overlap and standard error, hashes, date ranges, protocol and search limits. It excludes per-draw target values and candidate rankings. It does not automatically choose a winner, alter registry status, or claim a proven mechanism.
 
-This orchestration does not currently evaluate R54 because the archive does not meet the default 40-draw training minimum plus a separate validation interval. It does not define or execute every whole-state, A→B→C, A→T, MOD5→T, or crossover hypothesis; unsupported semantics must not be approximated silently.
+This orchestration does not currently evaluate R54 because the archive does not meet the default 40-draw training minimum plus a separate validation interval; even if R54 grows, this version keeps it discovery-only. The forward confirmatory report covers the reserved recent interval only. It does not claim a full 2020→latest leakage-free forward replay: selecting a hypothesis after seeing later discovery data and then scoring it on earlier rows would leak selection information. A future full historical forward replay must re-run or freeze hypothesis discovery separately at each historical cutoff rather than mislabel such scores as independent evidence. It also does not define or execute every whole-state, A→B→C, A→T, MOD5→T, or crossover hypothesis; unsupported semantics must not be approximated silently.
 
 ## Billing and operational safeguards
 
