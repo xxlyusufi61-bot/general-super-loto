@@ -18,7 +18,7 @@ GENERAL coordinates specialized tasks for Super Loto archive integrity, target-d
 - `general_method_registry.json` contains only three open research-family labels and experiment safeguards. It must not contain old formula implementations, source pointers, tuned weights, or historical formula scores.
 - `general_walkforward.py` implements separate chronology-aware baseline evaluation. It does not define the three open formula families.
 - `general_nvidia_guard.py` enforces live-inference safety and consent controls. Offline tests should be preferred when they answer the question.
-- `general_memory.json` stores agent reports, but reports are evidence to inspect rather than proof. Current runtime prompts do not load the historical shared-memory report entries.
+- `general_memory.json` stores agent reports, but reports are evidence to inspect rather than proof. Data-mode prompts may include only unverified agent reports tagged with the post-reset research epoch and timestamped strictly before the isolated target; pre-reset, untagged, non-agent, and post-target entries are excluded.
 - `.github/workflows/nvidia-safety-tests.yml` runs offline NVIDIA timeout/guard regression checks. It does not make a live inference request.
 - `.github/workflows/general.yml` is the Telegram heartbeat path. Its success is not proof that the GENERAL core or autonomous agents are continuously working.
 
