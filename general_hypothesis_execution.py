@@ -62,8 +62,6 @@ def _validate_node(
     if state["nodes"] > MAX_AST_NODES:
         _fail("expression contains too many nodes.")
 
-    if direction not in {"forward", "reverse"}:
-        _fail("ranking direction must be forward or reverse.")
     op = node["op"]
     if op == "const":
         if set(node) != {"op", "value"}:
@@ -221,6 +219,8 @@ def _evaluate_node(
     *,
     direction: str = "forward",
 ) -> bool | float | int:
+    if direction not in {"forward", "reverse"}:
+        _fail("ranking direction must be forward or reverse.")
     op = node["op"]
     if op == "const":
         return node["value"]
@@ -244,21 +244,21 @@ def _evaluate_node(
                     total += int(matched)
             return total
         contributions = []
-        for draw_age, row in enumerate(reversed(history)):
+        for draw_age, row in enumerate(reversed(history) if direction == "forward" else history):
             for number in row["numbers"]:
                 local = {
                     "candidate": context["candidate"],
                     "value": number,
                     "draw_age": draw_age,
                 }
-                contribution = _evaluate_node(expression, local, [])
+                contribution = _evaluate_node(expression, local, [], direction=direction)
                 contributions.append(_checked_number(contribution))
         return _checked_number(math.fsum(contributions))
 
     if op == "abs":
         return _checked_number(abs(_evaluate_node(node["arg"], context, history, direction=direction)))
     if op == "not":
-        value = _evaluate_node(node["arg"], context, history)
+        value = _evaluate_node(node["arg"], context, history, direction=direction)
         if not isinstance(value, bool):
             _fail("not received a non-boolean value.")
         return not value
@@ -278,7 +278,7 @@ def _evaluate_node(
             _fail("or received a non-boolean left operand.")
         if left:
             return True
-        right = _evaluate_node(node["right"], context, history)
+        right = _evaluate_node(node["right"], context, history, direction=direction)
         if not isinstance(right, bool):
             _fail("or received a non-boolean right operand.")
         return right
