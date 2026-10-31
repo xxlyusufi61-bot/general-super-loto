@@ -9,9 +9,9 @@ import general_data_guard as guard
 
 ROOT = Path(__file__).resolve().parent
 ARCHIVE_PATH = ROOT / "super_loto_archive.json"
-R54_TO_R60_CUTOFF = "2020-08-02"
+RESEARCH_SCOPE_START = "2020-08-02"
 EXPECTED_HISTORICAL_YEAR_COUNTS = {
-    2020: 97,
+    2020: 66,
     2021: 156,
     2022: 156,
     2023: 157,
@@ -40,6 +40,8 @@ class CanonicalArchiveTargetIsolationTests(unittest.TestCase):
 
     def test_archive_is_valid_strictly_chronological_and_unique(self):
         self.assertTrue(self.summary["valid"] is True)
+        self.assertEqual(self.summary.get("research_scope_start_date"), RESEARCH_SCOPE_START)
+        self.assertEqual(self.dates[0], RESEARCH_SCOPE_START)
         self.assertEqual(self.summary["record_count"], len(self.rows))
         self.assertEqual(self.summary["unique_dates"], len(self.dates))
         self.assertEqual(self.dates, sorted(self.dates))
@@ -149,7 +151,6 @@ class CanonicalArchiveTargetIsolationTests(unittest.TestCase):
             self.assertEqual(details.get("independent_only_count"), 0)
             self.assertEqual(details.get("number_mismatch_count"), 0)
             self.assertEqual(details.get("source_parse_error_count"), 0)
-        self.assertEqual(validation["lotobil_r54"].get("status"), "MATCH")
         self.assertEqual(
             validation["lotobil_r60"].get("status"),
             "MATCH_AFTER_DOCUMENTED_SOURCE_NORMALIZATION",
@@ -189,13 +190,6 @@ class CanonicalArchiveTargetIsolationTests(unittest.TestCase):
             self.assertEqual(details.get("number_mismatch_count"), 0)
             self.assertEqual(details.get("parse_error_count"), 0)
 
-        r54 = audit.get("lotobil_r54")
-        self.assertIsInstance(r54, dict)
-        self.assertEqual(r54.get("status"), "MATCH")
-        self.assertEqual(r54.get("archive_count"), r54.get("source_count"))
-        self.assertEqual(r54.get("number_mismatch_count"), 0)
-        self.assertEqual(r54.get("source_parse_error_count"), 0)
-
         r60 = audit.get("lotobil_r60")
         self.assertIsInstance(r60, dict)
         self.assertEqual(
@@ -215,25 +209,11 @@ class CanonicalArchiveTargetIsolationTests(unittest.TestCase):
 
         self.assertIs(audit.get("official_result_page_confirmed"), False)
 
-    def test_r54_and_r60_periods_remain_separated(self):
-        old_regime = [
-            row for row in self.rows
-            if row["date"] < R54_TO_R60_CUTOFF
-        ]
-        new_regime = [
-            row for row in self.rows
-            if row["date"] >= R54_TO_R60_CUTOFF
-        ]
-        self.assertTrue(old_regime)
-        self.assertTrue(new_regime)
-        self.assertTrue(all(
-            all(1 <= n <= 54 for n in row["numbers"])
-            for row in old_regime
-        ))
-        self.assertTrue(all(
-            all(1 <= n <= 60 for n in row["numbers"])
-            for row in new_regime
-        ))
+    def test_every_canonical_record_is_inside_the_active_scope(self):
+        self.assertEqual(self.dates[0], RESEARCH_SCOPE_START)
+        self.assertTrue(all(day >= RESEARCH_SCOPE_START for day in self.dates))
+        self.assertEqual(self.summary.get("research_scope_start_date"), RESEARCH_SCOPE_START)
+
 
     def test_latest_draw_is_present_once_and_excluded_from_training(self):
         target_matches = [

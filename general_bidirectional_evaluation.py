@@ -26,8 +26,8 @@ from general_hypothesis_execution import (
     validate_execution_spec,
 )
 
-VERSION = "0.1.1"
-REGIME_BOUNDARY = date(2020, 8, 2)
+VERSION = "0.2.0"
+RESEARCH_SCOPE_START = date(2020, 8, 2)
 MIN_SELECTION_DRAWS = 2
 MAX_SELECTION_DRAWS = 5
 CATALOG_ID = "GENERAL-SAFE-DSL-CATALOG-v1"
@@ -315,13 +315,13 @@ def evaluate_bidirectional_full_history(
         raise ValueError("Isolated target date must be canonical YYYY-MM-DD.")
     if type(min_train_draws) is not int or not 2 <= min_train_draws <= MAX_HISTORY_DRAWS:
         raise ValueError("Minimum training history is outside the supported range.")
-    if not isinstance(rows_by_regime, dict) or set(rows_by_regime) != {"R54", "R60"}:
-        raise ValueError("Both separate R54 and R60 histories are required.")
+    if not isinstance(rows_by_regime, dict) or set(rows_by_regime) != {"R60"}:
+        raise ValueError("Exactly one active-scope history is required.")
     catalog = fixed_candidate_catalog()
     results = {}
     all_forward_rows = []
     all_reverse_rows = []
-    for regime, pool_size in (("R54", 54), ("R60", 60)):
+    for regime, pool_size in (("R60", 60),):
         source_rows = rows_by_regime[regime]
         if not isinstance(source_rows, list):
             raise ValueError(regime + " history must be a list.")
@@ -504,13 +504,10 @@ def evaluate_bidirectional_full_history(
         "min_train_draws": min_train_draws,
         "min_selection_draws": MIN_SELECTION_DRAWS,
         "max_selection_draws": MAX_SELECTION_DRAWS,
-        "r54_r60_kept_separate": True,
-        "regime_boundary": REGIME_BOUNDARY.isoformat(),
+        "research_scope_start_date": RESEARCH_SCOPE_START.isoformat(),
+        "regime_boundary": RESEARCH_SCOPE_START.isoformat(),
         "regimes": results,
-        "overall_cross_regime_pooling": {
-            "performed": False,
-            "reason": "R54 and R60 use different number-pool sizes and must be reported separately.",
-        },
+        "cross_scope_pooling": False,
         "binding_limitations": [
             "This pre-registered generic DSL catalog is a separate exploratory baseline, not an implementation or approval of A->B->C, A->T, or MOD5->T.",
             "The reverse direction uses later historical data and is strictly retrospective, not predictive evidence.",
@@ -541,10 +538,7 @@ if __name__ == "__main__":
     if isolated.get("isolation_pass") is not True or isolated.get("target_present_in_archive") is not True:
         raise SystemExit("Target isolation failed.")
     pretarget = isolated["train"]
-    by_regime = {
-        "R54": [row for row in pretarget if date.fromisoformat(row["date"]) < REGIME_BOUNDARY],
-        "R60": [row for row in pretarget if date.fromisoformat(row["date"]) >= REGIME_BOUNDARY],
-    }
+    by_regime = {"R60": pretarget}
     result = evaluate_bidirectional_full_history(by_regime, isolated_target_date=target_date)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False) + "\n", encoding="utf-8")

@@ -63,7 +63,7 @@ GOVERNANCE_RULES = (
     "evidence catalogs, earlier user experiments, or previous project-memory reports.",
     "Use the neutral research notation only; define every symbol, transformation, input, output, parameter, "
     "and tie-break rule from scratch. The three research-family labels remain OPEN_DEFINITION.",
-    "Keep R54 (before 2020-08-02) and R60 (from 2020-08-02) separate. Do not pool their draw rows; "
+    "Only records dated 2020-08-02 or later are eligible for discovery, training, evaluation, and agent context; reject any earlier row. "
     "any cross-regime comparison must be separately identified and justified.",
     "Use only free resources. Do not use Pydroid, card-required services, or services that may automatically "
     "convert to paid use. Block live model requests unless free-use and no-billing status are independently verified.",
@@ -286,7 +286,7 @@ def build_messages(
         "imports, loops, file/network access, and arbitrary functions are forbidden. "
         "If a hypothesis cannot be represented without changing its meaning, omit its execution spec.\n"
         "A DSL-valid specification is not approved or canonical. It is run only against fixed "
-        "synthetic R54/R60 contract fixtures; do not claim that it was real-archive backtested, "
+        "synthetic 6-of-60 active-scope fixtures; do not claim that it was real-archive backtested, "
         "promoted, or written to the method registry.\n"
         "Place one raw JSON object between <HYPOTHESIS_EXECUTION_SPECS_JSON> and "
         "</HYPOTHESIS_EXECUTION_SPECS_JSON>. Its top-level keys are schema_version and "
@@ -295,18 +295,20 @@ def build_messages(
         "with placeholders; use a fully valid AST or leave the list empty."
     )
     target_day = date.fromisoformat(target)
-    r54 = [row for row in train if date.fromisoformat(row["date"]) < date(2020, 8, 2)]
-    r60 = [row for row in train if date.fromisoformat(row["date"]) >= date(2020, 8, 2)]
-    if len(r54) + len(r60) != len(train):
-        raise RuntimeError("R54/R60 partition count mismatch; open research stopped.")
-    if any(date.fromisoformat(row["date"]) >= target_day for row in r54 + r60):
-        raise RuntimeError("Target/future record found in a regime partition.")
-
+    scope_start = date(2020, 8, 2)
+    if target_day < scope_start:
+        raise RuntimeError("Target is before the active research scope.")
+    active_history = list(train)
+    for row in active_history:
+        day = date.fromisoformat(row["date"])
+        if day < scope_start:
+            raise RuntimeError("Pre-scope record reached agent discovery; request stopped.")
+        if day >= target_day:
+            raise RuntimeError("Target/future record found in discovery history.")
     if direction == "reverse":
-        r54 = list(reversed(r54))
-        r60 = list(reversed(r60))
-    regime_history = {"R54": r54, "R60": r60} if direction == "forward" else {"R60": r60, "R54": r54}
-    regime_counts = {"R54": len(r54), "R60": len(r60)} if direction == "forward" else {"R60": len(r60), "R54": len(r54)}
+        active_history.reverse()
+    regime_history = {"R60": active_history}
+    regime_counts = {"R60": len(active_history)}
     user = {
         "task": "Perform one isolated " + direction + " blank-slate hypothesis discovery pass. Do not output number predictions.",
         "discovery_direction": direction,
@@ -805,7 +807,6 @@ def main() -> int:
             f"{sealed_plan['regimes']['R60']['reverse_validation_start_date']} to "
             f"{sealed_plan['regimes']['R60']['reverse_validation_end_date']} "
             f"({sealed_plan['regimes']['R60']['reverse_validation_count']} draws).\n"
-            f"- R54 status: {sealed_plan['regimes']['R54']['status']}.\n"
             "- Reverse results remain retrospective stress tests, never predictive evidence.\n"
             "- Rule-change requests from the reverse report are saved separately and are not automatically submitted.\n"
         )

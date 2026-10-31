@@ -32,8 +32,8 @@ from general_hypothesis_execution import (
     validate_execution_spec,
 )
 
-VERSION = "0.3.2"
-REGIME_BOUNDARY = date(2020, 8, 2)
+VERSION = "0.4.0"
+RESEARCH_SCOPE_START = date(2020, 8, 2)
 DEFAULT_MIN_TRAIN_DRAWS = 40
 DEFAULT_MAX_VALIDATION_DRAWS = 30
 MIN_VALIDATION_DRAWS = 2
@@ -161,48 +161,29 @@ def split_archive(
     if not used_dates.issubset(archive_dates):
         raise SealedEvaluationError("Archive is missing one or more previously consumed validation dates.")
 
-    by_regime: dict[str, list[dict[str, Any]]] = {"R54": [], "R60": []}
+    by_regime: dict[str, list[dict[str, Any]]] = {"R60": []}
     for row in pre_target:
         day = date.fromisoformat(row["date"])
-        regime = "R54" if day < REGIME_BOUNDARY else "R60"
-        pool_size = 54 if regime == "R54" else 60
-        if any(type(number) is not int or not 1 <= number <= pool_size for number in row["numbers"]):
-            raise SealedEvaluationError(regime + " contains a number outside its allowed pool.")
-        by_regime[regime].append(_copy_row(row))
+        if day < RESEARCH_SCOPE_START:
+            raise SealedEvaluationError("Pre-target history contains a record before the active research scope.")
+        if any(type(number) is not int or not 1 <= number <= 60 for number in row["numbers"]):
+            raise SealedEvaluationError("Active-scope history contains a number outside the 1..60 pool.")
+        by_regime["R60"].append(_copy_row(row))
 
     regimes: dict[str, dict[str, Any]] = {}
     all_discovery: list[dict[str, Any]] = []
     for regime, history in by_regime.items():
-        pool_size = 54 if regime == "R54" else 60
+        pool_size = 60
         available_history = [row for row in history if row["date"] not in used_dates]
         previously_consumed_count = len(history) - len(available_history)
         regimes[regime] = {}
-        if regime == "R54":
-            # This version deliberately does not run R54 real-archive evaluation.
-            # Keep its unconsumed rows as discovery context only.
-            discovery = list(available_history)
-            validation: list[dict[str, Any]] = []
-            reverse_validation: list[dict[str, Any]] = []
-            if len(available_history) < DEFAULT_MIN_TRAIN_DRAWS + MIN_VALIDATION_DRAWS:
-                status = "NOT_EVALUABLE_INSUFFICIENT_HISTORY"
-                reason = (
-                    "R54 has fewer unconsumed rows than the default minimum training history; "
-                    "the minimum was not lowered, and R54 remains discovery-only without "
-                    "AI-selected holdout windows."
-                )
-            else:
-                status = "DISCOVERY_ONLY_NOT_EVALUATED"
-                reason = (
-                    "R54 real-archive evaluation is not enabled in this version; "
-                    "its unconsumed rows remain discovery context only."
-                )
-        elif len(available_history) < DEFAULT_MIN_TRAIN_DRAWS + 2 * MIN_VALIDATION_DRAWS:
+        if len(available_history) < DEFAULT_MIN_TRAIN_DRAWS + 2 * MIN_VALIDATION_DRAWS:
             discovery = list(available_history)
             validation = []
             reverse_validation = []
             status = "NOT_EVALUABLE_INSUFFICIENT_HISTORY"
             reason = (
-                "The regime does not have enough unconsumed rows for default training history plus "
+                "The active-scope history does not have enough unconsumed rows for default training history plus "
                 "two disjoint directional holdouts; the minimum was not lowered."
             )
         else:
@@ -600,6 +581,7 @@ def create_claim(
     claim_material = {
         "archive_sha256": archive["archive_sha256"],
         "target_date": split["target_date"],
+        "research_scope_start_date": RESEARCH_SCOPE_START.isoformat(),
         "validation_dates": validation_dates,
         "reverse_validation_dates": reverse_validation_dates,
         "previously_consumed_validation_dates": sorted(used_dates),
@@ -1111,13 +1093,8 @@ def evaluate_claim(
         reverse_row["spec_sha256"] = candidate["spec_sha256"]
         reverse_row["target_numbers_reported"] = False
         reverse_row["predicted_number_values_reported"] = False
-    r54 = split["regimes"]["R54"]
-    full_r54_history = sorted(
-        r54["discovery_rows"] + r54["validation_rows"] + r54["reverse_validation_rows"],
-        key=lambda row: row["date"],
-    )
     bidirectional = evaluate_bidirectional_full_history(
-        {"R54": full_r54_history, "R60": full_r60_history},
+        {"R60": full_r60_history},
         isolated_target_date=split["target_date"],
         min_train_draws=DEFAULT_MIN_TRAIN_DRAWS,
     )
@@ -1141,8 +1118,6 @@ def evaluate_claim(
         "validation_start_date": validation[0]["date"],
         "validation_end_date": validation[-1]["date"],
         "validation_draw_count": len(validation),
-        "r54_status": r54["status"],
-        "r54_reason": r54["reason"],
         "forward_walk_forward": forward,
         "time_ordered_cross_validation": cv,
         "reverse_retrospective_stress_test_of_forward_candidate": reverse,
@@ -1168,7 +1143,6 @@ def evaluate_claim(
             "The reverse blocked-CV folds reuse that same sealed reverse interval and are correlated descriptive summaries, not independent confirmation.",
             "The uniform-random expected overlap is 36/60 = 0.6 hits per six-number set; report uncertainty and do not infer an advantage from mean hits alone.",
             "Only one candidate is evaluated; no model-selected alternatives are scored on this interval.",
-            "R54 is not evaluated because the current archive does not meet the default 40-draw training minimum plus a separate validation window. That minimum was not reduced.",
             "The full-history bidirectional adaptive diagnostic is a separate pre-registered safe-DSL baseline; it does not implement or approve A->B->C, A->T, or MOD5->T.",
             "For that diagnostic, each forward target is selected/scored using only earlier draws; each reverse target uses only later draws and is strictly retrospective.",
             "Its per-draw report records the target date, selected safe-catalog ID, hit count, and matched top-six column positions 1-6, but no target or predicted number values.",

@@ -11,7 +11,7 @@ from general_source_context import build_source_context
 from general_live_consent import has_explicit_live_consent
 from general_agent_report_guard import report_contract_prompt, validate_agent_report
 
-VERSION = "0.6.0"
+VERSION = "0.7.0"
 MODEL = "z-ai/glm-5.3-flash"
 NVIDIA_TIMEOUT_SECONDS = 240
 BASE = Path(__file__).resolve().parent
@@ -36,7 +36,7 @@ NOTATION_RULES = [
 FRESH_START_RULES = [
     "Do not load, reuse, reconstruct from, or cite the user's earlier formula algorithms, implementations, tests, results, rankings, scores, weights, thresholds, or parameter choices.",
     "Use only the neutral notation, binding research rules, blank method labels, validated archive data allowed by target isolation, and GENERAL's own fresh-start research produced after the reset.",
-    "Keep R54 and R60 separate; the boundary is 2020-08-02. Report cross-regime comparisons separately.",
+    "Only archive records dated 2020-08-02 or later may enter any GENERAL, agent, discovery, training, evaluation, or report path; reject earlier dates.",
     "Do not use Pydroid, card-required services, or services that may automatically convert to paid use.",
     "Do not make a live hosted-model request unless free-use and no-billing status have been independently verified; otherwise stop before network access.",
     "Agents may request adding, revising, or removing a binding rule through the structured Telegram request flow. They must never change rules themselves.",
@@ -144,13 +144,13 @@ RULES = [
     "For mechanism/formula discovery and testing, evaluate both forward (2020 to latest pre-target) and reverse (latest pre-target/2026 toward 2020) chronology; reverse discovery is retrospective stress testing, not predictive evidence.",
     "Lottery outcomes are uncertain; never promise predictions.",
     "The current target draw must be hidden from discovery, training, model selection, formula tuning, and scoring. Exclude the target row and every row on or after its date from pre-target discovery and training.",
-    "Validate archive integrity before every analysis: canonical chronology, unique dates, valid six-number sets, regime-specific number ranges, exact target isolation, archive hash, and immutable snapshot when a claim is made.",
+    "Validate archive integrity before every analysis: canonical chronology, unique dates, valid six-number sets, sorted ascending number sets, active research-scope dates (2020-08-02 onward), exact target isolation, archive hash, and immutable snapshot when a claim is made.",
     "Preserve A->B->C, A->T, MOD5->T, and crossover research families, but do not silently assign or assume their mathematical semantics. Their exact definitions remain unconfirmed until the user explicitly approves them; an open PR such as PR #59 is not an approval.",
     "Forward discovery and testing must run chronologically from the selected 2020 starting draw through the latest pre-target draw. At each historical cutoff, discover/select using only earlier draws and score only the next eligible target; replay selection at every cutoff. Never apply a formula selected after seeing later rows to older forward targets and label that result leakage-free.",
     "Reverse discovery and testing must independently run from the latest pre-target draw toward 2020, use reverse-ordered discovery context, and use only strictly later historical rows for each reverse target. Report this direction separately and label it retrospective stress testing only, never predictive evidence.",
     "Forward and reverse discovery are two independent model requests: the forward request receives only oldest-to-newest discovery rows, and the reverse request only newest-to-oldest rows; neither request may receive the other direction's payload or candidates. Validate responses separately, require exact direction labels forward/reverse (never both to bypass isolation), then namespace IDs before combining sanitized outputs. Every proposal labels its discovery direction. Freeze the first eligible candidate in each direction before validation; do not switch to an alternative after viewing either holdout's scores.",
-    "Where there is enough R60 history, reserve disjoint directional holdouts: oldest pre-target rows for reverse testing, middle rows for discovery, newest pre-target rows for forward testing. Both holdouts stay out of model discovery; the current target is outside all three partitions. Never reduce the minimum training/validation counts silently.",
-    "Preserve the R54/R60 split and boundary 2020-08-02. Validate, evaluate, cross-validate, and report the regimes separately; never pool their number pools or hit-rate baselines.",
+    "Reserve disjoint directional holdouts from eligible post-2020-08-02 pre-target rows: oldest rows for reverse testing, middle rows for discovery, newest rows for forward testing. Both holdouts stay out of model discovery; the current target is outside all three partitions. Never reduce minimum training/validation counts silently.",
+    "The active archive and every research/evaluation path are restricted to records dated 2020-08-02 or later. Earlier records must be rejected and must never reach GENERAL or any agent.",
     "Run chronological walk-forward evaluation and blocked time-ordered cross-validation separately for forward and reverse protocols where supported. Do not shuffle. State when folds reuse the same interval and are therefore correlated, not independent confirmation.",
     "Per-draw reports must include date, direction, frozen formula/candidate identifier and parameter/spec hash, direction-appropriate history count, hit count, and which top-six column positions 1-6 matched. Report missed rows and aggregate hit distributions. Do not disclose target number sets or predicted number values in the shared report.",
     "Report actual test coverage, date ranges, methods, candidate/parameter versions, and limitations. Keep hypotheses, synthetic test passes, real-archive tests, and verified mechanisms distinct. Never invent data, tests, results, or claims.",
@@ -159,7 +159,7 @@ RULES = [
     "Do not let a DSL-safe generic baseline stand in for the formally approved meaning of A->B->C, A->T, MOD5->T, or crossover. Unsupported semantics must remain untested rather than being approximated silently.",
     "All paid services, credit-card-required setups, paid conversion, and automatic billing transitions are prohibited. Hosted NVIDIA calls require the existing explicit user consent, verified free-only/no-billing status, and global safety lock; offline tests must not make live calls.",
     "Never promise winning numbers, predictive certainty, or an edge. Reverse-time results cannot be used as evidence that a formula predicts future draws.",
-    "PR #63 must remain unmerged until two-direction discovery, full eligible-history per-cutoff forward evaluation, reverse retrospective testing, cross-validation, and per-draw column-hit reports are verified by CI and the user explicitly approves merging.",
+    "PR #63 was merged on 2026-10-31 only after two-direction discovery, full eligible-history per-cutoff forward evaluation, reverse retrospective testing, cross-validation, per-draw column-hit reports, green CI, and explicit user approval; preserve these validated safeguards in all follow-up work.",
     "Code edits should be made on a feature branch, not main. Use no more than three declared development steps, provide complete verified artifacts rather than implying partial completion is final, and do not report a step complete before its tests pass."
 ]
 
@@ -343,6 +343,9 @@ def is_data_task(task):
 
 
 
+RESEARCH_SCOPE_START = date(2020, 8, 2)
+
+
 def latest_archive_target_date():
     """Validate the current archive and select its latest valid draw date."""
     try:
@@ -430,14 +433,27 @@ def prepare_data(target):
 
     try:
         checked = guard.validate_archive(rows)
+    except Exception:
+        raise RuntimeError("Data Guard rejected archive.") from None
+
+    if not isinstance(checked, dict) or checked.get("valid") is not True:
+        raise RuntimeError("Data Guard archive validation failed.")
+
+    try:
+        target_day = date.fromisoformat(target)
+    except (TypeError, ValueError):
+        raise RuntimeError("Target date is invalid; analysis stopped.") from None
+    if target_day.isoformat() != target:
+        raise RuntimeError("Target date is not canonical; analysis stopped.")
+    if target_day < RESEARCH_SCOPE_START:
+        raise RuntimeError("Target date is before the active research scope.")
+
+    try:
         split = guard.isolate_target(rows, target)
     except Exception:
         raise RuntimeError(
             "Data Guard rejected archive or target isolation."
         ) from None
-
-    if not isinstance(checked, dict) or checked.get("valid") is not True:
-        raise RuntimeError("Data Guard archive validation failed.")
 
     if not isinstance(split, dict) or split.get("isolation_pass") is not True:
         raise RuntimeError("Data Guard target isolation failed.")
@@ -462,7 +478,6 @@ def prepare_data(target):
             "Target date is missing from archive; analysis stopped."
         )
 
-    target_day = date.fromisoformat(target)
     training = []
 
     for row in training_raw:
@@ -572,20 +587,6 @@ def prepare_data(target):
             "SECURITY: row-level chronology or target-isolation audit failed."
         )
 
-    # R54 and R60 are separate regimes. R60 starts on 2020-08-02;
-    # no draw is duplicated or silently reclassified.
-    r60_start = date(2020, 8, 2)
-    training_by_regime = {"R54": [], "R60": []}
-    for row in training:
-        regime = "R60" if date.fromisoformat(row["date"]) >= r60_start else "R54"
-        training_by_regime[regime].append(row)
-
-    if (
-        len(training_by_regime["R54"]) + len(training_by_regime["R60"])
-        != len(training)
-    ):
-        raise RuntimeError("SECURITY: regime partition count mismatch.")
-
     return {
         "guard": "PASS",
         "target_date": target,
@@ -603,12 +604,7 @@ def prepare_data(target):
         "training_dates_match_archive": training_dates_match_archive,
         "partition_counts_match": partition_counts_match,
         "training_data": training,
-        "training_by_regime": training_by_regime,
-        "regime_counts": {
-            "R54": len(training_by_regime["R54"]),
-            "R60": len(training_by_regime["R60"])
-        },
-        "regime_boundary": "2020-08-02"
+        "research_scope_start_date": RESEARCH_SCOPE_START.isoformat(),
     }
 
 
@@ -845,10 +841,9 @@ def run_agent(agent, task, coordinator_context=None):
                 "DATA GUARD PASS. Data Guard validated the archive and isolated "
                 "the target. Only records strictly before target_date are "
                 "supplied below. The target draw values and all target/future "
-                "records are not supplied. R54 (before 2020-08-02) and R60 "
-                " (from 2020-08-02) must be evaluated separately; do not pool "
-                "their draw rows as one regime. Do not claim to have inspected "
-                "excluded values.\n"
+                "records are not supplied. Only the approved archive scope "
+                "(2020-08-02 onward) is eligible for this analysis. Do not claim "
+                "to have inspected excluded values.\n"
             )
 
         print("Data Guard: PASS")
@@ -941,18 +936,8 @@ def run_agent(agent, task, coordinator_context=None):
         )
 
     if data:
-        # For analysis agents, transmit the two regime partitions explicitly
-        # instead of an undifferentiated training_data list.
-        model_data = {
-            key: value for key, value in data.items()
-            if key != "training_data"
-        }
-        if agent != "validation":
-            model_data["regime_analysis_instruction"] = (
-                "R54 and R60 are separate regimes. Analyze each regime "
-                "independently; do not combine rows or infer a pooled formula "
-                "without a separately reported and justified cross-regime test."
-            )
+        # Only post-scope rows pass Data Guard and are supplied as one R60 history.
+        model_data = dict(data)
         if agent == "validation":
             # Validation needs only metadata; transmitting every training draw
             # adds latency and exposes unnecessary number data to the model.

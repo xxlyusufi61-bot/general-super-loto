@@ -46,8 +46,8 @@ class ExecutionSpecParserTests(unittest.TestCase):
         self.assertTrue(result["specifications"][0]["dsl_validated"])
         self.assertTrue(result["specifications"][0]["synthetic_tests_passed"])
         self.assertEqual(
-            result["specifications"][0]["synthetic_test_summary"]["regimes_checked"],
-            ["R54", "R60"],
+            result["specifications"][0]["synthetic_test_summary"]["number_pools_checked"],
+            [60],
         )
         self.assertFalse(result["specifications"][0]["execution_ready"])
         self.assertFalse(result["specifications"][0]["registry_write_allowed"])

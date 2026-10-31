@@ -10,9 +10,9 @@ A successful one-shot claim requires one safe DSL specification matching the fir
 
 The labels A→B→C, A→T and MOD5→T remain open method families unless their exact mathematical definitions have been formally approved. The generic safe catalog described below is a separate exploratory baseline and must not be treated as silently defining those methods or any proposal in open PR #59.
 
-## Regimes and disjoint windows
+## Active research scope and disjoint windows
 
-R54 and R60 are validated and reported separately. The boundary remains 2020-08-02; number pools or scores are not pooled across the boundary.
+The only active scope is the 6-of-60 draw history dated 2020-08-02 onward. Records before that date are not part of the canonical archive, must be rejected, and are never supplied to GENERAL or any agent.
 
 For R60, each run partitions the still-unconsumed pre-target rows into three chronological, non-overlapping pieces:
 - Reverse holdout: up to 30 oldest eligible rows not previously consumed by either direction.
@@ -21,11 +21,11 @@ For R60, each run partitions the still-unconsumed pre-target rows into three chr
 
 A date consumed by either directional holdout is excluded from every later discovery and fresh holdout partition. It remains in the immutable source archive and append-only ledger, but is not silently recycled as training/discovery evidence or a new validation target. New windows advance through the remaining unused chronology: the reverse window takes the oldest unused rows, and the forward window takes the newest unused rows. A minimum of 40 unconsumed middle discovery rows plus at least two rows for each fresh holdout is required; the minimum is never silently reduced. If new rows do not yet satisfy all three minimums, preflight stops before either hosted request. With 80 initially unused pre-target R60 rows, for example, the first split is 20 reverse / 40 discovery / 20 forward. Subsequent splits use only dates not consumed by earlier claims. Dates/counts may be shown in the public plan; draw-number sets may not.
 
-R54 remains discovery-only in this orchestration version, preserving its existing restriction. The independent per-cutoff safe-catalog diagnostic can still report each R54 direction separately for the rows where enough direction-appropriate history exists. That diagnostic does not authorize a R54 AI-selected holdout claim.
+No pre-scope discovery, evaluation, diagnostic, or baseline path exists.
 
 ## Candidate freeze and safe DSL
 
-Each independent research request can propose at most five textual hypotheses and at most one execution specification. The strict proposal parser requires the exact direction of that request. The coordinator accepts only forward-labelled proposals from the forward request and reverse-labelled proposals from the reverse request, remaps IDs into disjoint namespaces, and retains at most the first candidate/specification per direction for a claim. There is no post-validation substitution. Every retained spec is checked by the restricted JSON expression DSL and deterministic synthetic R54/R60 tests before any claim.
+Each independent research request can propose at most five textual hypotheses and at most one execution specification. The strict proposal parser requires the exact direction of that request. The coordinator accepts only forward-labelled proposals from the forward request and reverse-labelled proposals from the reverse request, remaps IDs into disjoint namespaces, and retains at most the first candidate/specification per direction for a claim. There is no post-validation substitution. Every retained spec is checked by the restricted JSON expression DSL and deterministic synthetic 6-of-60 tests before any claim.
 
 The DSL executes no model-provided Python, code, imports, file/network access, or dynamic functions. A DSL-valid expression is still not canonical, does not change the registry, and is not evidence of predictive ability. If a hypothesis cannot be represented faithfully by the DSL, its spec must be omitted; meanings of A→B→C, A→T and MOD5→T are never approximated silently.
 
@@ -49,7 +49,7 @@ The per-draw details record:
 - hit count from zero to six;
 - the one-based position(s) among the six selected columns that matched.
 
-Reports omit target number sets, predicted number values and full candidate rankings. They include separate forward/reverse summaries and per-regime summaries, tested date ranges, hit distributions, uniform-random expectations, hashes, protocol limits, and explicit caveats. Historical dates that cannot be scored because the direction-appropriate minimum reference history is unavailable are listed with a skip reason and available-versus-required history count; they are never silently dropped or counted as zero-hit tests. No candidate is automatically promoted, no method registry status changes, and no formula is called proven.
+Reports omit target number sets, predicted number values and full candidate rankings. They include separate forward/reverse summaries and the active-scope summary, tested date ranges, hit distributions, uniform-random expectations, hashes, protocol limits, and explicit caveats. Historical dates that cannot be scored because the direction-appropriate minimum reference history is unavailable are listed with a skip reason and available-versus-required history count; they are never silently dropped or counted as zero-hit tests. No candidate is automatically promoted, no method registry status changes, and no formula is called proven.
 
 The append-only ledger stores both directional holdout dates, the exact set of dates consumed before each claim, candidate/specification hashes, archive snapshot hash, and evaluation status. Later preflights reconstruct the remaining unconsumed chronology from that ledger and fail closed if a consumed date is missing from the current archive. A date consumed by either holdout in either direction cannot re-enter later discovery or be reused as a fresh validation date. The claim and snapshot must be committed before scores are calculated. If evaluation later fails, the claimed dates remain consumed; the system fails closed. A regression test adds new draws after a prior claim, checks that one new draw is insufficient, then verifies that fresh non-overlapping windows become available once the original history minimums are met.
 
@@ -59,7 +59,7 @@ Unit tests and offline preflight do not send hosted inference requests or score 
 
 ## Known limits
 
-- The direction-specific AI one-shot protocol is available only in R60; R54 remains discovery-only for the AI candidate test in this version.
+- The only supported AI research and evaluation pool is 6-of-60 using records dated 2020-08-02 onward.
 - The generic full-history baseline is a fixed, bounded catalog, not an exhaustive search across every possible formula.
 - The restricted DSL cannot faithfully express every conceivable state transition/crossover rule. Unsupported semantics remain untested rather than approximated.
 - The reverse direction is inherently retrospective because it uses later data. It must never be combined with forward results as evidence of future prediction.

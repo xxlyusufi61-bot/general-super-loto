@@ -148,10 +148,6 @@ jobs:
                   "MISSING_STATUS",
               )
 
-          statuses["Lotobil R54"] = report.get(
-              "lotobil_R54_comparison", {}
-          ).get("status", "MISSING_STATUS")
-
           statuses["Lotobil R60"] = report.get(
               "lotobil_R60_comparison", {}
           ).get("status", "MISSING_STATUS")
