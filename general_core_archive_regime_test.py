@@ -43,7 +43,7 @@ class GeneralCoreResearchScopeTests(unittest.TestCase):
 
     def test_pre_scope_row_is_rejected_before_target_isolation(self):
         rows = [
-            {"date": "2020-07-30", "numbers": [1, 2, 3, 4, 5, 54]},
+            {"date": "2020-07-30", "numbers": [1, 2, 3, 4, 5, 6]},
             *eligible_rows(),
         ]
         with self.assertRaisesRegex(guard.DataGuardError, "before the active research scope"):
