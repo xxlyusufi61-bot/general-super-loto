@@ -92,6 +92,24 @@ class SafeHypothesisExecutionTests(unittest.TestCase):
                 execution_spec=count_candidate_matches_spec(),
             )
 
+    def test_regime_specific_cutoff_dates_are_enforced(self):
+        r54_history = synthetic_rows(3, start="2020-07-20", pool_size=54)
+        with self.assertRaisesRegex(ValueError, "R54 scoring cutoff must be before"):
+            engine.rank_candidates(
+                r54_history,
+                cutoff_date="2020-08-02",
+                number_pool_size=54,
+                execution_spec=count_candidate_matches_spec(),
+            )
+        r60_history = synthetic_rows(3, start="2020-08-02", pool_size=60)
+        with self.assertRaisesRegex(ValueError, "R60 scoring cutoff must be on or after"):
+            engine.rank_candidates(
+                r60_history,
+                cutoff_date="2020-08-01",
+                number_pool_size=60,
+                execution_spec=count_candidate_matches_spec(),
+            )
+
     def test_candidate_score_expression_runs_only_over_earlier_history(self):
         history = synthetic_rows(12, pool_size=60)
         ranked = engine.rank_candidates(
