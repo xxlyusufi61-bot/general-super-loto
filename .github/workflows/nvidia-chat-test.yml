@@ -8,6 +8,11 @@ on:
         required: true
         type: string
         default: "NO"
+      confirm_free_usage_verified:
+        description: "Set true only after independently verifying this request is free with no billing or automatic paid conversion risk. Otherwise leave false."
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -29,7 +34,7 @@ jobs:
           python-version: "3.12"
 
       - name: Check global NVIDIA safety lock
-        if: ${{ inputs.confirm_live_calls == 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_3_NVIDIA_REQUESTS' }}
+        if: ${{ inputs.confirm_live_calls == 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_3_NVIDIA_REQUESTS' && inputs.confirm_free_usage_verified == true }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
@@ -40,9 +45,10 @@ jobs:
 
       - name: Ask NVIDIA AI model
         id: nvidia-chat-request
-        if: ${{ inputs.confirm_live_calls == 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_3_NVIDIA_REQUESTS' }}
+        if: ${{ inputs.confirm_live_calls == 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_3_NVIDIA_REQUESTS' && inputs.confirm_free_usage_verified == true }}
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          GENERAL_NVIDIA_FREE_USAGE_VERIFIED: "true"
         run: |
           python3 - <<'PY'
           import json
@@ -52,6 +58,9 @@ jobs:
           import urllib.error
 
           key = os.environ.get("NVIDIA_API_KEY", "")
+          if os.environ.get("GENERAL_NVIDIA_FREE_USAGE_VERIFIED") != "true":
+              raise SystemExit("Free-use and no-billing status is not verified; no request sent.")
+
 
           if not key:
               raise SystemExit("NVIDIA_API_KEY secret is missing")
@@ -173,7 +182,7 @@ jobs:
           PY
 
       - name: Report no NVIDIA request when confirmation is absent
-        if: ${{ inputs.confirm_live_calls != 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_3_NVIDIA_REQUESTS' }}
+        if: ${{ (inputs.confirm_live_calls != 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_3_NVIDIA_REQUESTS' || inputs.confirm_free_usage_verified != true) }}
         run: |
           echo "::notice::No live NVIDIA request was authorized or made."
           echo "This workflow requires the exact free-only confirmation phrase for any live request."
