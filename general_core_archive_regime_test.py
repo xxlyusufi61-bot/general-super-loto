@@ -52,7 +52,7 @@ class GeneralCoreResearchScopeTests(unittest.TestCase):
             self.run_prepare_data(rows)
 
     def test_target_must_be_inside_active_scope(self):
-        with self.assertRaisesRegex(RuntimeError, "Data Guard rejected archive"):
+        with self.assertRaisesRegex(RuntimeError, "Target date is before the active research scope"):
             self.run_prepare_data(eligible_rows(), target="2020-07-30")
 
     def test_number_sixty_is_valid_in_current_archive_scope(self):
