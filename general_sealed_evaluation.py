@@ -24,6 +24,7 @@ from general_hypothesis_execution import (
     MAX_HISTORY_DRAWS,
     MAX_VALIDATION_DRAWS,
     evaluate_holdout,
+    rank_candidates_retrospective,
     evaluate_reverse_retrospective_stress,
     evaluate_time_ordered_cv,
     run_synthetic_contract_tests,
@@ -713,6 +714,89 @@ def _evaluate_full_reverse_history(
     }
 
 
+def _evaluate_reverse_validation_with_frozen_spec(
+    reverse_validation: list[dict[str, Any]],
+    full_pre_target_history: list[dict[str, Any]],
+    *,
+    isolated_target_date: str,
+    hypothesis_id: str,
+    spec_sha256: str,
+    execution_spec: dict[str, Any],
+    min_train_draws: int = DEFAULT_MIN_TRAIN_DRAWS,
+) -> dict[str, Any]:
+    """Score the oldest sealed interval against strictly later historical rows only."""
+    if len(reverse_validation) < MIN_VALIDATION_DRAWS:
+        raise SealedEvaluationError("Reverse holdout is too short.")
+    target_day = date.fromisoformat(isolated_target_date)
+    history_by_date = {row["date"]: row for row in full_pre_target_history}
+    if len(history_by_date) != len(full_pre_target_history):
+        raise SealedEvaluationError("Reverse evaluation history has duplicate dates.")
+    if any(
+        date.fromisoformat(row["date"]) >= target_day
+        for row in full_pre_target_history + reverse_validation
+    ):
+        raise SealedEvaluationError("Reverse evaluation includes the current target or a later draw.")
+    details = []
+    for target in sorted(reverse_validation, key=lambda row: row["date"], reverse=True):
+        target_date = target["date"]
+        later_history = [
+            row for day, row in sorted(history_by_date.items())
+            if day > target_date
+        ][-MAX_HISTORY_DRAWS:]
+        ranking = rank_candidates_retrospective(
+            later_history,
+            target_date=target_date,
+            number_pool_size=60,
+            execution_spec=execution_spec,
+            min_train_draws=min_train_draws,
+        )
+        target_numbers = set(target["numbers"])
+        matched_positions = [
+            position
+            for position, item in enumerate(ranking[:6], start=1)
+            if item["number"] in target_numbers
+        ]
+        details.append({
+            "test_date": target_date,
+            "direction": "reverse_retrospective",
+            "hypothesis_id": hypothesis_id,
+            "spec_sha256": spec_sha256,
+            "later_training_draw_count": len(later_history),
+            "hit_column_positions_1_to_6": matched_positions,
+            "hit_count": len(matched_positions),
+            "target_numbers_reported": False,
+            "predicted_number_values_reported": False,
+        })
+    hit_distribution = {
+        str(hits): sum(row["hit_count"] == hits for row in details)
+        for hits in range(7)
+    }
+    return {
+        "status": "EVALUATED_RETROSPECTIVE_ONLY",
+        "direction": "reverse_retrospective",
+        "predictive_evidence": False,
+        "evaluation_order": "newest_to_oldest",
+        "hypothesis_id": hypothesis_id,
+        "spec_sha256": spec_sha256,
+        "test_draw_count": len(details),
+        "first_test_date": details[0]["test_date"],
+        "last_test_date": details[-1]["test_date"],
+        "mean_hits_out_of_6": round(
+            sum(row["hit_count"] for row in details) / len(details), 6
+        ),
+        "uniform_random_expected_hits_out_of_6": 0.6,
+        "hit_distribution": hit_distribution,
+        "per_draw": details,
+        "target_number_sets_reported": False,
+        "predicted_number_values_reported": False,
+        "interpretation": (
+            "This direction-specific fixed-specification test uses only draws later than each test date. "
+            "Because it uses later historical information, it is retrospective stress testing only and "
+            "must never be interpreted as evidence of forward prediction."
+        ),
+    }
+
+
 def evaluate_claim(
     claim_id: str,
     ledger_path: str | Path,
@@ -738,13 +822,26 @@ def evaluate_claim(
         raise SealedEvaluationError("Snapshot target cutoff does not match the ledger.")
     r60 = split["regimes"]["R60"]
     validation_dates = [row["date"] for row in r60["validation_rows"]]
+    reverse_validation_dates = [row["date"] for row in r60["reverse_validation_rows"]]
     if validation_dates != entry["validation_dates"]:
-        raise SealedEvaluationError("Snapshot validation dates do not match the sealed claim.")
+        raise SealedEvaluationError("Snapshot forward validation dates do not match the sealed claim.")
+    if reverse_validation_dates != entry.get("reverse_validation_dates"):
+        raise SealedEvaluationError("Snapshot reverse validation dates do not match the sealed claim.")
+    if candidate["reverse_hypothesis_id"] != entry.get("reverse_hypothesis_id"):
+        raise SealedEvaluationError("Frozen reverse hypothesis changed after the one-shot claim.")
+    if candidate["reverse_spec_sha256"] != entry.get("reverse_spec_sha256"):
+        raise SealedEvaluationError("Frozen reverse execution specification changed after the claim.")
     discovery = r60["discovery_rows"]
     validation = r60["validation_rows"]
+    reverse_validation = r60["reverse_validation_rows"]
     spec = candidate["execution_spec"]
-    if len(discovery) < DEFAULT_MIN_TRAIN_DRAWS or len(validation) < MIN_VALIDATION_DRAWS:
-        raise SealedEvaluationError("Claim no longer satisfies the fixed evaluation minimums.")
+    reverse_spec = candidate["reverse_execution_spec"]
+    if (
+        len(discovery) < DEFAULT_MIN_TRAIN_DRAWS
+        or len(validation) < MIN_VALIDATION_DRAWS
+        or len(reverse_validation) < MIN_VALIDATION_DRAWS
+    ):
+        raise SealedEvaluationError("Claim no longer satisfies both directional evaluation minimums.")
 
     forward = evaluate_holdout(
         discovery,
@@ -764,8 +861,21 @@ def evaluate_claim(
         folds=folds,
         min_train_draws=DEFAULT_MIN_TRAIN_DRAWS,
     )
+    full_r60_history = sorted(
+        discovery + validation + reverse_validation,
+        key=lambda row: row["date"],
+    )
+    reverse_candidate_holdout = _evaluate_reverse_validation_with_frozen_spec(
+        reverse_validation,
+        full_r60_history,
+        isolated_target_date=split["target_date"],
+        hypothesis_id=candidate["reverse_hypothesis_id"],
+        spec_sha256=candidate["reverse_spec_sha256"],
+        execution_spec=reverse_spec,
+        min_train_draws=DEFAULT_MIN_TRAIN_DRAWS,
+    )
     reverse = _evaluate_full_reverse_history(
-        discovery + validation,
+        full_r60_history,
         cutoff_date=split["target_date"],
         number_pool_size=60,
         execution_spec=spec,
@@ -773,11 +883,7 @@ def evaluate_claim(
     )
     r54 = split["regimes"]["R54"]
     full_r54_history = sorted(
-        r54["discovery_rows"] + r54["validation_rows"],
-        key=lambda row: row["date"],
-    )
-    full_r60_history = sorted(
-        r60["discovery_rows"] + r60["validation_rows"],
+        r54["discovery_rows"] + r54["validation_rows"] + r54["reverse_validation_rows"],
         key=lambda row: row["date"],
     )
     bidirectional = evaluate_bidirectional_full_history(
@@ -809,11 +915,16 @@ def evaluate_claim(
         "r54_reason": r54["reason"],
         "forward_walk_forward": forward,
         "time_ordered_cross_validation": cv,
-        "reverse_retrospective_stress_test": reverse,
+        "reverse_retrospective_stress_test_of_forward_candidate": reverse,
+        "reverse_discovered_candidate_holdout": reverse_candidate_holdout,
         "bidirectional_full_history_adaptive_diagnostic": bidirectional,
         "candidate_selection": {
-            "rule": "First discovery-prioritized proposal only; exactly one matching execution specification.",
-            "evaluated_specification_count": 1,
+            "rule": "Freeze the first eligible forward/both proposal and the first eligible reverse/both proposal independently; one exact matching DSL spec for each direction.",
+            "forward_hypothesis_id": candidate["hypothesis_id"],
+            "forward_spec_sha256": candidate["spec_sha256"],
+            "reverse_hypothesis_id": candidate["reverse_hypothesis_id"],
+            "reverse_spec_sha256": candidate["reverse_spec_sha256"],
+            "evaluated_directional_specification_count": 2 if candidate["hypothesis_id"] != candidate["reverse_hypothesis_id"] else 1,
             "selection_used_validation_scores": False,
             "automatic_candidate_selection": False,
             "registry_promotion": False,
@@ -821,7 +932,8 @@ def evaluate_claim(
         "interpretation_limits": [
             "This is one exploratory fixed-specification evaluation, not proof of a predictive mechanism.",
             "The blocked CV folds reuse the same sealed validation interval and are correlated summaries, not independent confirmation.",
-            "The reverse-time result uses later historical draws and is retrospective stress testing only, not predictive evidence.",
+            "The forward candidate's full-history reverse result uses later historical draws and is retrospective stress testing only, not predictive evidence.",
+            "The separately reverse-discovered candidate is evaluated only on the disjoint oldest R60 holdout, using strictly later history; this is retrospective only and not predictive evidence.",
             "The uniform-random expected overlap is 36/60 = 0.6 hits per six-number set; report uncertainty and do not infer an advantage from mean hits alone.",
             "Only one candidate is evaluated; no model-selected alternatives are scored on this interval.",
             "R54 is not evaluated because the current archive does not meet the default 40-draw training minimum plus a separate validation window. That minimum was not reduced.",
@@ -829,6 +941,7 @@ def evaluate_claim(
             "For that diagnostic, each forward target is selected/scored using only earlier draws; each reverse target uses only later draws and is strictly retrospective.",
             "Its per-draw report records the target date, selected safe-catalog ID, hit count, and matched top-six column positions 1-6, but no target or predicted number values.",
             "The full-history adaptive diagnostic uses repeated overlapping selection windows; results are exploratory and are not independent confirmations.",
+            "The reverse-discovered candidate report includes per-date hit count and matched top-six column positions, but excludes actual target numbers and predicted number values.",
             "No number-level target outcomes or complete candidate rankings are included in this report.",
         ],
         "method_registry_modified": False,
@@ -849,6 +962,10 @@ def evaluate_claim(
         "cv_mean_hits_out_of_6": cv["mean_hits_out_of_6"],
         "reverse_mean_hits_out_of_6": reverse["mean_hits_out_of_6"],
         "reverse_predictive_evidence": reverse["predictive_evidence"],
+        "reverse_candidate_holdout_mean_hits_out_of_6": reverse_candidate_holdout["mean_hits_out_of_6"],
+        "reverse_candidate_holdout_draw_count": reverse_candidate_holdout["test_draw_count"],
+        "reverse_candidate_holdout_predictive_evidence": False,
+        "reverse_candidate_holdout_spec_sha256": reverse_candidate_holdout["spec_sha256"],
         "bidirectional_catalog_forward_mean_hits_out_of_6": bidirectional_r60["forward"]["mean_hits_out_of_6"],
         "bidirectional_catalog_forward_draw_count": bidirectional_r60["forward"]["evaluated_draw_count"],
         "bidirectional_catalog_reverse_mean_hits_out_of_6": bidirectional_r60["reverse_retrospective"]["mean_hits_out_of_6"],
