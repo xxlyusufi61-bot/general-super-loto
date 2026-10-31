@@ -214,6 +214,9 @@ class SealedEvaluationTests(unittest.TestCase):
         self.assertEqual(payload["candidate_selection"]["evaluated_specification_count"], 1)
         self.assertFalse(payload["time_ordered_cross_validation"]["automatic_candidate_selection"])
         self.assertFalse(payload["reverse_retrospective_stress_test"]["predictive_evidence"])
+        self.assertEqual(payload["reverse_retrospective_stress_test"]["evaluated_draw_count"], 40)
+        self.assertEqual(payload["reverse_retrospective_stress_test"]["last_test_date"], "2020-08-02")
+        self.assertEqual(sum(payload["reverse_retrospective_stress_test"]["hit_distribution"].values()), 40)
         self.assertIn("correlated summaries", " ".join(payload["interpretation_limits"]))
         with self.ledger_path.open(encoding="utf-8") as stream:
             ledger = json.load(stream)
