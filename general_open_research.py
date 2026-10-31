@@ -364,14 +364,67 @@ def build_usage_observation(
         ),
     }
 
-def save_usage_observation(observation: dict[str, Any]) -> None:
+def save_usage_observation(
+    observation: dict[str, Any],
+    *,
+    request_label: str | None = None,
+) -> None:
+    if request_label not in {None, "forward", "reverse"}:
+        raise ValueError("Unknown NVIDIA request label.")
+    report_path = (
+        USAGE_REPORT
+        if request_label is None
+        else USAGE_REPORT.with_name(
+            USAGE_REPORT.stem + "_" + request_label + USAGE_REPORT.suffix
+        )
+    )
     try:
-        USAGE_REPORT.write_text(
+        report_path.write_text(
             json.dumps(observation, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
     except OSError as exc:
         raise RuntimeError("Could not write NVIDIA usage observation report.") from exc
+
+
+def write_combined_usage_summary() -> dict[str, Any]:
+    directional = []
+    for direction in ("forward", "reverse"):
+        path = USAGE_REPORT.with_name(
+            USAGE_REPORT.stem + "_" + direction + USAGE_REPORT.suffix
+        )
+        if not path.is_file():
+            raise RuntimeError("Missing " + direction + " usage observation; run is incomplete.")
+        try:
+            observation = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            raise RuntimeError("Unreadable " + direction + " usage observation.") from None
+        if not isinstance(observation, dict):
+            raise RuntimeError("Invalid " + direction + " usage observation.")
+        directional.append({"direction": direction, "observation": observation})
+    summary = {
+        "schema_version": 1,
+        "inference_requests_made_by_this_run": 2,
+        "automatic_retries": 0,
+        "request_direction_order": ["forward", "reverse"],
+        "account_level_quota_status": "UNKNOWN",
+        "billing_or_paid_entitlement_status": "NOT_VERIFIED_BY_THIS_RUN",
+        "requests": directional,
+        "interpretation": (
+            "Two separate hosted requests were made only after the explicit free-only/no-billing "
+            "confirmation, global safety-lock preflight, and independent free-use verification. "
+            "Each direction's data was isolated to its own request. Token usage and rate-limit headers "
+            "do not prove remaining quota, free entitlement, or absence of billing risk."
+        ),
+    }
+    try:
+        USAGE_REPORT.write_text(
+            json.dumps(summary, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        raise RuntimeError("Could not write combined NVIDIA usage summary.") from exc
+    return summary
 
 def call_model(messages: list[dict[str, str]]) -> str:
     if not has_explicit_live_consent(
