@@ -19,6 +19,8 @@ SOURCE_MANIFEST: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("general_core.py", ()),
     ("docs/research-notation-and-governance.md",
      ("formula", "method", "research", "discovery", "notation", "hypothesis", "cross-validation", "walk-forward")),
+    ("docs/safe-hypothesis-execution.md",
+     ("formula", "method", "research", "hypothesis", "DSL", "execution", "executor", "operator", "sandbox")),
     (".github/workflows/general-agent.yml",
      ("agent", "workflow", "system", "architecture", "orchestrat", "coordinator", "research", "debug", "validation", "crossover")),
     ("general_coordinator.py",

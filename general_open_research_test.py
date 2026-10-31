@@ -58,6 +58,23 @@ class OpenResearchIsolationTests(unittest.TestCase):
         self.assertNotIn("v8.6", system.lower())
         self.assertNotIn("t[i] = b[i] - a[i]", system.lower())
 
+    def test_prompt_describes_restricted_dsl_without_legacy_formula_context(self):
+        system = research.build_messages("2026-10-22", self.rows[:2])[0]["content"].lower()
+        self.assertIn("<hypothesis_execution_specs_json>", system)
+        self.assertIn("</hypothesis_execution_specs_json>", system)
+        self.assertIn("aggregate_history_numbers", system)
+        self.assertIn("const has only op,value", system)
+        self.assertIn("binary operators have only op,left,right", system)
+        self.assertIn("nested aggregates", system)
+        self.assertIn("if a hypothesis cannot be represented", system)
+        self.assertIn("not approved or canonical", system)
+        self.assertIn("fixed synthetic r54/r60 contract fixtures", system)
+        self.assertIn("not claim that it was real-archive backtested", system)
+        self.assertNotIn("eval(", system)
+        self.assertNotIn("exec(", system)
+        self.assertNotIn("v19", system)
+        self.assertNotIn("t[i] = b[i] - a[i]", system)
+
     def test_prompt_requires_user_approval_for_rule_changes(self):
         system = research.build_messages("2026-10-22", self.rows[:2])[0]["content"].lower()
         self.assertIn("explicit telegram user approval", system)

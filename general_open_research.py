@@ -22,13 +22,15 @@ from typing import Any, Mapping
 import general_data_guard as guard
 from general_live_consent import has_explicit_live_consent
 from general_hypothesis_proposals import parse_hypothesis_proposals
+from general_execution_spec_parser import parse_execution_spec_block
 
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 MODEL = "z-ai/glm-5.3-flash"
 BASE = Path(__file__).resolve().parent
 ARCHIVE = BASE / os.environ.get("GENERAL_ARCHIVE_FILE", "super_loto_archive.json")
 REPORT = BASE / "open_research_report.md"
 PROPOSALS = BASE / "open_research_proposals.json"
+EXECUTION_SPECS = BASE / "open_research_execution_specs.json"
 USAGE_REPORT = BASE / "open_research_usage.json"
 API_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
 DOCUMENTATION_REVIEW_DATE = "2026-10-25"
@@ -191,11 +193,38 @@ def build_messages(target: str, train: list[dict[str, Any]], focus: str = "") ->
         "\"evaluation_protocols\":[\"forward_walk_forward\","
         "\"reverse_retrospective_stress_test\","
         "\"time_ordered_cross_validation\","
-        "\"uniform_random_6_of_60\"]}]}\n"
+        "\"uniform_random_6_of_N\"]}]}\n"
         "</HYPOTHESIS_PROPOSALS_JSON>\n"
         "Use exactly the schema keys shown; do not add prediction numbers, source code, weights chosen from hidden "
         "targets, or any claim of validation. Proposed family names are descriptive only: they do not create or "
-        "change a method registry entry. An empty proposals list is an acceptable result."
+        "change a method registry entry. An empty proposals list is an acceptable result.\n"
+        "Also include exactly one HYPOTHESIS_EXECUTION_SPECS_JSON block. It is a separate, "
+        "strictly declarative JSON block whose hypothesis_id values must match proposal IDs. "
+        "Use an empty specifications list when no proposal can be represented by this DSL.\n"
+        "The block shape is schema_version 1 with specifications; each item has only "
+        "hypothesis_id and execution_spec. execution_spec has only schema_version 1 and "
+        "score_expression. It is a typed expression tree, not source code.\n"
+        "Allowed nodes: const with a finite bounded numeric value; var with name candidate, "
+        "value, or draw_age; unary abs or not; binary add, sub, mul, div, mod, min, max, "
+        "eq, ne, lt, lte, gt, gte, and, or; and exactly one aggregate_history_numbers node "
+        "with aggregate count or sum and one expression. count requires a boolean expression; "
+        "sum requires a numeric expression. value and draw_age are available only inside "
+        "the aggregate.\n"
+        "Exact node shapes: const has only op,value; var has only op,name; abs and not "
+        "have only op,arg; binary operators have only op,left,right; "
+        "aggregate_history_numbers has only op,aggregate,expression. "
+        "Use those exact key sets on every node.\n"
+        "The score expression must return a number. Use at most 32 nodes and depth 8. "
+        "Unknown operations, extra keys, nested aggregates, multiple aggregates, code, "
+        "imports, loops, file/network access, and arbitrary functions are forbidden. "
+        "If a hypothesis cannot be represented without changing its meaning, omit its execution spec.\n"
+        "A DSL-valid specification is not approved or canonical. It is run only against fixed "
+        "synthetic R54/R60 contract fixtures; do not claim that it was real-archive backtested, "
+        "promoted, or written to the method registry.\n"
+        "Place one raw JSON object between <HYPOTHESIS_EXECUTION_SPECS_JSON> and "
+        "</HYPOTHESIS_EXECUTION_SPECS_JSON>. Its top-level keys are schema_version and "
+        "specifications. Each specification has exactly hypothesis_id and execution_spec. "
+        "Do not copy a template with placeholders; provide a fully valid AST or leave the list empty."
     )
     target_day = date.fromisoformat(target)
     r54 = [row for row in train if date.fromisoformat(row["date"]) < date(2020, 8, 2)]
@@ -387,8 +416,19 @@ def main() -> int:
         messages = build_messages(target, train, os.environ.get("TASK_TEXT", ""))
         report = call_model(messages)
         proposal_document = parse_hypothesis_proposals(report)
+        valid_proposal_ids = {
+            item["hypothesis_id"] for item in proposal_document["proposals"]
+        }
+        execution_spec_document = parse_execution_spec_block(
+            report,
+            allowed_hypothesis_ids=valid_proposal_ids,
+        )
         PROPOSALS.write_text(
             json.dumps(proposal_document, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        EXECUTION_SPECS.write_text(
+            json.dumps(execution_spec_document, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
         proposal_note = (
@@ -397,7 +437,12 @@ def main() -> int:
             f"- Validated proposal count: {len(proposal_document['proposals'])}\n"
             "- Execution ready: NO\n"
             "- Method registry modified: NO\n"
-            "- Hypotheses are unverified proposals only; no implementation or scoring was run.\n"
+            "- Hypotheses remain unverified proposals; no real-archive backtest was run.\n"
+            f"- Execution-spec parser status: {execution_spec_document['status']}\n"
+            f"- DSL-validated specifications: {len(execution_spec_document['specifications'])}\n"
+            f"- Synthetic contract tests passed: {execution_spec_document['synthetic_tests_passed']}\n"
+            "- Specifications executed against the real archive: NO\n"
+            "- Execution approval / method promotion: NO\n"
         )
         usage_note = (
             "\n\n## NVIDIA usage observation\n\n"
@@ -431,8 +476,13 @@ def main() -> int:
         print("Report status: EXPLORATORY ONLY; NOT VALIDATED")
         print("Proposal status:", proposal_document["status"])
         print("Validated proposals:", len(proposal_document["proposals"]))
-        print("Execution ready: NO | Method registry modified: NO")
+        print("Execution-spec status:", execution_spec_document["status"])
+        print("DSL-validated specifications:", len(execution_spec_document["specifications"]))
+        print("Synthetic contract tests passed:", execution_spec_document["synthetic_tests_passed"])
+        print("Real-archive execution: NO | Execution approval: NO")
+        print("Method registry modified: NO")
         print("Proposal file:", PROPOSALS.name)
+        print("Execution-spec file:", EXECUTION_SPECS.name)
         print("Report path:", REPORT.name)
         return 0
     except Exception as exc:
