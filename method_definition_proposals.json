@@ -1,0 +1,92 @@
+{
+  "schema_version": 1,
+  "status": "PROPOSAL_ONLY_NOT_CANONICAL",
+  "semantics_confirmed_by_user": false,
+  "canonical_registry_update_allowed": false,
+  "binding_rules_changed": false,
+  "execution_ready": false,
+  "real_archive_evaluation_performed": false,
+  "working_notation_assumption": {
+    "draw_sequence": "D_0, D_1, ... are consecutive, chronologically ordered draws inside one regime; each D_i is a set of six distinct numbers.",
+    "A": "An antecedent number a appearing in a source draw.",
+    "B": "An intermediate number b appearing in the immediately following draw.",
+    "C": "A candidate number c in the draw two steps after A.",
+    "T": "A candidate number t in the immediately following target draw.",
+    "MOD5": "The Euclidean remainder r = n mod 5, with classes 0, 1, 2, 3, 4; multiples of five belong to class 0.",
+    "semantic_warning": "These meanings are a coherent working interpretation, not recovered historical semantics. If A/B/C are intended to be hidden states rather than number identities, or T means something other than a next-draw target number, all three proposals must be revised before implementation."
+  },
+  "shared_definition": {
+    "draw_universe": "For R54, U={1,...,54}; for R60, U={1,...,60}.",
+    "regimes": {
+      "R54": "Draw dates strictly before 2020-08-02.",
+      "R60": "Draw dates on or after 2020-08-02."
+    },
+    "regime_boundary": "Never build a pair or triple transition that crosses the R54/R60 boundary. Do not pool the regimes.",
+    "input_contract": "Each forecast call receives only validated, chronologically ordered draws strictly earlier than the forecast target. The target and all later rows are absent.",
+    "archive_contract": "Transition experiments require complete, independently checked consecutive-draw coverage and zero unresolved draw-index gaps. Sorted dates alone do not prove that an intervening draw is not missing.",
+    "event_definition": "For a candidate number x and draw D_i, Y(i,x)=1 when x is in D_i and 0 otherwise.",
+    "smoothing": "Use a fixed Beta(1,1) prior for each Bernoulli conditional probability: p=(successes+1)/(exposures+2). Do not tune this prior on validation or target outcomes.",
+    "ranking": "Rank every number in the active regime universe by descending score; break exact ties by ascending number. The top six are an evaluation set, not a promise or prediction guarantee.",
+    "evaluation": "For each historical forecast point, refit using only earlier draws. Report forward walk-forward and time-ordered cross-validation separately. Reverse chronology is retrospective stress testing only.",
+    "null_baseline": "Uniform random selection of six numbers from the active universe; theoretical expected overlap is 36/54 for R54 and 36/60 for R60. Also compare against the already implemented frequency and adjacent-draw baselines.",
+    "selection_policy": "No parameter search, no target-aware selection, no cross-family weights, and no ensemble in this proposal. Any later crossover must use development-only selection and a frozen chronological evaluation interval.",
+    "status_policy": "Passing synthetic tests validates only that a prototype implements these proposed equations on toy data. It does not approve canonical definitions or establish predictive value."
+  },
+  "methods": {
+    "A->B->C": {
+      "status": "PROPOSAL_ONLY",
+      "execution_ready": false,
+      "meaning": "Two-step number-to-number conditional transition: source number A in D_i, intermediate number B in D_(i+1), candidate target number C in D_(i+2).",
+      "training_observations": "For every historical triple (D_i,D_(i+1),D_(i+2)) wholly before the forecast target, each pair (a,b) in D_i x D_(i+1) contributes one exposure. For each c in D_(i+2), increment the success count for (a,b,c).",
+      "conditional_probability": "P(C=c | A=a,B=b)=(N_abc+1)/(N_ab+2), where N_ab counts eligible historical triples containing the pair (a,b) in their first two draws and N_abc counts those triples whose third draw contains c.",
+      "forecast_context": "A is the six-number set from the second-most-recent pre-target draw; B is the six-number set from the most-recent pre-target draw.",
+      "score": "S_ABC(c)=(1/36)*sum over all a in A and b in B of P(C=c | A=a,B=b).",
+      "minimum_history": "At least three pre-target draws are required to estimate one or more historical triples and establish the two-draw forecast context.",
+      "support_reporting": "Report the number of the 36 current (a,b) contexts with at least one historical exposure. Sparse or unseen contexts remain smoothed but must be clearly reported.",
+      "primary_risk": "The 36 pair contexts within each draw triple are dependent, and many (a,b) contexts may be sparse. Block-aware uncertainty and out-of-sample stability checks are required."
+    },
+    "A->T": {
+      "status": "PROPOSAL_ONLY",
+      "execution_ready": false,
+      "meaning": "One-step number-to-target transition: antecedent number A in D_i and candidate target number T in D_(i+1).",
+      "training_observations": "For every adjacent historical draw pair (D_i,D_(i+1)) wholly before the forecast target, each a in D_i contributes one exposure. For each t in D_(i+1), increment the success count for (a,t).",
+      "conditional_probability": "P(T=t | A=a)=(N_at+1)/(N_a+2), where N_a counts eligible adjacent pairs whose source draw contains a and N_at counts those whose successor draw contains t.",
+      "forecast_context": "A is the six-number set from the most-recent pre-target draw.",
+      "score": "S_AT(t)=(1/6)*sum over a in A of P(T=t | A=a).",
+      "minimum_history": "At least two pre-target draws are required.",
+      "support_reporting": "For the six current antecedent numbers, report exposure counts and how many have no prior transition exposure.",
+      "primary_risk": "A single antecedent number may have few historical exposures; number-pair events within a draw pair are dependent."
+    },
+    "MOD5->T": {
+      "status": "PROPOSAL_ONLY",
+      "execution_ready": false,
+      "meaning": "One-step residue-class-to-target transition: the set of modulo-five classes represented in the source draw predicts candidate target number T in the next draw.",
+      "residue_definition": "r(a)=a mod 5, with residue 0 representing 5,10,15,... and 60 in R60.",
+      "training_observations": "For every adjacent historical draw pair (D_i,D_(i+1)) wholly before the forecast target, each distinct residue r represented at least once in D_i contributes exactly one exposure. For each t in D_(i+1), increment the success count for (r,t). Multiple source numbers with the same residue do not create extra exposures in that draw.",
+      "conditional_probability": "P(T=t | MOD5=r)=(N_rt+1)/(N_r+2), where N_r counts eligible source draws containing at least one number of residue r and N_rt counts those whose successor draw contains t.",
+      "forecast_context": "R is the set of distinct residues represented in the most-recent pre-target draw.",
+      "score": "S_MOD5T(t)=(1/|R|)*sum over r in R of P(T=t | MOD5=r).",
+      "minimum_history": "At least two pre-target draws are required.",
+      "support_reporting": "Report exposure counts for all five residue classes and which classes are active in the current source draw.",
+      "primary_risk": "Residue groups are broad and discard number identity; apparent group effects may be weak, unstable, or explainable by chance."
+    }
+  },
+  "required_synthetic_tests_before_real_archive_use": [
+    "A->T: a controlled toy history with repeated antecedent numbers must produce the hand-calculated smoothed conditional scores.",
+    "A->B->C: a repeated A/B/C toy sequence must produce the hand-calculated pair-conditional scores and 36-context averaging.",
+    "MOD5->T: repeated residue-class exposures must produce hand-calculated scores; residue 0 must include multiples of five and count each class once per source draw.",
+    "All methods: exact score ties must resolve in ascending numeric order.",
+    "All methods: reject unordered dates, duplicate dates, malformed six-number draws, mixed R54/R60 input, and values above 54 in R54.",
+    "All methods: do not mutate input rows; use no target or future row; do not read the canonical archive or make a network/API request.",
+    "All methods: enforce minimum history and report sparse or zero-exposure contexts."
+  ],
+  "required_real_archive_gates_after_definition_approval": [
+    "Obtain explicit user approval of these exact meanings and equations before changing general_method_registry.json.",
+    "Keep all three registry entries OPEN_DEFINITION and canonical_definition null until that approval is recorded.",
+    "Run a fresh canonical archive integrity and full cross-source coverage check; source lag acceptance remains limited to the merged one-row Lotobil tail-lag rule.",
+    "Run R54 and R60 as separate experiments with no cross-boundary transitions.",
+    "Use forward walk-forward, time-ordered cross-validation, and separately labelled reverse retrospective stress testing.",
+    "Use the uniform random 6-of-N null and existing baseline methods; report fold-level results, uncertainty, multiple-testing limits, and support counts.",
+    "Keep the latest target hidden and excluded from feature construction, fitting, tuning, and model selection."
+  ]
+}

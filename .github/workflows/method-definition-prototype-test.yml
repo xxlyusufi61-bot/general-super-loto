@@ -1,0 +1,53 @@
+name: GENERAL Method Definition Proposal — Synthetic Tests
+
+on:
+  pull_request:
+    paths:
+      - "METHOD_DEFINITION_PROPOSALS.md"
+      - "method_definition_proposals.json"
+      - "general_method_definition_prototype.py"
+      - "general_method_definition_prototype_test.py"
+      - "general_method_registry.json"
+      - "general_method_registry_test.py"
+      - ".github/workflows/method-definition-prototype-test.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "METHOD_DEFINITION_PROPOSALS.md"
+      - "method_definition_proposals.json"
+      - "general_method_definition_prototype.py"
+      - "general_method_definition_prototype_test.py"
+      - "general_method_registry.json"
+      - "general_method_registry_test.py"
+      - ".github/workflows/method-definition-prototype-test.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile prototype and tests
+        run: >-
+          python -m py_compile
+          general_method_definition_prototype.py
+          general_method_definition_prototype_test.py
+          general_data_guard.py
+
+      - name: Run synthetic-only method definition tests
+        run: python -m unittest -v general_method_definition_prototype_test
+
+      - name: Ensure canonical method registry remains open
+        run: python -m unittest -v general_method_registry_test
