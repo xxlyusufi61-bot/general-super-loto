@@ -86,6 +86,22 @@ class BidirectionalFullHistoryTests(unittest.TestCase):
         self.assertEqual(r60_report["forward"]["evaluation_order"], "oldest_to_newest")
         self.assertEqual(r60_report["reverse_retrospective"]["evaluation_order"], "newest_to_oldest")
         self.assertFalse(r60_report["reverse_retrospective"]["predictive_evidence"])
+        self.assertEqual(r60_report["forward"]["eligible_input_draw_count"], 75)
+        self.assertEqual(r60_report["reverse_retrospective"]["eligible_input_draw_count"], 75)
+        self.assertEqual(r60_report["forward"]["skipped_draw_count"], 42)
+        self.assertEqual(r60_report["reverse_retrospective"]["skipped_draw_count"], 42)
+        self.assertEqual(len(r60_report["forward_skipped_due_to_insufficient_history"]), 42)
+        self.assertEqual(len(r60_report["reverse_skipped_due_to_insufficient_history"]), 42)
+        self.assertEqual(
+            [row["test_date"] for row in r60_report["forward_skipped_due_to_insufficient_history"]],
+            [row["date"] for row in r60[:42]],
+        )
+        self.assertEqual(
+            [row["test_date"] for row in r60_report["reverse_skipped_due_to_insufficient_history"]],
+            [row["date"] for row in reversed(r60[-42:])],
+        )
+        self.assertTrue(all(row["hit_count"] is None for row in r60_report["forward_skipped_due_to_insufficient_history"]))
+        self.assertTrue(all(row["status"] == "SKIPPED_INSUFFICIENT_LATER_HISTORY" for row in r60_report["reverse_skipped_due_to_insufficient_history"]))
         self.assertEqual(
             r60_report["forward_and_reverse_tested_date_intersection_count"],
             75 - 84 if 75 > 84 else 0,
