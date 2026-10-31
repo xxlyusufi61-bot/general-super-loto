@@ -381,7 +381,7 @@ def reconcile_year_with_loto_gen(year, primary_rows, independent_rows, source_pa
         {"date": day, "numbers": list(sorted(independent_scope[day]))}
         for day in independent_only
     ]
-    merged = list(primary_rows) + additions
+    merged = list(primary_scope) + additions
     final_dates = {
         row["date"]: tuple(sorted(row["numbers"]))
         for row in merged
