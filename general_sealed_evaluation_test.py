@@ -9,15 +9,9 @@ import general_sealed_evaluation as sealed
 
 def make_rows():
     rows = []
-    r54_start = date(2020, 1, 2)
-    for index in range(31):
-        day = (r54_start + timedelta(days=6 * index)).isoformat()
-        base = (index * 7) % 54 + 1
-        numbers = sorted({((base + offset * 11 - 1) % 54) + 1 for offset in range(6)})
-        rows.append({"date": day, "numbers": numbers})
-    r60_start = date(2020, 8, 2)
+    start = date(2020, 8, 2)
     for index in range(80):
-        day = (r60_start + timedelta(days=2 * index)).isoformat()
+        day = (start + timedelta(days=2 * index)).isoformat()
         base = (index * 7) % 60 + 1
         numbers = sorted({((base + offset * 11 - 1) % 60) + 1 for offset in range(6)})
         rows.append({"date": day, "numbers": numbers})
@@ -123,33 +117,11 @@ class SealedEvaluationTests(unittest.TestCase):
         with self.assertRaises(sealed.SealedEvaluationError):
             sealed.split_archive(rows)
 
-    def test_r54_remains_unevaluated_instead_of_lowering_minimum(self):
-        archive = sealed.load_archive(self.archive_path)
-        split = sealed.split_archive(archive["rows"], archive_sha256=archive["archive_sha256"])
-        r54 = split["regimes"]["R54"]
-        self.assertEqual(r54["pre_target_draw_count"], 31)
-        self.assertEqual(r54["discovery_count"], 31)
-        self.assertEqual(r54["validation_count"], 0)
-        self.assertEqual(r54["status"], "NOT_EVALUABLE_INSUFFICIENT_HISTORY")
-        self.assertIn("minimum was not lowered", r54["reason"])
-
-    def test_r54_stays_discovery_only_even_if_history_grows(self):
+    def test_pre_scope_archive_is_rejected(self):
         rows = make_rows()
-        additions = []
-        for index in range(11):
-            day = (date(2020, 7, 1) + timedelta(days=index)).isoformat()
-            base = (index * 5) % 54 + 1
-            numbers = sorted({((base + offset * 9 - 1) % 54) + 1 for offset in range(6)})
-            additions.append({"date": day, "numbers": numbers})
-        rows.extend(additions)
-        rows.sort(key=lambda row: row["date"])
-        split = sealed.split_archive(rows)
-        r54 = split["regimes"]["R54"]
-        self.assertEqual(r54["pre_target_draw_count"], 42)
-        self.assertEqual(r54["discovery_count"], 42)
-        self.assertEqual(r54["validation_count"], 0)
-        self.assertEqual(r54["status"], "DISCOVERY_ONLY_NOT_EVALUATED")
-        self.assertIn("not enabled in this version", r54["reason"])
+        rows.insert(0, {"date": "2020-07-30", "numbers": [1, 2, 3, 4, 5, 54]})
+        with self.assertRaises(sealed.SealedEvaluationError):
+            sealed.split_archive(rows)
 
     def test_public_plan_contains_metadata_not_draw_values(self):
         archive = sealed.load_archive(self.archive_path)
@@ -167,7 +139,6 @@ class SealedEvaluationTests(unittest.TestCase):
         self.assertEqual(result["status"], "READY")
         self.assertFalse(result["hosted_model_request_performed"])
         self.assertFalse(result["real_archive_evaluation_performed"])
-        self.assertEqual(result["regimes"]["R54"]["status"], "NOT_EVALUABLE_INSUFFICIENT_HISTORY")
 
     def test_claim_persists_snapshot_and_prevents_overlap_reuse(self):
         proposals, specs = write_candidate_documents(self.root)
