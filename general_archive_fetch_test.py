@@ -140,5 +140,22 @@ class MultiYearReconciliationTests(unittest.TestCase):
         self.assertEqual(report["independent_source_count"], 1)
 
 
+
+class ActiveScopeArchiveParserTests(unittest.TestCase):
+    def test_primary_parser_skips_pre_scope_rows_before_number_parsing(self):
+        html = """
+        <table>
+          <tr><td>30.07.2020</td><td>1 2 3 4 5</td></tr>
+          <tr><td>02.08.2020</td><td>7 8 9 10 11 12</td></tr>
+        </table>
+        """
+        rows = fetcher.parse_primary_year(2020, html=html)
+        self.assertEqual(
+            rows,
+            [{"date": "2020-08-02", "numbers": [7, 8, 9, 10, 11, 12]}],
+        )
+        self.assertEqual(fetcher.EXPECTED[2020], 66)
+
+
 if __name__ == "__main__":
     unittest.main()
