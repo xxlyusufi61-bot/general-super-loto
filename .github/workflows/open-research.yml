@@ -14,8 +14,6 @@ name: GENERAL Blank-Slate Research
       - "general_hypothesis_execution_test.py"
       - "general_bidirectional_evaluation.py"
       - "general_bidirectional_evaluation_test.py"
-      - "general_bidirectional_evaluation.py"
-      - "general_bidirectional_evaluation_test.py"
       - "general_execution_spec_parser.py"
       - "general_execution_spec_parser_test.py"
       - "general_sealed_evaluation.py"
