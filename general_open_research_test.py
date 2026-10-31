@@ -74,6 +74,7 @@ class OpenResearchIsolationTests(unittest.TestCase):
         self.assertEqual(target, "2026-10-22")
         self.assertEqual(forward_payload["discovery_direction"], "forward")
         self.assertEqual(forward_payload["history_order"], "oldest_to_newest")
+        self.assertEqual(list(forward_payload["discovery_history_by_regime"]), ["R54", "R60"])
         self.assertEqual(
             [row["date"] for row in forward_payload["discovery_history_by_regime"]["R60"]],
             ["2026-10-18", "2026-10-20"],
@@ -83,6 +84,7 @@ class OpenResearchIsolationTests(unittest.TestCase):
         self.assertNotIn("reverse_discovery_history_by_regime", forward_payload)
         self.assertEqual(reverse_payload["discovery_direction"], "reverse")
         self.assertEqual(reverse_payload["history_order"], "newest_to_oldest")
+        self.assertEqual(list(reverse_payload["discovery_history_by_regime"]), ["R60", "R54"])
         self.assertEqual(
             [row["date"] for row in reverse_payload["discovery_history_by_regime"]["R60"]],
             ["2026-10-20", "2026-10-18"],
