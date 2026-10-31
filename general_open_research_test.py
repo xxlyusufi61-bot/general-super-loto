@@ -332,6 +332,36 @@ class NvidiaUsageObservationTests(unittest.TestCase):
                 research.call_model([{"role": "user", "content": "test"}])
             mocked_urlopen.assert_not_called()
 
+    def test_two_directional_usage_observations_are_separate_and_summarized(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            usage_path = Path(temp_dir) / "usage.json"
+            forward_observation = research.build_usage_observation(
+                200,
+                {"x-ratelimit-remaining-requests": "8"},
+                {"usage": {"prompt_tokens": 100, "completion_tokens": 30, "total_tokens": 130}},
+            )
+            reverse_observation = research.build_usage_observation(
+                200,
+                {"x-ratelimit-remaining-requests": "7"},
+                {"usage": {"prompt_tokens": 110, "completion_tokens": 35, "total_tokens": 145}},
+            )
+            with patch.object(research, "USAGE_REPORT", usage_path):
+                research.save_usage_observation(forward_observation, request_label="forward")
+                research.save_usage_observation(reverse_observation, request_label="reverse")
+                summary = research.write_combined_usage_summary()
+            self.assertTrue((Path(temp_dir) / "usage_forward.json").is_file())
+            self.assertTrue((Path(temp_dir) / "usage_reverse.json").is_file())
+            self.assertEqual(summary["inference_requests_made_by_this_run"], 2)
+            self.assertEqual(summary["automatic_retries"], 0)
+            self.assertEqual([item["direction"] for item in summary["requests"]], ["forward", "reverse"])
+            self.assertEqual(
+                [item["observation"]["token_usage_returned_by_provider"]["total_tokens"]
+                 for item in summary["requests"]],
+                [130, 145],
+            )
+            self.assertEqual(summary["account_level_quota_status"], "UNKNOWN")
+            self.assertEqual(summary["billing_or_paid_entitlement_status"], "NOT_VERIFIED_BY_THIS_RUN")
+
     def test_rate_limit_error_is_not_retried_and_metadata_is_saved(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             usage_path = Path(temp_dir) / "usage.json"
