@@ -364,6 +364,46 @@ def rank_candidates(
     )
 
 
+def rank_candidates_retrospective(
+    later_history: list[dict[str, Any]],
+    *,
+    target_date: str,
+    number_pool_size: int,
+    execution_spec: dict[str, Any],
+    min_train_draws: int = DEFAULT_MIN_TRAIN_DRAWS,
+) -> list[dict[str, Any]]:
+    """Rank candidates for an older target using only strictly later historical rows.
+
+    This helper is only for retrospective reverse-time diagnostics. Its output is
+    not predictive evidence. The target row itself must not be included.
+    """
+    if type(number_pool_size) is not int or number_pool_size not in ALLOWED_POOL_SIZES:
+        _fail("number pool must be R54 (54) or R60 (60).")
+    if type(min_train_draws) is not int or not 2 <= min_train_draws <= MAX_HISTORY_DRAWS:
+        _fail("minimum later-history draws are outside the supported range.")
+    cutoff = _canonical_date(target_date, "target_date")
+    if number_pool_size == 54 and cutoff >= REGIME_BOUNDARY:
+        _fail("R54 retrospective cutoff must be before 2020-08-02.")
+    if number_pool_size == 60 and cutoff < REGIME_BOUNDARY:
+        _fail("R60 retrospective cutoff must be on or after 2020-08-02.")
+    checked_history = _validate_rows(
+        later_history,
+        pool_size=number_pool_size,
+        field="later_history",
+        maximum=MAX_HISTORY_DRAWS,
+    )
+    if len(checked_history) < min_train_draws:
+        _fail("later historical reference is too short for reverse-time scoring.")
+    if any(date.fromisoformat(row["date"]) <= cutoff for row in checked_history):
+        _fail("later_history contains the target or an earlier draw.")
+    spec = validate_execution_spec(execution_spec)
+    return _rank_checked_history(
+        checked_history,
+        number_pool_size=number_pool_size,
+        spec=spec,
+    )
+
+
 def evaluate_holdout(
     discovery_history: list[dict[str, Any]],
     validation_draws: list[dict[str, Any]],
