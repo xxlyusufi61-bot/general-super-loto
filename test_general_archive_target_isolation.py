@@ -40,6 +40,8 @@ class CanonicalArchiveTargetIsolationTests(unittest.TestCase):
 
     def test_archive_is_valid_strictly_chronological_and_unique(self):
         self.assertTrue(self.summary["valid"] is True)
+        self.assertEqual(self.summary.get("research_scope_start_date"), RESEARCH_SCOPE_START)
+        self.assertEqual(self.dates[0], RESEARCH_SCOPE_START)
         self.assertEqual(self.summary["record_count"], len(self.rows))
         self.assertEqual(self.summary["unique_dates"], len(self.dates))
         self.assertEqual(self.dates, sorted(self.dates))
