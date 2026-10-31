@@ -110,6 +110,12 @@ class SealedEvaluationTests(unittest.TestCase):
         self.assertNotIn(split["target_date"], validation_dates)
         self.assertNotIn("numbers", split)
 
+    def test_split_rejects_unsorted_number_sets_even_in_isolated_target(self):
+        rows = make_rows()
+        rows[-1]["numbers"] = list(reversed(rows[-1]["numbers"]))
+        with self.assertRaises(sealed.SealedEvaluationError):
+            sealed.split_archive(rows)
+
     def test_r54_remains_unevaluated_instead_of_lowering_minimum(self):
         archive = sealed.load_archive(self.archive_path)
         split = sealed.split_archive(archive["rows"], archive_sha256=archive["archive_sha256"])
