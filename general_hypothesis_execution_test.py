@@ -314,6 +314,16 @@ class SafeHypothesisExecutionTests(unittest.TestCase):
         )
         self.assertEqual(report["uniform_random_expected_hits_out_of_6"], 0.666667)
 
+    def test_synthetic_contract_runner_checks_both_regimes(self):
+        result = engine.run_synthetic_contract_tests(count_candidate_matches_spec())
+        self.assertEqual(result["status"], "PASS")
+        self.assertEqual(result["regimes_checked"], ["R54", "R60"])
+        self.assertEqual(result["ranked_values_checked"], 114)
+        self.assertTrue(result["deterministic"])
+        self.assertFalse(result["input_mutated"])
+        self.assertFalse(result["real_archive_used"])
+        self.assertFalse(result["target_values_used"])
+
     def test_input_history_is_not_mutated(self):
         discovery = synthetic_rows(20)
         validation = synthetic_rows(2, start="2024-01-21")
