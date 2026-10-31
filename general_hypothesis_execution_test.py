@@ -45,7 +45,7 @@ class SafeHypothesisExecutionTests(unittest.TestCase):
         self.assertIsNot(checked["score_expression"], spec["score_expression"])
 
     def test_ranker_returns_full_pool_and_deterministic_tie_break(self):
-        history = synthetic_rows(8, start="2020-07-01", pool_size=54)
+        history = synthetic_rows(8, start="2020-08-02", pool_size=60)
         constant_spec = {
             "schema_version": 1,
             "score_expression": {
@@ -60,8 +60,8 @@ class SafeHypothesisExecutionTests(unittest.TestCase):
         }
         first = engine.rank_candidates(
             history,
-            cutoff_date="2020-07-09",
-            number_pool_size=54,
+            cutoff_date="2020-08-10",
+            number_pool_size=60,
             execution_spec=constant_spec,
         )
         second = engine.rank_candidates(
@@ -71,44 +71,30 @@ class SafeHypothesisExecutionTests(unittest.TestCase):
             execution_spec=constant_spec,
         )
         self.assertEqual(first, second)
-        self.assertEqual([item["number"] for item in first], list(range(1, 55)))
+        self.assertEqual([item["number"] for item in first], list(range(1, 61)))
         self.assertEqual({item["score"] for item in first}, {0})
 
-    def test_r54_and_r60_reject_cross_regime_dates(self):
-        r54_rows = synthetic_rows(4, start="2020-07-30", pool_size=54)
-        with self.assertRaisesRegex(ValueError, "outside the R54 regime"):
+    def test_pre_scope_history_is_rejected(self):
+        history = synthetic_rows(4, start="2020-07-30", pool_size=60)
+        with self.assertRaisesRegex(ValueError, "outside the active 6-of-60 research scope"):
             engine.rank_candidates(
-                r54_rows,
-                cutoff_date="2020-08-01",
-                number_pool_size=54,
-                execution_spec=count_candidate_matches_spec(),
-            )
-        r60_rows = synthetic_rows(3, start="2020-07-30", pool_size=60)
-        with self.assertRaisesRegex(ValueError, "outside the R60 regime"):
-            engine.rank_candidates(
-                r60_rows,
-                cutoff_date="2020-08-03",
+                history,
+                cutoff_date="2020-08-05",
                 number_pool_size=60,
                 execution_spec=count_candidate_matches_spec(),
             )
 
-    def test_regime_specific_cutoff_dates_are_enforced(self):
-        r54_history = synthetic_rows(3, start="2020-07-20", pool_size=54)
-        with self.assertRaisesRegex(ValueError, "R54 scoring cutoff must be before"):
+
+    def test_cutoff_before_active_scope_is_rejected(self):
+        history = synthetic_rows(3, start="2020-08-02", pool_size=60)
+        with self.assertRaisesRegex(ValueError, "scoring cutoff is before the active research scope"):
             engine.rank_candidates(
-                r54_history,
-                cutoff_date="2020-08-02",
-                number_pool_size=54,
-                execution_spec=count_candidate_matches_spec(),
-            )
-        r60_history = synthetic_rows(3, start="2020-08-02", pool_size=60)
-        with self.assertRaisesRegex(ValueError, "R60 scoring cutoff must be on or after"):
-            engine.rank_candidates(
-                r60_history,
+                history,
                 cutoff_date="2020-08-01",
                 number_pool_size=60,
                 execution_spec=count_candidate_matches_spec(),
             )
+
 
     def test_candidate_score_expression_runs_only_over_earlier_history(self):
         history = synthetic_rows(12, pool_size=60)
@@ -133,13 +119,13 @@ class SafeHypothesisExecutionTests(unittest.TestCase):
                 execution_spec=count_candidate_matches_spec(),
             )
 
-    def test_rejects_r54_out_of_pool_value(self):
-        history = synthetic_rows(3, start="2020-07-01", pool_size=54)
-        history[0]["numbers"][-1] = 55
+    def test_rejects_number_outside_the_6_of_60_pool(self):
+        history = synthetic_rows(3, start="2020-08-02", pool_size=60)
+        history[0]["numbers"][-1] = 61
         with self.assertRaisesRegex(ValueError, "invalid six-number draw"):
             engine.rank_candidates(
                 history,
-                cutoff_date="2020-07-04",
+                cutoff_date="2020-08-05",
                 number_pool_size=54,
                 execution_spec=count_candidate_matches_spec(),
             )
@@ -474,12 +460,12 @@ class SafeHypothesisExecutionTests(unittest.TestCase):
             )
 
     def test_holdout_reports_regime_specific_random_reference(self):
-        discovery = synthetic_rows(20, start="2020-07-01", pool_size=54)
-        validation = synthetic_rows(3, start="2020-07-21", pool_size=54)
+        discovery = synthetic_rows(20, start="2020-08-02", pool_size=60)
+        validation = synthetic_rows(3, start="2020-08-22", pool_size=60)
         report = engine.evaluate_holdout(
             discovery,
             validation,
-            cutoff_date="2020-07-24",
+            cutoff_date="2020-08-25",
             number_pool_size=54,
             execution_spec=count_candidate_matches_spec(),
             min_train_draws=10,
@@ -489,7 +475,7 @@ class SafeHypothesisExecutionTests(unittest.TestCase):
     def test_synthetic_contract_runner_checks_both_regimes(self):
         result = engine.run_synthetic_contract_tests(count_candidate_matches_spec())
         self.assertEqual(result["status"], "PASS")
-        self.assertEqual(result["regimes_checked"], ["R54", "R60"])
+        self.assertEqual(result["number_pools_checked"], [60])
         self.assertEqual(result["ranked_values_checked"], 114)
         self.assertTrue(result["deterministic"])
         self.assertFalse(result["input_mutated"])
