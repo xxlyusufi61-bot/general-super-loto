@@ -23,6 +23,7 @@ import general_data_guard as guard
 from general_live_consent import has_explicit_live_consent
 from general_hypothesis_proposals import parse_hypothesis_proposals
 from general_execution_spec_parser import parse_execution_spec_block
+import general_sealed_evaluation as sealed
 
 VERSION = "0.4.0"
 MODEL = "z-ai/glm-5.3-flash"
@@ -149,6 +150,30 @@ def isolate_pre_target(rows: list[dict[str, Any]]) -> tuple[str, list[dict[str, 
     clean_train = [{"date": row["date"], "numbers": list(row["numbers"])} for row in train]
     return target, clean_train
 
+def isolate_discovery_only(rows: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
+    """Return only the discovery partition; never include sealed validation rows."""
+    target, _pre_target = isolate_pre_target(rows)
+    split = sealed.split_archive(rows)
+    if split.get("target_date") != target:
+        raise RuntimeError("Sealed split target disagrees with Data Guard.")
+    discovery = split.get("discovery_rows")
+    if not isinstance(discovery, list):
+        raise RuntimeError("Sealed split returned invalid discovery rows.")
+    validation_dates = {
+        row["date"]
+        for regime in split["regimes"].values()
+        for row in regime["validation_rows"]
+    }
+    discovery_dates = {row["date"] for row in discovery}
+    if discovery_dates.intersection(validation_dates):
+        raise RuntimeError("Discovery and sealed validation dates overlap.")
+    if target in discovery_dates or target in validation_dates:
+        raise RuntimeError("Isolated target entered the discovery or validation partition.")
+    if any(row["date"] >= target for row in discovery):
+        raise RuntimeError("Target/future row leaked into model discovery input.")
+    return target, discovery, sealed.public_plan(split)
+
+
 def build_messages(target: str, train: list[dict[str, Any]], focus: str = "") -> list[dict[str, str]]:
     system = (
         "You are the GENERAL blank-slate research agent for Super Loto.\n"
@@ -198,9 +223,15 @@ def build_messages(target: str, train: list[dict[str, Any]], focus: str = "") ->
         "Use exactly the schema keys shown; do not add prediction numbers, source code, weights chosen from hidden "
         "targets, or any claim of validation. Proposed family names are descriptive only: they do not create or "
         "change a method registry entry. An empty proposals list is an acceptable result.\n"
+        "Order proposals by priority using discovery data only; put the most defensible, testable "
+        "hypothesis first. Do not use the sealed validation interval, validation outcomes, or later "
+        "draws to order or select proposals.\n"
         "Also include exactly one HYPOTHESIS_EXECUTION_SPECS_JSON block. It is a separate, "
-        "strictly declarative JSON block whose hypothesis_id values must match proposal IDs. "
-        "Use an empty specifications list when no proposal can be represented by this DSL.\n"
+        "strictly declarative JSON block. For the one-shot real-archive protocol, provide at most one "
+        "execution specification, and if present it MUST match the first proposal's hypothesis_id. "
+        "Do not provide alternative execution specs for later proposals. Use an empty specifications list "
+        "when the first proposal cannot be represented by this DSL. This rule is fixed before validation; "
+        "the evaluator must not choose a different proposal after seeing validation results.\n"
         "The block shape is schema_version 1 with specifications; each item has only "
         "hypothesis_id and execution_spec. execution_spec has only schema_version 1 and "
         "score_expression. It is a typed expression tree, not source code.\n"
@@ -223,8 +254,9 @@ def build_messages(target: str, train: list[dict[str, Any]], focus: str = "") ->
         "promoted, or written to the method registry.\n"
         "Place one raw JSON object between <HYPOTHESIS_EXECUTION_SPECS_JSON> and "
         "</HYPOTHESIS_EXECUTION_SPECS_JSON>. Its top-level keys are schema_version and "
-        "specifications. Each specification has exactly hypothesis_id and execution_spec. "
-        "Do not copy a template with placeholders; provide a fully valid AST or leave the list empty."
+        "specifications. Provide zero or one item only; if supplied, it must match the first proposal. "
+        "Each item has exactly hypothesis_id and execution_spec. Do not copy a template with placeholders; "
+        "provide a fully valid AST or leave the list empty."
     )
     target_day = date.fromisoformat(target)
     r54 = [row for row in train if date.fromisoformat(row["date"]) < date(2020, 8, 2)]
@@ -412,7 +444,15 @@ def call_model(messages: list[dict[str, str]]) -> str:
 def main() -> int:
     try:
         rows = parse_archive()
-        target, train = isolate_pre_target(rows)
+        target, train, _initial_plan = isolate_discovery_only(rows)
+        # Bind the plan to exact archive bytes, then recheck it has not changed.
+        archive_proof = sealed.load_archive(ARCHIVE)
+        if archive_proof["rows"] != rows:
+            raise RuntimeError("Archive changed between validation and sealed split.")
+        partition = sealed.split_archive(rows, archive_sha256=archive_proof["archive_sha256"])
+        sealed_plan = sealed.public_plan(partition)
+        if partition["target_date"] != target or partition["discovery_rows"] != train:
+            raise RuntimeError("Sealed discovery split changed before prompt construction.")
         messages = build_messages(target, train, os.environ.get("TASK_TEXT", ""))
         report = call_model(messages)
         proposal_document = parse_hypothesis_proposals(report)
@@ -441,7 +481,14 @@ def main() -> int:
             f"- Execution-spec parser status: {execution_spec_document['status']}\n"
             f"- DSL-validated specifications: {len(execution_spec_document['specifications'])}\n"
             f"- Synthetic contract tests passed: {execution_spec_document['synthetic_tests_passed']}\n"
-            "- Specifications executed against the real archive: NO\n"
+            "- Specifications executed against the real archive by discovery runner: NO\n"
+            "- Sealed one-shot evaluator eligible only with one spec matching the first discovery-prioritized proposal: YES\n"
+            "- Persistent claim required before scoring: YES; enforced by a separate workflow step\n"
+            "- Sealed R60 validation window (dates only): "
+            + str(sealed_plan["regimes"]["R60"]["validation_start_date"]) + " to "
+            + str(sealed_plan["regimes"]["R60"]["validation_end_date"]) + " ("
+            + str(sealed_plan["regimes"]["R60"]["validation_count"]) + " draws)\n"
+            "- R54 status: " + str(sealed_plan["regimes"]["R54"]["status"]) + "\n"
             "- Execution approval / method promotion: NO\n"
         )
         usage_note = (
@@ -458,16 +505,22 @@ def main() -> int:
             f"- Runner version: {VERSION}\n"
             f"- Generated (UTC): {datetime.now(timezone.utc).isoformat()}\n"
             f"- Isolated target date: {target}\n"
-            f"- Pre-target draws supplied: {len(train)}\n"
+            f"- Pre-target discovery draws supplied: {len(train)}\n"
+            "- Sealed validation rows sent to model: NO\n"
             "- Target numbers sent to model: NO\n"
             "- Target/future records sent to model: NO\n"
             "- Legacy method registry, candidate files, evidence catalog, and project memory loaded: NO\n"
             "- Status: EXPLORATORY HYPOTHESES ONLY; NOT VALIDATED; NOT CANONICAL\n\n"
         )
         REPORT.write_text(header + report + proposal_note + usage_note, encoding="utf-8")
+        (BASE / "open_research_sealed_plan.json").write_text(
+            json.dumps(sealed_plan, ensure_ascii=False, indent=2) + "\\n",
+            encoding="utf-8",
+        )
         print("OPEN RESEARCH: completed")
         print("Target date isolated:", target)
-        print("Pre-target draws supplied:", len(train))
+        print("Pre-target discovery draws supplied:", len(train))
+        print("Sealed validation rows sent to model: NO")
         print("Target numbers exposed: NO")
         print("Legacy research context loaded: NO")
         print("Provider quota checked before request: NO; no documented account quota API was identified")
