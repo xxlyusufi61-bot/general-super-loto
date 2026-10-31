@@ -214,8 +214,9 @@ def build_messages(target: str, train: list[dict[str, Any]], focus: str = "") ->
         "Unknown operations, extra keys, nested aggregates, multiple aggregates, code, "
         "imports, loops, file/network access, and arbitrary functions are forbidden. "
         "If a hypothesis cannot be represented without changing its meaning, omit its execution spec.\n"
-        "A DSL-valid specification is not approved or executed. It remains non-canonical; "
-        "do not claim that it was backtested, promoted, or written to the method registry.\n"
+        "A DSL-valid specification is not approved or canonical. It is run only against fixed "
+        "synthetic R54/R60 contract fixtures; do not claim that it was real-archive backtested, "
+        "promoted, or written to the method registry.\n"
         "Place one raw JSON object between <HYPOTHESIS_EXECUTION_SPECS_JSON> and "
         "</HYPOTHESIS_EXECUTION_SPECS_JSON>. Its top-level keys are schema_version and "
         "specifications. Each specification has exactly hypothesis_id and execution_spec. "
@@ -432,9 +433,10 @@ def main() -> int:
             f"- Validated proposal count: {len(proposal_document['proposals'])}\n"
             "- Execution ready: NO\n"
             "- Method registry modified: NO\n"
-            "- Hypotheses are unverified proposals only; no implementation or scoring was run.\n"
+            "- Hypotheses remain unverified proposals; no real-archive backtest was run.\n"
             f"- Execution-spec parser status: {execution_spec_document['status']}\n"
             f"- DSL-validated specifications: {len(execution_spec_document['specifications'])}\n"
+            f"- Synthetic contract tests passed: {execution_spec_document['synthetic_tests_passed']}\n"
             "- Specifications executed against the real archive: NO\n"
             "- Execution approval / method promotion: NO\n"
         )
@@ -472,6 +474,7 @@ def main() -> int:
         print("Validated proposals:", len(proposal_document["proposals"]))
         print("Execution-spec status:", execution_spec_document["status"])
         print("DSL-validated specifications:", len(execution_spec_document["specifications"]))
+        print("Synthetic contract tests passed:", execution_spec_document["synthetic_tests_passed"])
         print("Real-archive execution: NO | Execution approval: NO")
         print("Method registry modified: NO")
         print("Proposal file:", PROPOSALS.name)
