@@ -86,8 +86,9 @@ class BidirectionalFullHistoryTests(unittest.TestCase):
 
     def test_reverse_is_retrospective_not_predictive(self):
         rows = make_rows(date(2020, 8, 2), 90)
+        target_date = (date.fromisoformat(rows[-1]["date"]) + timedelta(days=2)).isoformat()
         report = evaluate_bidirectional_full_history(
-            {"R60": rows}, isolated_target_date="2021-01-10"
+            {"R60": rows}, isolated_target_date=target_date
         )
         reverse = report["regimes"]["R60"]["reverse_retrospective"]
         self.assertFalse(reverse["predictive_evidence"])
@@ -95,7 +96,7 @@ class BidirectionalFullHistoryTests(unittest.TestCase):
 
     def test_target_or_future_draws_are_rejected_before_scoring(self):
         rows = make_rows(date(2020, 8, 2), 45)
-        target_date = rows[-1]["date"]
+        target_date = (date.fromisoformat(rows[-1]["date"]) + timedelta(days=2)).isoformat()
         rows.append({"date": target_date, "numbers": [1, 2, 3, 4, 5, 6]})
         with self.assertRaisesRegex(ValueError, "isolated target"):
             evaluate_bidirectional_full_history(
