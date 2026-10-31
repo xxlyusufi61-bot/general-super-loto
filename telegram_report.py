@@ -84,6 +84,18 @@ def format_message(title, status, run_url, branch, kind="status", report=None):
             if not isinstance(details, dict):
                 lines.append("- Rapor bilgisi yok.")
                 continue
+            pool_size = details.get("number_pool_size")
+            random_expected = details.get("random_uniform_expected_hits_out_of_6")
+            if (
+                isinstance(pool_size, int)
+                and not isinstance(pool_size, bool)
+                and isinstance(random_expected, (int, float))
+                and not isinstance(random_expected, bool)
+            ):
+                lines.append(
+                    f"- Teorik rastgele referans: {random_expected:.3f}/6 "
+                    f"(1–{pool_size} sayı havuzu; 36/{pool_size})."
+                )
             if details.get("status") == "INSUFFICIENT_PRETARGET_HISTORY":
                 lines.append(
                     "- Yetersiz hedef-öncesi geçmiş: "
