@@ -21,6 +21,8 @@ SOURCE_MANIFEST: tuple[tuple[str, tuple[str, ...]], ...] = (
      ("formula", "method", "research", "discovery", "notation", "hypothesis", "cross-validation", "walk-forward")),
     ("docs/safe-hypothesis-execution.md",
      ("formula", "method", "research", "hypothesis", "DSL", "execution", "executor", "operator", "sandbox")),
+    ("docs/sealed-evaluation-orchestration.md",
+     ("research", "validation", "sealed", "evaluation", "holdout", "leakage", "orchestration", "walk-forward")),
     (".github/workflows/general-agent.yml",
      ("agent", "workflow", "system", "architecture", "orchestrat", "coordinator", "research", "debug", "validation", "crossover")),
     ("general_coordinator.py",
