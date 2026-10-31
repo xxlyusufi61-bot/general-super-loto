@@ -150,7 +150,7 @@ jobs:
           exit "$coordinator_status"
 
       - name: Submit coordinator rule-change requests for Telegram approval
-        if: ${{ success() && steps.run-coordinator.outcome == 'success' }}
+        if: ${{ always() && steps.run-coordinator.outcome != 'skipped' }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
