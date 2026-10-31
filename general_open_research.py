@@ -25,7 +25,7 @@ from general_hypothesis_proposals import parse_hypothesis_proposals
 from general_execution_spec_parser import parse_execution_spec_block
 import general_sealed_evaluation as sealed
 
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 MODEL = "z-ai/glm-5.3-flash"
 BASE = Path(__file__).resolve().parent
 ARCHIVE = BASE / os.environ.get("GENERAL_ARCHIVE_FILE", "super_loto_archive.json")
@@ -512,7 +512,7 @@ def main() -> int:
         )
         REPORT.write_text(header + report + proposal_note + usage_note, encoding="utf-8")
         (BASE / "open_research_sealed_plan.json").write_text(
-            json.dumps(sealed_plan, ensure_ascii=False, indent=2) + "\\n",
+            json.dumps(sealed_plan, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
         print("OPEN RESEARCH: completed")
