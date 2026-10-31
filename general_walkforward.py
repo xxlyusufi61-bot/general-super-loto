@@ -222,8 +222,8 @@ def evaluate_rows(
         raise ValueError("Expected exactly the latest target to be excluded.")
 
     history = split.get("train")
-    if not isinstance(history, list) or len(history) <= min_train:
-        raise ValueError("Insufficient pre-target history for evaluation.")
+    if not isinstance(history, list) or not history:
+        raise ValueError("No pre-target history available for evaluation.")
 
     if any(row["date"] >= target_date for row in history):
         raise ValueError("Leakage detected: target/future date in evaluation history.")
@@ -231,9 +231,49 @@ def evaluate_rows(
     if history_dates != sorted(history_dates) or len(history_dates) != len(set(history_dates)):
         raise ValueError("Evaluation history is not strictly chronological and unique.")
 
-    forward = _forward_walk_forward(history, min_train)
-    reverse = _reverse_retrospective_stress(history, min_train)
-    cv = _blocked_time_cv(history, min_train, cv_folds)
+    # Evaluate R54 and R60 independently. A regime without enough history is
+    # reported as insufficient; its rows are never pooled into the other regime.
+    regimes = {
+        "R54": [row for row in history if row["date"] < "2020-08-02"],
+        "R60": [row for row in history if row["date"] >= "2020-08-02"],
+    }
+    if sum(len(values) for values in regimes.values()) != len(history):
+        raise ValueError("R54/R60 partition count mismatch; evaluation stopped.")
+
+    regime_reports: dict[str, Any] = {}
+    evaluable_regimes = 0
+    for name, regime_history in regimes.items():
+        if len(regime_history) <= min_train:
+            regime_reports[name] = {
+                "status": "INSUFFICIENT_PRETARGET_HISTORY",
+                "pre_target_history_records": len(regime_history),
+                "minimum_training_draws": min_train,
+                "evaluated": False,
+                "reason": "This regime does not contain more pre-target draws than the required initial training window.",
+            }
+            continue
+
+        regime_dates = [row["date"] for row in regime_history]
+        if regime_dates != sorted(regime_dates) or len(regime_dates) != len(set(regime_dates)):
+            raise ValueError(name + " history is not strictly chronological and unique.")
+        if name == "R54" and any(day >= "2020-08-02" for day in regime_dates):
+            raise ValueError("R54 contains a date at or after the regime boundary.")
+        if name == "R60" and any(day < "2020-08-02" for day in regime_dates):
+            raise ValueError("R60 contains a date before the regime boundary.")
+
+        regime_reports[name] = {
+            "status": "EVALUATED",
+            "pre_target_history_records": len(regime_history),
+            "minimum_training_draws": min_train,
+            "evaluated": True,
+            "forward_walk_forward": _forward_walk_forward(regime_history, min_train),
+            "reverse_retrospective_stress_test": _reverse_retrospective_stress(regime_history, min_train),
+            "time_ordered_cross_validation": _blocked_time_cv(regime_history, min_train, cv_folds),
+        }
+        evaluable_regimes += 1
+
+    if evaluable_regimes == 0:
+        raise ValueError("Neither R54 nor R60 has sufficient pre-target history for baseline evaluation.")
 
     return {
         "engine_version": VERSION,
@@ -241,19 +281,22 @@ def evaluate_rows(
         "archive_records": checked["record_count"],
         "pre_target_history_records": len(history),
         "minimum_training_draws": min_train,
+        "regime_boundary": "2020-08-02",
+        "regime_counts": {name: len(values) for name, values in regimes.items()},
+        "regimes_evaluated_separately": True,
         "current_target_excluded_from_scoring": True,
         "current_target_numbers_used_for_scoring": False,
         "current_target_numbers_exposed": False,
-        "forward_walk_forward": forward,
-        "reverse_retrospective_stress_test": reverse,
-        "time_ordered_cross_validation": cv,
+        "regimes": regime_reports,
         "implemented_baselines": list(METHOD_NAMES),
         "required_methods_not_implemented": ["A->B->C", "A->T", "MOD5->T"],
         "interpretation_limits": [
             "The 0.6 random benchmark is the theoretical expected overlap for two uniform 6-of-60 sets, not an observed experiment.",
             "Baseline results are descriptive historical results, not proof of a predictive mechanism.",
-            "Reverse-time results use later historical draws and are retrospective stress tests, not predictive evidence.",
-            "A->B->C, A->T, and MOD5->T were not run because their established computational definitions are not present in the current repository.",
+            "R54 and R60 scores are computed independently; no draw rows are pooled across the 2020-08-02 boundary.",
+            "Reverse-time results use later historical draws within the same regime and are retrospective stress tests, not predictive evidence.",
+            "A->B->C, A->T, and MOD5->T remain OPEN_DEFINITION and were not executed by this baseline engine.",
+            "A regime with insufficient pre-target history is reported as such; no synthetic or cross-regime substitute is used.",
             "The latest archive target and its numbers are excluded from all scoring."
         ],
     }
