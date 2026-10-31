@@ -75,7 +75,7 @@ V18.0'da `NUMBER_T` adı gerçek sayı eşleşmesini ima etse de aday puanlayan 
 Daha sonraki kod aynı isimlerin anlamını/algoritmasını değiştirdi:
 
 - `MOD5_T`, `LOW_HIGH_T`, `ODD_EVEN_T` ve `DECADE_T`: tarihsel kaynak çekilişindeki sayı kategorileri ile hemen sonraki çekilişin sayılarını eşleştiren kategori-geçiş puanlaması.
-- `NUMBER_T`: kaynak çekilişteki `x) sayısından sonraki çekilişteki `y) sayısına doğrudan sayı→sayı sayımı.
+- `NUMBER_T`: kaynak çekilişteki `x` sayısından sonraki çekilişteki `y` sayısına doğrudan sayı→sayı sayımı.
 - `SUM_T`: bir varyantta çekiliş toplamının `% 12` durumundan sonraki çekiliş toplamına geçiş; aynı kod ailesinde ayrıca `n % 10` türü sayı-durumu kullanımları görülmüştü. Bunlar birbirine eşitlenmemelidir.
 - `GAP_T`: tam GAP imzasını eşleştirmek yerine komşu farklara dayalı benzerlik puanlaması.
 - `ABC`: V18'deki MOD5 durum eşleştirmeli üçlü aramadan farklı olarak A ve B'deki sayı çiftlerinden C'deki sayılara sayım.
@@ -87,7 +87,7 @@ Bu nedenle `*_T` sonekine bakarak bir algoritma varsaymak doğru değildir. Sür
 İncelenen en az iki farklı uygulama vardı:
 
 1. **V18.0:** A ve B'nin MOD5 frekans durumlarını karşılaştırıp geçmiş A→B geçişleri eşleştiriyor, bu üçlülerin C çekilişlerinden aday oyları topluyordu.
-2. **V19.0:** Tarihsel üçlülerde A sayısı `x`, B sayısı `y) ve C sayısı `z) arasındaki `(x, y) → z` ilişkilerini sayıyordu.
+2. **V19.0:** Tarihsel üçlülerde A sayısı `x`, B sayısı `y` ve C sayısı `z` arasındaki `(x, y) → z` ilişkilerini sayıyordu.
 
 Bunlar aynı matematiksel yöntem değildir. Daha eski bir dönüşüm motorunda benzer geçişleri eşleştirip B'yi puanlayan yaklaşım da tek başına A→B→C'nin kanonik tanımı sayılamaz.
 
@@ -103,7 +103,7 @@ Arşivlenmiş kanıtlar, bunların tek kanonik A→T tanımı olduğunu söyleme
 İncelenen sonraki kod parçalarında hem `n % 5` hem de `(n - 1) % 5` gösterimleri kullanıldı. Bu iki kodlama sınıf etiketlerini bir basamak kaydırır; eşdeğer kabul edilemez.
 
 - V12.1: pozisyon bazlı MOD5 geçiş farkı, `(B[j] - A[j]) % 5`.
-- V18.0: altı sayının `n % 5) kalan frekans profili ile durum eşleştirme.
+- V18.0: altı sayının `n % 5` kalan frekans profili ile durum eşleştirme.
 - V19.0 ve daha sonraki varyantlar: kategori bazlı geçiş ya da pozisyon bazlı alternatifler.
 
 V22/V23'e atfedilen sonraki deneylerde farklı pozisyon/kategori düzenleri görüldü; ancak bu belgede tam kaynak sohbet başlığı ve bütün fonksiyon gövdeleri yeniden sabitlenmediği için bunlar tamamlanmış bir tanım gibi sunulmaz. Tam kaynak ve test olmadan ayrıntıyı doldurmak yasaktır.
@@ -120,7 +120,7 @@ V22/V23'e atfedilen sonraki deneylerde farklı pozisyon/kategori düzenleri gör
 
 Bu belge, güncel araştırma politikasını değiştirmez:
 
-1. Üç aktif yöntem etiketi `OPEN_DEFINITION` kalır; kanonik tanımlar `null), çalıştırılabilirlik `false) kalır.
+1. Üç aktif yöntem etiketi `OPEN_DEFINITION` kalır; kanonik tanımlar `null`, çalıştırılabilirlik `false` kalır.
 2. Yeni çalışma, sürüme özel tarihsel semantiği evrensel tanıma dönüştürmeden başlamalıdır.
 3. Bir yöntemin tam matematiksel tanımı yeni baştan yazılmalı; deterministik sentetik testleri ve hedef/arka plan ayırımı doğrulanmalıdır.
 4. İleri kronolojik walk-forward ve zaman sıralı çapraz doğrulama ana değerlendirmedir. Ters kronoloji yalnızca ayrı adlandırılmış geriye dönük stres testidir.
