@@ -30,6 +30,27 @@ class BidirectionalFullHistoryTests(unittest.TestCase):
         self.assertEqual(catalog[0]["spec_id"], "EXACT_FREQUENCY_ALL")
         self.assertEqual(CATALOG_ID, "GENERAL-SAFE-DSL-CATALOG-v1")
 
+    def test_recent_catalog_window_follows_each_direction(self):
+        rows = []
+        for index in range(10):
+            numbers = list(range(1, 7)) if index < 5 else list(range(55, 61))
+            rows.append({
+                "date": (date(2024, 1, 1) + timedelta(days=index)).isoformat(),
+                "numbers": numbers,
+            })
+        candidate = next(
+            item for item in fixed_candidate_catalog()
+            if item["spec_id"] == "EXACT_FREQUENCY_RECENT_5_DRAWS"
+        )
+        forward = _rank_catalog_history(
+            rows, number_pool_size=60, candidate=candidate, direction="forward"
+        )
+        reverse = _rank_catalog_history(
+            rows, number_pool_size=60, candidate=candidate, direction="reverse"
+        )
+        self.assertEqual([item["number"] for item in forward[:6]], [55, 56, 57, 58, 59, 60])
+        self.assertEqual([item["number"] for item in reverse[:6]], [1, 2, 3, 4, 5, 6])
+
     def test_fast_catalog_ranker_matches_safe_dsl_interpreter(self):
         history = make_rows(date(2024, 1, 2), 50, 60)
         catalog = fixed_candidate_catalog()
