@@ -998,6 +998,13 @@ def evaluate_claim(
         execution_spec=spec,
         min_train_draws=DEFAULT_MIN_TRAIN_DRAWS,
     )
+    reverse["hypothesis_id"] = candidate["hypothesis_id"]
+    reverse["spec_sha256"] = candidate["spec_sha256"]
+    for reverse_row in reverse.get("per_draw", []):
+        reverse_row["hypothesis_id"] = candidate["hypothesis_id"]
+        reverse_row["spec_sha256"] = candidate["spec_sha256"]
+        reverse_row["target_numbers_reported"] = False
+        reverse_row["predicted_number_values_reported"] = False
     r54 = split["regimes"]["R54"]
     full_r54_history = sorted(
         r54["discovery_rows"] + r54["validation_rows"] + r54["reverse_validation_rows"],
