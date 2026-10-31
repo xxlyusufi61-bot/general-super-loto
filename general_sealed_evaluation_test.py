@@ -119,7 +119,7 @@ class SealedEvaluationTests(unittest.TestCase):
 
     def test_pre_scope_archive_is_rejected(self):
         rows = make_rows()
-        rows.insert(0, {"date": "2020-07-30", "numbers": [1, 2, 3, 4, 5, 54]})
+        rows.insert(0, {"date": "2020-07-30", "numbers": [1, 2, 3, 4, 5, 6]})
         with self.assertRaises(sealed.SealedEvaluationError):
             sealed.split_archive(rows)
 
