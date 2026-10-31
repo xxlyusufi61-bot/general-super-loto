@@ -24,19 +24,24 @@ class OpenResearchIsolationTests(unittest.TestCase):
         payload = json.loads(messages[1]["content"])
         self.assertEqual(target, "2026-10-22")
         self.assertEqual(
-            [r["date"] for r in payload["pre_target_history"]],
+            [r["date"] for r in payload["pre_target_history_by_regime"]["R60"]],
             ["2026-10-18", "2026-10-20"],
         )
+        self.assertEqual(payload["pre_target_history_by_regime"]["R54"], [])
+        self.assertEqual(payload["regime_counts"], {"R54": 0, "R60": 2})
+        self.assertTrue(payload["regimes_must_be_evaluated_separately"])
         self.assertNotIn("[3,9,15,24,36,50]", messages[1]["content"])
         self.assertFalse(payload["target_numbers_included"])
         self.assertFalse(payload["post_target_records_included"])
         self.assertNotIn("3,9,15,24,36,50", messages[1]["content"])
 
-    def test_prompt_does_not_prescribe_legacy_method_families(self):
+    def test_prompt_preserves_neutral_notation_without_teaching_old_formulas(self):
         target, train = research.isolate_pre_target(self.rows)
         messages = research.build_messages(target, train)
         system = messages[0]["content"].lower()
-        for legacy_marker in ("a->b->c", "a->t", "mod5->t", "v8.6", "v19", "v0.3.1"):
+        for label in ("a->b->c", "a->t", "mod5->t"):
+            self.assertIn(label, system)
+        for legacy_marker in ("v8.6", "v19", "v0.3.1", "t[i] = b[i] - a[i]", "legacy implementation"):
             self.assertNotIn(legacy_marker, system)
 
     def test_prompt_requires_bounded_structured_proposal_block(self):
@@ -48,15 +53,33 @@ class OpenResearchIsolationTests(unittest.TestCase):
         self.assertIn('"falsification_criterion"', system)
         self.assertIn('"forward_walk_forward"', system)
         self.assertIn("An empty proposals list is an acceptable result.", system)
-        for legacy_marker in ("a->b->c", "a->t", "mod5->t", "v8.6", "v19", "v0.3.1"):
-            self.assertNotIn(legacy_marker, system.lower())
+        for label in ("a->b->c", "a->t", "mod5->t"):
+            self.assertIn(label, system.lower())
+        self.assertNotIn("v8.6", system.lower())
+        self.assertNotIn("t[i] = b[i] - a[i]", system.lower())
 
     def test_prompt_requires_user_approval_for_rule_changes(self):
         system = research.build_messages("2026-10-22", self.rows[:2])[0]["content"].lower()
         self.assertIn("explicit telegram user approval", system)
+        self.assertIn('"change_type":"ADD|REVISE|REMOVE"', system)
         self.assertIn("<rule_change_request_json>", system)
         self.assertIn("separate reviewed implementation pull request is required", system)
         self.assertIn("telegram", system)
+
+    def test_r54_and_r60_are_sent_as_disjoint_regime_partitions(self):
+        history = [
+            {"date": "2020-07-30", "numbers": [1, 7, 13, 22, 34, 48]},
+            {"date": "2020-08-02", "numbers": [2, 8, 14, 23, 35, 49]},
+        ]
+        messages = research.build_messages("2020-08-05", history)
+        payload = json.loads(messages[1]["content"])
+        self.assertEqual([row["date"] for row in payload["pre_target_history_by_regime"]["R54"]], ["2020-07-30"])
+        self.assertEqual([row["date"] for row in payload["pre_target_history_by_regime"]["R60"]], ["2020-08-02"])
+        self.assertEqual(
+            set(row["date"] for row in payload["pre_target_history_by_regime"]["R54"])
+            & set(row["date"] for row in payload["pre_target_history_by_regime"]["R60"]),
+            set(),
+        )
 
     def test_invalid_archive_stops_before_model_payload(self):
         bad = [
