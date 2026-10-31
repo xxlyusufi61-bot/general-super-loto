@@ -75,7 +75,7 @@ class SafeHypothesisExecutionTests(unittest.TestCase):
         self.assertEqual({item["score"] for item in first}, {0})
 
     def test_r54_and_r60_reject_cross_regime_dates(self):
-        r54_rows = synthetic_rows(3, start="2020-07-30", pool_size=54)
+        r54_rows = synthetic_rows(4, start="2020-07-30", pool_size=54)
         with self.assertRaisesRegex(ValueError, "outside the R54 regime"):
             engine.rank_candidates(
                 r54_rows,
