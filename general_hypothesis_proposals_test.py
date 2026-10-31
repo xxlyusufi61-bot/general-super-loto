@@ -37,7 +37,7 @@ def wrapped(proposals):
         "Report text.\n"
         + START_MARKER
         + "\n"
-        + json.dumps({"schema_version": 1, "proposals": proposals})
+        + json.dumps({"schema_version": 2, "proposals": proposals})
         + "\n"
         + END_MARKER
         + "\nEnd text."
