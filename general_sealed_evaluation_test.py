@@ -120,6 +120,25 @@ class SealedEvaluationTests(unittest.TestCase):
         self.assertEqual(r54["status"], "NOT_EVALUABLE_INSUFFICIENT_HISTORY")
         self.assertIn("minimum was not lowered", r54["reason"])
 
+    def test_r54_stays_discovery_only_even_if_history_grows(self):
+        rows = make_rows()
+        additions = []
+        for index in range(11):
+            day = (date(2020, 7, 1) + timedelta(days=index)).isoformat()
+            base = (index * 5) % 54 + 1
+            numbers = sorted({((base + offset * 9 - 1) % 54) + 1 for offset in range(6)})
+            additions.append({"date": day, "numbers": numbers})
+        rows.extend(additions)
+        rows.sort(key=lambda row: row["date"])
+        archive = sealed.load_archive_from_rows if hasattr(sealed, "load_archive_from_rows") else None
+        split = sealed.split_archive(rows)
+        r54 = split["regimes"]["R54"]
+        self.assertEqual(r54["pre_target_draw_count"], 42)
+        self.assertEqual(r54["discovery_count"], 42)
+        self.assertEqual(r54["validation_count"], 0)
+        self.assertEqual(r54["status"], "DISCOVERY_ONLY_NOT_EVALUATED")
+        self.assertIn("not enabled in this version", r54["reason"])
+
     def test_public_plan_contains_metadata_not_draw_values(self):
         archive = sealed.load_archive(self.archive_path)
         split = sealed.split_archive(archive["rows"], archive_sha256=archive["archive_sha256"])
