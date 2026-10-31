@@ -68,8 +68,8 @@ class WalkForwardTests(unittest.TestCase):
         start_r54 = date(2020, 7, 20)
         for index in range(8):
             day = (start_r54 + timedelta(days=index)).isoformat()
-            base = (index * 7) % 55 + 1
-            nums = sorted({((base + offset * 9 - 1) % 60) + 1 for offset in range(6)})
+            base = (index * 7) % 54 + 1
+            nums = sorted({((base + offset * 9 - 1) % 54) + 1 for offset in range(6)})
             rows.append({"date": day, "numbers": nums})
         start_r60 = date(2020, 8, 2)
         for index in range(8):
@@ -84,6 +84,40 @@ class WalkForwardTests(unittest.TestCase):
         self.assertEqual(report["regimes"]["R60"]["status"], "EVALUATED")
         self.assertLess(report["regimes"]["R54"]["forward_walk_forward"]["first_test_date"], "2020-08-02")
         self.assertGreaterEqual(report["regimes"]["R60"]["forward_walk_forward"]["first_test_date"], "2020-08-02")
+
+    def test_random_baseline_matches_each_regime_pool(self):
+        rows = []
+        start_r54 = date(2020, 7, 20)
+        for index in range(8):
+            day = (start_r54 + timedelta(days=index)).isoformat()
+            base = (index * 7) % 54 + 1
+            nums = sorted({((base + offset * 9 - 1) % 54) + 1 for offset in range(6)})
+            rows.append({"date": day, "numbers": nums})
+        start_r60 = date(2020, 8, 2)
+        for index in range(8):
+            day = (start_r60 + timedelta(days=index)).isoformat()
+            base = (index * 11) % 60 + 1
+            nums = sorted({((base + offset * 7 - 1) % 60) + 1 for offset in range(6)})
+            rows.append({"date": day, "numbers": nums})
+
+        report = engine.evaluate_rows(rows, min_train=4, cv_folds=2)
+        for regime, pool_size, expected in (
+            ("R54", 54, 0.666667),
+            ("R60", 60, 0.6),
+        ):
+            details = report["regimes"][regime]
+            self.assertEqual(details["number_pool_size"], pool_size)
+            self.assertEqual(details["random_uniform_expected_hits_out_of_6"], expected)
+            for section in (
+                "forward_walk_forward",
+                "reverse_retrospective_stress_test",
+                "time_ordered_cross_validation",
+            ):
+                self.assertEqual(details[section]["number_pool_size"], pool_size)
+                self.assertEqual(
+                    details[section]["random_uniform_expected_hits_out_of_6"],
+                    expected,
+                )
 
     def test_invalid_fold_count_is_rejected(self):
         rows = synthetic_rows()
