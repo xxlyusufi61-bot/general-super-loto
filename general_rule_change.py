@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 MARKER = re.compile(r"\A\s*<!-- GENERAL_RULE_CHANGE_STATUS:([A-Z_]+) -->")
 BLOCK = re.compile(r"<RULE_CHANGE_REQUEST_JSON>\s*(\{.*?\})\s*</RULE_CHANGE_REQUEST_JSON>", re.DOTALL)
 FIELDS = ("change_type", "rule_id", "current_rule", "proposed_rule", "reason", "evidence", "risk_assessment", "tests_required", "rollback_plan")
