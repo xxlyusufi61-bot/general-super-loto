@@ -45,7 +45,7 @@ class SafeHypothesisExecutionTests(unittest.TestCase):
         self.assertIsNot(checked["score_expression"], spec["score_expression"])
 
     def test_ranker_returns_full_pool_and_deterministic_tie_break(self):
-        history = synthetic_rows(8, pool_size=54)
+        history = synthetic_rows(8, start="2020-07-01", pool_size=54)
         constant_spec = {
             "schema_version": 1,
             "score_expression": {
@@ -60,19 +60,37 @@ class SafeHypothesisExecutionTests(unittest.TestCase):
         }
         first = engine.rank_candidates(
             history,
-            cutoff_date="2024-01-09",
+            cutoff_date="2020-07-09",
             number_pool_size=54,
             execution_spec=constant_spec,
         )
         second = engine.rank_candidates(
             history,
-            cutoff_date="2024-01-09",
+            cutoff_date="2020-07-09",
             number_pool_size=54,
             execution_spec=constant_spec,
         )
         self.assertEqual(first, second)
         self.assertEqual([item["number"] for item in first], list(range(1, 55)))
         self.assertEqual({item["score"] for item in first}, {0})
+
+    def test_r54_and_r60_reject_cross_regime_dates(self):
+        r54_rows = synthetic_rows(3, start="2020-07-30", pool_size=54)
+        with self.assertRaisesRegex(ValueError, "outside the R54 regime"):
+            engine.rank_candidates(
+                r54_rows,
+                cutoff_date="2020-08-03",
+                number_pool_size=54,
+                execution_spec=count_candidate_matches_spec(),
+            )
+        r60_rows = synthetic_rows(3, start="2020-07-30", pool_size=60)
+        with self.assertRaisesRegex(ValueError, "outside the R60 regime"):
+            engine.rank_candidates(
+                r60_rows,
+                cutoff_date="2020-08-03",
+                number_pool_size=60,
+                execution_spec=count_candidate_matches_spec(),
+            )
 
     def test_candidate_score_expression_runs_only_over_earlier_history(self):
         history = synthetic_rows(12, pool_size=60)
@@ -98,12 +116,12 @@ class SafeHypothesisExecutionTests(unittest.TestCase):
             )
 
     def test_rejects_r54_out_of_pool_value(self):
-        history = synthetic_rows(3, pool_size=54)
+        history = synthetic_rows(3, start="2020-07-01", pool_size=54)
         history[0]["numbers"][-1] = 55
         with self.assertRaisesRegex(ValueError, "invalid six-number draw"):
             engine.rank_candidates(
                 history,
-                cutoff_date="2024-01-04",
+                cutoff_date="2020-07-04",
                 number_pool_size=54,
                 execution_spec=count_candidate_matches_spec(),
             )
