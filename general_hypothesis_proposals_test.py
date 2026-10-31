@@ -24,7 +24,7 @@ def candidate(**overrides):
             "forward_walk_forward",
             "reverse_retrospective_stress_test",
             "time_ordered_cross_validation",
-            "uniform_random_6_of_60",
+            "uniform_random_6_of_N",
         ],
     }
     item.update(overrides)
