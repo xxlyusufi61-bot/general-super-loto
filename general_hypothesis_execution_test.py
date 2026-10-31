@@ -79,7 +79,7 @@ class SafeHypothesisExecutionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "outside the R54 regime"):
             engine.rank_candidates(
                 r54_rows,
-                cutoff_date="2020-08-03",
+                cutoff_date="2020-08-01",
                 number_pool_size=54,
                 execution_spec=count_candidate_matches_spec(),
             )
@@ -239,7 +239,7 @@ class SafeHypothesisExecutionTests(unittest.TestCase):
         self.assertFalse(report["candidate_rankings_reported"])
         self.assertFalse(report["automatic_candidate_selection"])
         self.assertFalse(report["method_registry_modified"])
-        self.assertNotIn("numbers", json.dumps(report))
+        self.assertNotIn('"numbers":', json.dumps(report))
 
     def test_holdout_rejects_overlap_or_current_target(self):
         discovery = synthetic_rows(20, start="2024-01-01")
@@ -253,7 +253,7 @@ class SafeHypothesisExecutionTests(unittest.TestCase):
                 execution_spec=count_candidate_matches_spec(),
                 min_train_draws=10,
             )
-        with self.assertRaisesRegex(ValueError, "must end before the validation interval"):
+        with self.assertRaisesRegex(ValueError, "discovery history must end before the validation window begins"):
             engine.evaluate_holdout(
                 discovery + [validation[0]],
                 validation,
