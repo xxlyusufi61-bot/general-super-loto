@@ -11,7 +11,7 @@ from general_source_context import build_source_context
 from general_live_consent import has_explicit_live_consent
 from general_agent_report_guard import report_contract_prompt, validate_agent_report
 
-VERSION = "0.5.6"
+VERSION = "0.6.0"
 MODEL = "z-ai/glm-5.3-flash"
 NVIDIA_TIMEOUT_SECONDS = 240
 BASE = Path(__file__).resolve().parent
