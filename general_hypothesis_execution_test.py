@@ -301,6 +301,31 @@ class SafeHypothesisExecutionTests(unittest.TestCase):
             report["fold_reports"][1]["validation_start_date"],
         )
 
+    def test_retrospective_ranker_requires_only_strictly_later_history(self):
+        later = synthetic_rows(45, start="2021-01-02", pool_size=60)
+        ranking = engine.rank_candidates_retrospective(
+            later[-40:],
+            target_date="2021-01-01",
+            number_pool_size=60,
+            execution_spec=count_candidate_matches_spec(),
+        )
+        self.assertEqual(len(ranking), 60)
+        self.assertEqual([row["number"] for row in ranking], list(range(1, 61)))
+        with self.assertRaisesRegex(ValueError, "target or an earlier draw"):
+            engine.rank_candidates_retrospective(
+                later,
+                target_date="2021-01-02",
+                number_pool_size=60,
+                execution_spec=count_candidate_matches_spec(),
+            )
+        with self.assertRaises(ValueError):
+            engine.rank_candidates_retrospective(
+                later[:39],
+                target_date="2021-01-01",
+                number_pool_size=60,
+                execution_spec=count_candidate_matches_spec(),
+            )
+
     def test_reverse_stress_is_explicitly_not_predictive_evidence(self):
         history = synthetic_rows(45, start="2024-01-01", pool_size=60)
         report = engine.evaluate_reverse_retrospective_stress(
