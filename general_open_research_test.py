@@ -108,12 +108,6 @@ class OpenResearchIsolationTests(unittest.TestCase):
 
     def test_research_payload_uses_only_discovery_rows_for_long_history(self):
         rows = []
-        r54_start = date(2020, 1, 2)
-        for index in range(31):
-            draw_day = (r54_start + timedelta(days=6 * index)).isoformat()
-            base = (index * 7) % 54 + 1
-            numbers = sorted({((base + offset * 11 - 1) % 54) + 1 for offset in range(6)})
-            rows.append({"date": draw_day, "numbers": numbers})
         r60_start = date(2020, 8, 2)
         for index in range(80):
             draw_day = (r60_start + timedelta(days=2 * index)).isoformat()
@@ -154,12 +148,6 @@ class OpenResearchIsolationTests(unittest.TestCase):
 
     def test_previous_holdout_dates_are_excluded_from_later_discovery_payload(self):
         rows = []
-        r54_start = date(2020, 1, 2)
-        for index in range(31):
-            draw_day = (r54_start + timedelta(days=6 * index)).isoformat()
-            base = (index * 7) % 54 + 1
-            numbers = sorted({((base + offset * 11 - 1) % 54) + 1 for offset in range(6)})
-            rows.append({"date": draw_day, "numbers": numbers})
         r60_start = date(2020, 8, 2)
         for index in range(80):
             draw_day = (r60_start + timedelta(days=2 * index)).isoformat()
@@ -267,7 +255,7 @@ class OpenResearchIsolationTests(unittest.TestCase):
             {"date": "2020-08-02", "numbers": [2, 8, 14, 23, 35, 49]},
         ]
         with self.assertRaisesRegex(RuntimeError, "Data Guard rejected archive"):
-            research.load_archive_payload({"draws": history})
+            research.isolate_pre_target(history)
 
     def test_invalid_archive_stops_before_model_payload(self):
         bad = [
