@@ -254,6 +254,15 @@ def evaluate_rows(
     evaluable_regimes = 0
     for name, regime_history in regimes.items():
         number_pool_size = REGIME_NUMBER_POOL_SIZES[name]
+        if any(
+            number < 1 or number > number_pool_size
+            for row in regime_history
+            for number in row["numbers"]
+        ):
+            raise ValueError(
+                name + " contains a pre-target value outside its 1.."
+                + str(number_pool_size) + " number pool."
+            )
         expected_random_hits = _random_uniform_expected_hits(number_pool_size)
         if len(regime_history) <= min_train:
             regime_reports[name] = {
