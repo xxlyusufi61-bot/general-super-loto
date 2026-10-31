@@ -35,14 +35,19 @@
   "entries": [
     {
       "id": "PR63_REVISION_2026-10-31",
-      "status": "IN_PROGRESS_DO_NOT_MERGE",
-      "summary": "Revise PR #63 to add directional discovery, disjoint oldest-reverse/newest-forward R60 holdouts, full-history per-cutoff safe-catalog evaluation, cross-validation summaries in both directions, and per-draw hit-column reports.",
+      "status": "READY_FOR_USER_REVIEW_DO_NOT_MERGE",
+      "summary": "Revised PR #63 to isolate forward and reverse model discovery in separate requests; use disjoint R60 reverse/forward holdouts; add full-history per-cutoff bidirectional safe-catalog diagnostics, direction-aware draw_age, per-draw column-position and zero-hit-date reports, directional CV summaries, strict DSL candidate checks, separate usage records, and no-live-request tests. CI was green at SHA 455e2805d4b6fc5389fe04714c3ba249c59595d9; re-check after this memory update. Main is unchanged; merging requires explicit user approval.",
       "constraints": [
         "Main branch unchanged",
         "Target draw isolated",
         "No live hosted requests in tests",
         "R54/R60 remain separate",
-        "Reverse is retrospective only"
+        "Forward evaluation must be leakage-free at each cutoff",
+        "Reverse uses later data and is retrospective only, never predictive evidence",
+        "Per-draw report includes date, candidate/spec hash, direction-appropriate history count, hit count, matched columns 1-6, and zero-hit dates",
+        "No target number set or predicted number values in shared reports",
+        "A->B->C, A->T, MOD5->T and crossover semantics must not be guessed or silently approximated",
+        "Do not merge without a new explicit user approval after the final CI review"
       ],
       "last_reviewed": "2026-10-31"
     }
