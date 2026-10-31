@@ -103,15 +103,18 @@ def _rank_catalog_history(
     *,
     number_pool_size: int,
     candidate: dict[str, Any],
+    direction: str = "forward",
 ) -> list[dict[str, Any]]:
-    """Fast deterministic implementation, contract-tested against the DSL interpreter."""
+    """Fast deterministic ranker with direction-relative recent-window semantics."""
+    if direction not in {"forward", "reverse"}:
+        raise ValueError("Ranking direction must be forward or reverse.")
     spec_id = candidate["spec_id"]
     counts = [0] * (number_pool_size + 1)
     recent_counts = [0] * (number_pool_size + 1)
     mod5_counts = [0] * 5
     recent_mod5_counts = [0] * 5
     unit_counts = [0] * 10
-    for age, row in enumerate(reversed(history)):
+    for age, row in enumerate(reversed(history) if direction == "forward" else history):
         is_recent = age < 5
         for value in row["numbers"]:
             counts[value] += 1
@@ -242,6 +245,7 @@ def _choose_reverse_spec(
                 _checked_rows,
                 number_pool_size=number_pool_size,
                 candidate=candidate,
+                direction="reverse",
             )
             hits.append(len(_matched_positions(ranking, validation_target["numbers"])))
         scored.append((statistics.fmean(hits), -catalog_index, candidate))
@@ -354,6 +358,7 @@ def evaluate_bidirectional_full_history(
                 scoring_history,
                 number_pool_size=pool_size,
                 candidate=chosen,
+                direction="reverse",
             )
             matched = _matched_positions(ranking, target["numbers"])
             forward_details.append({
