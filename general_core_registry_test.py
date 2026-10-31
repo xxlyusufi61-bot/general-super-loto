@@ -116,7 +116,7 @@ class MethodRegistryContextTests(unittest.TestCase):
         self.assertTrue(all(row["date"] >= "2020-08-02" for row in data["training_data"]))
         self.assertNotIn("training_by_regime", data)
 
-        archive_rows.insert(0, {"date": "2020-07-30", "numbers": [1, 2, 3, 4, 5, 54]})
+        archive_rows.insert(0, {"date": "2020-07-30", "numbers": [1, 2, 3, 4, 5, 6]})
         with tempfile.TemporaryDirectory() as tmp:
             archive_path = Path(tmp) / "archive.json"
             archive_path.write_text(json.dumps({"draws": archive_rows}), encoding="utf-8")
