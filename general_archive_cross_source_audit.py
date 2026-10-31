@@ -782,7 +782,6 @@ def main() -> None:
     for year, details in report["loto_gen_by_year"].items():
         r = details["loto_gen"]
         print(f"LOTO_GEN {year}: {r['status']} archive={r['archive_count']} source={r['independent_count']} date_mismatch={r['archive_only_count'] + r['independent_only_count']} number_mismatch={r['number_mismatch_count']} parse_errors={r['source_parse_error_count']}")
-    print(f"LOTObil R54: {report['lotobil_R54_comparison']['status']} archive={report['lotobil_R54_comparison'].get('archive_count', '?')} source={report['lotobil_R54_comparison'].get('independent_count', '?')}")
     print(f"LOTObil R60: {report['lotobil_R60_comparison']['status']} archive={report['lotobil_R60_comparison'].get('archive_count', '?')} source={report['lotobil_R60_comparison'].get('independent_count', '?')}")
     print("Detailed report path: archive_cross_source_audit_report.json")
 
