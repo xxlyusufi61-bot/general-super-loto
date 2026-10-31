@@ -25,11 +25,11 @@ class OpenResearchIsolationTests(unittest.TestCase):
         payload = json.loads(messages[1]["content"])
         self.assertEqual(target, "2026-10-22")
         self.assertEqual(
-            [r["date"] for r in payload["pre_target_history_by_regime"]["R60"]],
+            [r["date"] for r in payload["discovery_history_by_regime"]["R60"]],
             ["2026-10-18", "2026-10-20"],
         )
-        self.assertEqual(payload["pre_target_history_by_regime"]["R54"], [])
-        self.assertEqual(payload["regime_counts"], {"R54": 0, "R60": 2})
+        self.assertEqual(payload["discovery_history_by_regime"]["R54"], [])
+        self.assertEqual(payload["discovery_counts_by_regime"], {"R54": 0, "R60": 2})
         self.assertTrue(payload["regimes_must_be_evaluated_separately"])
         self.assertNotIn("[3,9,15,24,36,50]", messages[1]["content"])
         self.assertFalse(payload["target_numbers_included"])
@@ -66,12 +66,12 @@ class OpenResearchIsolationTests(unittest.TestCase):
         target, discovery, plan = research.isolate_discovery_only(rows)
         messages = research.build_messages(target, discovery)
         payload = json.loads(messages[1]["content"])
-        r60_dates = [row["date"] for row in payload["pre_target_history_by_regime"]["R60"]]
+        r60_dates = [row["date"] for row in payload["discovery_history_by_regime"]["R60"]]
         sealed_start = plan["regimes"]["R60"]["validation_start_date"]
         self.assertEqual(target, "2021-01-10")
         self.assertEqual(len(r60_dates), 50)
         self.assertLess(max(r60_dates), sealed_start)
-        self.assertEqual(payload["regime_counts"]["R54"], 31)
+        self.assertEqual(payload["discovery_counts_by_regime"]["R54"], 31)
         self.assertNotIn(sealed_start, messages[1]["content"])
         self.assertNotIn(target, r60_dates)
         self.assertFalse(payload["target_numbers_included"])
@@ -125,11 +125,11 @@ class OpenResearchIsolationTests(unittest.TestCase):
         ]
         messages = research.build_messages("2020-08-05", history)
         payload = json.loads(messages[1]["content"])
-        self.assertEqual([row["date"] for row in payload["pre_target_history_by_regime"]["R54"]], ["2020-07-30"])
-        self.assertEqual([row["date"] for row in payload["pre_target_history_by_regime"]["R60"]], ["2020-08-02"])
+        self.assertEqual([row["date"] for row in payload["discovery_history_by_regime"]["R54"]], ["2020-07-30"])
+        self.assertEqual([row["date"] for row in payload["discovery_history_by_regime"]["R60"]], ["2020-08-02"])
         self.assertEqual(
-            set(row["date"] for row in payload["pre_target_history_by_regime"]["R54"])
-            & set(row["date"] for row in payload["pre_target_history_by_regime"]["R60"]),
+            set(row["date"] for row in payload["discovery_history_by_regime"]["R54"])
+            & set(row["date"] for row in payload["discovery_history_by_regime"]["R60"]),
             set(),
         )
 
