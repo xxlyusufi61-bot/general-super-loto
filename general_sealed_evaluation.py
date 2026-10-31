@@ -29,7 +29,7 @@ from general_hypothesis_execution import (
     validate_execution_spec,
 )
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 REGIME_BOUNDARY = date(2020, 8, 2)
 DEFAULT_MIN_TRAIN_DRAWS = 40
 DEFAULT_MAX_VALIDATION_DRAWS = 30
