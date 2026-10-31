@@ -1,11 +1,11 @@
 """
 GENERAL Super Loto - Data Guard
-Version: 0.1.1
+Version: 0.2.0
 
 Gorevler:
-- Arsiv kayitlarini dogrulamak.
+- 2020-08-02 ve sonrasi aktif arsiv kayitlarini dogrulamak.
 - Tarih siralamasini ve tekrar eden tarihleri kontrol etmek.
-- Gecersiz cekilis kayitlarini reddetmek.
+- Aktif kapsam disindaki ve gecersiz cekilis kayitlarini reddetmek.
 - Hedef tarihinden onceki verileri egitim icin ayirmak.
 - Hedef tarihindeki ve sonraki cekilislerin sayilarini
   sonuc raporlarina aktarmamak.
