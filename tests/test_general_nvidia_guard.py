@@ -117,6 +117,7 @@ class GlobalNvidiaLockTests(unittest.TestCase):
                     "NVIDIA_API_KEY": "offline-unit-test-key",
                     "GENERAL_CONFIRM_LIVE_CALLS": CONFIRMATION_PHRASE,
                     "GENERAL_NVIDIA_GUARD_PASSED": "1",
+                    "GENERAL_NVIDIA_FREE_USAGE_VERIFIED": "true",
                 },
             ):
                 with patch("general_core.Path", side_effect=temporary_marker_path):
