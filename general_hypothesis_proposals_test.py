@@ -11,6 +11,7 @@ from general_hypothesis_proposals import (
 def candidate(**overrides):
     item = {
         "hypothesis_id": "HYP-001",
+        "discovery_direction": "forward",
         "proposed_family": "unclassified historical relationship",
         "hypothesis": "A reproducible relationship may remain after controlling for chronology.",
         "exact_definition": "Define the state from strictly earlier rows, then derive a fixed candidate ranking without using target values.",
@@ -36,7 +37,7 @@ def wrapped(proposals):
         "Report text.\n"
         + START_MARKER
         + "\n"
-        + json.dumps({"schema_version": 1, "proposals": proposals})
+        + json.dumps({"schema_version": 2, "proposals": proposals})
         + "\n"
         + END_MARKER
         + "\nEnd text."
@@ -90,6 +91,12 @@ class HypothesisProposalContractTests(unittest.TestCase):
         first = candidate()
         second = candidate(hypothesis="A different hypothesis, with the same ID.")
         result = parse_hypothesis_proposals(wrapped([first, second]))
+        self.assertEqual(result["status"], "REJECTED")
+        self.assertEqual(result["proposals"], [])
+
+    def test_invalid_discovery_direction_rejects_entire_block(self):
+        item = candidate(discovery_direction="sideways")
+        result = parse_hypothesis_proposals(wrapped([item]))
         self.assertEqual(result["status"], "REJECTED")
         self.assertEqual(result["proposals"], [])
 

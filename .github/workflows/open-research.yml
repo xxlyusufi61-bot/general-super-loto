@@ -12,8 +12,16 @@ name: GENERAL Blank-Slate Research
       - "general_open_research_test.py"
       - "general_hypothesis_execution.py"
       - "general_hypothesis_execution_test.py"
+      - "general_bidirectional_evaluation.py"
+      - "general_bidirectional_evaluation_test.py"
       - "general_execution_spec_parser.py"
       - "general_execution_spec_parser_test.py"
+      - "general_sealed_evaluation.py"
+      - "general_sealed_evaluation_test.py"
+      - "general_evaluation_ledger.json"
+      - "general_source_context.py"
+      - "general_source_context_test.py"
+      - "docs/sealed-evaluation-orchestration.md"
       - "general_hypothesis_proposals.py"
       - "general_hypothesis_proposals_test.py"
       - "docs/safe-hypothesis-execution.md"
@@ -28,8 +36,16 @@ name: GENERAL Blank-Slate Research
       - "general_open_research_test.py"
       - "general_hypothesis_execution.py"
       - "general_hypothesis_execution_test.py"
+      - "general_bidirectional_evaluation.py"
+      - "general_bidirectional_evaluation_test.py"
       - "general_execution_spec_parser.py"
       - "general_execution_spec_parser_test.py"
+      - "general_sealed_evaluation.py"
+      - "general_sealed_evaluation_test.py"
+      - "general_evaluation_ledger.json"
+      - "general_source_context.py"
+      - "general_source_context_test.py"
+      - "docs/sealed-evaluation-orchestration.md"
       - "general_hypothesis_proposals.py"
       - "general_hypothesis_proposals_test.py"
       - "docs/safe-hypothesis-execution.md"
@@ -47,7 +63,7 @@ name: GENERAL Blank-Slate Research
         type: string
         default: "NO"
       confirm_free_usage_verified:
-        description: "Only true if NVIDIA's account UI and current terms clearly verify this single hosted request is within free use with no paid charge risk. If only rate limits are visible and free allowance cannot be verified, leave false."
+        description: "Only true if NVIDIA account UI and current terms clearly verify BOTH planned directional requests are within free use with no paid charge risk. If only rate limits are visible and free allowance cannot be verified, leave false."
         required: true
         type: boolean
         default: false
@@ -72,11 +88,11 @@ jobs:
           python-version: "3.12"
       - name: Compile and test blank-slate runner
         run: |
-          python3 -m py_compile general_open_research.py general_open_research_test.py general_hypothesis_proposals.py general_hypothesis_proposals_test.py general_hypothesis_execution.py general_hypothesis_execution_test.py general_execution_spec_parser.py general_execution_spec_parser_test.py
-          python3 -m unittest -v general_hypothesis_proposals_test general_open_research_test general_hypothesis_execution_test general_execution_spec_parser_test
+          python3 -m py_compile general_open_research.py general_open_research_test.py general_hypothesis_proposals.py general_hypothesis_proposals_test.py general_hypothesis_execution.py general_hypothesis_execution_test.py general_bidirectional_evaluation.py general_bidirectional_evaluation_test.py general_execution_spec_parser.py general_execution_spec_parser_test.py general_sealed_evaluation.py general_sealed_evaluation_test.py general_source_context.py general_source_context_test.py
+          python3 -m unittest -v general_hypothesis_proposals_test general_open_research_test general_hypothesis_execution_test general_bidirectional_evaluation_test general_execution_spec_parser_test general_sealed_evaluation_test general_source_context_test
 
   research:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.confirm_live_calls == 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_3_NVIDIA_REQUESTS' && inputs.confirm_free_usage_verified == true }}
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.confirm_live_calls == 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_3_NVIDIA_REQUESTS' && inputs.confirm_free_usage_verified == true }}
     needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -108,7 +124,10 @@ jobs:
             echo "Archive retrieval failed; research stopped."
             exit 1
           fi
-      - name: Run isolated blank-slate exploration
+      - name: Preflight both sealed directional intervals before hosted inference
+        run: |
+          python3 general_sealed_evaluation.py preflight --archive super_loto_archive.json --ledger general_evaluation_ledger.json
+      - name: Run separate forward and reverse blank-slate discovery requests
         id: nvidia-research
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
@@ -118,6 +137,43 @@ jobs:
           GENERAL_NVIDIA_FREE_USAGE_VERIFIED: "true"
         run: |
           python3 general_open_research.py
+      - name: Claim one sealed interval before real-archive scoring
+        id: sealed-claim
+        if: ${{ success() }}
+        run: |
+          python3 general_sealed_evaluation.py claim \
+            --archive super_loto_archive.json \
+            --ledger general_evaluation_ledger.json \
+            --proposals open_research_proposals.json \
+            --specs open_research_execution_specs.json \
+            --output open_research_evaluation_claim.json \
+            --github-output "$GITHUB_OUTPUT"
+      - name: Persist sealed claim and immutable archive snapshot before evaluation
+        if: ${{ steps.sealed-claim.outputs.claim_created == 'true' }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add general_evaluation_ledger.json general_evaluation_snapshots/
+          git commit -m "Reserve one-shot Super Loto validation interval"
+          git push origin HEAD:main
+      - name: Run one-shot chronological evaluation
+        id: sealed-evaluation
+        if: ${{ steps.sealed-claim.outputs.claim_created == 'true' }}
+        env:
+          SEALED_CLAIM_ID: ${{ steps.sealed-claim.outputs.claim_id }}
+        run: |
+          python3 general_sealed_evaluation.py evaluate \
+            --claim-id "$SEALED_CLAIM_ID" \
+            --ledger general_evaluation_ledger.json \
+            --proposals open_research_proposals.json \
+            --specs open_research_execution_specs.json \
+            --output open_research_evaluation_report.json
+      - name: Persist evaluation completion without draw-level values
+        if: ${{ success() && steps.sealed-claim.outputs.claim_created == 'true' }}
+        run: |
+          git add general_evaluation_ledger.json
+          git commit -m "Record sealed evaluation completion"
+          git push origin HEAD:main
       - name: Activate global lock after an incomplete NVIDIA research request
         if: ${{ failure() && steps.nvidia-research.outcome == 'failure' }}
         env:
@@ -140,15 +196,23 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python3 general_rule_change.py submit-report --report open_research_report.md
-      - name: Upload hypothesis report only
+      - name: Upload direction-isolated hypothesis reports and safe metadata
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
           name: general-blank-slate-research-report
           path: |
             open_research_report.md
+            open_research_forward_report.md
+            open_research_reverse_report.md
             open_research_proposals.json
             open_research_execution_specs.json
             open_research_usage.json
+            open_research_usage_forward.json
+            open_research_usage_reverse.json
+            open_research_sealed_plan.json
+            open_research_evaluation_claim.json
+            open_research_evaluation_report.json
+            general_evaluation_ledger.json
           if-no-files-found: ignore
           retention-days: 14

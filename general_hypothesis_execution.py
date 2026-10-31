@@ -13,7 +13,7 @@ import statistics
 from datetime import date, timedelta
 from typing import Any
 
-VERSION = "0.1.0"
+VERSION = "0.2.1"
 ALLOWED_POOL_SIZES = {54, 60}
 MAX_AST_NODES = 32
 MAX_AST_DEPTH = 8
@@ -216,7 +216,11 @@ def _evaluate_node(
     node: dict[str, Any],
     context: dict[str, float | int],
     history: list[dict[str, Any]],
+    *,
+    direction: str = "forward",
 ) -> bool | float | int:
+    if direction not in {"forward", "reverse"}:
+        _fail("ranking direction must be forward or reverse.")
     op = node["op"]
     if op == "const":
         return node["value"]
@@ -227,45 +231,45 @@ def _evaluate_node(
         expression = node["expression"]
         if aggregate == "count":
             total = 0
-            for draw_age, row in enumerate(reversed(history)):
+            for draw_age, row in enumerate(reversed(history) if direction == "forward" else history):
                 for number in row["numbers"]:
                     local = {
                         "candidate": context["candidate"],
                         "value": number,
                         "draw_age": draw_age,
                     }
-                    matched = _evaluate_node(expression, local, [])
+                    matched = _evaluate_node(expression, local, [], direction=direction)
                     if not isinstance(matched, bool):
                         _fail("count aggregate expression did not return a boolean.")
                     total += int(matched)
             return total
         contributions = []
-        for draw_age, row in enumerate(reversed(history)):
+        for draw_age, row in enumerate(reversed(history) if direction == "forward" else history):
             for number in row["numbers"]:
                 local = {
                     "candidate": context["candidate"],
                     "value": number,
                     "draw_age": draw_age,
                 }
-                contribution = _evaluate_node(expression, local, [])
+                contribution = _evaluate_node(expression, local, [], direction=direction)
                 contributions.append(_checked_number(contribution))
         return _checked_number(math.fsum(contributions))
 
     if op == "abs":
-        return _checked_number(abs(_evaluate_node(node["arg"], context, history)))
+        return _checked_number(abs(_evaluate_node(node["arg"], context, history, direction=direction)))
     if op == "not":
-        value = _evaluate_node(node["arg"], context, history)
+        value = _evaluate_node(node["arg"], context, history, direction=direction)
         if not isinstance(value, bool):
             _fail("not received a non-boolean value.")
         return not value
 
-    left = _evaluate_node(node["left"], context, history)
+    left = _evaluate_node(node["left"], context, history, direction=direction)
     if op == "and":
         if not isinstance(left, bool):
             _fail("and received a non-boolean left operand.")
         if not left:
             return False
-        right = _evaluate_node(node["right"], context, history)
+        right = _evaluate_node(node["right"], context, history, direction=direction)
         if not isinstance(right, bool):
             _fail("and received a non-boolean right operand.")
         return right
@@ -274,12 +278,12 @@ def _evaluate_node(
             _fail("or received a non-boolean left operand.")
         if left:
             return True
-        right = _evaluate_node(node["right"], context, history)
+        right = _evaluate_node(node["right"], context, history, direction=direction)
         if not isinstance(right, bool):
             _fail("or received a non-boolean right operand.")
         return right
 
-    right = _evaluate_node(node["right"], context, history)
+    right = _evaluate_node(node["right"], context, history, direction=direction)
     if op == "add":
         result = left + right
     elif op == "sub":
@@ -320,6 +324,7 @@ def _rank_checked_history(
     *,
     number_pool_size: int,
     spec: dict[str, Any],
+    direction: str = "forward",
 ) -> list[dict[str, Any]]:
     ranking = []
     for candidate in range(1, number_pool_size + 1):
@@ -327,6 +332,7 @@ def _rank_checked_history(
             spec["score_expression"],
             {"candidate": candidate},
             checked_history,
+            direction=direction,
         )
         ranking.append({"number": candidate, "score": _checked_number(score)})
     ranking.sort(key=lambda item: (-item["score"], item["number"]))
@@ -361,6 +367,47 @@ def rank_candidates(
         checked_history,
         number_pool_size=number_pool_size,
         spec=spec,
+    )
+
+
+def rank_candidates_retrospective(
+    later_history: list[dict[str, Any]],
+    *,
+    target_date: str,
+    number_pool_size: int,
+    execution_spec: dict[str, Any],
+    min_train_draws: int = DEFAULT_MIN_TRAIN_DRAWS,
+) -> list[dict[str, Any]]:
+    """Rank candidates for an older target using only strictly later historical rows.
+
+    This helper is only for retrospective reverse-time diagnostics. Its output is
+    not predictive evidence. The target row itself must not be included.
+    """
+    if type(number_pool_size) is not int or number_pool_size not in ALLOWED_POOL_SIZES:
+        _fail("number pool must be R54 (54) or R60 (60).")
+    if type(min_train_draws) is not int or not 2 <= min_train_draws <= MAX_HISTORY_DRAWS:
+        _fail("minimum later-history draws are outside the supported range.")
+    cutoff = _canonical_date(target_date, "target_date")
+    if number_pool_size == 54 and cutoff >= REGIME_BOUNDARY:
+        _fail("R54 retrospective cutoff must be before 2020-08-02.")
+    if number_pool_size == 60 and cutoff < REGIME_BOUNDARY:
+        _fail("R60 retrospective cutoff must be on or after 2020-08-02.")
+    checked_history = _validate_rows(
+        later_history,
+        pool_size=number_pool_size,
+        field="later_history",
+        maximum=MAX_HISTORY_DRAWS,
+    )
+    if len(checked_history) < min_train_draws:
+        _fail("later historical reference is too short for reverse-time scoring.")
+    if any(date.fromisoformat(row["date"]) <= cutoff for row in checked_history):
+        _fail("later_history contains the target or an earlier draw.")
+    spec = validate_execution_spec(execution_spec)
+    return _rank_checked_history(
+        checked_history,
+        number_pool_size=number_pool_size,
+        spec=spec,
+        direction="reverse",
     )
 
 
@@ -548,12 +595,15 @@ def evaluate_reverse_retrospective_stress(
     execution_spec: dict[str, Any],
     test_draw_count: int = MAX_VALIDATION_DRAWS,
     min_train_draws: int = DEFAULT_MIN_TRAIN_DRAWS,
+    skip_recent_test_draws: int = 0,
 ) -> dict[str, Any]:
-    """Run a separately labelled reverse-time diagnostic using later historical rows."""
+    """Run one reverse-time batch; skip_recent_test_draws enables contiguous batching."""
     if type(number_pool_size) is not int or number_pool_size not in ALLOWED_POOL_SIZES:
         _fail("number pool must be R54 (54) or R60 (60).")
     if type(test_draw_count) is not int or not 1 <= test_draw_count <= MAX_VALIDATION_DRAWS:
         _fail("reverse stress test draw count is outside the configured limit.")
+    if type(skip_recent_test_draws) is not int or not 0 <= skip_recent_test_draws <= MAX_INPUT_HISTORY_DRAWS:
+        _fail("reverse stress test offset is outside the configured range.")
     if type(min_train_draws) is not int or not 2 <= min_train_draws <= MAX_HISTORY_DRAWS:
         _fail("minimum training draws are outside the supported range.")
     cutoff = _canonical_date(cutoff_date, "cutoff_date")
@@ -569,28 +619,43 @@ def evaluate_reverse_retrospective_stress(
     )
     if date.fromisoformat(checked[-1]["date"]) >= cutoff:
         _fail("pre-target history contains the isolated target or a later date.")
-    if len(checked) < min_train_draws + test_draw_count:
-        _fail("not enough later historical rows for the requested reverse stress test.")
+    if len(checked) < min_train_draws + test_draw_count + skip_recent_test_draws:
+        _fail("not enough later historical rows for the requested reverse stress test batch.")
     spec = validate_execution_spec(execution_spec)
 
     scores: list[int] = []
-    reverse_indices = range(
-        len(checked) - min_train_draws - 1,
-        len(checked) - min_train_draws - test_draw_count - 1,
-        -1,
-    )
+    per_draw: list[dict[str, Any]] = []
+    reverse_start = len(checked) - min_train_draws - 1 - skip_recent_test_draws
+    reverse_stop = reverse_start - test_draw_count
+    reverse_indices = range(reverse_start, reverse_stop, -1)
     for index in reverse_indices:
         target = checked[index]
-        later_history = checked[index + 1:][-MAX_HISTORY_DRAWS:]
+        later_history = checked[index + 1:index + 1 + MAX_HISTORY_DRAWS]
         if len(later_history) < min_train_draws:
             _fail("reverse stress test has too few later historical training draws.")
         ranked = _rank_checked_history(
             later_history,
             number_pool_size=number_pool_size,
             spec=spec,
+            direction="reverse",
         )
         selected = {item["number"] for item in ranked[:6]}
-        scores.append(len(selected.intersection(target["numbers"])))
+        matched_positions = [
+            position
+            for position, item in enumerate(ranked[:6], start=1)
+            if item["number"] in set(target["numbers"])
+        ]
+        hit_count = len(matched_positions)
+        scores.append(hit_count)
+        per_draw.append({
+            "test_date": target["date"],
+            "direction": "reverse_retrospective",
+            "later_training_draw_count": len(later_history),
+            "hit_column_positions_1_to_6": matched_positions,
+            "hit_count": hit_count,
+            "target_numbers_reported": False,
+            "predicted_number_values_reported": False,
+        })
 
     mean_hits = statistics.fmean(scores)
     standard_error = (
@@ -605,8 +670,17 @@ def evaluate_reverse_retrospective_stress(
         "number_pool_size": number_pool_size,
         "evaluated_draw_count": len(scores),
         "evaluation_order": "newest_to_oldest",
-        "first_test_date": checked[len(checked) - min_train_draws - 1]["date"],
-        "last_test_date": checked[len(checked) - min_train_draws - test_draw_count]["date"],
+        "first_test_date": checked[reverse_start]["date"],
+        "last_test_date": checked[reverse_stop + 1]["date"],
+        "skip_recent_test_draws": skip_recent_test_draws,
+        "hit_distribution": {
+            str(hits): sum(score == hits for score in scores)
+            for hits in range(7)
+        },
+        "per_draw": per_draw,
+        "per_draw_detail_present": True,
+        "target_number_sets_reported": False,
+        "predicted_number_values_reported": False,
         "minimum_later_training_draws": min_train_draws,
         "maximum_later_history_window_draws": MAX_HISTORY_DRAWS,
         "mean_hits_out_of_6": round(mean_hits, 6),

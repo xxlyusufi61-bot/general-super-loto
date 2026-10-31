@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 
-SOURCE_CONTEXT_VERSION = "0.2.0"
+SOURCE_CONTEXT_VERSION = "0.3.0"
 MAX_CONTEXT_CHARS = 55_000
 MAX_FILE_CHARS = 34_000
 MAX_FILES = 6
@@ -21,6 +21,10 @@ SOURCE_MANIFEST: tuple[tuple[str, tuple[str, ...]], ...] = (
      ("formula", "method", "research", "discovery", "notation", "hypothesis", "cross-validation", "walk-forward")),
     ("docs/safe-hypothesis-execution.md",
      ("formula", "method", "research", "hypothesis", "DSL", "execution", "executor", "operator", "sandbox")),
+    ("docs/sealed-evaluation-orchestration.md",
+     ("research", "validation", "sealed", "evaluation", "holdout", "leakage", "orchestration", "walk-forward")),
+    ("general_sealed_evaluation.py",
+     ("sealed", "evaluation", "holdout", "validation", "leakage", "orchestration", "ledger")),
     (".github/workflows/general-agent.yml",
      ("agent", "workflow", "system", "architecture", "orchestrat", "coordinator", "research", "debug", "validation", "crossover")),
     ("general_coordinator.py",

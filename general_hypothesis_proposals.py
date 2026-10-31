@@ -11,7 +11,7 @@ from typing import Any
 
 START_MARKER = "<HYPOTHESIS_PROPOSALS_JSON>"
 END_MARKER = "</HYPOTHESIS_PROPOSALS_JSON>"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 MAX_PROPOSALS = 5
 ALLOWED_EVALUATION_PROTOCOLS = {
     "forward_walk_forward",
@@ -22,6 +22,7 @@ ALLOWED_EVALUATION_PROTOCOLS = {
 TOP_LEVEL_KEYS = {"schema_version", "proposals"}
 PROPOSAL_KEYS = {
     "hypothesis_id",
+    "discovery_direction",
     "proposed_family",
     "hypothesis",
     "exact_definition",
@@ -65,7 +66,13 @@ def _validate_proposal(value: Any) -> dict[str, Any]:
     proposal_id = value.get("hypothesis_id")
     if not isinstance(proposal_id, str) or re.fullmatch(r"HYP-(?!000)[0-9]{3}", proposal_id) is None:
         raise ValueError("hypothesis_id must match HYP-001 through HYP-999.")
-    proposal: dict[str, Any] = {"hypothesis_id": proposal_id}
+    direction = value.get("discovery_direction")
+    if direction not in {"forward", "reverse", "both"}:
+        raise ValueError("discovery_direction must be forward, reverse, or both.")
+    proposal: dict[str, Any] = {
+        "hypothesis_id": proposal_id,
+        "discovery_direction": direction,
+    }
     for field in sorted(TEXT_FIELDS):
         proposal[field] = _valid_text(value.get(field), field)
     risks = value.get("known_risks")
