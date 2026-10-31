@@ -10,7 +10,7 @@ import hashlib
 import json
 import math
 import statistics
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 VERSION = "0.1.0"
@@ -616,4 +616,69 @@ def evaluate_reverse_retrospective_stress(
             "Later historical draws are intentionally used. This is retrospective stress testing only, "
             "not forward predictive evidence and not a basis for claiming a future advantage."
         ),
+    }
+
+
+def run_synthetic_contract_tests(execution_spec: dict[str, Any]) -> dict[str, Any]:
+    """Execute a spec twice on deterministic synthetic R54/R60 fixtures."""
+    spec = validate_execution_spec(execution_spec)
+    cases = (
+        (54, date(2020, 7, 20)),
+        (60, date(2020, 8, 2)),
+    )
+    checked_cases = 0
+    total_ranked_values = 0
+    for pool_size, start_day in cases:
+        rows = []
+        for index in range(4):
+            draw_day = (start_day + timedelta(days=index)).isoformat()
+            base = (index * 7) % pool_size + 1
+            numbers = sorted({
+                ((base + offset * 11 - 1) % pool_size) + 1
+                for offset in range(6)
+            })
+            if len(numbers) != 6:
+                _fail("synthetic fixture construction failed.")
+            rows.append({"date": draw_day, "numbers": numbers})
+        before = json.dumps(rows, sort_keys=True)
+        cutoff = (start_day + timedelta(days=4)).isoformat()
+        first = rank_candidates(
+            rows,
+            cutoff_date=cutoff,
+            number_pool_size=pool_size,
+            execution_spec=spec,
+        )
+        second = rank_candidates(
+            rows,
+            cutoff_date=cutoff,
+            number_pool_size=pool_size,
+            execution_spec=spec,
+        )
+        if first != second:
+            _fail("synthetic execution was not deterministic.")
+        if len(first) != pool_size:
+            _fail("synthetic execution returned an incomplete number pool.")
+        if len({item["number"] for item in first}) != pool_size:
+            _fail("synthetic execution returned duplicate candidate numbers.")
+        if any(
+            item["number"] < 1
+            or item["number"] > pool_size
+            or not math.isfinite(item["score"])
+            for item in first
+        ):
+            _fail("synthetic execution returned an invalid candidate or score.")
+        if json.dumps(rows, sort_keys=True) != before:
+            _fail("synthetic execution mutated its input history.")
+        checked_cases += 1
+        total_ranked_values += len(first)
+
+    return {
+        "status": "PASS",
+        "synthetic_cases": checked_cases,
+        "ranked_values_checked": total_ranked_values,
+        "regimes_checked": ["R54", "R60"],
+        "deterministic": True,
+        "input_mutated": False,
+        "real_archive_used": False,
+        "target_values_used": False,
     }
