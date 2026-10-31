@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import general_open_research as research
+from general_data_guard import DataGuardError
 import general_sealed_evaluation as sealed
 from general_live_consent import CONFIRMATION_PHRASE
 
@@ -254,7 +255,7 @@ class OpenResearchIsolationTests(unittest.TestCase):
             {"date": "2020-07-30", "numbers": [1, 2, 3, 4, 5, 6]},
             {"date": "2020-08-02", "numbers": [2, 8, 14, 23, 35, 49]},
         ]
-        with self.assertRaisesRegex(Exception, "Data Guard rejected archive"):
+        with self.assertRaisesRegex(DataGuardError, "before the active research scope"):
             research.isolate_pre_target(history)
 
     def test_invalid_archive_stops_before_model_payload(self):
