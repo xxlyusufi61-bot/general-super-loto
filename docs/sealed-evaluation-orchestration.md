@@ -4,7 +4,7 @@
 
 The latest archive draw is the isolated current target. Its number set and any record on or after its date are excluded from discovery, training, candidate selection, validation, and scoring. The archive is validated by Data Guard before any split. The exact archive bytes are hashed and copied to a content-addressed snapshot before a claim is evaluated.
 
-The discovery agent receives two views of the same discovery-only rows: one ordered oldest-to-newest and one newest-to-oldest. These are two independent discovery directions. Candidate hypotheses must explicitly label their discovery direction as forward, reverse, or both; forward and reverse discoveries/results are not silently combined.
+Forward and reverse discovery are separate hosted requests. The forward request receives only discovery rows ordered oldest-to-newest; the reverse request receives only the same discovery partition ordered newest-to-oldest. Neither request receives the other direction's payload or candidate list. Each response is parsed and direction-checked independently; IDs are then namespaced before the sanitized outputs are combined. Forward proposals must label themselves forward and reverse proposals must label themselves reverse; the model cannot use a both label to bypass directional isolation.
 
 A successful one-shot claim requires one safe DSL specification matching the first eligible forward/both proposal and one matching the first eligible reverse/both proposal. If either directional candidate is missing, mismatched, unrepresentable, or fails synthetic preflight, evaluation is skipped. The evaluator may not select an alternative after validation outcomes are seen. A proposal/spec is not a method registry entry or proof of a mechanism.
 
@@ -25,7 +25,7 @@ R54 remains discovery-only in this orchestration version, preserving its existin
 
 ## Candidate freeze and safe DSL
 
-The research agent can propose at most five textual hypotheses. The strict proposal parser requires a directional label. The agent can emit at most two execution specs: the first eligible forward/both proposal and the first eligible reverse/both proposal. One both-direction proposal may cover both directions with one spec. There is no post-validation substitution. Every spec is checked by the restricted JSON expression DSL and deterministic synthetic R54/R60 tests before any claim.
+Each independent research request can propose at most five textual hypotheses and at most one execution specification. The strict proposal parser requires the exact direction of that request. The coordinator accepts only forward-labelled proposals from the forward request and reverse-labelled proposals from the reverse request, remaps IDs into disjoint namespaces, and retains at most the first candidate/specification per direction for a claim. There is no post-validation substitution. Every retained spec is checked by the restricted JSON expression DSL and deterministic synthetic R54/R60 tests before any claim.
 
 The DSL executes no model-provided Python, code, imports, file/network access, or dynamic functions. A DSL-valid expression is still not canonical, does not change the registry, and is not evidence of predictive ability. If a hypothesis cannot be represented faithfully by the DSL, its spec must be omitted; meanings of A→B→C, A→T and MOD5→T are never approximated silently.
 
@@ -53,7 +53,7 @@ The append-only ledger stores both directional holdout dates, candidate/specific
 
 ## Billing and operational safeguards
 
-Unit tests and offline preflight do not send hosted inference requests or score the real archive. A live hosted call remains blocked unless the existing exact free-only/no-billing confirmation, independently verified free-use status, and global NVIDIA safety lock all pass. No paid service, credit-card-required setup or automatic billing transition is authorized. A provider rate limit is not proof of free allowance. The evaluator makes no additional hosted request.
+Unit tests and offline preflight do not send hosted inference requests or score the real archive. The manual workflow currently performs exactly two hosted discovery requests—one isolated forward request and one isolated reverse request—only if its existing exact free-only/no-billing confirmation, independent verification that both requests are within free use, and global NVIDIA safety lock all pass. The manual confirmation phrase authorizes up to three requests, but this workflow uses two and performs no automatic retry. Each response's safe usage/limit metadata is recorded separately. No paid service, credit-card-required setup or automatic billing transition is authorized. A provider rate limit is not proof of free allowance. CI and offline tests make no hosted requests.
 
 ## Known limits
 
