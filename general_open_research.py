@@ -181,6 +181,8 @@ def build_messages(target: str, train: list[dict[str, Any]], focus: str = "") ->
         "relationships from the supplied historical data rather than assuming a known method.\n"
         "Research notation:\n- " + "\n- ".join(NOTATION_RULES) + "\n"
         "Governance rules:\n- " + "\n- ".join(GOVERNANCE_RULES) + "\n"
+        "Direction-specific discovery is mandatory. Analyze discovery_history_by_regime in forward chronological order, then independently analyze reverse_discovery_history_by_regime in newest-to-oldest order. Keep the two hypothesis sets and their evidence separate; do not combine or transfer directional scores. Every proposal must label discovery_direction as forward, reverse, or both. If a forward/both proposal is available, put the highest-priority forward/both proposal first because the one-shot sealed holdout evaluates only that first forward-eligible proposal. Reverse-only proposals are not eligible for that forward claim.\n"
+        "For full-history real-archive testing, selection must be repeated separately at each historical cutoff using only rows available in that direction. Never apply a formula selected after seeing later rows to earlier forward targets. Any reverse result using later draws is retrospective stress testing only, not predictive evidence.\n"
         "The target date is metadata only; its numbers and every record on or after it are absent. "
         "Do not infer or fabricate those values. The data supplied is discovery history, not a frozen "
         "final test set. Do not claim a candidate is validated or predictive based on inspection alone.\n"
@@ -206,6 +208,7 @@ def build_messages(target: str, train: list[dict[str, Any]], focus: str = "") ->
         "<HYPOTHESIS_PROPOSALS_JSON>\n"
         "{\"schema_version\":1,\"proposals\":[{"
         "\"hypothesis_id\":\"HYP-001\","
+        "\"discovery_direction\":\"forward|reverse|both\","
         "\"proposed_family\":\"free descriptive label; not a registry status\","
         "\"hypothesis\":\"testable statement\","
         "\"exact_definition\":\"precise mathematical steps, no executable code\","
@@ -266,12 +269,17 @@ def build_messages(target: str, train: list[dict[str, Any]], focus: str = "") ->
     if any(date.fromisoformat(row["date"]) >= target_day for row in r54 + r60):
         raise RuntimeError("Target/future record found in a regime partition.")
 
+    reverse_r54 = list(reversed(r54))
+    reverse_r60 = list(reversed(r60))
     user = {
-        "task": "Perform exploratory, blank-slate hypothesis discovery only. Do not output number predictions.",
+        "task": "Perform two independent directional blank-slate hypothesis discovery passes. Do not output number predictions.",
         "user_research_focus_untrusted": str(focus)[:1000],
         "target_date_metadata_only": target,
         "pre_target_draw_count": len(train),
         "discovery_history_by_regime": {"R54": r54, "R60": r60},
+        "reverse_discovery_history_by_regime": {"R54": reverse_r54, "R60": reverse_r60},
+        "discovery_directions": ["forward", "reverse"],
+        "directional_discovery_must_remain_separate": True,
         "discovery_counts_by_regime": {"R54": len(r54), "R60": len(r60)},
         "regime_boundary": "2020-08-02",
         "regimes_must_be_evaluated_separately": True,
@@ -471,10 +479,20 @@ def main() -> int:
             json.dumps(execution_spec_document, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
+        forward_proposal_count = sum(
+            item.get("discovery_direction") in {"forward", "both"}
+            for item in proposal_document["proposals"]
+        )
+        reverse_proposal_count = sum(
+            item.get("discovery_direction") in {"reverse", "both"}
+            for item in proposal_document["proposals"]
+        )
         proposal_note = (
             "\n\n## Structured hypothesis proposals\n\n"
             f"- Proposal parser status: {proposal_document['status']}\n"
             f"- Validated proposal count: {len(proposal_document['proposals'])}\n"
+            f"- Forward/both discovery labels: {forward_proposal_count}\n"
+            f"- Reverse/both discovery labels: {reverse_proposal_count}\n"
             "- Execution ready: NO\n"
             "- Method registry modified: NO\n"
             "- Hypotheses remain unverified proposals; no real-archive backtest was run.\n"
