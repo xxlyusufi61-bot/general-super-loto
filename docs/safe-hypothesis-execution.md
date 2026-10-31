@@ -41,6 +41,18 @@ Boolean operators: and, or, not.
 
 The validator checks expression types before any evaluation.
 
+### Exact JSON node keys
+
+Each node must contain exactly the keys listed here; extra keys are rejected:
+
+- const: op, value
+- var: op, name
+- abs or not: op, arg
+- any binary operator: op, left, right
+- aggregate_history_numbers: op, aggregate, expression
+
+The top-level execution spec contains exactly schema_version and score_expression. A research-run item contains exactly hypothesis_id and execution_spec.
+
 ### Historical aggregate
 
 Exactly one aggregate_history_numbers node is required:
