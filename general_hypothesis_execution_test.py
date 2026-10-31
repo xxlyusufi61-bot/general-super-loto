@@ -201,6 +201,22 @@ class SafeHypothesisExecutionTests(unittest.TestCase):
                 },
             })
 
+    def test_rejects_extremely_large_integer_constants_without_overflow(self):
+        oversized = {
+            "schema_version": 1,
+            "score_expression": {
+                "op": "add",
+                "left": {
+                    "op": "aggregate_history_numbers",
+                    "aggregate": "sum",
+                    "expression": {"op": "const", "value": 1},
+                },
+                "right": {"op": "const", "value": 10 ** 400},
+            },
+        }
+        with self.assertRaisesRegex(ValueError, "within the safe bound"):
+            engine.validate_execution_spec(oversized)
+
     def test_runtime_division_by_zero_fails_closed(self):
         spec = {
             "schema_version": 1,
