@@ -53,12 +53,24 @@
       ],
       "last_reviewed": "2026-10-31",
       "post_merge_audit": {
-        "status": "FIX_IMPLEMENTED_ON_FEATURE_BRANCH_CI_PENDING",
+        "status": "VERIFIED_BY_CI_PENDING_PR_REVIEW",
         "reviewed_at": "2026-10-31",
         "finding": "The normal GENERAL Core prepare_data path previously enforced the global 1-60 range but did not enforce date-specific R54/R60 upper bounds or ascending number order on every archive row.",
         "observed_archive_state": "The 1,009-record canonical archive was inspected; no invalid range, duplicate date, malformed six-number set, or chronology issue was found. Existing rows are covered by the archive integrity tests.",
         "remediation": "Add a local pre-model validation pass across the entire archive, including excluded target/future rows, and synthetic regressions for the R54 boundary, maximum values, out-of-pool numbers, and unsorted hidden target rows.",
-        "scope_limit": "No live NVIDIA request, archive rewrite, target-number disclosure, or real-archive formula evaluation."
+        "scope_limit": "No live NVIDIA request, archive rewrite, target-number disclosure, or real-archive formula evaluation.",
+        "verification": {
+          "coordinator_workflow_run": 41215981951,
+          "coordinator_workflow_commit": "cfac0269697025f58ea1da39f1291f71015ce9dd",
+          "offline_tests_passed": 139,
+          "new_regime_regressions_passed": 5,
+          "security_workflow_run": 41215960668,
+          "security_workflow_commit": "e44611cb21c4d75e994702076b5500e72c32be44",
+          "security_unit_tests_passed": 14,
+          "missing_target_workflow_run": 41215932278,
+          "live_nvidia_requests_made": false,
+          "real_archive_formula_evaluation_performed": false
+        }
       }
     }
   ]
