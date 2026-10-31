@@ -67,12 +67,14 @@ def _validate_node(
         if set(node) != {"op", "value"}:
             _fail("const node keys are invalid.")
         value = node["value"]
-        if (
-            isinstance(value, bool)
-            or not isinstance(value, (int, float))
-            or not math.isfinite(value)
-            or abs(value) > MAX_ABS_LITERAL
-        ):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            _fail("numeric constants must be finite and within the safe bound.")
+        # Check integers against the bound before float conversion so even
+        # extremely large JSON integers fail cleanly instead of raising overflow.
+        if isinstance(value, int):
+            if abs(value) > MAX_ABS_LITERAL:
+                _fail("numeric constants must be finite and within the safe bound.")
+        elif not math.isfinite(value) or abs(value) > MAX_ABS_LITERAL:
             _fail("numeric constants must be finite and within the safe bound.")
         return "number"
 
