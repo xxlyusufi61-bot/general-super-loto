@@ -61,7 +61,7 @@ V18'de `state_transition_predict` geçerli çekiliş için bir durum temsili olu
 | Etiket | V18.0'da görülen temsil | Sınır/not |
 |---|---|---|
 | `MOD5_T` | Altı sayının `n % 5` kalanlarının frekans sayımı | Kalan dağılımı; pozisyon sırasına dayalı fark vektörü değil. |
-| `LOW_HIGH_T` | `(n <= 30` adedi, `n > 30` adedi) | Eşik 30'dur. |
+| `LOW_HIGH_T` | `(count(n <= 30), count(n > 30))` | Eşik 30'dur. |
 | `ODD_EVEN_T` | Tek ve çift sayı adetleri | Pozisyon sırasını kullanmaz. |
 | `SUM_T` | `(çekiliş toplamı % 5, çekiliş toplamı % 10)` | Bu sürümde ham toplam değildir. |
 | `DECADE_T` | `(n - 1) // 10` onluk kategorilerinin frekansları | 1–10, 11–20, …, 51–60 kategorileri. |
