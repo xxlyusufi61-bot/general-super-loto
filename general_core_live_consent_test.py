@@ -40,11 +40,33 @@ class CoreLiveConsentBoundaryTests(unittest.TestCase):
             "global safety-lock preflight was not confirmed",
         )
 
+    def test_missing_free_use_verification_blocks_before_network(self):
+        self.assert_no_network_request(
+            {
+                "NVIDIA_API_KEY": "test-secret",
+                "GENERAL_CONFIRM_LIVE_CALLS": CONFIRMATION_PHRASE,
+                "GENERAL_NVIDIA_GUARD_PASSED": "1",
+            },
+            "free-use and no-billing status was not independently verified",
+        )
+
+    def test_false_free_use_verification_blocks_before_network(self):
+        self.assert_no_network_request(
+            {
+                "NVIDIA_API_KEY": "test-secret",
+                "GENERAL_CONFIRM_LIVE_CALLS": CONFIRMATION_PHRASE,
+                "GENERAL_NVIDIA_GUARD_PASSED": "1",
+                "GENERAL_NVIDIA_FREE_USAGE_VERIFIED": "false",
+            },
+            "free-use and no-billing status was not independently verified",
+        )
+
     def test_missing_api_key_blocks_after_gates_without_network(self):
         self.assert_no_network_request(
             {
                 "GENERAL_CONFIRM_LIVE_CALLS": CONFIRMATION_PHRASE,
                 "GENERAL_NVIDIA_GUARD_PASSED": "1",
+                "GENERAL_NVIDIA_FREE_USAGE_VERIFIED": "true",
             },
             "NVIDIA_API_KEY missing",
         )
