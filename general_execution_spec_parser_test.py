@@ -68,6 +68,33 @@ class ExecutionSpecParserTests(unittest.TestCase):
         self.assertEqual(result["status"], "REJECTED")
         self.assertEqual(result["specifications"], [])
 
+    def test_duplicate_json_keys_and_nonstandard_numbers_are_rejected(self):
+        duplicate = (
+            START_MARKER
+            + '\n{"schema_version":1,"schema_version":1,"specifications":[]}\n'
+            + END_MARKER
+        )
+        duplicate_result = parse_execution_spec_block(duplicate)
+        self.assertEqual(duplicate_result["status"], "REJECTED")
+        self.assertEqual(duplicate_result["specifications"], [])
+
+        nonstandard = (
+            START_MARKER
+            + '\n{"schema_version":1,"specifications":[{"hypothesis_id":"HYP-001",'
+            + '"execution_spec":{"schema_version":1,"score_expression":{"op":"aggregate_history_numbers",'
+            + '"aggregate":"sum","expression":{"op":"const","value":NaN}}}]}\n'
+            + END_MARKER
+        )
+        nonstandard_result = parse_execution_spec_block(nonstandard)
+        self.assertEqual(nonstandard_result["status"], "REJECTED")
+        self.assertEqual(nonstandard_result["specifications"], [])
+
+    def test_oversized_execution_block_is_rejected_before_json_parsing(self):
+        oversized = START_MARKER + (' ' * 16_385) + END_MARKER
+        result = parse_execution_spec_block(oversized)
+        self.assertEqual(result["status"], "REJECTED")
+        self.assertIn("exceeds the size limit", result["rejection_reasons"][0])
+
     def test_unknown_or_unmatched_hypothesis_id_is_rejected(self):
         result = parse_execution_spec_block(
             wrapped([specification("HYP-002")]),
