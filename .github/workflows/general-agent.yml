@@ -239,7 +239,7 @@ jobs:
         run: python3 general_rule_change.py submit-report --report general-agent-report.md
 
       - name: Skip live agent call without explicit free-only confirmation
-        if: ${{ inputs.agent != 'archive' && inputs.agent != 'isolation-test' && inputs.confirm_live_calls != 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_3_NVIDIA_REQUESTS' || inputs.confirm_free_usage_verified != true }}
+        if: ${{ inputs.agent != 'archive' && inputs.agent != 'isolation-test' && (inputs.confirm_live_calls != 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_3_NVIDIA_REQUESTS' || inputs.confirm_free_usage_verified != true) }}
         run: |
           echo "::notice::Live agent execution was not authorized; no NVIDIA request was made."
           echo "Supply the exact confirmation phrase only after verifying free-only provider settings."
