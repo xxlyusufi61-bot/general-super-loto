@@ -47,7 +47,7 @@ These are binding project constraints:
 4. Preserve `A->B->C`, `A->T`, and `MOD5->T` as research-family labels only. Each exact mathematical definition and implementation must be developed from scratch and remains `OPEN_DEFINITION` until explicitly approved.
 5. Use leakage-free forward walk-forward evaluation and time-ordered cross-validation.
 6. Keep reverse chronology as a separately labeled retrospective stress test, never predictive evidence.
-7. Keep R54 and R60 separate; do not silently mix the regimes.
+7. The canonical archive and every GENERAL/agent data path contain only records dated 2020-08-02 or later; earlier records are rejected.
 8. Never invent archive data, experiments, results, or test status.
 9. Never change permanent project rules silently; ask the user before changing them.
 10. Separate hypotheses from verified findings and preserve reproducible tests, boundaries, baselines, and uncertainty.
