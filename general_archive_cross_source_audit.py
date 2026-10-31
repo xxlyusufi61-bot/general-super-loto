@@ -585,7 +585,7 @@ def run_audit(archive_path: Path = ARCHIVE_PATH) -> dict[str, Any]:
                     else:
                         combined[draw_date] = numbers
 
-            # Loto.gen's 2020 page contains only R60; do not mix the R54 regime.
+            # Loto.gen's 2020 page is filtered to the active research scope only.
             eligible = {
                 draw_date: numbers for draw_date, numbers in combined.items()
                 if year != 2020 or draw_date >= R60_START
@@ -619,7 +619,6 @@ def run_audit(archive_path: Path = ARCHIVE_PATH) -> dict[str, Any]:
     lotobil_index_date_rows: set[tuple[int, int, str]] = set()
     lotobil_rows: dict[str, tuple[int, ...]] = {}
     lotobil_errors: list[str] = []
-    r54_fetch_status = "FETCH_FAILED"
     try:
         lotobil_html = fetch_html(LOTObil_URL)
         (
@@ -629,25 +628,6 @@ def run_audit(archive_path: Path = ARCHIVE_PATH) -> dict[str, Any]:
             lotobil_indices_by_year,
             lotobil_index_date_rows,
         ) = parse_lotobil_archive_detailed(lotobil_html)
-        r54_archive = [row for row in archive_rows if row["date"] < R60_START]
-        r54_start_date = min(
-            (row["date"] for row in r54_archive),
-            default=R60_START,
-        )
-        r54_source = {
-            draw_date: nums for draw_date, nums in lotobil_rows.items()
-            if _within_date_scope(draw_date, r54_start_date, R60_START)
-        }
-        r54_errors = [
-            draw_date for draw_date in lotobil_errors
-            if _within_date_scope(draw_date, r54_start_date, R60_START)
-        ]
-        r54_report = _compare(r54_archive, r54_source, r54_errors)
-        r54_fetch_status = "FETCHED"
-    except AuditSourceError:
-        r54_report = {"status": "FETCH_FAILED", "draw_numbers_in_report": False}
-
-    if r54_fetch_status == "FETCHED":
         r60_source = {
             draw_date: nums for draw_date, nums in lotobil_rows.items()
             if draw_date >= R60_START
@@ -759,13 +739,13 @@ def run_audit(archive_path: Path = ARCHIVE_PATH) -> dict[str, Any]:
                 lotobil_r60_report["status"] = "MATCH_AFTER_DOCUMENTED_SOURCE_NORMALIZATION"
             lotobil_r60_report["normalized_match"] = True
         else:
-            lotobil_r60_report["normalized_match"] = False
-    else:
+            lotobil_r60_report["normalized_match"] = False    except AuditSourceError:
         lotobil_r60_report = {"status": "FETCH_FAILED", "draw_numbers_in_report": False}
 
 
+
     return {
-        "audit_version": "1.1.0",
+        "audit_version": "1.2.0",
         "archive_guard_version": summary["guard_version"],
         "archive_records": summary["record_count"],
         "archive_first_date": summary["first_date"],
@@ -774,9 +754,8 @@ def run_audit(archive_path: Path = ARCHIVE_PATH) -> dict[str, Any]:
         "archive_modified": False,
         "draw_numbers_in_report": False,
         "primary_source_cross_check_scope_in_existing_fetcher": "2025 only",
-        "regime_rule": {"R54_end_date": "2020-07-30", "R60_start_date": R60_START},
+        "research_scope_start_date": R60_START,
         "loto_gen_by_year": year_status,
-        "lotobil_R54_comparison": r54_report,
         "lotobil_R60_comparison": lotobil_r60_report,
         "fetch_failures": fetch_failures,
         "lotobil_anomaly_registry_version": LOTObil_ANOMALY_REGISTRY_VERSION,
