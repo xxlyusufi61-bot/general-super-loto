@@ -104,7 +104,7 @@ class BidirectionalFullHistoryTests(unittest.TestCase):
 
     def test_pre_scope_history_is_rejected(self):
         rows = make_rows(date(2020, 8, 2), 45)
-        rows.insert(0, {"date": "2020-07-30", "numbers": [1, 2, 3, 4, 5, 54]})
+        rows.insert(0, {"date": "2020-07-30", "numbers": [1, 2, 3, 4, 5, 6]})
         with self.assertRaises(ValueError):
             evaluate_bidirectional_full_history(
                 {"R60": rows}, isolated_target_date="2021-01-10"
