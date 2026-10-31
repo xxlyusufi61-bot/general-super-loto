@@ -23,7 +23,8 @@ from datetime import date
 from typing import Any, Iterable
 
 
-GUARD_VERSION = "0.1.1"
+GUARD_VERSION = "0.2.0"
+RESEARCH_SCOPE_START = date(2020, 8, 2)
 MIN_NUMBER = 1
 MAX_NUMBER = 60
 NUMBERS_PER_DRAW = 6
@@ -135,7 +136,15 @@ def validate_archive(
             )
 
         current_date = parse_date(row["date"])
-        validate_numbers(row["numbers"])
+        if current_date < RESEARCH_SCOPE_START:
+            raise DataGuardError(
+                "Archive contains a record before the active research scope."
+            )
+        numbers = validate_numbers(row["numbers"])
+        if numbers != sorted(numbers):
+            raise DataGuardError(
+                "Draw numbers must be sorted ascending in the canonical archive."
+            )
 
         if current_date in seen_dates:
             raise DataGuardError(
@@ -167,6 +176,7 @@ def validate_archive(
         "first_date": first_date.isoformat(),
         "last_date": last_date.isoformat(),
         "draw_numbers_exposed": False,
+        "research_scope_start_date": RESEARCH_SCOPE_START.isoformat(),
     }
 
 
