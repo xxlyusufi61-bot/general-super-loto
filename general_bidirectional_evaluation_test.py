@@ -7,6 +7,9 @@ from general_bidirectional_evaluation import (
     fixed_candidate_catalog,
 )
 
+from general_hypothesis_execution import rank_candidates
+from general_bidirectional_evaluation import _rank_catalog_history
+
 
 def make_rows(start: date, count: int, pool_size: int, step: int = 2):
     rows = []
@@ -26,6 +29,24 @@ class BidirectionalFullHistoryTests(unittest.TestCase):
         self.assertEqual(len({item["spec_sha256"] for item in catalog}), 6)
         self.assertEqual(catalog[0]["spec_id"], "EXACT_FREQUENCY_ALL")
         self.assertEqual(CATALOG_ID, "GENERAL-SAFE-DSL-CATALOG-v1")
+
+    def test_fast_catalog_ranker_matches_safe_dsl_interpreter(self):
+        history = make_rows(date(2024, 1, 2), 50, 60)
+        catalog = fixed_candidate_catalog()
+        for candidate in catalog:
+            with self.subTest(spec_id=candidate["spec_id"]):
+                expected = rank_candidates(
+                    history,
+                    cutoff_date="2025-01-01",
+                    number_pool_size=60,
+                    execution_spec=candidate["execution_spec"],
+                )
+                actual = _rank_catalog_history(
+                    history,
+                    number_pool_size=60,
+                    candidate=candidate,
+                )
+                self.assertEqual(actual, expected)
 
     def test_both_directions_cover_eligible_rows_and_keep_target_isolated(self):
         r54 = make_rows(date(2020, 1, 2), 46, 54, step=3)
