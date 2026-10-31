@@ -745,7 +745,7 @@ def _evaluate_reverse_validation_with_frozen_spec(
         later_history = [
             row for day, row in sorted(history_by_date.items())
             if day > target_date
-        ][-MAX_HISTORY_DRAWS:]
+        ][:MAX_HISTORY_DRAWS]
         ranking = rank_candidates_retrospective(
             later_history,
             target_date=target_date,
