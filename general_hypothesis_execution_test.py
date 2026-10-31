@@ -126,7 +126,7 @@ class SafeHypothesisExecutionTests(unittest.TestCase):
             engine.rank_candidates(
                 history,
                 cutoff_date="2020-08-05",
-                number_pool_size=54,
+                number_pool_size=60,
                 execution_spec=count_candidate_matches_spec(),
             )
 
@@ -459,7 +459,7 @@ class SafeHypothesisExecutionTests(unittest.TestCase):
                 skip_recent_test_draws=21,
             )
 
-    def test_holdout_reports_regime_specific_random_reference(self):
+    def test_holdout_reports_active_scope_random_reference(self):
         discovery = synthetic_rows(20, start="2020-08-02", pool_size=60)
         validation = synthetic_rows(3, start="2020-08-22", pool_size=60)
         report = engine.evaluate_holdout(
@@ -472,7 +472,7 @@ class SafeHypothesisExecutionTests(unittest.TestCase):
         )
         self.assertEqual(report["uniform_random_expected_hits_out_of_6"], 0.6)
 
-    def test_synthetic_contract_runner_checks_both_regimes(self):
+    def test_synthetic_contract_runner_checks_only_active_scope(self):
         result = engine.run_synthetic_contract_tests(count_candidate_matches_spec())
         self.assertEqual(result["status"], "PASS")
         self.assertEqual(result["number_pools_checked"], [60])
