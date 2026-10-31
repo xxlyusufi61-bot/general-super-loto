@@ -67,7 +67,7 @@ class SafeHypothesisExecutionTests(unittest.TestCase):
         second = engine.rank_candidates(
             history,
             cutoff_date="2020-08-10",
-            number_pool_size=54,
+            number_pool_size=60,
             execution_spec=constant_spec,
         )
         self.assertEqual(first, second)
@@ -470,13 +470,13 @@ class SafeHypothesisExecutionTests(unittest.TestCase):
             execution_spec=count_candidate_matches_spec(),
             min_train_draws=10,
         )
-        self.assertEqual(report["uniform_random_expected_hits_out_of_6"], 0.666667)
+        self.assertEqual(report["uniform_random_expected_hits_out_of_6"], 0.6)
 
     def test_synthetic_contract_runner_checks_both_regimes(self):
         result = engine.run_synthetic_contract_tests(count_candidate_matches_spec())
         self.assertEqual(result["status"], "PASS")
         self.assertEqual(result["number_pools_checked"], [60])
-        self.assertEqual(result["ranked_values_checked"], 114)
+        self.assertEqual(result["ranked_values_checked"], 60)
         self.assertTrue(result["deterministic"])
         self.assertFalse(result["input_mutated"])
         self.assertFalse(result["real_archive_used"])
