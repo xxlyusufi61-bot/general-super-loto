@@ -466,7 +466,7 @@ class SafeHypothesisExecutionTests(unittest.TestCase):
             discovery,
             validation,
             cutoff_date="2020-08-25",
-            number_pool_size=54,
+            number_pool_size=60,
             execution_spec=count_candidate_matches_spec(),
             min_train_draws=10,
         )
