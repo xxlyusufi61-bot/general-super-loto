@@ -319,6 +319,45 @@ class SafeHypothesisExecutionTests(unittest.TestCase):
         self.assertEqual(report["evaluation_order"], "newest_to_oldest")
         self.assertGreater(report["first_test_date"], report["last_test_date"])
 
+    def test_reverse_stress_batches_are_contiguous_without_overlap(self):
+        history = synthetic_rows(45, start="2024-01-01", pool_size=60)
+        first = engine.evaluate_reverse_retrospective_stress(
+            history,
+            cutoff_date="2024-02-15",
+            number_pool_size=60,
+            execution_spec=count_candidate_matches_spec(),
+            test_draw_count=5,
+            min_train_draws=20,
+        )
+        second = engine.evaluate_reverse_retrospective_stress(
+            history,
+            cutoff_date="2024-02-15",
+            number_pool_size=60,
+            execution_spec=count_candidate_matches_spec(),
+            test_draw_count=5,
+            min_train_draws=20,
+            skip_recent_test_draws=5,
+        )
+        self.assertEqual(first["evaluated_draw_count"], 5)
+        self.assertEqual(second["evaluated_draw_count"], 5)
+        self.assertEqual(first["first_test_date"], history[24]["date"])
+        self.assertEqual(first["last_test_date"], history[20]["date"])
+        self.assertEqual(second["first_test_date"], history[19]["date"])
+        self.assertEqual(second["last_test_date"], history[15]["date"])
+        self.assertLess(second["first_test_date"], first["last_test_date"])
+        self.assertEqual(sum(first["hit_distribution"].values()), 5)
+        self.assertEqual(sum(second["hit_distribution"].values()), 5)
+        with self.assertRaises(ValueError):
+            engine.evaluate_reverse_retrospective_stress(
+                history,
+                cutoff_date="2024-02-15",
+                number_pool_size=60,
+                execution_spec=count_candidate_matches_spec(),
+                test_draw_count=5,
+                min_train_draws=20,
+                skip_recent_test_draws=21,
+            )
+
     def test_holdout_reports_regime_specific_random_reference(self):
         discovery = synthetic_rows(20, start="2020-07-01", pool_size=54)
         validation = synthetic_rows(3, start="2020-07-21", pool_size=54)
