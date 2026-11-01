@@ -79,12 +79,13 @@ def _safe_candidate(candidate_id, spec_sha, field):
     return candidate_id, spec_sha
 
 
-def _format_draw_lines(draws, direction, candidate_id, spec_sha):
+def _format_draw_lines(draws, direction, candidate_id, spec_sha, target_day):
     if not isinstance(draws, list) or not draws or len(draws) > 30:
         raise ValueError(direction + " per-draw details are missing or outside the safe report limit.")
     output = []
     expected_direction = "forward" if direction == "forward" else "reverse_retrospective"
     history_key = "training_draw_count" if direction == "forward" else "later_training_draw_count"
+    dates = []
     for item in draws:
         if not isinstance(item, dict) or item.get("direction") != expected_direction:
             raise ValueError(direction + " per-draw direction mismatch.")
@@ -101,6 +102,9 @@ def _format_draw_lines(draws, direction, candidate_id, spec_sha):
             raise ValueError(direction + " test date is invalid.") from None
         if parsed.isoformat() != day:
             raise ValueError(direction + " test date is not canonical.")
+        if parsed < date(2020, 8, 2) or parsed >= target_day:
+            raise ValueError(direction + " test date is outside the pre-target 6-of-60 scope.")
+        dates.append(day)
         history_count = item.get(history_key)
         hit_count = item.get("hit_count")
         positions = item.get("hit_column_positions_1_to_6")
@@ -118,6 +122,9 @@ def _format_draw_lines(draws, direction, candidate_id, spec_sha):
         output.append(
             f"{day}: {hit_count}/6 isabet | sütunlar: {position_text} | referans geçmiş: {history_count}"
         )
+    expected_dates = sorted(dates, reverse=(direction == "reverse"))
+    if dates != expected_dates or len(dates) != len(set(dates)):
+        raise ValueError(direction + " test dates must be unique and directionally chronological.")
     return output
 
 
@@ -183,8 +190,18 @@ def format_research_messages(report, run_url="", branch="main", title="Otonom Ar
     )):
         raise ValueError("Directional evaluation counts or fold counts are invalid.")
 
-    forward_draws = _format_draw_lines(forward.get("per_draw"), "forward", forward_id, forward_sha)
-    reverse_draws = _format_draw_lines(reverse.get("per_draw"), "reverse", reverse_id, reverse_sha)
+    forward_draws = _format_draw_lines(forward.get("per_draw"), "forward", forward_id, forward_sha, target_day)
+    reverse_draws = _format_draw_lines(reverse.get("per_draw"), "reverse", reverse_id, reverse_sha, target_day)
+    if len(forward_draws) != forward_count or len(reverse_draws) != reverse_count:
+        raise ValueError("Per-draw report counts do not match their directional holdout counts.")
+    forward_dates = [item["test_date"] for item in forward["per_draw"]]
+    reverse_dates = [item["test_date"] for item in reverse["per_draw"]]
+    if set(forward_dates).intersection(reverse_dates):
+        raise ValueError("Forward and reverse Telegram reports contain overlapping holdout dates.")
+    if forward_dates[0] != report.get("validation_start_date") or forward_dates[-1] != report.get("validation_end_date"):
+        raise ValueError("Forward Telegram dates do not match the sealed validation range.")
+    if reverse_dates[0] != reverse.get("first_test_date") or reverse_dates[-1] != reverse.get("last_test_date"):
+        raise ValueError("Reverse Telegram dates do not match the sealed validation range.")
 
     common = [
         f"Hedef tarihi (çekiliş sayıları gizli): {target_date}",
