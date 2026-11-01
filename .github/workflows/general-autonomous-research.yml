@@ -129,6 +129,7 @@ jobs:
             exit 1
           fi
       - name: Persist the refreshed canonical archive
+        id: persist_archive
         if: ${{ steps.status.outputs.authorized == 'true' && steps.status.outputs.lock_clear == 'true' }}
         run: |
           git config user.name "github-actions[bot]"
@@ -158,6 +159,7 @@ jobs:
             --github-output "$GITHUB_OUTPUT"
           cat "$GITHUB_OUTPUT"
       - name: Persist the target-attempt reservation
+        id: persist_attempt
         if: ${{ steps.attempt_reservation.outputs.attempt_id != '' }}
         run: |
           git config user.name "github-actions[bot]"
@@ -203,6 +205,7 @@ jobs:
             --github-output "$GITHUB_OUTPUT"
           cat "$GITHUB_OUTPUT"
       - name: Persist the sealed claim and immutable archive snapshot
+        id: persist_claim
         if: ${{ steps.sealed_claim.outputs.claim_created == 'true' }}
         run: |
           git add general_evaluation_ledger.json general_evaluation_snapshots/
@@ -221,13 +224,14 @@ jobs:
             --specs open_research_execution_specs.json \
             --output open_research_evaluation_report.json
       - name: Persist evaluation completion
+        id: persist_eval
         if: ${{ steps.evaluation.outcome == 'success' }}
         run: |
           git add general_evaluation_ledger.json
           git commit -m "Record autonomous sealed evaluation completion"
           git push origin HEAD:main
       - name: Record successful evaluation outcome
-        if: ${{ always() && steps.attempt_reservation.outputs.attempt_id != '' && steps.sealed_claim.outputs.claim_created == 'true' && steps.evaluation.outcome == 'success' }}
+        if: ${{ always() && steps.attempt_reservation.outputs.attempt_id != '' && steps.sealed_claim.outputs.claim_created == 'true' && steps.evaluation.outcome == 'success' && steps.persist_eval.outcome == 'success' }}
         env:
           ATTEMPT_ID: ${{ steps.attempt_reservation.outputs.attempt_id }}
         run: |
@@ -251,7 +255,7 @@ jobs:
           git commit -m "Record autonomous cycle without eligible candidate"
           git push origin HEAD:main
       - name: Record failed claimed cycle
-        if: ${{ always() && steps.attempt_reservation.outputs.attempt_id != '' && (steps.research.outcome == 'failure' || steps.sealed_claim.outcome == 'failure' || steps.evaluation.outcome == 'failure') }}
+        if: ${{ always() && steps.attempt_reservation.outputs.attempt_id != '' && (steps.persist_attempt.outcome == 'failure' || steps.research.outcome == 'failure' || steps.sealed_claim.outcome == 'failure' || steps.persist_claim.outcome == 'failure' || steps.evaluation.outcome == 'failure' || steps.persist_eval.outcome == 'failure') }}
         env:
           ATTEMPT_ID: ${{ steps.attempt_reservation.outputs.attempt_id }}
         run: |
@@ -287,7 +291,7 @@ jobs:
             --branch main \
             --run-url "https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
       - name: Notify Telegram after a failed claimed cycle
-        if: ${{ failure() && steps.attempt_reservation.outputs.attempt_id != '' }}
+        if: ${{ always() && steps.attempt_reservation.outputs.attempt_id != '' && (steps.persist_attempt.outcome == 'failure' || steps.research.outcome == 'failure' || steps.sealed_claim.outcome == 'failure' || steps.persist_claim.outcome == 'failure' || steps.evaluation.outcome == 'failure' || steps.persist_eval.outcome == 'failure') }}
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
