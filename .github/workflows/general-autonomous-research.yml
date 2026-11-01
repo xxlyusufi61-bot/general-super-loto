@@ -243,7 +243,7 @@ jobs:
           git commit -m "Record autonomous research cycle success"
           git push origin HEAD:main
       - name: Record no-candidate outcome without scoring the archive
-        if: ${{ always() && steps.attempt_reservation.outputs.attempt_id != '' && steps.research.outcome == 'success' && steps.sealed_claim.outputs.claim_created != 'true' }}
+        if: ${{ always() && steps.attempt_reservation.outputs.attempt_id != '' && steps.research.outcome == 'success' && steps.sealed_claim.outcome == 'success' && steps.sealed_claim.outputs.claim_created != 'true' }}
         env:
           ATTEMPT_ID: ${{ steps.attempt_reservation.outputs.attempt_id }}
         run: |
