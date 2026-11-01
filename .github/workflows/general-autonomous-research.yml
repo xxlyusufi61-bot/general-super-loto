@@ -280,7 +280,7 @@ jobs:
             --kind research \
             --report-log open_research_evaluation_report.json
       - name: Notify Telegram when no directional DSL candidate was eligible
-        if: ${{ steps.attempt_reservation.outputs.attempt_id != '' && steps.research.outcome == 'success' && steps.sealed_claim.outputs.claim_created != 'true' }}
+        if: ${{ steps.attempt_reservation.outputs.attempt_id != '' && steps.research.outcome == 'success' && steps.sealed_claim.outcome == 'success' && steps.sealed_claim.outputs.claim_created != 'true' }}
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
