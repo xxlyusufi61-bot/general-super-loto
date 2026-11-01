@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 import general_autonomous_research as auto
 from general_nvidia_guard import initial_lock_state, make_locked_state
@@ -174,7 +175,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
             )
             lock.write_text(json.dumps(initial_lock_state()), encoding="utf-8")
             for message in messages:
-                with self.subTest(message=message), unittest.mock.patch.object(
+                with self.subTest(message=message), patch.object(
                     auto.sealed,
                     "preflight",
                     side_effect=auto.sealed.SealedEvaluationError(message),
