@@ -369,10 +369,10 @@ class NvidiaUsageObservationTests(unittest.TestCase):
     def test_stream_parser_rejects_token_limit_truncation(self):
         response = MagicMock()
         response.readline.side_effect = [
-            b'data: {"choices":[{"delta":{"content":"partial answer"},"finish_reason":"length"}]}\\n',
-            b"\\n",
-            b"data: [DONE]\\n",
-            b"\\n",
+            b'data: {"choices":[{"delta":{"content":"partial answer"},"finish_reason":"length"}]}\n',
+            b"\n",
+            b"data: [DONE]\n",
+            b"\n",
             b"",
         ]
         with self.assertRaisesRegex(RuntimeError, "reached max_tokens"):
