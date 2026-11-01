@@ -1,9 +1,11 @@
-"""GitHub Actions test ve değerlendirme raporlarını Türkçe olarak Telegram'a gönderir."""
+"""GitHub Actions test ve araştırma raporlarını Türkçe olarak Telegram'a gönderir."""
 import argparse
 import json
+import math
 import os
 import urllib.parse
 import urllib.request
+from datetime import date
 from pathlib import Path
 
 LABELS = {
@@ -20,10 +22,20 @@ def read_report(path):
     if not path:
         return None
     try:
-        lines = Path(path).read_text(encoding="utf-8").splitlines()
+        raw = Path(path).read_text(encoding="utf-8")
     except OSError:
         return None
-    for line in reversed(lines):
+
+    # Evaluation reports are pretty-printed JSON files, while older logs may
+    # contain one JSON object per line. Support both without exposing raw data.
+    try:
+        value = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        value = None
+    if isinstance(value, dict):
+        return value
+
+    for line in reversed(raw.splitlines()):
         try:
             value = json.loads(line.strip())
         except (json.JSONDecodeError, TypeError):
@@ -48,6 +60,196 @@ def metric_lines(value):
                 suffix += f", {count} çekiliş"
             output.append(f"- {LABELS.get(name, name)}: {suffix}")
     return output
+
+
+def _safe_number(value, field):
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        raise ValueError(field + " is missing or invalid.")
+    number = float(value)
+    if not math.isfinite(number) or not 0.0 <= number <= 6.0:
+        raise ValueError(field + " must be a finite hit metric in the 0..6 range.")
+    return number
+
+
+def _safe_candidate(candidate_id, spec_sha, field):
+    if not isinstance(candidate_id, str) or not candidate_id or len(candidate_id) > 100:
+        raise ValueError(field + " candidate identifier is invalid.")
+    if (
+        not isinstance(spec_sha, str)
+        or len(spec_sha) != 64
+        or any(char not in "0123456789abcdef" for char in spec_sha)
+    ):
+        raise ValueError(field + " specification hash is invalid.")
+    return candidate_id, spec_sha
+
+
+def _format_draw_lines(draws, direction, candidate_id, spec_sha, target_day):
+    if not isinstance(draws, list) or not draws or len(draws) > 30:
+        raise ValueError(direction + " per-draw details are missing or outside the safe report limit.")
+    output = []
+    expected_direction = "forward" if direction == "forward" else "reverse_retrospective"
+    history_key = "training_draw_count" if direction == "forward" else "later_training_draw_count"
+    dates = []
+    for item in draws:
+        if not isinstance(item, dict) or item.get("direction") != expected_direction:
+            raise ValueError(direction + " per-draw direction mismatch.")
+        if item.get("hypothesis_id") != candidate_id or item.get("spec_sha256") != spec_sha:
+            raise ValueError(direction + " per-draw candidate provenance mismatch.")
+        if item.get("target_numbers_reported") is not False:
+            raise ValueError(direction + " report does not prove target-number omission.")
+        if item.get("predicted_number_values_reported") is not False:
+            raise ValueError(direction + " report does not prove predicted-number omission.")
+        day = item.get("test_date")
+        try:
+            parsed = date.fromisoformat(day)
+        except (TypeError, ValueError):
+            raise ValueError(direction + " test date is invalid.") from None
+        if parsed.isoformat() != day:
+            raise ValueError(direction + " test date is not canonical.")
+        if parsed < date(2020, 8, 2) or parsed >= target_day:
+            raise ValueError(direction + " test date is outside the pre-target 6-of-60 scope.")
+        dates.append(day)
+        history_count = item.get(history_key)
+        hit_count = item.get("hit_count")
+        positions = item.get("hit_column_positions_1_to_6")
+        if type(history_count) is not int or history_count < 1:
+            raise ValueError(direction + " reference-history count is invalid.")
+        if type(hit_count) is not int or not 0 <= hit_count <= 6:
+            raise ValueError(direction + " hit count is invalid.")
+        if not isinstance(positions, list) or len(positions) != hit_count:
+            raise ValueError(direction + " matched-column positions do not reconcile to hit count.")
+        if any(type(position) is not int or not 1 <= position <= 6 for position in positions):
+            raise ValueError(direction + " matched-column positions are invalid.")
+        if positions != sorted(set(positions)):
+            raise ValueError(direction + " matched-column positions are duplicated or unordered.")
+        position_text = ", ".join(str(value) for value in positions) if positions else "yok"
+        output.append(
+            f"{day}: {hit_count}/6 isabet | sütunlar: {position_text} | referans geçmiş: {history_count}"
+        )
+    expected_dates = sorted(dates, reverse=(direction == "reverse"))
+    if dates != expected_dates or len(dates) != len(set(dates)):
+        raise ValueError(direction + " test dates must be unique and directionally chronological.")
+    return output
+
+
+def format_research_messages(report, run_url="", branch="main", title="Otonom Araştırma"):
+    """Create separate safe forward and reverse Telegram messages."""
+    if not isinstance(report, dict) or report.get("status") != "EVALUATED_EXPLORATORY_FIXED_SPEC":
+        raise ValueError("A completed sealed evaluation report is required.")
+    safety_flags = (
+        "current_isolated_target_included",
+        "current_target_numbers_exposed",
+        "target_or_future_rows_used",
+        "per_draw_target_numbers_reported",
+        "candidate_rankings_reported",
+    )
+    if any(report.get(key) is not False for key in safety_flags):
+        raise ValueError("Evaluation report failed target/number omission checks.")
+
+    target_date = report.get("target_date")
+    try:
+        target_day = date.fromisoformat(target_date)
+    except (TypeError, ValueError):
+        raise ValueError("Isolated target date is invalid.") from None
+    if target_day.isoformat() != target_date:
+        raise ValueError("Isolated target date is not canonical.")
+
+    selection = report.get("candidate_selection")
+    forward = report.get("forward_walk_forward")
+    reverse = report.get("reverse_discovered_candidate_holdout")
+    forward_cv = report.get("time_ordered_cross_validation")
+    reverse_cv = report.get("reverse_time_ordered_cross_validation")
+    if not all(isinstance(item, dict) for item in (selection, forward, reverse, forward_cv, reverse_cv)):
+        raise ValueError("Bidirectional evaluation sections are incomplete.")
+
+    forward_id, forward_sha = _safe_candidate(
+        selection.get("forward_hypothesis_id"),
+        selection.get("forward_spec_sha256"),
+        "forward",
+    )
+    reverse_id, reverse_sha = _safe_candidate(
+        selection.get("reverse_hypothesis_id"),
+        selection.get("reverse_spec_sha256"),
+        "reverse",
+    )
+    if reverse.get("predictive_evidence") is not False:
+        raise ValueError("Reverse results must be explicitly marked retrospective-only.")
+    if reverse_cv.get("predictive_evidence") is not False:
+        raise ValueError("Reverse cross-validation must be explicitly marked retrospective-only.")
+
+    forward_mean = _safe_number(forward.get("mean_hits_out_of_6"), "forward mean")
+    forward_random = _safe_number(
+        forward.get("uniform_random_expected_hits_out_of_6"), "forward random reference"
+    )
+    forward_cv_mean = _safe_number(forward_cv.get("mean_hits_out_of_6"), "forward CV mean")
+    reverse_mean = _safe_number(reverse.get("mean_hits_out_of_6"), "reverse mean")
+    reverse_random = _safe_number(
+        reverse.get("uniform_random_expected_hits_out_of_6"), "reverse random reference"
+    )
+    reverse_cv_mean = _safe_number(reverse_cv.get("mean_hits_out_of_6"), "reverse CV mean")
+    forward_count = forward.get("validation_draw_count")
+    reverse_count = reverse.get("test_draw_count")
+    forward_folds = forward_cv.get("folds")
+    reverse_folds = reverse_cv.get("folds")
+    if any(type(item) is not int or item < 1 for item in (
+        forward_count, reverse_count, forward_folds, reverse_folds
+    )):
+        raise ValueError("Directional evaluation counts or fold counts are invalid.")
+
+    forward_draws = _format_draw_lines(forward.get("per_draw"), "forward", forward_id, forward_sha, target_day)
+    reverse_draws = _format_draw_lines(reverse.get("per_draw"), "reverse", reverse_id, reverse_sha, target_day)
+    if len(forward_draws) != forward_count or len(reverse_draws) != reverse_count:
+        raise ValueError("Per-draw report counts do not match their directional holdout counts.")
+    forward_dates = [item["test_date"] for item in forward["per_draw"]]
+    reverse_dates = [item["test_date"] for item in reverse["per_draw"]]
+    if set(forward_dates).intersection(reverse_dates):
+        raise ValueError("Forward and reverse Telegram reports contain overlapping holdout dates.")
+    if forward_dates[0] != report.get("validation_start_date") or forward_dates[-1] != report.get("validation_end_date"):
+        raise ValueError("Forward Telegram dates do not match the sealed validation range.")
+    if reverse_dates[0] != reverse.get("first_test_date") or reverse_dates[-1] != reverse.get("last_test_date"):
+        raise ValueError("Reverse Telegram dates do not match the sealed validation range.")
+
+    common = [
+        f"Hedef tarihi (çekiliş sayıları gizli): {target_date}",
+        "Arşiv kapsamı: 02.08.2020 ve sonrası, 6/60.",
+        "Hedef çekiliş keşif ve puanlamaya alınmadı.",
+    ]
+    link = f"GitHub Actions: {run_url}" if run_url else ""
+    forward_lines = [
+        f"✅ GENERAL — İLERİ YÖN | {title}",
+        *common,
+        f"Aday: {forward_id}",
+        f"Tanım SHA-256: {forward_sha}",
+        f"İleri holdout: {report.get('validation_start_date')} – {report.get('validation_end_date')}",
+        f"Test: {forward_count} çekiliş | ortalama {forward_mean:.3f}/6",
+        f"Rastgele referans: {forward_random:.3f}/6",
+        f"Zaman sıralı CV: {forward_folds} kat | {forward_cv_mean:.3f}/6",
+        "Not: CV, aynı mühürlü aralığın bölünmüş özetidir; bağımsız doğrulama değildir.",
+        "Çekiliş başına sonuçlar (tahmin edilen sayılar gösterilmez):",
+        *forward_draws,
+        "Durum: Deneysel bulgu; tek başına tahmin gücü veya mekanizma kanıtı değildir.",
+    ]
+    reverse_lines = [
+        f"✅ GENERAL — TERS YÖN / RETROSPEKTİF | {title}",
+        *common,
+        f"Aday: {reverse_id}",
+        f"Tanım SHA-256: {reverse_sha}",
+        f"Ters holdout: {reverse.get('first_test_date')} – {reverse.get('last_test_date')}",
+        f"Test: {reverse_count} çekiliş | ortalama {reverse_mean:.3f}/6",
+        f"Rastgele referans: {reverse_random:.3f}/6",
+        f"Ters zaman sıralı CV: {reverse_folds} kat | {reverse_cv_mean:.3f}/6",
+        "Not: CV, aynı ters holdout aralığının bölünmüş özetidir; bağımsız doğrulama değildir.",
+        "Çekiliş başına sonuçlar (tahmin edilen sayılar gösterilmez):",
+        *reverse_draws,
+        "ÖNEMLİ: Ters yön daha sonraki tarihli verileri kullandığından yalnızca retrospektif stres testidir; ileriye dönük tahmin kanıtı değildir.",
+    ]
+    if branch:
+        forward_lines.append("Dal: " + branch)
+        reverse_lines.append("Dal: " + branch)
+    if link:
+        forward_lines.extend(["", link])
+        reverse_lines.extend(["", link])
+    return ["\n".join(forward_lines)[:3800], "\n".join(reverse_lines)[:3800]]
 
 
 def format_message(title, status, run_url, branch, kind="status", report=None):
@@ -122,23 +324,7 @@ def format_message(title, status, run_url, branch, kind="status", report=None):
     return "\n".join(lines)[:3800]
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--title", required=True)
-    parser.add_argument("--status", required=True)
-    parser.add_argument("--run-url", default="")
-    parser.add_argument("--branch", default="")
-    parser.add_argument("--kind", choices=["status", "candidates", "walkforward"], default="status")
-    parser.add_argument("--report-log")
-    args = parser.parse_args()
-    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
-    if not token or not chat_id or not chat_id.lstrip("-").isdigit():
-        raise SystemExit("Telegram raporu gönderilemedi: gerekli secret eksik veya geçersiz.")
-    report = read_report(args.report_log)
-    if args.status.lower() == "success" and args.kind in ("candidates", "walkforward") and report is None:
-        raise SystemExit("Telegram raporu gönderilemedi: toplu değerlendirme raporu okunamadı.")
-    message = format_message(args.title, args.status, args.run_url, args.branch, args.kind, report)
+def _send_message(token, chat_id, message):
     data = urllib.parse.urlencode({
         "chat_id": chat_id,
         "text": message,
@@ -161,7 +347,31 @@ def main():
         or not isinstance(result["result"].get("message_id"), int)
     ):
         raise SystemExit("Telegram raporu gönderilemedi: Telegram teslimatı doğrulamadı.")
-    print("TELEGRAM RAPOR TESLİMİ: BAŞARILI")
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--title", required=True)
+    parser.add_argument("--status", required=True)
+    parser.add_argument("--run-url", default="")
+    parser.add_argument("--branch", default="")
+    parser.add_argument("--kind", choices=["status", "candidates", "walkforward", "research"], default="status")
+    parser.add_argument("--report-log")
+    args = parser.parse_args()
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    if not token or not chat_id or not chat_id.lstrip("-").isdigit():
+        raise SystemExit("Telegram raporu gönderilemedi: gerekli secret eksik veya geçersiz.")
+    report = read_report(args.report_log)
+    if args.status.lower() == "success" and args.kind in ("candidates", "walkforward", "research") and report is None:
+        raise SystemExit("Telegram raporu gönderilemedi: toplu değerlendirme raporu okunamadı.")
+    if args.kind == "research" and args.status.lower() == "success":
+        messages = format_research_messages(report, args.run_url, args.branch, args.title)
+    else:
+        messages = [format_message(args.title, args.status, args.run_url, args.branch, args.kind, report)]
+    for message in messages:
+        _send_message(token, chat_id, message)
+    print("TELEGRAM RAPOR TESLİMİ: BAŞARILI (" + str(len(messages)) + " mesaj)")
 
 
 if __name__ == "__main__":

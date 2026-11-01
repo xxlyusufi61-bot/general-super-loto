@@ -6,11 +6,23 @@ on:
     paths:
       - "telegram_report.py"
       - "telegram_report_test.py"
+      - "general_autonomous_research.py"
+      - "general_autonomous_research_test.py"
+      - "general_autonomous_research_state.json"
+      - "general_open_research.py"
+      - "general_open_research_test.py"
+      - ".github/workflows/general-autonomous-research.yml"
       - ".github/workflows/telegram-report-test.yml"
   pull_request:
     paths:
       - "telegram_report.py"
       - "telegram_report_test.py"
+      - "general_autonomous_research.py"
+      - "general_autonomous_research_test.py"
+      - "general_autonomous_research_state.json"
+      - "general_open_research.py"
+      - "general_open_research_test.py"
+      - ".github/workflows/general-autonomous-research.yml"
       - ".github/workflows/telegram-report-test.yml"
 
 permissions:
@@ -28,6 +40,13 @@ jobs:
         with:
           python-version: "3.12"
       - name: Compile report helper and tests
-        run: python -m py_compile telegram_report.py telegram_report_test.py
+        run: |
+          python -m py_compile \
+            telegram_report.py telegram_report_test.py \
+            general_autonomous_research.py general_autonomous_research_test.py \
+            general_open_research.py general_open_research_test.py
       - name: Run synthetic report formatting tests
-        run: python -m unittest -v telegram_report_test
+        run: python -m unittest -v general_open_research_test general_autonomous_research_test telegram_report_test
+      - name: Parse autonomous workflow YAML
+        run: |
+          ruby -e 'require "yaml"; YAML.load_file(".github/workflows/general-autonomous-research.yml"); puts "Autonomous workflow YAML: PASS"'
