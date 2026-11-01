@@ -307,7 +307,7 @@ def read_remote_rate_limit():
 def write_remote_rate_limit(state, sha):
     url, branch = _rate_limit_url()
     raw = (
-        json.dumps(validate_rate_limit_state(state), ensure_ascii=False, indent=2) + "\\n"
+        json.dumps(validate_rate_limit_state(state), ensure_ascii=False, indent=2) + "\n"
     ).encode("utf-8")
     payload = {
         "message": "chore: reserve shared NVIDIA request slot",
