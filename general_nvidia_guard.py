@@ -169,9 +169,9 @@ def reserve_rate_limit_slot(previous, source, now=None):
     now = now.astimezone(timezone.utc)
 
     # The timestamp is intentionally recorded 30 seconds ahead of the guard's
-    # clock. The GitHub reservation write has a 20-second timeout; this margin
-    # prevents a slow successful ledger write from making the record earlier
-    # than the outbound NVIDIA request it protects.
+    # clock. The final Git push has a 30-second timeout; this margin prevents a
+    # slow successful reservation push from making the record earlier than the
+    # outbound NVIDIA request it protects.
     effective_now = now + timedelta(seconds=RATE_LIMIT_RESERVATION_SAFETY_SECONDS)
     cutoff = effective_now - timedelta(seconds=NVIDIA_RATE_WINDOW_SECONDS)
     active = []
