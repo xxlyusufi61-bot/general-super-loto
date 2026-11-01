@@ -48,6 +48,9 @@ jobs:
         if: ${{ inputs.confirm_live_calls == 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_3_NVIDIA_REQUESTS' && inputs.confirm_free_usage_verified == true }}
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GENERAL_DEFAULT_BRANCH: main
           GENERAL_NVIDIA_FREE_USAGE_VERIFIED: "true"
         run: |
           python3 - <<'PY'
@@ -56,6 +59,7 @@ jobs:
           from pathlib import Path
           import urllib.request
           import urllib.error
+          from general_nvidia_guard import reserve_nvidia_request
 
           key = os.environ.get("NVIDIA_API_KEY", "")
           if os.environ.get("GENERAL_NVIDIA_FREE_USAGE_VERIFIED") != "true":
@@ -93,6 +97,7 @@ jobs:
               method="POST"
           )
 
+          reserve_nvidia_request("nvidia-chat-test")
           Path("/tmp/general_nvidia_api_attempted").touch()
 
           try:
