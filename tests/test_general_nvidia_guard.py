@@ -225,6 +225,37 @@ class GlobalNvidiaLockTests(unittest.TestCase):
                 self.assertIn("GITHUB_TOKEN: ${{ github.token }}", source)
                 self.assertIn("GITHUB_REPOSITORY: ${{ github.repository }}", source)
 
+
+    def test_read_remote_lock_returns_blob_sha_for_contents_api_updates(self):
+        locked_state = make_locked_state(
+            initial_lock_state(),
+            "offline lock SHA regression test",
+            stamp="2026-11-01T01:00:00+00:00",
+            locked_by="offline-test",
+        )
+        expected_ref = "refs/remotes/origin/main:general_nvidia_lock.json"
+        commands = []
+
+        def fake_git(arguments, *, cwd=None):
+            commands.append(list(arguments))
+            if arguments == ["show", expected_ref]:
+                return json.dumps(locked_state)
+            if arguments == ["rev-parse", expected_ref]:
+                return "expected-blob-sha"
+            raise AssertionError("Unexpected Git command: " + repr(arguments))
+
+        with patch.dict(os.environ, {"GENERAL_DEFAULT_BRANCH": "main"}), patch.object(
+            nvidia_guard, "_fetch_remote_branch"
+        ) as mocked_fetch, patch.object(
+            nvidia_guard, "_run_git", side_effect=fake_git
+        ):
+            observed_state, observed_sha = nvidia_guard.read_remote_lock()
+
+        mocked_fetch.assert_called_once_with("main")
+        self.assertEqual(observed_state, locked_state)
+        self.assertEqual(observed_sha, "expected-blob-sha")
+        self.assertIn(["rev-parse", expected_ref], commands)
+
     def test_general_core_python_syntax(self):
         source = Path("general_core.py").read_text(encoding="utf-8")
         compile(source, "general_core.py", "exec")
