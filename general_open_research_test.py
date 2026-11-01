@@ -584,6 +584,50 @@ class NvidiaUsageObservationTests(unittest.TestCase):
             Path("/tmp/general_nvidia_api_attempted").unlink(missing_ok=True)
             Path("/tmp/general_nvidia_api_succeeded").unlink(missing_ok=True)
 
+    def test_token_limit_failure_is_recorded_as_incomplete_model_response(self):
+        env = {
+            "GENERAL_CONFIRM_LIVE_CALLS": CONFIRMATION_PHRASE,
+            "GENERAL_NVIDIA_GUARD_PASSED": "1",
+            "GENERAL_ALLOW_NVIDIA_CALL": "true",
+            "GENERAL_NVIDIA_FREE_USAGE_VERIFIED": "true",
+            "NVIDIA_API_KEY": "test-secret",
+        }
+        response = MagicMock()
+        response.status = 200
+        response.headers = {"x-request-id": "synthetic-request"}
+        response.readline.side_effect = [
+            b'data: {"choices":[{"delta":{"content":"partial"},"finish_reason":"length"}]}\\n',
+            b"\\n",
+            b"data: [DONE]\\n",
+            b"\\n",
+            b"",
+        ]
+        saved = []
+        try:
+            with patch.dict(os.environ, env, clear=True), patch.object(
+                research, "reserve_nvidia_request"
+            ), patch.object(
+                research,
+                "save_usage_observation",
+                side_effect=lambda observation, **kwargs: saved.append(observation),
+            ), patch(
+                "general_open_research.urllib.request.urlopen",
+                return_value=response,
+            ) as mocked_urlopen:
+                with self.assertRaisesRegex(RuntimeError, "reached max_tokens"):
+                    research.call_model(
+                        [{"role": "user", "content": "test"}],
+                        request_label="forward",
+                    )
+                self.assertEqual(mocked_urlopen.call_count, 1)
+            self.assertEqual(len(saved), 1)
+            self.assertEqual(saved[0]["failure_stage"], "model_finish")
+            self.assertEqual(saved[0]["network_error_type"], "IncompleteModelResponse")
+            self.assertEqual(saved[0]["automatic_retries"], 0)
+        finally:
+            Path("/tmp/general_nvidia_api_attempted").unlink(missing_ok=True)
+            Path("/tmp/general_nvidia_api_succeeded").unlink(missing_ok=True)
+
     def test_stream_read_timeout_is_distinguished_from_connection_timeout(self):
         env = {
             "GENERAL_CONFIRM_LIVE_CALLS": CONFIRMATION_PHRASE,
