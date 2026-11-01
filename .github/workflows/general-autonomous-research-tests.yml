@@ -2,8 +2,6 @@ name: GENERAL Autonomous Research Scheduler Tests
 
 'on':
   push:
-    branches:
-      - main
     paths:
       - "general_autonomous_research.py"
       - "general_autonomous_research_test.py"
