@@ -58,7 +58,12 @@ provider call. Failed and uncertain provider attempts still consume their
 reserved slot; no automatic provider retry is performed.
 
 The state branch is operational safety data and must not be deleted or merged into
-`main`.
+`main`. The 40-per-60-second accounting covers requests routed through this
+repository's shared GENERAL NVIDIA key; it cannot observe manual calls or other
+projects that use the same NVIDIA account/key outside this repository. Any such
+external consumer must use the same central limiter to be included in this count.
+Git transport remains subject to GitHub's normal repository/abuse controls; any
+fetch or push failure blocks the corresponding NVIDIA request.
 
 ## Target, archive, and holdout rules
 
