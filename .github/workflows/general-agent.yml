@@ -220,6 +220,9 @@ jobs:
         if: ${{ inputs.agent != 'archive' && inputs.agent != 'isolation-test' && inputs.confirm_live_calls == 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_3_NVIDIA_REQUESTS' && inputs.confirm_free_usage_verified == true }}
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GENERAL_DEFAULT_BRANCH: main
           AGENT_ID: ${{ inputs.agent }}
           TASK_TEXT: ${{ inputs.task }}
           GENERAL_SAVE_MEMORY: ${{ inputs.publish_memory_pr == 'YES' && '1' || '0' }}
