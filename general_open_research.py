@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 import general_data_guard as guard
+from general_nvidia_guard import reserve_nvidia_request
 from general_live_consent import has_explicit_live_consent
 from general_hypothesis_proposals import parse_hypothesis_proposals
 from general_execution_spec_parser import parse_execution_spec_block
@@ -684,6 +685,7 @@ def call_model(
         headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"},
         method="POST",
     )
+    reserve_nvidia_request("open-research-" + request_key)
     attempt_marker = Path("/tmp/general_nvidia_api_attempted")
     success_marker = Path("/tmp/general_nvidia_api_succeeded")
     for marker in (attempt_marker, success_marker):
