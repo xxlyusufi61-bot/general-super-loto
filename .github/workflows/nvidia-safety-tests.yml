@@ -26,4 +26,4 @@ jobs:
       - name: Run offline safety-lock tests
         run: |
           python3 -m unittest discover -s tests -v
-          python3 -m unittest -v general_autonomous_research_test general_live_consent_test
+          python3 -m unittest -v general_autonomous_research_test general_live_consent_test general_agent_workflow_guard_test
