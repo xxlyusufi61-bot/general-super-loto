@@ -6,11 +6,14 @@ The scheduler reuses the existing blank-slate research runner, safe JSON DSL,
 sealed evaluation ledger, and Telegram reporting. It does not replace or loosen
 their validation rules.
 
-A scheduled check runs every six hours. It may start at most one research cycle
-for a newly published latest draw date. If the archive target date has not
-advanced, that date has already been attempted, the archive fails Data Guard,
-or fresh disjoint holdout windows are unavailable, the cycle stops before any
-NVIDIA inference request.
+A scheduled check runs every six hours. Its first job refreshes and validates
+the canonical 6-of-60 archive independently of AI authorization and NVIDIA
+lock state; this archive-only job makes no model request. The research job then
+checks the explicit authorization and global lock and may start at most one
+research cycle for a newly published latest draw date. If the archive target
+date has not advanced, that date has already been attempted, the archive fails
+Data Guard, or fresh disjoint holdout windows are unavailable, the cycle stops
+before any NVIDIA inference request.
 
 ## Authorization and NVIDIA safety
 
