@@ -66,7 +66,7 @@ class TelegramReportTests(unittest.TestCase):
             "per_draw_target_numbers_reported": False,
             "candidate_rankings_reported": False,
             "validation_start_date": "2021-01-01",
-            "validation_end_date": "2021-02-01",
+            "validation_end_date": "2021-01-03",
             "candidate_selection": {
                 "forward_hypothesis_id": "FWD-001",
                 "forward_spec_sha256": spec_a,
