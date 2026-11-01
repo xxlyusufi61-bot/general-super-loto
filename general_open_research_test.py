@@ -597,6 +597,8 @@ class NvidiaUsageObservationTests(unittest.TestCase):
         response = MagicMock()
         response.status = 200
         response.headers = {"x-request-id": "synthetic-request"}
+        response.__enter__.return_value = response
+        response.__exit__.return_value = False
         response.readline.side_effect = [
             b'data: {"choices":[{"delta":{"content":"partial"},"finish_reason":"length"}]}\n',
             b"\n",
