@@ -596,10 +596,10 @@ class NvidiaUsageObservationTests(unittest.TestCase):
         response.status = 200
         response.headers = {"x-request-id": "synthetic-request"}
         response.readline.side_effect = [
-            b'data: {"choices":[{"delta":{"content":"partial"},"finish_reason":"length"}]}\\n',
-            b"\\n",
-            b"data: [DONE]\\n",
-            b"\\n",
+            b'data: {"choices":[{"delta":{"content":"partial"},"finish_reason":"length"}]}\n',
+            b"\n",
+            b"data: [DONE]\n",
+            b"\n",
             b"",
         ]
         saved = []
