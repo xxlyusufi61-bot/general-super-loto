@@ -366,6 +366,18 @@ class NvidiaUsageObservationTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "before the \\[DONE\\] marker"):
             research._parse_streamed_chat_completion(response)
 
+    def test_stream_parser_rejects_token_limit_truncation(self):
+        response = MagicMock()
+        response.readline.side_effect = [
+            b'data: {"choices":[{"delta":{"content":"partial answer"},"finish_reason":"length"}]}\\n',
+            b"\\n",
+            b"data: [DONE]\\n",
+            b"\\n",
+            b"",
+        ]
+        with self.assertRaisesRegex(RuntimeError, "reached max_tokens"):
+            research._parse_streamed_chat_completion(response)
+
     def test_stream_parser_rejects_reasoning_only_output(self):
         response = MagicMock()
         response.readline.side_effect = [
