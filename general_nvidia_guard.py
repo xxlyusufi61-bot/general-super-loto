@@ -1,16 +1,21 @@
 #!/usr/bin/env python3
 """Fail-closed global safety lock for every GENERAL NVIDIA API workflow."""
 import argparse
+import atexit
 import base64
 import json
 import math
 import os
+import shutil
+import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 LOCK_PATH = "general_nvidia_lock.json"
 RATE_LIMIT_PATH = "general_nvidia_rate_limit.json"
@@ -19,6 +24,9 @@ NVIDIA_REQUESTS_PER_MINUTE = 40
 NVIDIA_RATE_WINDOW_SECONDS = 60
 RATE_LIMIT_RESERVATION_SAFETY_SECONDS = 30
 MAX_REASON_LENGTH = 320
+GIT_COMMAND_TIMEOUT_SECONDS = 30
+_RATE_LIMIT_WORKTREE = None
+_RATE_LIMIT_LOCK_VERIFIED = False
 
 
 def utc_now():
@@ -198,6 +206,46 @@ def reserve_rate_limit_slot(previous, source, now=None):
     return validate_rate_limit_state(state), 0
 
 
+
+def _run_git(arguments, *, cwd=None):
+    try:
+        completed = subprocess.run(
+            ["git"] + list(arguments),
+            cwd=str(cwd or Path(__file__).resolve().parent),
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=GIT_COMMAND_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        # Do not echo Git stderr: it may include remote details. All state
+        # operations are fail-closed and no NVIDIA call may follow a failure.
+        raise RuntimeError(
+            "GitHub shared safety-state operation failed; NVIDIA request blocked."
+        ) from None
+    return completed.stdout
+
+
+def _fetch_remote_branch(branch):
+    if not isinstance(branch, str) or not branch or "/" in branch or ".." in branch:
+        raise RuntimeError("Invalid GENERAL safety-state branch; NVIDIA request blocked.")
+    refspec = "+refs/heads/" + branch + ":refs/remotes/origin/" + branch
+    _run_git(["fetch", "--no-tags", "--depth=1", "origin", refspec])
+
+
+def _cleanup_rate_limit_worktree():
+    global _RATE_LIMIT_WORKTREE
+    worktree = _RATE_LIMIT_WORKTREE
+    _RATE_LIMIT_WORKTREE = None
+    if worktree is None:
+        return
+    try:
+        _run_git(["worktree", "remove", "--force", str(worktree)])
+    except Exception:
+        shutil.rmtree(worktree, ignore_errors=True)
+
+
 def _required_env(name):
     value = os.environ.get(name, "").strip()
     if not value:
@@ -247,17 +295,19 @@ def _lock_url():
 
 
 def read_remote_lock():
-    url, _ = _lock_url()
-    response = _api_request("GET", url)
-    sha = response.get("sha")
-    encoded = response.get("content")
-    if not isinstance(sha, str) or not isinstance(encoded, str):
-        raise RuntimeError("global NVIDIA lock file is missing or unreadable")
+    branch = os.environ.get("GENERAL_DEFAULT_BRANCH", "main").strip() or "main"
+    _fetch_remote_branch(branch)
+    ref = "refs/remotes/origin/" + branch + ":" + LOCK_PATH
     try:
-        decoded = base64.b64decode("".join(encoded.split())).decode("utf-8")
-        state = validate_lock_state(json.loads(decoded))
-    except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+        raw = _run_git(["show", ref])
+        sha = _run_git(["rev-parse", ref]).strip()
+        state = validate_lock_state(json.loads(raw))
+    except (ValueError, json.JSONDecodeError):
         raise RuntimeError("global NVIDIA lock file is malformed; API use blocked") from None
+    except RuntimeError:
+        raise RuntimeError("global NVIDIA lock file is missing or unreadable; API use blocked") from None
+    if not sha:
+        raise RuntimeError("global NVIDIA lock file SHA is missing; API use blocked")
     return state, sha
 
 
@@ -278,48 +328,79 @@ def write_remote_lock(state, sha, message):
 
 
 
-def _rate_limit_url():
-    repo = _required_env("GITHUB_REPOSITORY")
-    api_base = os.environ.get("GITHUB_API_URL", "https://api.github.com").rstrip("/")
-    url = (
-        api_base + "/repos/" + urllib.parse.quote(repo, safe="/")
-        + "/contents/" + urllib.parse.quote(RATE_LIMIT_PATH, safe="/")
-        + "?ref=" + urllib.parse.quote(RATE_LIMIT_BRANCH, safe="")
+def _ensure_rate_limit_worktree():
+    global _RATE_LIMIT_WORKTREE
+    if _RATE_LIMIT_WORKTREE is not None and Path(_RATE_LIMIT_WORKTREE).is_dir():
+        return Path(_RATE_LIMIT_WORKTREE)
+
+    _fetch_remote_branch(RATE_LIMIT_BRANCH)
+    remote_ref = "refs/remotes/origin/" + RATE_LIMIT_BRANCH
+    worktree = Path(tempfile.mkdtemp(prefix="general-nvidia-rate-limit-"))
+    # git worktree add expects a path that does not already exist.
+    worktree.rmdir()
+    _run_git(["worktree", "add", "--detach", str(worktree), remote_ref])
+    _run_git(["config", "user.name", "GENERAL NVIDIA Rate Guard"], cwd=worktree)
+    _run_git(
+        ["config", "user.email", "41898282+github-actions[bot]@users.noreply.github.com"],
+        cwd=worktree,
     )
-    return url, RATE_LIMIT_BRANCH
+    _RATE_LIMIT_WORKTREE = worktree
+    atexit.register(_cleanup_rate_limit_worktree)
+    return worktree
 
 
 def read_remote_rate_limit():
-    url, _ = _rate_limit_url()
-    response = _api_request("GET", url)
-    sha = response.get("sha")
-    encoded = response.get("content")
-    if not isinstance(sha, str) or not isinstance(encoded, str):
-        raise RuntimeError("shared NVIDIA rate-limit ledger is missing or unreadable")
+    worktree = _ensure_rate_limit_worktree()
+    path = worktree / RATE_LIMIT_PATH
     try:
-        decoded = base64.b64decode("".join(encoded.split())).decode("utf-8")
-        state = validate_rate_limit_state(json.loads(decoded))
-    except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
-        raise RuntimeError("shared NVIDIA rate-limit ledger is malformed; API use blocked") from None
-    return state, sha
+        state = validate_rate_limit_state(
+            json.loads(path.read_text(encoding="utf-8"))
+        )
+    except (OSError, ValueError, json.JSONDecodeError):
+        raise RuntimeError(
+            "shared NVIDIA rate-limit ledger is missing or malformed; API use blocked"
+        ) from None
+    head = _run_git(["rev-parse", "HEAD"], cwd=worktree).strip()
+    if not head:
+        raise RuntimeError("shared NVIDIA rate-limit branch head is unreadable; API use blocked")
+    return state, head
 
 
 def write_remote_rate_limit(state, sha):
-    url, branch = _rate_limit_url()
-    raw = (
-        json.dumps(validate_rate_limit_state(state), ensure_ascii=False, indent=2) + "\n"
-    ).encode("utf-8")
-    payload = {
-        "message": "chore: reserve shared NVIDIA request slot",
-        "content": base64.b64encode(raw).decode("ascii"),
-        "sha": sha,
-        "branch": branch,
-    }
-    response = _api_request("PUT", url.split("?ref=", 1)[0], payload)
-    commit = response.get("commit")
-    if not isinstance(commit, dict) or not isinstance(commit.get("sha"), str):
-        raise RuntimeError("GitHub did not confirm the shared NVIDIA rate-limit reservation")
-    return commit["sha"]
+    worktree = _ensure_rate_limit_worktree()
+    current_head = _run_git(["rev-parse", "HEAD"], cwd=worktree).strip()
+    if current_head != sha:
+        raise RuntimeError(
+            "shared NVIDIA rate-limit state changed unexpectedly; provider request blocked"
+        )
+
+    path = worktree / RATE_LIMIT_PATH
+    raw = json.dumps(
+        validate_rate_limit_state(state),
+        ensure_ascii=False,
+        indent=2,
+        allow_nan=False,
+    ) + "\n"
+    try:
+        path.write_text(raw, encoding="utf-8")
+    except OSError:
+        raise RuntimeError(
+            "shared NVIDIA rate-limit ledger could not be written; provider request blocked"
+        ) from None
+
+    _run_git(["add", RATE_LIMIT_PATH], cwd=worktree)
+    _run_git(
+        ["commit", "-m", "chore: reserve shared NVIDIA request slot"],
+        cwd=worktree,
+    )
+    new_head = _run_git(["rev-parse", "HEAD"], cwd=worktree).strip()
+    # Normal fast-forward push only. If another writer moved the branch, this
+    # fails closed instead of overwriting or losing another reservation.
+    _run_git(
+        ["push", "origin", "HEAD:refs/heads/" + RATE_LIMIT_BRANCH],
+        cwd=worktree,
+    )
+    return new_head
 
 
 def reserve_nvidia_request(source):
@@ -328,12 +409,15 @@ def reserve_nvidia_request(source):
     if not source:
         raise RuntimeError("NVIDIA request source is required; no provider request was sent.")
 
+    global _RATE_LIMIT_LOCK_VERIFIED
     while True:
-        lock_state, _ = read_remote_lock()
-        if lock_state["locked"]:
-            raise RuntimeError(
-                "Global NVIDIA safety lock is active; no provider request was sent."
-            )
+        if not _RATE_LIMIT_LOCK_VERIFIED:
+            lock_state, _ = read_remote_lock()
+            if lock_state["locked"]:
+                raise RuntimeError(
+                    "Global NVIDIA safety lock is active; no provider request was sent."
+                )
+            _RATE_LIMIT_LOCK_VERIFIED = True
 
         previous, sha = read_remote_rate_limit()
         next_state, wait_seconds = reserve_rate_limit_slot(previous, source)
