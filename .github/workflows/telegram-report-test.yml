@@ -43,4 +43,5 @@ jobs:
       - name: Run synthetic report formatting tests
         run: python -m unittest -v general_autonomous_research_test telegram_report_test
       - name: Parse autonomous workflow YAML
-        run: ruby -e 'require "yaml"; YAML.load_file(".github/workflows/general-autonomous-research.yml"); puts "Autonomous workflow YAML: PASS"'
+        run: |
+          ruby -e 'require "yaml"; YAML.load_file(".github/workflows/general-autonomous-research.yml"); puts "Autonomous workflow YAML: PASS"'
