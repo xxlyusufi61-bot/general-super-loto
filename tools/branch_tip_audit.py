@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-FORBIDDEN_PATTERN = re.compile(r"(?i)\\bR\\s*[-_ ]?\\s*54\\b")
+FORBIDDEN_PATTERN = re.compile(r"(?i)\bR\s*[-_ ]?\s*54\b")
 CODE_AND_DATA_SUFFIXES = {
     ".py", ".json", ".yml", ".yaml", ".sh", ".bash", ".js", ".ts",
     ".toml", ".ini", ".cfg", ".ps1", ".ipynb", ".xml", ".html",
@@ -43,7 +43,7 @@ def tracked_paths() -> list[str]:
         raise RuntimeError(proc.stderr.decode("utf-8", errors="replace"))
     return [
         item.decode("utf-8", errors="strict")
-        for item in proc.stdout.split(b"\\0")
+        for item in proc.stdout.split(b"\0")
         if item
     ]
 
