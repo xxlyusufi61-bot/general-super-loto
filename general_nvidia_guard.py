@@ -26,7 +26,6 @@ RATE_LIMIT_RESERVATION_SAFETY_SECONDS = 30
 MAX_REASON_LENGTH = 320
 GIT_COMMAND_TIMEOUT_SECONDS = 30
 _RATE_LIMIT_WORKTREE = None
-_RATE_LIMIT_LOCK_VERIFIED = False
 
 
 def utc_now():
@@ -409,15 +408,15 @@ def reserve_nvidia_request(source):
     if not source:
         raise RuntimeError("NVIDIA request source is required; no provider request was sent.")
 
-    global _RATE_LIMIT_LOCK_VERIFIED
     while True:
-        if not _RATE_LIMIT_LOCK_VERIFIED:
-            lock_state, _ = read_remote_lock()
-            if lock_state["locked"]:
-                raise RuntimeError(
-                    "Global NVIDIA safety lock is active; no provider request was sent."
-                )
-            _RATE_LIMIT_LOCK_VERIFIED = True
+        # Re-read the remote global lock before every reserved provider request.
+        # A successful earlier check must never authorize later requests in the same
+        # process after another workflow or operator activates the safety lock.
+        lock_state, _ = read_remote_lock()
+        if lock_state["locked"]:
+            raise RuntimeError(
+                "Global NVIDIA safety lock is active; no provider request was sent."
+            )
 
         previous, sha = read_remote_rate_limit()
         next_state, wait_seconds = reserve_rate_limit_slot(previous, source)
