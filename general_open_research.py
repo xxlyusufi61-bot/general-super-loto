@@ -38,6 +38,10 @@ USAGE_REPORT = BASE / "open_research_usage.json"
 API_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
 DOCUMENTATION_REVIEW_DATE = "2026-10-25"
 
+MAX_NVIDIA_REQUESTS_PER_RUN = 2
+_NVIDIA_REQUESTS_ATTEMPTED = 0
+_NVIDIA_REQUEST_LABELS_ATTEMPTED: set[str] = set()
+
 QUOTA_LIMITATION_NOTE = (
     "No supported account-level remaining-quota API was identified in the NVIDIA "
     "API Catalog documentation reviewed on 2026-10-25. Check account-level rate "
@@ -616,6 +620,7 @@ def call_model(
     *,
     request_label: str | None = None,
 ) -> str:
+    global _NVIDIA_REQUESTS_ATTEMPTED
     if request_label not in {None, "forward", "reverse"}:
         raise ValueError("Unknown NVIDIA request label.")
     request_usage_name = (
@@ -650,6 +655,23 @@ def call_model(
     key = os.environ.get("NVIDIA_API_KEY")
     if not key:
         raise RuntimeError("NVIDIA_API_KEY missing; research stopped.")
+
+    if _NVIDIA_REQUESTS_ATTEMPTED >= MAX_NVIDIA_REQUESTS_PER_RUN:
+        raise RuntimeError(
+            "Autonomous research request cap reached (2 total); no additional provider request was sent."
+        )
+    request_key = request_label or "unlabelled"
+    if request_key in _NVIDIA_REQUEST_LABELS_ATTEMPTED:
+        raise RuntimeError(
+            "This directional NVIDIA request was already attempted; no duplicate request was sent."
+        )
+    if request_label is not None:
+        expected_direction = ("forward", "reverse")[_NVIDIA_REQUESTS_ATTEMPTED]
+        if request_label != expected_direction:
+            raise RuntimeError(
+                "Directional NVIDIA requests must run once each in forward-then-reverse order."
+            )
+
     body = json.dumps({
         "model": MODEL,
         "messages": messages,
@@ -669,6 +691,8 @@ def call_model(
             marker.unlink()
         except FileNotFoundError:
             pass
+    _NVIDIA_REQUESTS_ATTEMPTED += 1
+    _NVIDIA_REQUEST_LABELS_ATTEMPTED.add(request_key)
     attempt_marker.write_text(
         datetime.now(timezone.utc).isoformat(), encoding="utf-8"
     )
