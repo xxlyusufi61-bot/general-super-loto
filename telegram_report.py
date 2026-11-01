@@ -1,6 +1,7 @@
 """GitHub Actions test ve araştırma raporlarını Türkçe olarak Telegram'a gönderir."""
 import argparse
 import json
+import math
 import os
 import urllib.parse
 import urllib.request
@@ -64,7 +65,10 @@ def metric_lines(value):
 def _safe_number(value, field):
     if not isinstance(value, (int, float)) or isinstance(value, bool):
         raise ValueError(field + " is missing or invalid.")
-    return float(value)
+    number = float(value)
+    if not math.isfinite(number) or not 0.0 <= number <= 6.0:
+        raise ValueError(field + " must be a finite hit metric in the 0..6 range.")
+    return number
 
 
 def _safe_candidate(candidate_id, spec_sha, field):
@@ -170,6 +174,8 @@ def format_research_messages(report, run_url="", branch="main", title="Otonom Ar
     )
     if reverse.get("predictive_evidence") is not False:
         raise ValueError("Reverse results must be explicitly marked retrospective-only.")
+    if reverse_cv.get("predictive_evidence") is not False:
+        raise ValueError("Reverse cross-validation must be explicitly marked retrospective-only.")
 
     forward_mean = _safe_number(forward.get("mean_hits_out_of_6"), "forward mean")
     forward_random = _safe_number(
@@ -218,6 +224,7 @@ def format_research_messages(report, run_url="", branch="main", title="Otonom Ar
         f"Test: {forward_count} çekiliş | ortalama {forward_mean:.3f}/6",
         f"Rastgele referans: {forward_random:.3f}/6",
         f"Zaman sıralı CV: {forward_folds} kat | {forward_cv_mean:.3f}/6",
+        "Not: CV, aynı mühürlü aralığın bölünmüş özetidir; bağımsız doğrulama değildir.",
         "Çekiliş başına sonuçlar (tahmin edilen sayılar gösterilmez):",
         *forward_draws,
         "Durum: Deneysel bulgu; tek başına tahmin gücü veya mekanizma kanıtı değildir.",
@@ -231,6 +238,7 @@ def format_research_messages(report, run_url="", branch="main", title="Otonom Ar
         f"Test: {reverse_count} çekiliş | ortalama {reverse_mean:.3f}/6",
         f"Rastgele referans: {reverse_random:.3f}/6",
         f"Ters zaman sıralı CV: {reverse_folds} kat | {reverse_cv_mean:.3f}/6",
+        "Not: CV, aynı ters holdout aralığının bölünmüş özetidir; bağımsız doğrulama değildir.",
         "Çekiliş başına sonuçlar (tahmin edilen sayılar gösterilmez):",
         *reverse_draws,
         "ÖNEMLİ: Ters yön daha sonraki tarihli verileri kullandığından yalnızca retrospektif stres testidir; ileriye dönük tahmin kanıtı değildir.",
