@@ -5,6 +5,7 @@ import json
 import re
 import subprocess
 import sys
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -48,7 +49,16 @@ def tracked_paths() -> list[str]:
     ]
 
 
+def detector_self_test() -> bool:
+    samples = ("R" + "54", "r" + " 54", "R" + "-54", "r" + "_54")
+    return all(FORBIDDEN_PATTERN.search(sample) for sample in samples)
+
+
 def main() -> int:
+    if not detector_self_test():
+        print("Guard detector self-test failed; refusing to continue.", file=sys.stderr)
+        return 2
+
     matches = []
     errors = []
     checked_files = 0
