@@ -360,6 +360,7 @@ def build_usage_observation(
     request_duration_seconds: float | None = None,
     stream_event_count: int | None = None,
     stream_completed: bool | None = None,
+    stream_finish_reason: str | None = None,
     failure_stage: str | None = None,
     error_type: str | None = None,
 ) -> dict[str, Any]:
@@ -383,6 +384,7 @@ def build_usage_observation(
         ),
         "stream_event_count": stream_event_count,
         "stream_completed": stream_completed,
+        "stream_finish_reason": stream_finish_reason,
         "failure_stage": failure_stage,
         "network_error_type": error_type,
         "rate_limit_headers_returned": filter_usage_headers(headers),
@@ -728,6 +730,11 @@ def _parse_streamed_chat_completion(response) -> tuple[dict[str, Any], dict[str,
             "Research model stream completed without final answer content; "
             "reasoning-only output is not accepted."
         )
+    if finish_reason == "length":
+        raise RuntimeError(
+            "Research model stream reached max_tokens before completion; "
+            "the partial response was rejected."
+        )
     result = {
         "choices": [
             {
@@ -934,6 +941,7 @@ def call_model(
             request_duration_seconds=time.monotonic() - request_started,
             stream_event_count=stream_metadata["stream_event_count"],
             stream_completed=stream_metadata["stream_completed"],
+            stream_finish_reason=stream_metadata["finish_reason"],
         ),
         request_label=request_label,
     )
