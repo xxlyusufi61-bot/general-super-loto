@@ -35,6 +35,36 @@ The manual activation action does not itself call NVIDIA. It only records the
 expiring authorization. The next scheduled check may run only after the global
 lock is separately clear.
 
+## Global NVIDIA request-rate protection
+
+Every live NVIDIA call from GENERAL Core, individual agents, coordinator execution,
+blank-slate research, and the two direct API diagnostic workflows reserves a slot
+through the same shared ledger before the HTTP request is sent. The ledger is stored
+on the separate `general-nvidia-rate-limit-state` branch so rate accounting does not
+change the canonical archive, evaluation ledger, or `main` branch.
+
+The guard enforces a rolling limit of at most 40 reservations in any 60-second
+window across the repository's shared NVIDIA key. It reads the current safety lock
+and initializes a dedicated Git worktree for the ledger, then records each request
+reservation by a normal fast-forward Git push before the provider call. This avoids
+a per-request GitHub REST Contents API read/write pair and its hourly/content-write
+quotas. The existing `general-nvidia-api` concurrency group serializes all six
+provider workflows; a non-fast-forward push or other Git failure blocks the
+provider request instead of overwriting a reservation. A 30-second reservation
+timestamp safety margin accounts for the bounded state-operation time. When all
+40 slots are occupied, GENERAL waits for an expired slot rather than sending a
+41st request. A missing, malformed, unreadable, or unwriteable ledger blocks the
+provider call. Failed and uncertain provider attempts still consume their
+reserved slot; no automatic provider retry is performed.
+
+The state branch is operational safety data and must not be deleted or merged into
+`main`. The 40-per-60-second accounting covers requests routed through this
+repository's shared GENERAL NVIDIA key; it cannot observe manual calls or other
+projects that use the same NVIDIA account/key outside this repository. Any such
+external consumer must use the same central limiter to be included in this count.
+Git transport remains subject to GitHub's normal repository/abuse controls; any
+fetch or push failure blocks the corresponding NVIDIA request.
+
 ## Target, archive, and holdout rules
 
 - Only validated 6-of-60 archive rows dated 2020-08-02 or later are accepted.

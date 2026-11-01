@@ -1,17 +1,32 @@
 #!/usr/bin/env python3
 """Fail-closed global safety lock for every GENERAL NVIDIA API workflow."""
 import argparse
+import atexit
 import base64
 import json
+import math
 import os
+import shutil
+import subprocess
 import sys
+import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 LOCK_PATH = "general_nvidia_lock.json"
+RATE_LIMIT_PATH = "general_nvidia_rate_limit.json"
+RATE_LIMIT_BRANCH = "general-nvidia-rate-limit-state"
+NVIDIA_REQUESTS_PER_MINUTE = 40
+NVIDIA_RATE_WINDOW_SECONDS = 60
+RATE_LIMIT_RESERVATION_SAFETY_SECONDS = 30
 MAX_REASON_LENGTH = 320
+GIT_COMMAND_TIMEOUT_SECONDS = 30
+_RATE_LIMIT_WORKTREE = None
+_RATE_LIMIT_LOCK_VERIFIED = False
 
 
 def utc_now():
@@ -88,6 +103,149 @@ def should_activate_after_failure(attempted, succeeded):
     return bool(attempted) and not bool(succeeded)
 
 
+
+def initial_rate_limit_state():
+    return {
+        "schema_version": 1,
+        "window_seconds": NVIDIA_RATE_WINDOW_SECONDS,
+        "max_requests": NVIDIA_REQUESTS_PER_MINUTE,
+        "requests": [],
+        "updated_at_utc": None,
+    }
+
+
+def _parse_aware_timestamp(value, field_name):
+    if not isinstance(value, str):
+        raise ValueError(field_name + " must be an ISO-8601 string")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        raise ValueError(field_name + " must be a valid ISO-8601 timestamp") from None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError(field_name + " must include a timezone")
+    return parsed.astimezone(timezone.utc)
+
+
+def validate_rate_limit_state(value):
+    if not isinstance(value, dict):
+        raise ValueError("NVIDIA rate-limit state must be a JSON object")
+    if value.get("schema_version") != 1:
+        raise ValueError("unsupported NVIDIA rate-limit schema")
+    if value.get("window_seconds") != NVIDIA_RATE_WINDOW_SECONDS:
+        raise ValueError("NVIDIA rate-limit window was changed or is invalid")
+    if value.get("max_requests") != NVIDIA_REQUESTS_PER_MINUTE:
+        raise ValueError("NVIDIA request cap was changed or is invalid")
+    requests = value.get("requests")
+    if not isinstance(requests, list) or len(requests) > NVIDIA_REQUESTS_PER_MINUTE:
+        raise ValueError("NVIDIA rate-limit request history is invalid")
+    previous = None
+    for index, entry in enumerate(requests):
+        if not isinstance(entry, dict):
+            raise ValueError("NVIDIA rate-limit history entry is invalid")
+        stamp = _parse_aware_timestamp(
+            entry.get("reserved_at_utc"),
+            "NVIDIA rate-limit history timestamp",
+        )
+        source = entry.get("source")
+        if not isinstance(source, str) or not source or len(source) > 80:
+            raise ValueError("NVIDIA rate-limit history source is invalid")
+        if previous is not None and stamp < previous:
+            raise ValueError("NVIDIA rate-limit history is not chronological")
+        previous = stamp
+    updated = value.get("updated_at_utc")
+    if updated is not None:
+        _parse_aware_timestamp(updated, "NVIDIA rate-limit updated_at_utc")
+    return value
+
+
+def reserve_rate_limit_slot(previous, source, now=None):
+    previous = validate_rate_limit_state(previous)
+    source = " ".join(str(source).split())[:80]
+    if not source:
+        raise ValueError("NVIDIA request source is required")
+    now = now or datetime.now(timezone.utc)
+    if not isinstance(now, datetime) or now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("NVIDIA rate-limit clock must be timezone-aware")
+    now = now.astimezone(timezone.utc)
+
+    # The timestamp is intentionally recorded 30 seconds ahead of the guard's
+    # clock. The final Git push has a 30-second timeout; this margin prevents a
+    # slow successful reservation push from making the record earlier than the
+    # outbound NVIDIA request it protects.
+    effective_now = now + timedelta(seconds=RATE_LIMIT_RESERVATION_SAFETY_SECONDS)
+    cutoff = effective_now - timedelta(seconds=NVIDIA_RATE_WINDOW_SECONDS)
+    active = []
+    for entry in previous["requests"]:
+        stamp = _parse_aware_timestamp(
+            entry["reserved_at_utc"],
+            "NVIDIA rate-limit history timestamp",
+        )
+        if stamp >= cutoff:
+            active.append(entry)
+
+    if len(active) >= NVIDIA_REQUESTS_PER_MINUTE:
+        oldest = _parse_aware_timestamp(
+            active[0]["reserved_at_utc"],
+            "NVIDIA rate-limit history timestamp",
+        )
+        release_at = oldest + timedelta(seconds=NVIDIA_RATE_WINDOW_SECONDS + 1)
+        wait_seconds = max(1, math.ceil((release_at - effective_now).total_seconds()))
+        return None, wait_seconds
+
+    active.append({
+        "reserved_at_utc": effective_now.isoformat(),
+        "source": source,
+    })
+    state = {
+        "schema_version": 1,
+        "window_seconds": NVIDIA_RATE_WINDOW_SECONDS,
+        "max_requests": NVIDIA_REQUESTS_PER_MINUTE,
+        "requests": active,
+        "updated_at_utc": now.isoformat(),
+    }
+    return validate_rate_limit_state(state), 0
+
+
+
+def _run_git(arguments, *, cwd=None):
+    try:
+        completed = subprocess.run(
+            ["git"] + list(arguments),
+            cwd=str(cwd or Path(__file__).resolve().parent),
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=GIT_COMMAND_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        # Do not echo Git stderr: it may include remote details. All state
+        # operations are fail-closed and no NVIDIA call may follow a failure.
+        raise RuntimeError(
+            "GitHub shared safety-state operation failed; NVIDIA request blocked."
+        ) from None
+    return completed.stdout
+
+
+def _fetch_remote_branch(branch):
+    if not isinstance(branch, str) or not branch or "/" in branch or ".." in branch:
+        raise RuntimeError("Invalid GENERAL safety-state branch; NVIDIA request blocked.")
+    refspec = "+refs/heads/" + branch + ":refs/remotes/origin/" + branch
+    _run_git(["fetch", "--no-tags", "--depth=1", "origin", refspec])
+
+
+def _cleanup_rate_limit_worktree():
+    global _RATE_LIMIT_WORKTREE
+    worktree = _RATE_LIMIT_WORKTREE
+    _RATE_LIMIT_WORKTREE = None
+    if worktree is None:
+        return
+    try:
+        _run_git(["worktree", "remove", "--force", str(worktree)])
+    except Exception:
+        shutil.rmtree(worktree, ignore_errors=True)
+
+
 def _required_env(name):
     value = os.environ.get(name, "").strip()
     if not value:
@@ -137,17 +295,19 @@ def _lock_url():
 
 
 def read_remote_lock():
-    url, _ = _lock_url()
-    response = _api_request("GET", url)
-    sha = response.get("sha")
-    encoded = response.get("content")
-    if not isinstance(sha, str) or not isinstance(encoded, str):
-        raise RuntimeError("global NVIDIA lock file is missing or unreadable")
+    branch = os.environ.get("GENERAL_DEFAULT_BRANCH", "main").strip() or "main"
+    _fetch_remote_branch(branch)
+    ref = "refs/remotes/origin/" + branch + ":" + LOCK_PATH
     try:
-        decoded = base64.b64decode("".join(encoded.split())).decode("utf-8")
-        state = validate_lock_state(json.loads(decoded))
-    except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+        raw = _run_git(["show", ref])
+        sha = _run_git(["rev-parse", ref]).strip()
+        state = validate_lock_state(json.loads(raw))
+    except (ValueError, json.JSONDecodeError):
         raise RuntimeError("global NVIDIA lock file is malformed; API use blocked") from None
+    except RuntimeError:
+        raise RuntimeError("global NVIDIA lock file is missing or unreadable; API use blocked") from None
+    if not sha:
+        raise RuntimeError("global NVIDIA lock file SHA is missing; API use blocked")
     return state, sha
 
 
@@ -165,6 +325,124 @@ def write_remote_lock(state, sha, message):
     if not isinstance(commit, dict) or not isinstance(commit.get("sha"), str):
         raise RuntimeError("GitHub did not confirm the global lock commit")
     return commit["sha"]
+
+
+
+def _ensure_rate_limit_worktree():
+    global _RATE_LIMIT_WORKTREE
+    if _RATE_LIMIT_WORKTREE is not None and Path(_RATE_LIMIT_WORKTREE).is_dir():
+        return Path(_RATE_LIMIT_WORKTREE)
+
+    _fetch_remote_branch(RATE_LIMIT_BRANCH)
+    remote_ref = "refs/remotes/origin/" + RATE_LIMIT_BRANCH
+    worktree = Path(tempfile.mkdtemp(prefix="general-nvidia-rate-limit-"))
+    # git worktree add expects a path that does not already exist.
+    worktree.rmdir()
+    _run_git(["worktree", "add", "--detach", str(worktree), remote_ref])
+    _run_git(["config", "user.name", "GENERAL NVIDIA Rate Guard"], cwd=worktree)
+    _run_git(
+        ["config", "user.email", "41898282+github-actions[bot]@users.noreply.github.com"],
+        cwd=worktree,
+    )
+    _RATE_LIMIT_WORKTREE = worktree
+    atexit.register(_cleanup_rate_limit_worktree)
+    return worktree
+
+
+def read_remote_rate_limit():
+    worktree = _ensure_rate_limit_worktree()
+    path = worktree / RATE_LIMIT_PATH
+    try:
+        state = validate_rate_limit_state(
+            json.loads(path.read_text(encoding="utf-8"))
+        )
+    except (OSError, ValueError, json.JSONDecodeError):
+        raise RuntimeError(
+            "shared NVIDIA rate-limit ledger is missing or malformed; API use blocked"
+        ) from None
+    head = _run_git(["rev-parse", "HEAD"], cwd=worktree).strip()
+    if not head:
+        raise RuntimeError("shared NVIDIA rate-limit branch head is unreadable; API use blocked")
+    return state, head
+
+
+def write_remote_rate_limit(state, sha):
+    worktree = _ensure_rate_limit_worktree()
+    current_head = _run_git(["rev-parse", "HEAD"], cwd=worktree).strip()
+    if current_head != sha:
+        raise RuntimeError(
+            "shared NVIDIA rate-limit state changed unexpectedly; provider request blocked"
+        )
+
+    path = worktree / RATE_LIMIT_PATH
+    raw = json.dumps(
+        validate_rate_limit_state(state),
+        ensure_ascii=False,
+        indent=2,
+        allow_nan=False,
+    ) + "\n"
+    try:
+        path.write_text(raw, encoding="utf-8")
+    except OSError:
+        raise RuntimeError(
+            "shared NVIDIA rate-limit ledger could not be written; provider request blocked"
+        ) from None
+
+    _run_git(["add", RATE_LIMIT_PATH], cwd=worktree)
+    _run_git(
+        ["commit", "-m", "chore: reserve shared NVIDIA request slot"],
+        cwd=worktree,
+    )
+    new_head = _run_git(["rev-parse", "HEAD"], cwd=worktree).strip()
+    # Normal fast-forward push only. If another writer moved the branch, this
+    # fails closed instead of overwriting or losing another reservation.
+    _run_git(
+        ["push", "origin", "HEAD:refs/heads/" + RATE_LIMIT_BRANCH],
+        cwd=worktree,
+    )
+    return new_head
+
+
+def reserve_nvidia_request(source):
+    """Persist one global request reservation before any outbound NVIDIA call."""
+    source = " ".join(str(source).split())[:80]
+    if not source:
+        raise RuntimeError("NVIDIA request source is required; no provider request was sent.")
+
+    global _RATE_LIMIT_LOCK_VERIFIED
+    while True:
+        if not _RATE_LIMIT_LOCK_VERIFIED:
+            lock_state, _ = read_remote_lock()
+            if lock_state["locked"]:
+                raise RuntimeError(
+                    "Global NVIDIA safety lock is active; no provider request was sent."
+                )
+            _RATE_LIMIT_LOCK_VERIFIED = True
+
+        previous, sha = read_remote_rate_limit()
+        next_state, wait_seconds = reserve_rate_limit_slot(previous, source)
+        if next_state is None:
+            print(
+                "GENERAL NVIDIA RATE LIMIT: 40 requests are already reserved in the "
+                "rolling 60-second window; waiting " + str(wait_seconds) + " seconds."
+            )
+            time.sleep(wait_seconds)
+            continue
+
+        try:
+            commit_sha = write_remote_rate_limit(next_state, sha)
+        except Exception as error:
+            raise RuntimeError(
+                "Shared NVIDIA rate-limit reservation could not be committed; "
+                "no provider request was sent. " + str(error)
+            ) from None
+
+        print(
+            "GENERAL NVIDIA RATE LIMIT: reservation committed; "
+            + str(len(next_state["requests"])) + "/40 slots in the rolling 60-second window. "
+            + "State commit: " + commit_sha
+        )
+        return next_state["requests"][-1]
 
 
 def send_telegram(message):
@@ -297,6 +575,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("check", help="Fail closed unless the default-branch lock is verified clear")
+    reserve_parser = subparsers.add_parser("reserve", help="Atomically reserve one shared NVIDIA request slot")
+    reserve_parser.add_argument("--source", required=True)
     lock_parser = subparsers.add_parser("lock", help="Persist a global lock and notify Telegram")
     lock_parser.add_argument("--reason", required=True)
     subparsers.add_parser("unlock", help="Clear the lock; only the confirmed manual workflow should call this")
@@ -304,6 +584,9 @@ def main():
 
     if args.command == "check":
         return command_check()
+    if args.command == "reserve":
+        reserve_nvidia_request(args.source)
+        return 0
     if args.command == "lock":
         return command_lock(args.reason)
     if args.command == "unlock":

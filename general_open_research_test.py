@@ -431,7 +431,7 @@ class NvidiaUsageObservationTests(unittest.TestCase):
         try:
             with patch.dict(os.environ, env, clear=True), patch.object(
                 research, "save_usage_observation"
-            ), patch(
+            ), patch.object(research, "reserve_nvidia_request") as mocked_reserve, patch(
                 "general_open_research.urllib.request.urlopen",
                 side_effect=responses,
             ) as mocked_urlopen:
@@ -448,6 +448,7 @@ class NvidiaUsageObservationTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "request cap reached"):
                     research.call_model([{"role": "user", "content": "third"}])
                 self.assertEqual(mocked_urlopen.call_count, 2)
+                self.assertEqual(mocked_reserve.call_count, 2)
                 self.assertEqual(research._NVIDIA_REQUESTS_ATTEMPTED, 2)
         finally:
             Path("/tmp/general_nvidia_api_attempted").unlink(missing_ok=True)
@@ -494,7 +495,7 @@ class NvidiaUsageObservationTests(unittest.TestCase):
                     "GENERAL_NVIDIA_FREE_USAGE_VERIFIED": "true",
                     "NVIDIA_API_KEY": "test-secret",
                 },
-            ), patch(
+            ), patch.object(research, "reserve_nvidia_request"), patch(
                 "general_open_research.urllib.request.urlopen", side_effect=error
             ) as mocked_urlopen:
                 with self.assertRaisesRegex(RuntimeError, "HTTP 429"):

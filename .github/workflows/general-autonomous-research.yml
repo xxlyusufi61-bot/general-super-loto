@@ -186,6 +186,9 @@ jobs:
         if: ${{ steps.attempt_reservation.outputs.attempt_id != '' }}
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GENERAL_DEFAULT_BRANCH: main
           TASK_TEXT: "Explore the validated pre-target 6-of-60 archive from scratch. Propose independently testable hypotheses for the forward and reverse directions. Do not request, infer, or report winning-number predictions."
           GENERAL_CONFIRM_LIVE_CALLS: "I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_3_NVIDIA_REQUESTS"
           GENERAL_ALLOW_NVIDIA_CALL: "true"

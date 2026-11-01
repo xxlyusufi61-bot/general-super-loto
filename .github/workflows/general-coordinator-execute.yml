@@ -134,6 +134,9 @@ jobs:
         if: ${{ steps.consent.outputs.enabled == 'true' }}
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GENERAL_DEFAULT_BRANCH: main
           TASK_TEXT: ${{ inputs.task }}
           CONFIRM_LIVE_CALLS: ${{ inputs.confirm_live_calls }}
           GENERAL_CONFIRM_LIVE_CALLS: ${{ inputs.confirm_live_calls }}

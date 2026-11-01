@@ -492,7 +492,7 @@ try:
             }
         }]
     }
-    with patch(
+    with patch("general_core.reserve_nvidia_request"), patch(
         "general_core.urllib.request.urlopen",
         return_value=_FakeResponse(reasoning_only)
     ):
@@ -523,7 +523,7 @@ try:
         captured_request["payload"] = json.loads(request.data.decode("utf-8"))
         return _FakeResponse(final_and_reasoning)
 
-    with patch(
+    with patch("general_core.reserve_nvidia_request"), patch(
         "general_core.urllib.request.urlopen",
         side_effect=capture_final_request
     ):
