@@ -1,26 +1,26 @@
-name: Branch-tip reference audit
+name: Active Scope Guard
 
 on:
   pull_request:
-    paths:
-      - "tools/branch_tip_audit.py"
-      - ".github/workflows/branch-tip-audit.yml"
+  push:
+    branches:
+      - main
 
 permissions:
   contents: read
 
 jobs:
-  audit:
+  active-scope:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          fetch-depth: 0
+          python-version: "3.12"
 
-      - name: Fetch all current branch tips read-only
-        run: git fetch origin '+refs/heads/*:refs/remotes/origin/*'
-
-      - name: Scan all remote branch tips
+      - name: Reject forbidden legacy-pool references in active code and configuration
         run: python tools/branch_tip_audit.py
