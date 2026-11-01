@@ -208,6 +208,40 @@ class GlobalNvidiaLockTests(unittest.TestCase):
     def test_rate_limit_state_uses_a_separate_persistent_branch(self):
         self.assertEqual(RATE_LIMIT_BRANCH, "general-nvidia-rate-limit-state")
 
+    def test_shared_reservation_rechecks_global_lock_before_each_request(self):
+        clear_lock = initial_lock_state()
+        active_lock = make_locked_state(
+            initial_lock_state(),
+            "lock activated between request reservations",
+            stamp="2026-11-02T10:00:00+00:00",
+            locked_by="offline-regression-test",
+        )
+        rate_state = initial_rate_limit_state()
+
+        with patch.object(
+            nvidia_guard,
+            "read_remote_lock",
+            side_effect=[(clear_lock, "clear-lock-sha"), (active_lock, "active-lock-sha")],
+        ) as mocked_lock, patch.object(
+            nvidia_guard,
+            "read_remote_rate_limit",
+            return_value=(rate_state, "rate-limit-head"),
+        ) as mocked_read_rate, patch.object(
+            nvidia_guard,
+            "write_remote_rate_limit",
+            return_value="rate-limit-head-after",
+        ) as mocked_write_rate:
+            nvidia_guard.reserve_nvidia_request("offline-first-request")
+
+            with self.assertRaisesRegex(
+                RuntimeError, "Global NVIDIA safety lock is active"
+            ):
+                nvidia_guard.reserve_nvidia_request("offline-second-request")
+
+        self.assertEqual(mocked_lock.call_count, 2)
+        self.assertEqual(mocked_read_rate.call_count, 1)
+        self.assertEqual(mocked_write_rate.call_count, 1)
+
     def test_all_live_nvidia_workflows_share_the_repository_concurrency_group(self):
         workflow_names = (
             "general-agent.yml",
