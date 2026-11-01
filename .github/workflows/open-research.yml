@@ -58,7 +58,7 @@ name: GENERAL Blank-Slate Research
         type: string
         default: "Explore the pre-target archive from scratch and propose testable hypotheses."
       confirm_live_calls:
-        description: "Leave NO to block all live calls. Type the exact free-only confirmation phrase only after manually verifying there is no paid-charge risk."
+        description: "Leave NO to block all live calls. The exact free-only phrase authorizes at most two directional NVIDIA requests for this operation; use it only after verifying there is no paid-charge risk."
         required: true
         type: string
         default: "NO"
@@ -92,7 +92,7 @@ jobs:
           python3 -m unittest -v general_hypothesis_proposals_test general_open_research_test general_hypothesis_execution_test general_bidirectional_evaluation_test general_execution_spec_parser_test general_sealed_evaluation_test general_source_context_test
 
   research:
-    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.confirm_live_calls == 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_3_NVIDIA_REQUESTS' && inputs.confirm_free_usage_verified == true }}
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.confirm_live_calls == 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_2_NVIDIA_REQUESTS' && inputs.confirm_free_usage_verified == true }}
     needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 15

@@ -3,7 +3,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 WORKFLOWS = ROOT / ".github" / "workflows"
-CONFIRMATION = "I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_3_NVIDIA_REQUESTS"
+CONFIRMATION = "I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_2_NVIDIA_REQUESTS"
+COORDINATOR_CONFIRMATION = "I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_3_NVIDIA_REQUESTS"
 
 WORKFLOW_CASES = (
     ("general-agent.yml", "Check global NVIDIA safety lock", "Run selected GENERAL agent"),
@@ -87,9 +88,10 @@ class LiveModelConsentGateTests(unittest.TestCase):
 
     def test_coordinator_execute_keeps_its_existing_explicit_gate(self):
         source = (WORKFLOWS / "general-coordinator-execute.yml").read_text(encoding="utf-8")
-        self.assertIn(CONFIRMATION, source)
+        self.assertIn(COORDINATOR_CONFIRMATION, source)
+        self.assertNotIn(CONFIRMATION, source)
         consent_step = read_step(source, "Evaluate explicit free-only consent")
-        self.assertIn('CONFIRM_LIVE_CALLS" = "' + CONFIRMATION, consent_step)
+        self.assertIn('CONFIRM_LIVE_CALLS" = "' + COORDINATOR_CONFIRMATION, consent_step)
         run_step = read_step(source, "Run coordinator agents sequentially")
         self.assertIn("steps.consent.outputs.enabled == 'true'", run_step)
         self.assertIn("GENERAL_CONFIRM_LIVE_CALLS:", run_step)

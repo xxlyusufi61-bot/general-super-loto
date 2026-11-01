@@ -12,7 +12,7 @@ import sys
 from typing import Any
 
 import general_core as core
-from general_live_consent import CONFIRMATION_PHRASE
+from general_live_consent import COORDINATOR_CONFIRMATION_PHRASE
 from general_core import is_data_task, target_date_from, task_mode_from
 
 
@@ -120,7 +120,7 @@ def build_plan(raw_task: str) -> dict[str, Any]:
     }
 
 
-EXECUTION_CONFIRMATION = CONFIRMATION_PHRASE
+EXECUTION_CONFIRMATION = COORDINATOR_CONFIRMATION_PHRASE
 REQUIRED_PREFLIGHT_FLAGS = (
     "row_level_audit_pass",
     "archive_dates_chronological",
