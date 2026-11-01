@@ -94,7 +94,7 @@ class TelegramReportTests(unittest.TestCase):
             "time_ordered_cross_validation": {"folds": 2, "mean_hits_out_of_6": 0.65},
             "reverse_discovered_candidate_holdout": {
                 "predictive_evidence": False, "test_draw_count": 2,
-                "first_test_date": "2021-01-05", "last_test_date": "2021-01-03",
+                "first_test_date": "2021-01-05", "last_test_date": "2021-01-02",
                 "mean_hits_out_of_6": 0.5, "uniform_random_expected_hits_out_of_6": 0.6,
                 "per_draw": [{
                     "test_date": "2021-01-05", "direction": "reverse_retrospective",
@@ -103,7 +103,7 @@ class TelegramReportTests(unittest.TestCase):
                     "hit_count": 1, "target_numbers_reported": False,
                     "predicted_number_values_reported": False,
                 }, {
-                    "test_date": "2021-01-03", "direction": "reverse_retrospective",
+                    "test_date": "2021-01-02", "direction": "reverse_retrospective",
                     "hypothesis_id": "REV-001", "spec_sha256": spec_b,
                     "later_training_draw_count": 46, "hit_column_positions_1_to_6": [3],
                     "hit_count": 1, "target_numbers_reported": False,
@@ -136,7 +136,12 @@ class TelegramReportTests(unittest.TestCase):
             "target_or_future_rows_used": False,
             "per_draw_target_numbers_reported": False,
             "candidate_rankings_reported": False,
-            "candidate_selection": {},
+            "candidate_selection": {
+                "forward_hypothesis_id": "FWD-001",
+                "forward_spec_sha256": "a" * 64,
+                "reverse_hypothesis_id": "REV-001",
+                "reverse_spec_sha256": "b" * 64,
+            },
             "forward_walk_forward": {},
             "reverse_discovered_candidate_holdout": {"predictive_evidence": True},
             "time_ordered_cross_validation": {},
