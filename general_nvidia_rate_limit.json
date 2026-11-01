@@ -2,6 +2,6 @@
   "schema_version": 1,
   "window_seconds": 60,
   "max_requests": 40,
-  "requests_utc": [],
+  "requests": [],
   "updated_at_utc": null
 }
