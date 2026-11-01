@@ -338,6 +338,9 @@ def prepare_cycle(
         if (
             "fresh forward sealed validation interval" in lower
             or "fresh reverse sealed validation interval" in lower
+            or "no sufficiently sized forward r60 validation interval" in lower
+            or "no sufficiently sized reverse r60 validation interval" in lower
+            or "r60 discovery history is shorter than the default minimum training window" in lower
             or "discovery history is shorter than the default minimum" in lower
         ):
             return {
