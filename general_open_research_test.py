@@ -317,16 +317,16 @@ class NvidiaUsageObservationTests(unittest.TestCase):
         response.status = 200
         response.headers = {"x-request-id": "synthetic-request"}
         response.readline.side_effect = [
-            b'data: {"choices":[{"delta":{"reasoning_content":"hidden reasoning"}}]}\\n',
-            b'\\n',
-            b'data: {"choices":[{"delta":{"content":"synthetic "}}]}\\n',
-            b'\\n',
-            b'data: {"choices":[{"delta":{"content":"response"},"finish_reason":"stop"}]}\\n',
-            b'\\n',
-            b'data: {"choices":[],"usage":{"total_tokens":1}}\\n',
-            b'\\n',
-            b'data: [DONE]\\n',
-            b'\\n',
+            b'data: {"choices":[{"delta":{"reasoning_content":"hidden reasoning"}}]}\n',
+            b'\n',
+            b'data: {"choices":[{"delta":{"content":"synthetic "}}]}\n',
+            b'\n',
+            b'data: {"choices":[{"delta":{"content":"response"},"finish_reason":"stop"}]}\n',
+            b'\n',
+            b'data: {"choices":[],"usage":{"total_tokens":1}}\n',
+            b'\n',
+            b'data: [DONE]\n',
+            b'\n',
             b"",
         ]
         response.__enter__.return_value = response
@@ -336,17 +336,17 @@ class NvidiaUsageObservationTests(unittest.TestCase):
     def test_stream_parser_joins_content_and_ignores_reasoning(self):
         response = MagicMock()
         response.readline.side_effect = [
-            b": keep-alive\\n",
-            b'data: {"choices":[{"delta":{"reasoning_content":"not final text"}}]}\\n',
-            b"\\n",
-            b'data: {"choices":[{"delta":{"content":"GENERAL "}}]}\\n',
-            b"\\n",
-            b'data: {"choices":[{"delta":{"content":"stream"},"finish_reason":"stop"}]}\\n',
-            b"\\n",
-            b'data: {"choices":[],"usage":{"total_tokens":12}}\\n',
-            b"\\n",
-            b"data: [DONE]\\n",
-            b"\\n",
+            b": keep-alive\n",
+            b'data: {"choices":[{"delta":{"reasoning_content":"not final text"}}]}\n',
+            b"\n",
+            b'data: {"choices":[{"delta":{"content":"GENERAL "}}]}\n',
+            b"\n",
+            b'data: {"choices":[{"delta":{"content":"stream"},"finish_reason":"stop"}]}\n',
+            b"\n",
+            b'data: {"choices":[],"usage":{"total_tokens":12}}\n',
+            b"\n",
+            b"data: [DONE]\n",
+            b"\n",
             b"",
         ]
         payload, metadata = research._parse_streamed_chat_completion(response)
@@ -359,8 +359,8 @@ class NvidiaUsageObservationTests(unittest.TestCase):
     def test_stream_parser_rejects_missing_done_marker(self):
         response = MagicMock()
         response.readline.side_effect = [
-            b'data: {"choices":[{"delta":{"content":"partial"}}]}\\n',
-            b"\\n",
+            b'data: {"choices":[{"delta":{"content":"partial"}}]}\n',
+            b"\n",
             b"",
         ]
         with self.assertRaisesRegex(RuntimeError, "before the \\[DONE\\] marker"):
@@ -369,10 +369,10 @@ class NvidiaUsageObservationTests(unittest.TestCase):
     def test_stream_parser_rejects_reasoning_only_output(self):
         response = MagicMock()
         response.readline.side_effect = [
-            b'data: {"choices":[{"delta":{"reasoning_content":"private"}}]}\\n',
-            b"\\n",
-            b"data: [DONE]\\n",
-            b"\\n",
+            b'data: {"choices":[{"delta":{"reasoning_content":"private"}}]}\n',
+            b"\n",
+            b"data: [DONE]\n",
+            b"\n",
             b"",
         ]
         with self.assertRaisesRegex(RuntimeError, "reasoning-only output is not accepted"):
@@ -582,8 +582,8 @@ class NvidiaUsageObservationTests(unittest.TestCase):
         }
         response = self.successful_response()
         response.readline.side_effect = [
-            b'data: {"choices":[{"delta":{"content":"partial"}}]}\\n',
-            b"\\n",
+            b'data: {"choices":[{"delta":{"content":"partial"}}]}\n',
+            b"\n",
             TimeoutError("synthetic idle timeout"),
         ]
         saved = []
