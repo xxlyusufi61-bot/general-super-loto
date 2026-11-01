@@ -169,7 +169,7 @@ class GlobalNvidiaLockTests(unittest.TestCase):
             worktree = Path(temporary_directory)
             ledger = worktree / "general_nvidia_rate_limit.json"
             ledger.write_text(
-                json.dumps(initial_rate_limit_state(), indent=2) + "\\n",
+                json.dumps(initial_rate_limit_state(), indent=2) + "\n",
                 encoding="utf-8",
             )
             git_calls = []
