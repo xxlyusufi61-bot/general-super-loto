@@ -20,7 +20,7 @@ name: GENERAL Agent
         type: string
         default: "GENERAL sisteminin mevcut durumunu ve sonraki geliştirme adımlarını değerlendir."
       confirm_live_calls:
-        description: "Leave NO to block live NVIDIA calls. Type the exact phrase only after manually verifying your provider account is free-only."
+        description: "Leave NO to block live NVIDIA calls. The exact approval phrase authorizes at most two NVIDIA requests per operation; use it only after verifying free-only/no-billing status."
         required: true
         type: string
         default: "NO"
@@ -62,7 +62,7 @@ jobs:
           python-version: "3.12"
 
       - name: Check global NVIDIA safety lock
-        if: ${{ inputs.agent != 'archive' && inputs.agent != 'isolation-test' && inputs.confirm_live_calls == 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_3_NVIDIA_REQUESTS' && inputs.confirm_free_usage_verified == true }}
+        if: ${{ inputs.agent != 'archive' && inputs.agent != 'isolation-test' && inputs.confirm_live_calls == 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_2_NVIDIA_REQUESTS' && inputs.confirm_free_usage_verified == true }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
@@ -208,7 +208,7 @@ jobs:
 
       - name: Snapshot shared-memory baseline for optional review PR
         id: memory-baseline
-        if: ${{ inputs.agent != 'archive' && inputs.agent != 'isolation-test' && inputs.confirm_live_calls == 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_3_NVIDIA_REQUESTS' && inputs.confirm_free_usage_verified == true && inputs.publish_memory_pr == 'YES' }}
+        if: ${{ inputs.agent != 'archive' && inputs.agent != 'isolation-test' && inputs.confirm_live_calls == 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_2_NVIDIA_REQUESTS' && inputs.confirm_free_usage_verified == true && inputs.publish_memory_pr == 'YES' }}
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/general-agent-memory"
@@ -217,7 +217,7 @@ jobs:
 
       - name: Run selected GENERAL agent
         id: run-agent
-        if: ${{ inputs.agent != 'archive' && inputs.agent != 'isolation-test' && inputs.confirm_live_calls == 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_3_NVIDIA_REQUESTS' && inputs.confirm_free_usage_verified == true }}
+        if: ${{ inputs.agent != 'archive' && inputs.agent != 'isolation-test' && inputs.confirm_live_calls == 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_2_NVIDIA_REQUESTS' && inputs.confirm_free_usage_verified == true }}
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
@@ -242,7 +242,7 @@ jobs:
         run: python3 general_rule_change.py submit-report --report general-agent-report.md
 
       - name: Skip live agent call without explicit free-only confirmation
-        if: ${{ inputs.agent != 'archive' && inputs.agent != 'isolation-test' && (inputs.confirm_live_calls != 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_3_NVIDIA_REQUESTS' || inputs.confirm_free_usage_verified != true) }}
+        if: ${{ inputs.agent != 'archive' && inputs.agent != 'isolation-test' && (inputs.confirm_live_calls != 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_2_NVIDIA_REQUESTS' || inputs.confirm_free_usage_verified != true) }}
         run: |
           echo "::notice::Live agent execution was not authorized; no NVIDIA request was made."
           echo "Supply the exact confirmation phrase only after verifying free-only provider settings."
