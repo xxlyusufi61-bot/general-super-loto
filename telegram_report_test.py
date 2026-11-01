@@ -110,7 +110,7 @@ class TelegramReportTests(unittest.TestCase):
                     "predicted_number_values_reported": False,
                 }],
             },
-            "reverse_time_ordered_cross_validation": {"folds": 2, "mean_hits_out_of_6": 0.48},
+            "reverse_time_ordered_cross_validation": {"folds": 2, "mean_hits_out_of_6": 0.48, "predictive_evidence": False},
         }
         forward, reverse = format_research_messages(
             report, "https://github.com/example/run", "main", "Otonom araştırma"
@@ -148,6 +148,18 @@ class TelegramReportTests(unittest.TestCase):
             "reverse_time_ordered_cross_validation": {},
         }
         with self.assertRaisesRegex(ValueError, "retrospective-only"):
+            format_research_messages(report)
+
+    def test_research_report_rejects_predictive_reverse_cv(self):
+        report = self._valid_research_fixture()
+        report["reverse_time_ordered_cross_validation"]["predictive_evidence"] = True
+        with self.assertRaisesRegex(ValueError, "Reverse cross-validation"):
+            format_research_messages(report)
+
+    def test_research_report_rejects_non_finite_hit_metrics(self):
+        report = self._valid_research_fixture()
+        report["forward_walk_forward"]["mean_hits_out_of_6"] = float("nan")
+        with self.assertRaisesRegex(ValueError, "finite hit metric"):
             format_research_messages(report)
 
     def test_research_report_rejects_target_or_pre_scope_dates(self):
