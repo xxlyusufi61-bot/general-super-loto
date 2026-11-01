@@ -153,8 +153,8 @@ class TelegramReportTests(unittest.TestCase):
 
     def test_research_report_rejects_overlapping_or_unordered_holdouts(self):
         report = self._valid_research_fixture()
-        report["reverse_discovered_candidate_holdout"]["per_draw"][1]["test_date"] = "2021-01-05"
-        with self.assertRaisesRegex(ValueError, "directionally chronological"):
+        report["reverse_discovered_candidate_holdout"]["per_draw"][1]["test_date"] = "2021-01-03"
+        with self.assertRaisesRegex(ValueError, "overlapping holdout dates"):
             format_research_messages(report)
 
     @staticmethod
