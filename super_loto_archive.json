@@ -7,13 +7,116 @@
     "independent_record_count": 156,
     "matching_dates_and_number_sets": 156,
     "result": "PASS",
-    "checked_at": "2026-10-23T00:09:12.601200+00:00",
+    "checked_at": "2026-11-01T07:25:02.236554+00:00",
     "pages_checked": [
       "https://loto.gen.tr/super-loto/arsiv/2025",
       "https://loto.gen.tr/super-loto/arsiv/2025?sayfa=2"
     ]
   },
-  "fetched_at": "2026-10-29T15:03:02.818+00:00",
+  "multi_year_cross_source_validation": {
+    "2020": {
+      "result": "PASS",
+      "archive_compared_count_before_merge": 66,
+      "independent_source_count": 66,
+      "records_added_from_independent_source": 0,
+      "matching_dates_and_number_sets_after_merge": 66,
+      "draw_numbers_in_report": false,
+      "source": "loto.gen.tr",
+      "pages_checked": [
+        "https://loto.gen.tr/super-loto/arsiv/2020"
+      ],
+      "checked_at": "2026-11-01T07:25:02.975737+00:00"
+    },
+    "2021": {
+      "result": "PASS",
+      "archive_compared_count_before_merge": 154,
+      "independent_source_count": 156,
+      "records_added_from_independent_source": 2,
+      "matching_dates_and_number_sets_after_merge": 156,
+      "draw_numbers_in_report": false,
+      "source": "loto.gen.tr",
+      "pages_checked": [
+        "https://loto.gen.tr/super-loto/arsiv/2021",
+        "https://loto.gen.tr/super-loto/arsiv/2021?sayfa=2"
+      ],
+      "checked_at": "2026-11-01T07:25:04.438143+00:00"
+    },
+    "2022": {
+      "result": "PASS",
+      "archive_compared_count_before_merge": 155,
+      "independent_source_count": 156,
+      "records_added_from_independent_source": 1,
+      "matching_dates_and_number_sets_after_merge": 156,
+      "draw_numbers_in_report": false,
+      "source": "loto.gen.tr",
+      "pages_checked": [
+        "https://loto.gen.tr/super-loto/arsiv/2022",
+        "https://loto.gen.tr/super-loto/arsiv/2022?sayfa=2"
+      ],
+      "checked_at": "2026-11-01T07:25:05.933008+00:00"
+    },
+    "2023": {
+      "result": "PASS",
+      "archive_compared_count_before_merge": 150,
+      "independent_source_count": 157,
+      "records_added_from_independent_source": 7,
+      "matching_dates_and_number_sets_after_merge": 157,
+      "draw_numbers_in_report": false,
+      "source": "loto.gen.tr",
+      "pages_checked": [
+        "https://loto.gen.tr/super-loto/arsiv/2023",
+        "https://loto.gen.tr/super-loto/arsiv/2023?sayfa=2"
+      ],
+      "checked_at": "2026-11-01T07:25:07.416573+00:00"
+    },
+    "2024": {
+      "result": "PASS",
+      "archive_compared_count_before_merge": 157,
+      "independent_source_count": 157,
+      "records_added_from_independent_source": 0,
+      "matching_dates_and_number_sets_after_merge": 157,
+      "draw_numbers_in_report": false,
+      "source": "loto.gen.tr",
+      "pages_checked": [
+        "https://loto.gen.tr/super-loto/arsiv/2024",
+        "https://loto.gen.tr/super-loto/arsiv/2024?sayfa=2"
+      ],
+      "checked_at": "2026-11-01T07:25:09.038143+00:00"
+    },
+    "2025": {
+      "result": "PASS",
+      "archive_compared_count_before_merge": 156,
+      "independent_source_count": 156,
+      "records_added_from_independent_source": 0,
+      "matching_dates_and_number_sets_after_merge": 156,
+      "draw_numbers_in_report": false,
+      "source": "loto.gen.tr",
+      "pages_checked": [
+        "https://loto.gen.tr/super-loto/arsiv/2025",
+        "https://loto.gen.tr/super-loto/arsiv/2025?sayfa=2"
+      ],
+      "checked_at": "2026-11-01T07:25:09.205128+00:00"
+    },
+    "2026": {
+      "result": "PASS",
+      "archive_compared_count_before_merge": 130,
+      "independent_source_count": 130,
+      "records_added_from_independent_source": 0,
+      "matching_dates_and_number_sets_after_merge": 130,
+      "draw_numbers_in_report": false,
+      "source": "loto.gen.tr",
+      "pages_checked": [
+        "https://loto.gen.tr/super-loto/arsiv (root archive page 1)",
+        "https://loto.gen.tr/super-loto/arsiv (root archive page 2)",
+        "https://loto.gen.tr/super-loto/arsiv (root archive page 3)",
+        "https://loto.gen.tr/super-loto/arsiv (root archive page 4)",
+        "https://loto.gen.tr/super-loto/arsiv (root archive page 5)",
+        "https://loto.gen.tr/super-loto/arsiv (root archive page 6)"
+      ],
+      "checked_at": "2026-11-01T07:25:13.087400+00:00"
+    }
+  },
+  "fetched_at": "2026-11-01T07:25:13.088044+00:00",
   "corrections_applied": [
     {
       "removed_source_date": "2025-07-19",
@@ -34,86 +137,6 @@
       "removed_source_date": "2025-07-12",
       "verified_actual_date": "2025-06-12",
       "reason": "Misdated duplicate; verified against matching counterpart and independent source"
-    },
-    {
-      "added_verified_date": "2021-01-31",
-      "independent_sources": [
-        "https://loto.gen.tr/super-loto/arsiv/2021?sayfa=2",
-        "https://www.aydinlik.com.tr/sans-oyunlari/super-loto-sonuclari?ay=1&yil=2021"
-      ],
-      "reason": "Added missing historical draw after two-source verification. A third source labels the same result one calendar day earlier; the verified date from the first two sources was retained."
-    },
-    {
-      "added_verified_date": "2021-11-30",
-      "independent_sources": [
-        "https://www.lotobil.com/Super-Loto-Butun-Sonuc-Listesi",
-        "https://www.aydinlik.com.tr/sans-oyunlari/super-loto-sonuclari?ay=11&yil=2021"
-      ],
-      "reason": "Added missing historical draw after independent-source date and result agreement."
-    },
-    {
-      "added_verified_date": "2022-01-02",
-      "independent_sources": [
-        "https://loto.gen.tr/super-loto/arsiv/2022",
-        "https://www.lotobil.com/Super-Loto-Butun-Sonuc-Listesi"
-      ],
-      "reason": "Added missing historical draw after independent-source date and result agreement."
-    },
-    {
-      "added_verified_date": "2023-08-17",
-      "independent_sources": [
-        "https://loto.gen.tr/super-loto/arsiv/2023",
-        "https://www.lotobil.com/Super-Loto-Butun-Sonuc-Listesi"
-      ],
-      "reason": "Added missing historical draw after independent-source date and result agreement."
-    },
-    {
-      "added_verified_date": "2023-08-20",
-      "independent_sources": [
-        "https://loto.gen.tr/super-loto/arsiv/2023",
-        "https://www.lotobil.com/Super-Loto-Butun-Sonuc-Listesi"
-      ],
-      "reason": "Added missing historical draw after independent-source date and result agreement."
-    },
-    {
-      "added_verified_date": "2023-10-22",
-      "independent_sources": [
-        "https://loto.gen.tr/super-loto/arsiv/2023",
-        "https://www.lotobil.com/Super-Loto-Butun-Sonuc-Listesi"
-      ],
-      "reason": "Added missing historical draw after independent-source date and result agreement."
-    },
-    {
-      "added_verified_date": "2023-10-24",
-      "independent_sources": [
-        "https://loto.gen.tr/super-loto/arsiv/2023",
-        "https://www.lotobil.com/Super-Loto-Butun-Sonuc-Listesi"
-      ],
-      "reason": "Added missing historical draw after independent-source date and result agreement."
-    },
-    {
-      "added_verified_date": "2023-10-26",
-      "independent_sources": [
-        "https://loto.gen.tr/super-loto/arsiv/2023",
-        "https://www.lotobil.com/Super-Loto-Butun-Sonuc-Listesi"
-      ],
-      "reason": "Added missing historical draw after independent-source date and result agreement."
-    },
-    {
-      "added_verified_date": "2023-10-29",
-      "independent_sources": [
-        "https://loto.gen.tr/super-loto/cekilis/20230130",
-        "https://www.haberturk.com/super-loto-sonuclari-belli-oldu-29-ekim-2023-super-loto-sonuc-sorgulama-sayfasi-tikla-ve-ogren-3633330"
-      ],
-      "reason": "Added missing historical draw after agreement from the draw-specific results page and a separate news report; another archive has an invalid duplicate-number row for this date and was not used to determine the result."
-    },
-    {
-      "added_verified_date": "2023-11-05",
-      "independent_sources": [
-        "https://loto.gen.tr/super-loto/arsiv/2023",
-        "https://www.lotobil.com/Super-Loto-Butun-Sonuc-Listesi"
-      ],
-      "reason": "Added missing historical draw after independent-source date and result agreement."
     }
   ],
   "draws": [
@@ -10875,218 +10898,5 @@
         57
       ]
     }
-  ],
-  "archive_updated_at": "2026-10-29T23:43:32.405Z",
-  "archive_update_reason": "Canonical archive restricted to the active research scope beginning 2020-08-02; earlier records removed.",
-  "multi_year_cross_source_validation": {
-    "audit_version": "1.1.0",
-    "result": "PASS_AFTER_DOCUMENTED_SOURCE_NORMALIZATION",
-    "checked_at": "2026-10-29T15:01:16.7401256+00:00",
-    "archive_records": 977,
-    "archive_first_date": "2020-08-02",
-    "archive_last_date": "2026-10-27",
-    "loto_gen_r60_by_year": {
-      "2020": {
-        "scope": "active research scope only",
-        "status": "MATCH",
-        "archive_count": 66,
-        "independent_count": 66,
-        "common_date_count": 66,
-        "archive_only_count": 0,
-        "independent_only_count": 0,
-        "number_mismatch_count": 0,
-        "source_parse_error_count": 0
-      },
-      "2021": {
-        "status": "MATCH",
-        "archive_count": 156,
-        "independent_count": 156,
-        "common_date_count": 156,
-        "archive_only_count": 0,
-        "independent_only_count": 0,
-        "number_mismatch_count": 0,
-        "source_parse_error_count": 0
-      },
-      "2022": {
-        "status": "MATCH",
-        "archive_count": 156,
-        "independent_count": 156,
-        "common_date_count": 156,
-        "archive_only_count": 0,
-        "independent_only_count": 0,
-        "number_mismatch_count": 0,
-        "source_parse_error_count": 0
-      },
-      "2023": {
-        "status": "MATCH",
-        "archive_count": 157,
-        "independent_count": 157,
-        "common_date_count": 157,
-        "archive_only_count": 0,
-        "independent_only_count": 0,
-        "number_mismatch_count": 0,
-        "source_parse_error_count": 0
-      },
-      "2024": {
-        "status": "MATCH",
-        "archive_count": 157,
-        "independent_count": 157,
-        "common_date_count": 157,
-        "archive_only_count": 0,
-        "independent_only_count": 0,
-        "number_mismatch_count": 0,
-        "source_parse_error_count": 0
-      },
-      "2025": {
-        "status": "MATCH",
-        "archive_count": 156,
-        "independent_count": 156,
-        "common_date_count": 156,
-        "archive_only_count": 0,
-        "independent_only_count": 0,
-        "number_mismatch_count": 0,
-        "source_parse_error_count": 0
-      },
-      "2026": {
-        "status": "MATCH",
-        "archive_count": 129,
-        "independent_count": 129,
-        "common_date_count": 129,
-        "archive_only_count": 0,
-        "independent_only_count": 0,
-        "number_mismatch_count": 0,
-        "source_parse_error_count": 0
-      }
-    },
-    "lotobil_r60": {
-      "status": "MATCH_AFTER_DOCUMENTED_SOURCE_NORMALIZATION",
-      "archive_count": 973,
-      "independent_count": 973,
-      "common_date_count": 973,
-      "archive_only_count": 0,
-      "independent_only_count": 0,
-      "number_mismatch_count": 0,
-      "source_parse_error_count": 0,
-      "raw_source_parse_error_count": 0,
-      "source_date_correction_count": 9,
-      "excluded_confirmed_bad_row_count": 4,
-      "excluded_confirmed_missing_row_count": 1,
-      "unresolved_index_gap_count": 0,
-      "anomaly_registry_version": "1.0.0"
-    },
-    "fetch_failures": [],
-    "draw_numbers_in_report": false,
-    "archive_modified_by_audit": false,
-    "note": "Full read-only multi-year audit completed successfully against the historical active-scope snapshot on 2026-10-29. Loto.gen coverage for the current year used paginated root-archive pages because the year-specific page can be incomplete. All checks cover only the active research scope beginning 2020-08-02. Lotobil-only normalizations are documented and do not alter the canonical archive. The audit report contains no draw-number sets."
-  },
-  "recent_draw_source_check": {
-    "checked_at": "2026-10-29T23:43:32.405Z",
-    "status": "MATCH_SELECTED_PUBLISHERS_PENDING_FULL_AUDIT",
-    "records_checked": 1,
-    "checked_dates": [
-      "2026-10-29"
-    ],
-    "sources": [
-      "https://loto.gen.tr/super-loto/cekilis/20260130",
-      "https://com.com.tr/sans-oyunlari/super-loto/29-10-2026",
-      "https://lotopiyangosonuclari.com/piyango-loto-cekilis-sonuclari/29.10.2026"
-    ],
-    "date_and_number_set_mismatch_count": 0,
-    "numbers_in_metadata": false,
-    "excluded_conflicting_publication": "https://www.gazetearena.com/29-ekim-2026-super-loto-sonuclari-belli-oldu",
-    "scope_note": "Selected indexed result pages agree on this one record; this is not full-archive verification by itself. A conflicting secondary report was not treated as authoritative. A full read-only multi-year audit was subsequently completed successfully on 2026-10-30 for the 1,009-record archive; see latest_live_archive_audit. The official result page for this exact draw remained unconfirmed during this check."
-  },
-  "latest_live_archive_audit": {
-    "audit_version": "1.1.0",
-    "workflow_run_id": 40982053265,
-    "workflow_run_url": "https://github.com/xxlyusufi61-bot/general-super-loto/actions/runs/40982053265",
-    "checked_at": "2026-10-30T00:49:33Z",
-    "result": "PASS_WITH_ACCEPTED_LOTOBIL_TAIL_LAG",
-    "archive_records": 978,
-    "archive_first_date": "2020-08-02",
-    "archive_last_date": "2026-10-29",
-    "loto_gen_by_year": {
-      "2020": {
-        "status": "MATCH",
-        "archive_count": 66,
-        "source_count": 66,
-        "date_mismatch_count": 0,
-        "number_mismatch_count": 0,
-        "parse_error_count": 0
-      },
-      "2021": {
-        "status": "MATCH",
-        "archive_count": 156,
-        "source_count": 156,
-        "date_mismatch_count": 0,
-        "number_mismatch_count": 0,
-        "parse_error_count": 0
-      },
-      "2022": {
-        "status": "MATCH",
-        "archive_count": 156,
-        "source_count": 156,
-        "date_mismatch_count": 0,
-        "number_mismatch_count": 0,
-        "parse_error_count": 0
-      },
-      "2023": {
-        "status": "MATCH",
-        "archive_count": 157,
-        "source_count": 157,
-        "date_mismatch_count": 0,
-        "number_mismatch_count": 0,
-        "parse_error_count": 0
-      },
-      "2024": {
-        "status": "MATCH",
-        "archive_count": 157,
-        "source_count": 157,
-        "date_mismatch_count": 0,
-        "number_mismatch_count": 0,
-        "parse_error_count": 0
-      },
-      "2025": {
-        "status": "MATCH",
-        "archive_count": 156,
-        "source_count": 156,
-        "date_mismatch_count": 0,
-        "number_mismatch_count": 0,
-        "parse_error_count": 0
-      },
-      "2026": {
-        "status": "MATCH",
-        "archive_count": 130,
-        "source_count": 130,
-        "date_mismatch_count": 0,
-        "number_mismatch_count": 0,
-        "parse_error_count": 0
-      }
-    },
-    "lotobil_r60": {
-      "raw_comparison_status": "SOURCE_LAG_AT_TAIL",
-      "status": "ACCEPTED_SOURCE_LAG_AT_TAIL",
-      "archive_count": 974,
-      "source_count": 973,
-      "common_date_count": 973,
-      "archive_only_count": 1,
-      "independent_only_count": 0,
-      "number_mismatch_count": 0,
-      "source_parse_error_count": 0,
-      "raw_source_parse_error_count": 0,
-      "unresolved_index_gap_count": 0,
-      "archive_last_date": "2026-10-29",
-      "archive_only_dates": [
-        "2026-10-29"
-      ],
-      "independent_last_date": "2026-10-27",
-      "acceptance_basis": "Exactly one latest archive row is missing from Lotobil; every common row matches; no date/number mismatch, parsing error, raw parsing error, or unresolved index gap exists; the complete Loto.gen 2026 comparison matches the same latest archive date."
-    },
-    "fetch_failure_count": 0,
-    "archive_modified_by_audit": false,
-    "target_numbers_exposed": false,
-    "draw_numbers_in_report": false,
-    "official_result_page_confirmed": false,
-    "official_result_page_note": "The exact official Milli Piyango result page was not confirmed during the 2026-10-29 source check. Three indexed public result pages agreed on the draw; this metadata does not claim official-page confirmation."
-  }
+  ]
 }
