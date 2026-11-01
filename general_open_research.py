@@ -916,6 +916,7 @@ def call_model(
             "no automatic retry was attempted. Inspect " + request_usage_name + "."
         ) from None
     except RuntimeError as exc:
+        incomplete_model_response = "reached max_tokens" in str(exc)
         save_usage_observation(
             build_usage_observation(
                 getattr(response, "status", None) if "response" in locals() else None,
@@ -923,8 +924,13 @@ def call_model(
                 None,
                 response_mode="sse",
                 request_duration_seconds=time.monotonic() - request_started,
-                failure_stage="sse_protocol",
-                error_type="StreamProtocolError",
+                failure_stage=(
+                    "model_finish" if incomplete_model_response else "sse_protocol"
+                ),
+                error_type=(
+                    "IncompleteModelResponse" if incomplete_model_response
+                    else "StreamProtocolError"
+                ),
             ),
             request_label=request_label,
         )
