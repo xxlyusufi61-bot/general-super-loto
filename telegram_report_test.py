@@ -145,6 +145,80 @@ class TelegramReportTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "retrospective-only"):
             format_research_messages(report)
 
+    def test_research_report_rejects_target_or_pre_scope_dates(self):
+        report = self._valid_research_fixture()
+        report["forward_walk_forward"]["per_draw"][0]["test_date"] = report["target_date"]
+        with self.assertRaisesRegex(ValueError, "pre-target 6-of-60 scope"):
+            format_research_messages(report)
+
+    def test_research_report_rejects_overlapping_or_unordered_holdouts(self):
+        report = self._valid_research_fixture()
+        report["reverse_discovered_candidate_holdout"]["per_draw"][1]["test_date"] = "2021-01-05"
+        with self.assertRaisesRegex(ValueError, "directionally chronological"):
+            format_research_messages(report)
+
+    @staticmethod
+    def _valid_research_fixture():
+        spec_a = "a" * 64
+        spec_b = "b" * 64
+        return {
+            "status": "EVALUATED_EXPLORATORY_FIXED_SPEC",
+            "target_date": "2026-10-29",
+            "current_isolated_target_included": False,
+            "current_target_numbers_exposed": False,
+            "target_or_future_rows_used": False,
+            "per_draw_target_numbers_reported": False,
+            "candidate_rankings_reported": False,
+            "validation_start_date": "2021-01-01",
+            "validation_end_date": "2021-01-03",
+            "candidate_selection": {
+                "forward_hypothesis_id": "FWD-001",
+                "forward_spec_sha256": spec_a,
+                "reverse_hypothesis_id": "REV-001",
+                "reverse_spec_sha256": spec_b,
+            },
+            "forward_walk_forward": {
+                "validation_draw_count": 2,
+                "mean_hits_out_of_6": 0.7,
+                "uniform_random_expected_hits_out_of_6": 0.6,
+                "per_draw": [{
+                    "test_date": "2021-01-01", "direction": "forward",
+                    "hypothesis_id": "FWD-001", "spec_sha256": spec_a,
+                    "training_draw_count": 40, "hit_column_positions_1_to_6": [1],
+                    "hit_count": 1, "target_numbers_reported": False,
+                    "predicted_number_values_reported": False,
+                }, {
+                    "test_date": "2021-01-03", "direction": "forward",
+                    "hypothesis_id": "FWD-001", "spec_sha256": spec_a,
+                    "training_draw_count": 41, "hit_column_positions_1_to_6": [],
+                    "hit_count": 0, "target_numbers_reported": False,
+                    "predicted_number_values_reported": False,
+                }],
+            },
+            "time_ordered_cross_validation": {"folds": 2, "mean_hits_out_of_6": 0.65},
+            "reverse_discovered_candidate_holdout": {
+                "predictive_evidence": False, "test_draw_count": 2,
+                "first_test_date": "2021-02-02", "last_test_date": "2021-02-01",
+                "mean_hits_out_of_6": 0.5, "uniform_random_expected_hits_out_of_6": 0.6,
+                "per_draw": [{
+                    "test_date": "2021-02-02", "direction": "reverse_retrospective",
+                    "hypothesis_id": "REV-001", "spec_sha256": spec_b,
+                    "later_training_draw_count": 45, "hit_column_positions_1_to_6": [2],
+                    "hit_count": 1, "target_numbers_reported": False,
+                    "predicted_number_values_reported": False,
+                }, {
+                    "test_date": "2021-02-01", "direction": "reverse_retrospective",
+                    "hypothesis_id": "REV-001", "spec_sha256": spec_b,
+                    "later_training_draw_count": 46, "hit_column_positions_1_to_6": [3],
+                    "hit_count": 1, "target_numbers_reported": False,
+                    "predicted_number_values_reported": False,
+                }],
+            },
+            "reverse_time_ordered_cross_validation": {
+                "folds": 2, "mean_hits_out_of_6": 0.48, "predictive_evidence": False,
+            },
+        }
+
     def test_pretty_printed_evaluation_json_is_read_as_one_document(self):
         payload = {"status": "EVALUATED_EXPLORATORY_FIXED_SPEC", "detail": {"folds": 5}}
         with tempfile.TemporaryDirectory() as directory:
