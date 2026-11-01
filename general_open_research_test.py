@@ -5,7 +5,7 @@ import unittest
 import urllib.error
 from datetime import date, timedelta
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import general_open_research as research
 from general_data_guard import DataGuardError
@@ -307,6 +307,23 @@ class OpenResearchIsolationTests(unittest.TestCase):
 
 
 class NvidiaUsageObservationTests(unittest.TestCase):
+    def setUp(self):
+        research._NVIDIA_REQUESTS_ATTEMPTED = 0
+        research._NVIDIA_REQUEST_LABELS_ATTEMPTED.clear()
+
+    @staticmethod
+    def successful_response():
+        response = MagicMock()
+        response.status = 200
+        response.headers = {}
+        response.read.return_value = (
+            b'{"choices":[{"message":{"content":"synthetic response"}}],'
+            b'"usage":{"total_tokens":1}}'
+        )
+        response.__enter__.return_value = response
+        response.__exit__.return_value = False
+        return response
+
     def test_only_safe_rate_limit_headers_are_recorded(self):
         observed = research.build_usage_observation(
             200,
@@ -401,6 +418,58 @@ class NvidiaUsageObservationTests(unittest.TestCase):
             )
             self.assertEqual(summary["account_level_quota_status"], "UNKNOWN")
             self.assertEqual(summary["billing_or_paid_entitlement_status"], "NOT_VERIFIED_BY_THIS_RUN")
+
+    def test_runner_enforces_two_total_requests_and_direction_order(self):
+        env = {
+            "GENERAL_CONFIRM_LIVE_CALLS": CONFIRMATION_PHRASE,
+            "GENERAL_NVIDIA_GUARD_PASSED": "1",
+            "GENERAL_ALLOW_NVIDIA_CALL": "true",
+            "GENERAL_NVIDIA_FREE_USAGE_VERIFIED": "true",
+            "NVIDIA_API_KEY": "test-secret",
+        }
+        responses = [self.successful_response(), self.successful_response()]
+        try:
+            with patch.dict(os.environ, env, clear=True), patch.object(
+                research, "save_usage_observation"
+            ), patch(
+                "general_open_research.urllib.request.urlopen",
+                side_effect=responses,
+            ) as mocked_urlopen:
+                forward = research.call_model(
+                    [{"role": "user", "content": "forward"}],
+                    request_label="forward",
+                )
+                reverse = research.call_model(
+                    [{"role": "user", "content": "reverse"}],
+                    request_label="reverse",
+                )
+                self.assertEqual(forward, "synthetic response")
+                self.assertEqual(reverse, "synthetic response")
+                with self.assertRaisesRegex(RuntimeError, "request cap reached"):
+                    research.call_model([{"role": "user", "content": "third"}])
+                self.assertEqual(mocked_urlopen.call_count, 2)
+                self.assertEqual(research._NVIDIA_REQUESTS_ATTEMPTED, 2)
+        finally:
+            Path("/tmp/general_nvidia_api_attempted").unlink(missing_ok=True)
+            Path("/tmp/general_nvidia_api_succeeded").unlink(missing_ok=True)
+
+    def test_runner_rejects_reverse_before_forward_and_duplicate_direction(self):
+        env = {
+            "GENERAL_CONFIRM_LIVE_CALLS": CONFIRMATION_PHRASE,
+            "GENERAL_NVIDIA_GUARD_PASSED": "1",
+            "GENERAL_ALLOW_NVIDIA_CALL": "true",
+            "GENERAL_NVIDIA_FREE_USAGE_VERIFIED": "true",
+            "NVIDIA_API_KEY": "test-secret",
+        }
+        with patch.dict(os.environ, env, clear=True), patch(
+            "general_open_research.urllib.request.urlopen"
+        ) as mocked_urlopen:
+            with self.assertRaisesRegex(RuntimeError, "forward-then-reverse"):
+                research.call_model(
+                    [{"role": "user", "content": "reverse"}],
+                    request_label="reverse",
+                )
+            mocked_urlopen.assert_not_called()
 
     def test_rate_limit_error_is_not_retried_and_metadata_is_saved(self):
         with tempfile.TemporaryDirectory() as temp_dir:
