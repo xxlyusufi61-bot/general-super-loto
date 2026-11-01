@@ -88,8 +88,42 @@ jobs:
           echo "Action: ${{ inputs.action }}" >> "$GITHUB_STEP_SUMMARY"
           echo "No NVIDIA request is made by activation, pause, or status actions." >> "$GITHUB_STEP_SUMMARY"
 
+  archive-refresh:
+    if: ${{ github.event_name == 'schedule' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout default branch
+        uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Refresh and validate the 6-of-60 canonical archive
+        run: |
+          if python3 general_archive_fetch.py > /tmp/general-archive-fetch.log 2>&1; then
+            echo "Archive refresh completed and validated."
+          else
+            echo "Archive refresh failed; no research cycle will start."
+            exit 1
+          fi
+      - name: Persist the refreshed canonical archive
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add super_loto_archive.json
+          if ! git diff --cached --quiet; then
+            git commit -m "data: refresh validated Super Loto archive"
+            git push origin HEAD:main
+          fi
+
   scheduled-cycle:
     if: ${{ github.event_name == 'schedule' }}
+    needs: archive-refresh
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -119,26 +153,6 @@ jobs:
         run: |
           python3 general_nvidia_guard.py check
           echo "GENERAL_NVIDIA_GUARD_PASSED=1" >> "$GITHUB_ENV"
-      - name: Refresh and validate the current 6-of-60 archive
-        if: ${{ steps.status.outputs.authorized == 'true' && steps.status.outputs.lock_clear == 'true' }}
-        run: |
-          if python3 general_archive_fetch.py > /tmp/general-archive-fetch.log 2>&1; then
-            echo "Archive refresh completed."
-          else
-            echo "Archive refresh failed; no model request will be made."
-            exit 1
-          fi
-      - name: Persist the refreshed canonical archive
-        id: persist_archive
-        if: ${{ steps.status.outputs.authorized == 'true' && steps.status.outputs.lock_clear == 'true' }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add super_loto_archive.json
-          if ! git diff --cached --quiet; then
-            git commit -m "data: refresh validated Super Loto archive"
-            git push origin HEAD:main
-          fi
       - name: Prepare one cycle only for a new target and fresh sealed windows
         id: prepare
         if: ${{ steps.status.outputs.authorized == 'true' && steps.status.outputs.lock_clear == 'true' }}
