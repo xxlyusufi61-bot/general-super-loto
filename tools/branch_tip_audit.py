@@ -43,9 +43,12 @@ for ref in refs:
         errors.append({"ref": ref, "error": result.stderr.strip()})
         continue
     for row in result.stdout.splitlines():
-        try:
-            path, line_no, text = row.split(":", 2)
-        except ValueError:
+        parts = row.split(":", 3)
+        if len(parts) == 4 and parts[0].startswith("refs/"):
+            _, path, line_no, text = parts
+        elif len(parts) == 3:
+            path, line_no, text = parts
+        else:
             errors.append({"ref": ref, "error": "Unparseable git-grep result", "row": row})
             continue
         record = {"ref": ref, "path": path, "line": int(line_no), "text": text.strip()}
