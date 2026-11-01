@@ -1,0 +1,26 @@
+name: Branch-tip reference audit
+
+on:
+  pull_request:
+    paths:
+      - "tools/branch_tip_audit.py"
+      - ".github/workflows/branch-tip-audit.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch all current branch tips read-only
+        run: git fetch origin '+refs/heads/*:refs/remotes/origin/*'
+
+      - name: Scan all remote branch tips
+        run: python tools/branch_tip_audit.py
