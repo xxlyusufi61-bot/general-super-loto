@@ -64,7 +64,7 @@ The aggregate visits the numbers in the supplied earlier-draw history. Its expre
 
 ## 3. Fixed safety limits
 
-- Number pool must be exactly R54 (1–54) or R60 (1–60).
+- The only supported number pool is 1–60; every input record and cutoff date must be on or after 2020-08-02.
 - At most 32 expression nodes and depth 8.
 - At most 64 prior draws per candidate-ranking operation.
 - At most 30 holdout draws per evaluation call.
@@ -82,7 +82,7 @@ evaluate_holdout receives two separate, strictly chronological inputs:
 
 For each validation draw, candidate scores are calculated only from the earlier discovery rows and validation rows that would already have occurred by that date. The current validation draw is used only after ranking, to count overlap. The current isolated target and all later draws are rejected by the date boundary.
 
-Callers must pass one regime at a time. R54 and R60 histories must never be pooled. The executor rejects R54 dates on or after 2020-08-02, R60 dates before that boundary, and values outside the corresponding number pool.
+The executor rejects all pre-2020-08-02 dates and all number pools other than 1–60. No earlier-period data is accepted by this engine.
 
 The report contains aggregate hit statistics, a standard error, the uniform-random reference 36/N, and a hash of the exact specification. It omits per-draw target values and candidate rankings.
 
@@ -94,6 +94,6 @@ evaluate_reverse_retrospective_stress starts at the newest testable pre-target d
 
 This v0.1 DSL can express only score functions based on one aggregate over prior draw numbers. It does not yet express every possible hypothesis involving whole draw states, linked state sequences, crossover, or more complex transformations. A proposal outside this grammar must remain PROPOSAL_ONLY; it must not be approximated silently or translated into arbitrary code.
 
-The engine unit tests use deterministic synthetic fixtures. This PR does not run new candidate specifications against the real archive, does not call a hosted model, does not change the canonical method registry, and does not claim a predictive result. Before real-archive evaluation, a separate orchestration step must withhold a non-overlapping chronological validation interval from the research agent, prevent repeat use of the same holdout, preserve R54/R60 separation, and record reproducible provenance.
+The engine unit tests use deterministic synthetic fixtures. This PR does not run new candidate specifications against the real archive, does not call a hosted model, does not change the canonical method registry, and does not claim a predictive result. Before real-archive evaluation, a separate orchestration step must withhold a non-overlapping chronological validation interval from the research agent, prevent repeat use of the same holdout, reject all records before 2020-08-02, and record reproducible provenance.
 
 A validated DSL specification is not evidence of predictive power. Mean overlap alone is not proof, and no lottery outcome is guaranteed.

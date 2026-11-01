@@ -272,5 +272,46 @@ class ArchiveCrossSourceAuditTests(unittest.TestCase):
         self.assertEqual(anomalies, [])
 
 
+
+class ActiveScopeSourceParserTests(unittest.TestCase):
+    def test_loto_gen_parser_skips_pre_scope_rows_before_number_parsing(self):
+        html = """
+        <table>
+          <tr><td>20200001</td><td>30 Temmuz 2020</td><td>1 2 3 4 5</td></tr>
+          <tr><td>20200002</td><td>2 Ağustos 2020</td>
+              <td>7</td><td>8</td><td>9</td><td>10</td><td>11</td><td>12</td></tr>
+        </table>
+        """
+        rows, errors = audit.parse_loto_gen_year_page(html, 2020)
+        self.assertEqual(errors, [])
+        self.assertEqual(rows, {"2020-08-02": (7, 8, 9, 10, 11, 12)})
+
+    def test_lotobil_parser_skips_pre_scope_row_before_number_parsing(self):
+        html = """
+        <table>
+          <tr><td>30/07/2020</td><td>40</td><td>1 2 3 4 5</td></tr>
+        </table>
+        """
+        rows, errors, anomalies, indices, index_dates = (
+            audit.parse_lotobil_archive_detailed(html)
+        )
+        self.assertEqual(rows, {})
+        self.assertEqual(errors, [])
+        self.assertEqual(anomalies, [])
+        self.assertEqual(indices, {})
+        self.assertEqual(index_dates, set())
+
+    def test_root_archive_parser_skips_pre_scope_row_before_number_parsing(self):
+        html = """
+        <div><a href="/super-loto/arsiv/2020/1">
+          #20200001 30 Temmuz 2020 1 2 3 4 5
+        </a></div>
+        """
+        rows, errors, years_seen = audit.parse_loto_gen_root_archive_page(html)
+        self.assertEqual(rows, {})
+        self.assertEqual(errors, [])
+        self.assertEqual(years_seen, {2020})
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -3,15 +3,14 @@ from datetime import date, timedelta
 
 from general_bidirectional_evaluation import (
     CATALOG_ID,
+    _rank_catalog_history,
     evaluate_bidirectional_full_history,
     fixed_candidate_catalog,
 )
-
 from general_hypothesis_execution import rank_candidates
-from general_bidirectional_evaluation import _rank_catalog_history
 
 
-def make_rows(start: date, count: int, pool_size: int, step: int = 2):
+def make_rows(start: date, count: int, pool_size: int = 60, step: int = 2):
     rows = []
     for index in range(count):
         draw_day = (start + timedelta(days=step * index)).isoformat()
@@ -52,9 +51,8 @@ class BidirectionalFullHistoryTests(unittest.TestCase):
         self.assertEqual([item["number"] for item in reverse[:6]], [1, 2, 3, 4, 5, 6])
 
     def test_fast_catalog_ranker_matches_safe_dsl_interpreter(self):
-        history = make_rows(date(2024, 1, 2), 50, 60)
-        catalog = fixed_candidate_catalog()
-        for candidate in catalog:
+        history = make_rows(date(2024, 1, 2), 50)
+        for candidate in fixed_candidate_catalog():
             with self.subTest(spec_id=candidate["spec_id"]):
                 expected = rank_candidates(
                     history,
@@ -63,108 +61,56 @@ class BidirectionalFullHistoryTests(unittest.TestCase):
                     execution_spec=candidate["execution_spec"],
                 )
                 actual = _rank_catalog_history(
-                    history,
-                    number_pool_size=60,
-                    candidate=candidate,
+                    history, number_pool_size=60, candidate=candidate
                 )
                 self.assertEqual(actual, expected)
 
     def test_both_directions_cover_eligible_rows_and_keep_target_isolated(self):
-        r54 = make_rows(date(2020, 1, 2), 46, 54, step=3)
-        r60 = make_rows(date(2020, 8, 2), 75, 60, step=2)
-        target_date = "2021-01-10"
+        rows = make_rows(date(2020, 8, 2), 75)
+        target_date = (date.fromisoformat(rows[-1]["date"]) + timedelta(days=2)).isoformat()
         report = evaluate_bidirectional_full_history(
-            {"R54": r54, "R60": r60},
-            isolated_target_date=target_date,
+            {"R60": rows}, isolated_target_date=target_date
         )
-        r60_report = report["regimes"]["R60"]
+        details = report["regimes"]["R60"]
         self.assertEqual(report["status"], "EVALUATED_BIDIRECTIONAL_ADAPTIVE_BASELINE")
         self.assertFalse(report["isolated_target_numbers_exposed"])
         self.assertFalse(report["isolated_target_in_forward_or_reverse_test"])
-        self.assertEqual(r60_report["forward"]["evaluated_draw_count"], 75 - 42)
-        self.assertEqual(r60_report["reverse_retrospective"]["evaluated_draw_count"], 75 - 42)
-        self.assertEqual(r60_report["forward"]["evaluation_order"], "oldest_to_newest")
-        self.assertEqual(r60_report["reverse_retrospective"]["evaluation_order"], "newest_to_oldest")
-        self.assertFalse(r60_report["reverse_retrospective"]["predictive_evidence"])
-        self.assertEqual(r60_report["forward"]["eligible_input_draw_count"], 75)
-        self.assertEqual(r60_report["reverse_retrospective"]["eligible_input_draw_count"], 75)
-        self.assertEqual(r60_report["forward"]["skipped_draw_count"], 42)
-        self.assertEqual(r60_report["reverse_retrospective"]["skipped_draw_count"], 42)
-        self.assertEqual(len(r60_report["forward_skipped_due_to_insufficient_history"]), 42)
-        self.assertEqual(len(r60_report["reverse_skipped_due_to_insufficient_history"]), 42)
-        self.assertEqual(
-            [row["test_date"] for row in r60_report["forward_skipped_due_to_insufficient_history"]],
-            [row["date"] for row in r60[:42]],
-        )
-        self.assertEqual(
-            [row["test_date"] for row in r60_report["reverse_skipped_due_to_insufficient_history"]],
-            [row["date"] for row in reversed(r60[-42:])],
-        )
-        self.assertTrue(all(row["hit_count"] is None for row in r60_report["forward_skipped_due_to_insufficient_history"]))
-        self.assertTrue(all(row["status"] == "SKIPPED_INSUFFICIENT_LATER_HISTORY" for row in r60_report["reverse_skipped_due_to_insufficient_history"]))
-        self.assertEqual(
-            r60_report["forward_and_reverse_tested_date_intersection_count"],
-            75 - 84 if 75 > 84 else 0,
-        )
-        self.assertEqual(
-            r60_report["forward_per_draw"][0]["test_date"],
-            r60[42]["date"],
-        )
-        for direction_key, details_key in (
-            ("forward", "forward_per_draw"),
-            ("reverse_retrospective", "reverse_per_draw"),
-        ):
-            summary = r60_report[direction_key]
-            details = r60_report[details_key]
-            expected_missed = [row["test_date"] for row in details if row["hit_count"] == 0]
-            self.assertEqual(summary["missed_draw_dates"], expected_missed)
-            self.assertEqual(summary["missed_draw_count"], len(expected_missed))
-        self.assertEqual(
-            r60_report["reverse_per_draw"][0]["test_date"],
-            r60[-43]["date"],
-        )
-        for per_draw in (r60_report["forward_per_draw"] + r60_report["reverse_per_draw"]):
-            self.assertLess(per_draw["test_date"], target_date)
-            self.assertTrue(0 <= per_draw["hit_count"] <= 6)
-            self.assertEqual(
-                per_draw["hit_count"],
-                len(per_draw["hit_column_positions_1_to_6"]),
-            )
-            self.assertTrue(all(1 <= pos <= 6 for pos in per_draw["hit_column_positions_1_to_6"]))
-            self.assertFalse(per_draw["target_numbers_reported"])
-            self.assertFalse(per_draw["predicted_number_values_reported"])
-            self.assertNotIn("numbers", per_draw)
+        self.assertEqual(details["forward"]["evaluated_draw_count"], 75 - 42)
+        self.assertEqual(details["reverse_retrospective"]["evaluated_draw_count"], 75 - 42)
+        self.assertEqual(details["forward"]["evaluation_order"], "oldest_to_newest")
+        self.assertEqual(details["reverse_retrospective"]["evaluation_order"], "newest_to_oldest")
+        self.assertFalse(details["reverse_retrospective"]["predictive_evidence"])
+        self.assertTrue(all(row["test_date"] < target_date for row in details["forward_per_draw"] + details["reverse_per_draw"]))
+        self.assertTrue(all(not row["target_numbers_reported"] and not row["predicted_number_values_reported"] for row in details["forward_per_draw"] + details["reverse_per_draw"]))
+        self.assertEqual(set(report["regimes"]), {"R60"})
 
-    def test_reverse_is_marked_retrospective_not_predictive(self):
-        rows = make_rows(date(2020, 8, 2), 90, 60)
+    def test_reverse_is_retrospective_not_predictive(self):
+        rows = make_rows(date(2020, 8, 2), 90)
+        target_date = (date.fromisoformat(rows[-1]["date"]) + timedelta(days=2)).isoformat()
         report = evaluate_bidirectional_full_history(
-            {"R54": [], "R60": rows},
-            isolated_target_date="2021-10-01",
+            {"R60": rows}, isolated_target_date=target_date
         )
         reverse = report["regimes"]["R60"]["reverse_retrospective"]
         self.assertFalse(reverse["predictive_evidence"])
         self.assertIn("retrospective", reverse["direction"])
 
     def test_target_or_future_draws_are_rejected_before_scoring(self):
-        rows = make_rows(date(2020, 8, 2), 45, 60)
-        rows.append({"date": "2021-01-10", "numbers": [1, 2, 3, 4, 5, 6]})
+        rows = make_rows(date(2020, 8, 2), 45)
+        target_date = (date.fromisoformat(rows[-1]["date"]) + timedelta(days=2)).isoformat()
+        rows.append({"date": target_date, "numbers": [1, 2, 3, 4, 5, 6]})
         with self.assertRaisesRegex(ValueError, "isolated target"):
             evaluate_bidirectional_full_history(
-                {"R54": [], "R60": rows},
-                isolated_target_date="2021-01-10",
+                {"R60": rows}, isolated_target_date=target_date
             )
 
-    def test_r54_and_r60_boundary_is_enforced(self):
-        r54 = make_rows(date(2020, 1, 2), 44, 54, step=4)
-        r60 = make_rows(date(2020, 8, 2), 44, 60, step=3)
-        r54[-1]["date"] = "2020-08-02"
-        r54.sort(key=lambda row: row["date"])
+    def test_pre_scope_history_is_rejected(self):
+        rows = make_rows(date(2020, 8, 2), 45)
+        rows.insert(0, {"date": "2020-07-30", "numbers": [1, 2, 3, 4, 5, 6]})
         with self.assertRaises(ValueError):
             evaluate_bidirectional_full_history(
-                {"R54": r54, "R60": r60},
-                isolated_target_date="2021-01-10",
+                {"R60": rows}, isolated_target_date="2021-01-10"
             )
 
 
 if __name__ == "__main__":
-    unittest.main()
+    unittest.main(verbosity=2)

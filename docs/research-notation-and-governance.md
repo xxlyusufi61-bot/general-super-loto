@@ -31,7 +31,7 @@ Each new hypothesis must define every symbol, input, transformation, output, par
 1. Keep the target draw hidden during discovery, training, feature construction, model selection, and tuning.
 2. Use only records strictly earlier than the isolated target for predictive evaluation.
 3. Validate archive structure, values, date uniqueness, chronology, and target partition before analysis. Stop if any required check fails.
-4. Keep R54 and R60 separate. The R60 boundary is 2020-08-02. Any cross-regime comparison must be explicitly identified and tested separately.
+4. Restrict the canonical archive and every research, agent, and evaluation path to records dated 2020-08-02 or later. Reject any earlier record before analysis or model access.
 5. Use leakage-free forward walk-forward evaluation and time-ordered cross-validation.
 6. Reverse chronology is permitted only as a separately labelled retrospective stress test; it is never predictive evidence.
 7. Use deterministic synthetic tests before real-archive evaluation.

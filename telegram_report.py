@@ -78,7 +78,7 @@ def format_message(title, status, run_url, branch, kind="status", report=None):
         regimes = report.get("regimes", {})
         if not isinstance(regimes, dict):
             regimes = {}
-        for regime in ("R54", "R60"):
+        for regime in ("R60",):
             details = regimes.get(regime, {})
             lines.append(regime + " rejimi:")
             if not isinstance(details, dict):
@@ -114,7 +114,7 @@ def format_message(title, status, run_url, branch, kind="status", report=None):
             lines.append("- Zaman sıralı çapraz doğrulama:")
             cv = details.get("time_ordered_cross_validation", {})
             lines.extend(metric_lines(cv.get("baselines") if isinstance(cv, dict) else None))
-        lines.append("R54 ve R60 ayrı değerlendirildi; rejimler arasında veri havuzlama yapılmadı.")
+        lines.append("Yalnızca 2 Ağustos 2020 ve sonrası çekilişleri değerlendirildi.")
         lines.append("A->B->C, A->T ve MOD5->T bu temel değerlendirme motorunda uygulanmış değil.")
         lines.append("Ters kronolojik sonuçlar geriye dönük incelemedir; tahmin kanıtı değildir.")
     if run_url:
