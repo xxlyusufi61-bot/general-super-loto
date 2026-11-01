@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import general_core as core
+import general_nvidia_guard as nvidia_guard
 from general_live_consent import CONFIRMATION_PHRASE
 
 from general_nvidia_guard import (
@@ -161,6 +162,47 @@ class GlobalNvidiaLockTests(unittest.TestCase):
         }
         with self.assertRaisesRegex(ValueError, "not chronological"):
             validate_rate_limit_state(state)
+
+
+    def test_shared_rate_limit_persistence_uses_git_push_not_rest_contents_api(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            worktree = Path(temporary_directory)
+            ledger = worktree / "general_nvidia_rate_limit.json"
+            ledger.write_text(
+                json.dumps(initial_rate_limit_state(), indent=2) + "\\n",
+                encoding="utf-8",
+            )
+            git_calls = []
+            rev_calls = {"count": 0}
+
+            def fake_git(arguments, *, cwd=None):
+                git_calls.append(list(arguments))
+                if arguments[:2] == ["rev-parse", "HEAD"]:
+                    rev_calls["count"] += 1
+                    return "head-before" if rev_calls["count"] <= 2 else "head-after"
+                return ""
+
+            with patch.object(
+                nvidia_guard, "_ensure_rate_limit_worktree", return_value=worktree
+            ), patch.object(nvidia_guard, "_run_git", side_effect=fake_git), patch.object(
+                nvidia_guard, "_api_request"
+            ) as mocked_api:
+                state, head = nvidia_guard.read_remote_rate_limit()
+                updated_state, wait = reserve_rate_limit_slot(
+                    state,
+                    "offline-git-persistence-test",
+                    now=datetime(2026, 11, 1, 1, 0, 0, tzinfo=timezone.utc),
+                )
+                self.assertEqual(wait, 0)
+                new_head = nvidia_guard.write_remote_rate_limit(updated_state, head)
+
+            self.assertEqual(new_head, "head-after")
+            self.assertIn(
+                ["push", "origin", "HEAD:refs/heads/" + nvidia_guard.RATE_LIMIT_BRANCH],
+                git_calls,
+            )
+            self.assertNotIn(["commit", "-m", "chore: reserve shared NVIDIA request slot"], [])
+            mocked_api.assert_not_called()
 
     def test_rate_limit_state_uses_a_separate_persistent_branch(self):
         self.assertEqual(RATE_LIMIT_BRANCH, "general-nvidia-rate-limit-state")
