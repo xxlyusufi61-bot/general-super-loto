@@ -4,15 +4,21 @@ import unittest
 from pathlib import Path
 import textwrap
 import urllib.error
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import general_core as core
 from general_live_consent import CONFIRMATION_PHRASE
 
 from general_nvidia_guard import (
+    NVIDIA_REQUESTS_PER_MINUTE,
+    RATE_LIMIT_BRANCH,
     initial_lock_state,
+    initial_rate_limit_state,
     make_locked_state,
     make_unlocked_state,
+    reserve_rate_limit_slot,
+    validate_rate_limit_state,
     should_activate_after_failure,
     validate_lock_state,
 )
@@ -88,6 +94,94 @@ class GlobalNvidiaLockTests(unittest.TestCase):
         )
         self.assertLessEqual(len(state["reason"]), 320)
 
+
+    def test_shared_rate_limiter_allows_40_and_blocks_the_41st_request(self):
+        now = datetime(2026, 11, 1, 1, 0, 0, tzinfo=timezone.utc)
+        state = initial_rate_limit_state()
+        for index in range(NVIDIA_REQUESTS_PER_MINUTE):
+            state, wait = reserve_rate_limit_slot(
+                state, "offline-test-agent-" + str(index), now=now
+            )
+            self.assertEqual(wait, 0)
+            self.assertIsNotNone(state)
+        blocked, wait = reserve_rate_limit_slot(
+            state, "offline-test-agent-41", now=now
+        )
+        self.assertIsNone(blocked)
+        self.assertGreater(wait, 0)
+        self.assertEqual(len(state["requests"]), 40)
+
+    def test_shared_rate_limiter_releases_a_slot_after_the_rolling_window(self):
+        now = datetime(2026, 11, 1, 1, 0, 0, tzinfo=timezone.utc)
+        state = initial_rate_limit_state()
+        for index in range(40):
+            state, _ = reserve_rate_limit_slot(state, "agent-" + str(index), now=now)
+        next_state, wait = reserve_rate_limit_slot(
+            state, "next-agent", now=now + timedelta(seconds=62)
+        )
+        self.assertEqual(wait, 0)
+        self.assertIsNotNone(next_state)
+        self.assertEqual(len(next_state["requests"]), 1)
+
+    def test_shared_rate_limiter_rejects_corrupt_or_non_chronological_state(self):
+        now = datetime(2026, 11, 1, 1, 0, 0, tzinfo=timezone.utc)
+        invalid = [
+            None,
+            [],
+            {"schema_version": 2, "window_seconds": 60, "max_requests": 40, "requests": []},
+            {
+                "schema_version": 1,
+                "window_seconds": 60,
+                "max_requests": 41,
+                "requests": [],
+            },
+            {
+                "schema_version": 1,
+                "window_seconds": 60,
+                "max_requests": 40,
+                "requests": [{"reserved_at_utc": "not-a-date", "source": "agent"}],
+            },
+        ]
+        for value in invalid:
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    validate_rate_limit_state(value)
+
+        first = now.isoformat()
+        second = (now - timedelta(seconds=1)).isoformat()
+        state = {
+            "schema_version": 1,
+            "window_seconds": 60,
+            "max_requests": 40,
+            "requests": [
+                {"reserved_at_utc": first, "source": "agent-a"},
+                {"reserved_at_utc": second, "source": "agent-b"},
+            ],
+            "updated_at_utc": now.isoformat(),
+        }
+        with self.assertRaisesRegex(ValueError, "not chronological"):
+            validate_rate_limit_state(state)
+
+    def test_rate_limit_state_uses_a_separate_persistent_branch(self):
+        self.assertEqual(RATE_LIMIT_BRANCH, "general-nvidia-rate-limit-state")
+
+    def test_all_live_nvidia_workflows_share_the_repository_concurrency_group(self):
+        workflow_names = (
+            "general-agent.yml",
+            "general-coordinator-execute.yml",
+            "general-autonomous-research.yml",
+            "open-research.yml",
+            "nvidia-chat-test.yml",
+            "nvidia-test.yml",
+        )
+        for workflow_name in workflow_names:
+            path = Path(".github/workflows") / workflow_name
+            source = path.read_text(encoding="utf-8")
+            with self.subTest(workflow=workflow_name):
+                self.assertIn("group: general-nvidia-api", source)
+                self.assertIn("GITHUB_TOKEN: ${{ github.token }}", source)
+                self.assertIn("GITHUB_REPOSITORY: ${{ github.repository }}", source)
+
     def test_general_core_python_syntax(self):
         source = Path("general_core.py").read_text(encoding="utf-8")
         compile(source, "general_core.py", "exec")
@@ -111,7 +205,7 @@ class GlobalNvidiaLockTests(unittest.TestCase):
             def temporary_marker_path(original_path):
                 return marker_root / Path(original_path).name
 
-            with patch.dict(
+            with patch("general_core.reserve_nvidia_request") as mocked_reserve, patch.dict(
                 os.environ,
                 {
                     "NVIDIA_API_KEY": "offline-unit-test-key",
@@ -130,6 +224,7 @@ class GlobalNvidiaLockTests(unittest.TestCase):
                                 [{"role": "user", "content": "offline timeout test"}]
                             )
 
+            mocked_reserve.assert_called_once_with("general-core")
             self.assertEqual(
                 mocked_urlopen.call_count,
                 1,
