@@ -9,6 +9,7 @@ from pathlib import Path
 from datetime import datetime, date, timezone
 from general_source_context import build_source_context
 from general_live_consent import has_explicit_live_consent
+from general_nvidia_guard import reserve_nvidia_request
 from general_agent_report_guard import report_contract_prompt, validate_agent_report
 
 VERSION = "0.7.0"
@@ -660,7 +661,9 @@ def ask_nvidia(messages):
         method="POST"
     )
 
-    # Write the marker immediately before the paid-risk API boundary.
+    # Reserve a global account-wide slot immediately before the provider boundary.
+    reserve_nvidia_request("general-core")
+    # Write the marker immediately before the provider boundary.
     attempt_marker.write_text(datetime.now(timezone.utc).isoformat(), encoding="utf-8")
     try:
         with urllib.request.urlopen(req, timeout=NVIDIA_TIMEOUT_SECONDS) as r:
