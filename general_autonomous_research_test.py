@@ -156,6 +156,39 @@ class AutonomousResearchStateTests(unittest.TestCase):
         self.assertNotIn("numbers", result)
         self.assertNotIn("forward_validation_dates", result)
 
+    def test_insufficient_fresh_sealed_windows_return_a_wait_state(self):
+        messages = (
+            "No sufficiently sized forward R60 validation interval is available.",
+            "No sufficiently sized reverse R60 validation interval is available.",
+            "R60 discovery history is shorter than the default minimum training window.",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root / "archive.json"
+            ledger = root / "ledger.json"
+            lock = root / "lock.json"
+            archive.write_text(json.dumps({"draws": synthetic_rows(90)}), encoding="utf-8")
+            ledger.write_text(
+                json.dumps({"schema_version": 1, "purpose": "test", "entries": []}),
+                encoding="utf-8",
+            )
+            lock.write_text(json.dumps(initial_lock_state()), encoding="utf-8")
+            for message in messages:
+                with self.subTest(message=message), unittest.mock.patch.object(
+                    auto.sealed,
+                    "preflight",
+                    side_effect=auto.sealed.SealedEvaluationError(message),
+                ):
+                    result = auto.prepare_cycle(
+                        active_state(),
+                        archive_path=archive,
+                        ledger_path=ledger,
+                        global_lock_path=lock,
+                        now=NOW,
+                    )
+                    self.assertFalse(result["eligible"])
+                    self.assertEqual(result["status"], "WAITING_FOR_FRESH_SEALED_WINDOWS")
+
     def test_active_global_lock_blocks_prepare_before_archive_analysis(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
