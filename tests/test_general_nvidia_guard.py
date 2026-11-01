@@ -201,7 +201,7 @@ class GlobalNvidiaLockTests(unittest.TestCase):
                 ["push", "origin", "HEAD:refs/heads/" + nvidia_guard.RATE_LIMIT_BRANCH],
                 git_calls,
             )
-            self.assertNotIn(["commit", "-m", "chore: reserve shared NVIDIA request slot"], [])
+            self.assertIn(["commit", "-m", "chore: reserve shared NVIDIA request slot"], git_calls)
             mocked_api.assert_not_called()
 
     def test_rate_limit_state_uses_a_separate_persistent_branch(self):
