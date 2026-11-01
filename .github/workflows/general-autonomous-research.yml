@@ -1,0 +1,318 @@
+name: GENERAL Autonomous Research Cycle
+
+'on':
+  schedule:
+    - cron: "23 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Read status, activate scheduled research, or pause it."
+        required: true
+        type: choice
+        options:
+          - status
+          - activate
+          - pause
+        default: status
+      authorization_phrase:
+        description: "For activation only, enter the exact autonomous free-only authorization phrase."
+        required: false
+        type: string
+        default: "NO"
+      confirm_free_usage_verified:
+        description: "Only true after independently verifying free-only/no-billing status."
+        required: true
+        type: boolean
+        default: false
+      authorization_days:
+        description: "Automatic-use authorization expiry."
+        required: true
+        type: choice
+        options:
+          - "1"
+          - "7"
+          - "30"
+        default: "7"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: general-nvidia-api
+  cancel-in-progress: false
+
+jobs:
+  control:
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout default branch
+        uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Read automation status
+        if: ${{ inputs.action == 'status' }
+        run: python3 general_autonomous_research.py status
+      - name: Activate bounded autonomous authorization
+        if: ${{ inputs.action == 'activate' }
+        env:
+          AUTO_CONFIRMATION: ${{ inputs.authorization_phrase }
+          FREE_USAGE_VERIFIED: ${{ inputs.confirm_free_usage_verified && 'true' || 'false' }
+          AUTHORIZATION_DAYS: ${{ inputs.authorization_days }
+        run: |
+          python3 general_autonomous_research.py activate \
+            --confirmation "$AUTO_CONFIRMATION" \
+            --free-usage-verified "$FREE_USAGE_VERIFIED" \
+            --days "$AUTHORIZATION_DAYS"
+      - name: Pause autonomous research
+        if: ${{ inputs.action == 'pause' }
+        run: python3 general_autonomous_research.py pause
+      - name: Persist authorization or pause state
+        if: ${{ inputs.action == 'activate' || inputs.action == 'pause' }
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add general_autonomous_research_state.json
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: update autonomous research authorization"
+            git push origin HEAD:main
+          fi
+      - name: Summarize control action
+        if: always()
+        run: |
+          echo "Action: ${{ inputs.action }" >> "$GITHUB_STEP_SUMMARY"
+          echo "No NVIDIA request is made by activation, pause, or status actions." >> "$GITHUB_STEP_SUMMARY"
+
+  scheduled-cycle:
+    if: ${{ github.event_name == 'schedule' }
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout default branch
+        uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check explicit authorization and local global-lock state
+        id: status
+        run: |
+          python3 general_autonomous_research.py status --github-output "$GITHUB_OUTPUT"
+          cat "$GITHUB_OUTPUT"
+      - name: Verify remote global NVIDIA safety lock
+        if: ${{ steps.status.outputs.authorized == 'true' && steps.status.outputs.lock_clear == 'true' }
+        env:
+          GITHUB_TOKEN: ${{ github.token }
+          GITHUB_REPOSITORY: ${{ github.repository }
+          GENERAL_DEFAULT_BRANCH: main
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }
+        run: |
+          python3 general_nvidia_guard.py check
+          echo "GENERAL_NVIDIA_GUARD_PASSED=1" >> "$GITHUB_ENV"
+      - name: Refresh and validate the current 6-of-60 archive
+        if: ${{ steps.status.outputs.authorized == 'true' && steps.status.outputs.lock_clear == 'true' }
+        run: |
+          if python3 general_archive_fetch.py > /tmp/general-archive-fetch.log 2>&1; then
+            echo "Archive refresh completed."
+          else
+            echo "Archive refresh failed; no model request will be made."
+            exit 1
+          fi
+      - name: Persist the refreshed canonical archive
+        if: ${{ steps.status.outputs.authorized == 'true' && steps.status.outputs.lock_clear == 'true' }
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add super_loto_archive.json
+          if ! git diff --cached --quiet; then
+            git commit -m "data: refresh validated Super Loto archive"
+            git push origin HEAD:main
+          fi
+      - name: Prepare one cycle only for a new target and fresh sealed windows
+        id: prepare
+        if: ${{ steps.status.outputs.authorized == 'true' && steps.status.outputs.lock_clear == 'true' }
+        run: |
+          python3 general_autonomous_research.py prepare \
+            --archive super_loto_archive.json \
+            --ledger general_evaluation_ledger.json \
+            --github-output "$GITHUB_OUTPUT"
+          cat "$GITHUB_OUTPUT"
+      - name: Claim this target before any provider request
+        id: attempt_reservation
+        if: ${{ steps.prepare.outputs.eligible == 'true' }
+        run: |
+          python3 general_autonomous_research.py claim \
+            --archive super_loto_archive.json \
+            --ledger general_evaluation_ledger.json \
+            --run-id "$GITHUB_RUN_ID" \
+            --github-output "$GITHUB_OUTPUT"
+          cat "$GITHUB_OUTPUT"
+      - name: Persist the target-attempt reservation
+        if: ${{ steps.attempt_reservation.outputs.attempt_id != '' }
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add general_autonomous_research_state.json
+          git commit -m "chore: reserve autonomous research target"
+          git push origin HEAD:main
+      - name: Run independent forward and reverse NVIDIA discovery
+        id: research
+        if: ${{ steps.attempt_reservation.outputs.attempt_id != '' }
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }
+          TASK_TEXT: "Explore the validated pre-target 6-of-60 archive from scratch. Propose independently testable hypotheses for the forward and reverse directions. Do not request, infer, or report winning-number predictions."
+          GENERAL_CONFIRM_LIVE_CALLS: "I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_3_NVIDIA_REQUESTS"
+          GENERAL_ALLOW_NVIDIA_CALL: "true"
+          GENERAL_NVIDIA_FREE_USAGE_VERIFIED: "true"
+          GENERAL_NVIDIA_GUARD_PASSED: "1"
+        run: python3 general_open_research.py
+      - name: Activate global lock after an incomplete provider request
+        if: ${{ failure() && steps.research.outcome == 'failure' }
+        env:
+          GITHUB_TOKEN: ${{ github.token }
+          GITHUB_REPOSITORY: ${{ github.repository }
+          GENERAL_DEFAULT_BRANCH: main
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }
+        run: |
+          if [ -f /tmp/general_nvidia_api_attempted ] && [ ! -f /tmp/general_nvidia_api_succeeded ]; then
+            python3 general_nvidia_guard.py lock --reason "Autonomous NVIDIA request failed or its response could not be validated; no automatic retry is allowed."
+          else
+            echo "No incomplete NVIDIA request detected; global lock unchanged."
+          fi
+      - name: Create the frozen sealed evaluation claim
+        id: sealed_claim
+        if: ${{ success() && steps.research.outcome == 'success' }
+        run: |
+          python3 general_sealed_evaluation.py claim \
+            --archive super_loto_archive.json \
+            --ledger general_evaluation_ledger.json \
+            --proposals open_research_proposals.json \
+            --specs open_research_execution_specs.json \
+            --output open_research_evaluation_claim.json \
+            --github-output "$GITHUB_OUTPUT"
+          cat "$GITHUB_OUTPUT"
+      - name: Persist the sealed claim and immutable archive snapshot
+        if: ${{ steps.sealed_claim.outputs.claim_created == 'true' }
+        run: |
+          git add general_evaluation_ledger.json general_evaluation_snapshots/
+          git commit -m "Reserve autonomous sealed evaluation holdouts"
+          git push origin HEAD:main
+      - name: Evaluate the frozen candidates chronologically
+        id: evaluation
+        if: ${{ steps.sealed_claim.outputs.claim_created == 'true' }
+        env:
+          SEALED_CLAIM_ID: ${{ steps.sealed_claim.outputs.claim_id }
+        run: |
+          python3 general_sealed_evaluation.py evaluate \
+            --claim-id "$SEALED_CLAIM_ID" \
+            --ledger general_evaluation_ledger.json \
+            --proposals open_research_proposals.json \
+            --specs open_research_execution_specs.json \
+            --output open_research_evaluation_report.json
+      - name: Persist evaluation completion
+        if: ${{ steps.evaluation.outcome == 'success' }
+        run: |
+          git add general_evaluation_ledger.json
+          git commit -m "Record autonomous sealed evaluation completion"
+          git push origin HEAD:main
+      - name: Record successful evaluation outcome
+        if: ${{ always() && steps.attempt_reservation.outputs.attempt_id != '' && steps.sealed_claim.outputs.claim_created == 'true' && steps.evaluation.outcome == 'success' }
+        env:
+          ATTEMPT_ID: ${{ steps.attempt_reservation.outputs.attempt_id }
+        run: |
+          python3 general_autonomous_research.py finish \
+            --attempt-id "$ATTEMPT_ID" \
+            --outcome SUCCEEDED \
+            --reason-code EVALUATION_COMPLETED
+          git add general_autonomous_research_state.json
+          git commit -m "Record autonomous research cycle success"
+          git push origin HEAD:main
+      - name: Record no-candidate outcome without scoring the archive
+        if: ${{ always() && steps.attempt_reservation.outputs.attempt_id != '' && steps.research.outcome == 'success' && steps.sealed_claim.outputs.claim_created != 'true' }
+        env:
+          ATTEMPT_ID: ${{ steps.attempt_reservation.outputs.attempt_id }
+        run: |
+          python3 general_autonomous_research.py finish \
+            --attempt-id "$ATTEMPT_ID" \
+            --outcome NO_ELIGIBLE_CANDIDATE \
+            --reason-code NO_FROZEN_DIRECTIONAL_CANDIDATE
+          git add general_autonomous_research_state.json
+          git commit -m "Record autonomous cycle without eligible candidate"
+          git push origin HEAD:main
+      - name: Record failed claimed cycle
+        if: ${{ always() && steps.attempt_reservation.outputs.attempt_id != '' && (steps.research.outcome == 'failure' || steps.sealed_claim.outcome == 'failure' || steps.evaluation.outcome == 'failure') }
+        env:
+          ATTEMPT_ID: ${{ steps.attempt_reservation.outputs.attempt_id }
+        run: |
+          python3 general_autonomous_research.py finish \
+            --attempt-id "$ATTEMPT_ID" \
+            --outcome FAILED \
+            --reason-code WORKFLOW_FAILED
+          git add general_autonomous_research_state.json
+          git commit -m "Record failed autonomous research cycle"
+          git push origin HEAD:main
+      - name: Send separate forward and reverse Telegram reports
+        if: ${{ steps.evaluation.outcome == 'success' }
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }
+        run: |
+          python3 telegram_report.py \
+            --title "Otonom araştırma turu" \
+            --status success \
+            --branch main \
+            --run-url "https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --kind research \
+            --report-log open_research_evaluation_report.json
+      - name: Notify Telegram when no directional DSL candidate was eligible
+        if: ${{ steps.attempt_reservation.outputs.attempt_id != '' && steps.research.outcome == 'success' && steps.sealed_claim.outputs.claim_created != 'true' }
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }
+        run: |
+          python3 telegram_report.py \
+            --title "Otonom araştırma: yürütülebilir aday bulunamadı" \
+            --status success \
+            --branch main \
+            --run-url "https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+      - name: Notify Telegram after a failed claimed cycle
+        if: ${{ failure() && steps.attempt_reservation.outputs.attempt_id != '' }
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }
+        run: |
+          python3 telegram_report.py \
+            --title "Otonom araştırma döngüsü" \
+            --status failure \
+            --branch main \
+            --run-url "https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+      - name: Upload number-safe autonomous cycle artifacts
+        if: ${{ always() && steps.attempt_reservation.outputs.attempt_id != '' }
+        uses: actions/upload-artifact@v4
+        with:
+          name: general-autonomous-cycle-${{ github.run_id }
+          path: |
+            open_research_report.md
+            open_research_forward_report.md
+            open_research_reverse_report.md
+            open_research_proposals.json
+            open_research_execution_specs.json
+            open_research_usage.json
+            open_research_usage_forward.json
+            open_research_usage_reverse.json
+            open_research_sealed_plan.json
+            open_research_evaluation_claim.json
+            open_research_evaluation_report.json
+          if-no-files-found: ignore
+          retention-days: 14
