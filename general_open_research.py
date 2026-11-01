@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import urllib.error
 import urllib.request
 from datetime import date, datetime, timezone
@@ -354,6 +355,13 @@ def build_usage_observation(
     status_code: int | None,
     headers: Mapping[str, Any] | None,
     payload: Mapping[str, Any] | None,
+    *,
+    response_mode: str = "json",
+    request_duration_seconds: float | None = None,
+    stream_event_count: int | None = None,
+    stream_completed: bool | None = None,
+    failure_stage: str | None = None,
+    error_type: str | None = None,
 ) -> dict[str, Any]:
     """Build a cautious report without treating token usage as remaining quota or cost."""
     usage = payload.get("usage") if isinstance(payload, Mapping) else None
@@ -367,6 +375,16 @@ def build_usage_observation(
         "http_status": status_code,
         "inference_requests_made_by_this_run": 1,
         "automatic_retries": 0,
+        "response_mode": response_mode,
+        "request_duration_seconds": (
+            round(request_duration_seconds, 3)
+            if isinstance(request_duration_seconds, (int, float))
+            else None
+        ),
+        "stream_event_count": stream_event_count,
+        "stream_completed": stream_completed,
+        "failure_stage": failure_stage,
+        "network_error_type": error_type,
         "rate_limit_headers_returned": filter_usage_headers(headers),
         "token_usage_returned_by_provider": usage,
         "remaining_quota_before_request": None,
@@ -379,7 +397,8 @@ def build_usage_observation(
         "interpretation": (
             "Response token usage is not remaining quota and does not establish cost or unlimited access. "
             "Only provider-returned rate-limit headers are recorded; missing headers mean unavailable, "
-            "not unlimited."
+            "not unlimited. Network metadata identifies the failed stage without storing request content, "
+            "credentials, or provider error bodies."
         ),
     }
 
@@ -616,6 +635,116 @@ def combine_directional_results(
     return proposal_document, execution_document
 
 
+def _iter_sse_data(response):
+    """Yield data payloads from a UTF-8 server-sent-event response."""
+    data_lines: list[str] = []
+    while True:
+        raw_line = response.readline()
+        if raw_line in (b"", ""):
+            if data_lines:
+                yield "\n".join(data_lines)
+            return
+        if isinstance(raw_line, bytes):
+            try:
+                line = raw_line.decode("utf-8")
+            except UnicodeDecodeError:
+                raise RuntimeError("Research model stream contained invalid UTF-8.") from None
+        elif isinstance(raw_line, str):
+            line = raw_line
+        else:
+            raise RuntimeError("Research model stream returned an invalid line type.")
+
+        line = line.rstrip("\r\n")
+        if not line:
+            if data_lines:
+                yield "\n".join(data_lines)
+                data_lines = []
+            continue
+        if line.startswith(":"):
+            # SSE comments/keep-alives do not carry model output.
+            continue
+        field, separator, value = line.partition(":")
+        if separator and field == "data":
+            if value.startswith(" "):
+                value = value[1:]
+            data_lines.append(value)
+
+
+def _parse_streamed_chat_completion(response) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Parse NVIDIA's data-only SSE stream; reasoning is never treated as final content."""
+    content_parts: list[str] = []
+    usage: dict[str, Any] | None = None
+    finish_reason: str | None = None
+    event_count = 0
+    saw_done = False
+
+    for event_data in _iter_sse_data(response):
+        if event_data.strip() == "[DONE]":
+            saw_done = True
+            break
+        if not event_data.strip():
+            continue
+        try:
+            chunk = json.loads(event_data)
+        except json.JSONDecodeError:
+            raise RuntimeError("Research model stream contained invalid JSON.") from None
+        if not isinstance(chunk, dict):
+            raise RuntimeError("Research model stream contained a non-object event.")
+        if chunk.get("error") is not None:
+            raise RuntimeError("Research model stream returned a provider error event.")
+
+        event_count += 1
+        returned_usage = chunk.get("usage")
+        if isinstance(returned_usage, dict):
+            usage = returned_usage
+
+        choices = chunk.get("choices")
+        if choices is None:
+            if isinstance(returned_usage, dict):
+                continue
+            raise RuntimeError("Research model stream event did not contain choices.")
+        if not isinstance(choices, list):
+            raise RuntimeError("Research model stream returned invalid choices.")
+        for choice in choices:
+            if not isinstance(choice, dict):
+                raise RuntimeError("Research model stream returned an invalid choice.")
+            delta = choice.get("delta", {})
+            if not isinstance(delta, dict):
+                raise RuntimeError("Research model stream returned an invalid delta.")
+            delta_content = delta.get("content")
+            if isinstance(delta_content, str):
+                content_parts.append(delta_content)
+            elif delta_content is not None:
+                raise RuntimeError("Research model stream returned unsupported content.")
+            # reasoning_content is deliberately ignored. Only delta.content is final text.
+            if choice.get("finish_reason") is not None:
+                finish_reason = str(choice["finish_reason"])
+
+    if not saw_done:
+        raise RuntimeError("Research model stream ended before the [DONE] marker.")
+    content = "".join(content_parts)
+    if not content.strip():
+        raise RuntimeError(
+            "Research model stream completed without final answer content; "
+            "reasoning-only output is not accepted."
+        )
+    result = {
+        "choices": [
+            {
+                "message": {"content": content},
+                "finish_reason": finish_reason,
+            }
+        ],
+        "usage": usage,
+    }
+    metadata = {
+        "stream_event_count": event_count,
+        "stream_completed": True,
+        "finish_reason": finish_reason,
+    }
+    return result, metadata
+
+
 def call_model(
     messages: list[dict[str, str]],
     *,
@@ -644,10 +773,9 @@ def call_model(
         raise RuntimeError(
             "NVIDIA inference was not explicitly approved; no provider request was sent."
         )
-    # Every individual hosted request is blocked unless the operator has
-    # independently verified its free-only/no-billing status. The orchestrator
-    # uses separate directional calls and never retries automatically. Rate limits
-    # alone are not proof of free allowance.
+    # Every individual hosted request remains blocked unless the operator has
+    # independently verified free-only/no-billing status. The two directional calls
+    # are separate and no network error is ever retried automatically.
     if os.environ.get("GENERAL_NVIDIA_FREE_USAGE_VERIFIED", "").strip().lower() != "true":
         raise RuntimeError(
             "Free-use status was not independently verified; NVIDIA inference blocked. "
@@ -678,11 +806,18 @@ def call_model(
         "messages": messages,
         "max_tokens": 1800,
         "temperature": 0.2,
-        "stream": False,
+        "reasoning_effort": "low",
+        "chat_template_kwargs": {"clear_thinking": True},
+        "stream": True,
     }).encode("utf-8")
     request = urllib.request.Request(
-        API_URL, data=body,
-        headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"},
+        API_URL,
+        data=body,
+        headers={
+            "Authorization": "Bearer " + key,
+            "Content-Type": "application/json",
+            "Accept": "text/event-stream",
+        },
         method="POST",
     )
     reserve_nvidia_request("open-research-" + request_key)
@@ -699,21 +834,27 @@ def call_model(
         datetime.now(timezone.utc).isoformat(), encoding="utf-8"
     )
 
+    request_started = time.monotonic()
+    stage = "connect_or_wait_for_headers"
     try:
         with urllib.request.urlopen(request, timeout=240) as response:
             status = getattr(response, "status", 200)
             headers = response.headers
-            raw = response.read().decode("utf-8")
-        try:
-            result = json.loads(raw)
-        except json.JSONDecodeError:
-            save_usage_observation(build_usage_observation(status, headers, None), request_label=request_label)
-            raise RuntimeError(
-                "Research model returned invalid JSON; usage observation was saved; no retry attempted."
-            ) from None
-        save_usage_observation(build_usage_observation(status, headers, result), request_label=request_label)
+            stage = "read_stream"
+            result, stream_metadata = _parse_streamed_chat_completion(response)
     except urllib.error.HTTPError as exc:
-        save_usage_observation(build_usage_observation(exc.code, exc.headers, None), request_label=request_label)
+        save_usage_observation(
+            build_usage_observation(
+                exc.code,
+                exc.headers,
+                None,
+                response_mode="sse",
+                request_duration_seconds=time.monotonic() - request_started,
+                failure_stage="http_response",
+                error_type="HTTPError",
+            ),
+            request_label=request_label,
+        )
         if exc.code == 429:
             raise RuntimeError(
                 "NVIDIA returned HTTP 429 (rate limit). No automatic retry was attempted; "
@@ -728,20 +869,75 @@ def call_model(
             "Research model HTTP error " + str(exc.code) +
             "; no automatic retry was attempted; inspect " + request_usage_name + "."
         ) from None
-    except (urllib.error.URLError, TimeoutError):
-        save_usage_observation(build_usage_observation(None, None, None), request_label=request_label)
-        raise RuntimeError(
-            "Research model connection/timeout error. Whether the provider received the request "
-            "is unknown; no automatic retry was attempted."
-        ) from None
-    choices = result.get("choices", [])
-    message = choices[0].get("message", {}) if choices else {}
-    content = message.get("content")
-    if not isinstance(content, str) or not content.strip():
-        raise RuntimeError(
-            "Research model returned no final content. Inspect " + request_usage_name + "; "
-            "no automatic retry was attempted."
+    except urllib.error.URLError as exc:
+        reason = getattr(exc, "reason", None)
+        error_type = type(reason).__name__ if reason is not None else type(exc).__name__
+        save_usage_observation(
+            build_usage_observation(
+                None,
+                None,
+                None,
+                response_mode="sse",
+                request_duration_seconds=time.monotonic() - request_started,
+                failure_stage=stage,
+                error_type=error_type,
+            ),
+            request_label=request_label,
         )
+        raise RuntimeError(
+            "Research model connection/timeout error during " + stage +
+            " (" + error_type + "). Whether the provider received the request is unknown; "
+            "no automatic retry was attempted. Inspect " + request_usage_name + "."
+        ) from None
+    except (TimeoutError, OSError) as exc:
+        error_type = type(exc).__name__
+        save_usage_observation(
+            build_usage_observation(
+                None,
+                None,
+                None,
+                response_mode="sse",
+                request_duration_seconds=time.monotonic() - request_started,
+                failure_stage=stage,
+                error_type=error_type,
+            ),
+            request_label=request_label,
+        )
+        raise RuntimeError(
+            "Research model connection/stream timeout during " + stage +
+            " (" + error_type + "). Whether the provider received the request is unknown; "
+            "no automatic retry was attempted. Inspect " + request_usage_name + "."
+        ) from None
+    except RuntimeError as exc:
+        save_usage_observation(
+            build_usage_observation(
+                getattr(response, "status", None) if "response" in locals() else None,
+                getattr(response, "headers", None) if "response" in locals() else None,
+                None,
+                response_mode="sse",
+                request_duration_seconds=time.monotonic() - request_started,
+                failure_stage="sse_protocol",
+                error_type="StreamProtocolError",
+            ),
+            request_label=request_label,
+        )
+        raise RuntimeError(
+            str(exc) + " No automatic retry was attempted; inspect " + request_usage_name + "."
+        ) from None
+
+    save_usage_observation(
+        build_usage_observation(
+            status,
+            headers,
+            result,
+            response_mode="sse",
+            request_duration_seconds=time.monotonic() - request_started,
+            stream_event_count=stream_metadata["stream_event_count"],
+            stream_completed=stream_metadata["stream_completed"],
+        ),
+        request_label=request_label,
+    )
+    content = result["choices"][0]["message"]["content"]
     success_marker.write_text(
         datetime.now(timezone.utc).isoformat(), encoding="utf-8"
     )
