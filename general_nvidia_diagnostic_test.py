@@ -71,6 +71,21 @@ class SingleRequestDiagnosticTests(unittest.TestCase):
             "GENERAL_NVIDIA_GUARD_PASSED": "1",
         }
 
+    def test_compact_diagnostic_prompt_rejects_nonchronological_history(self):
+        reversed_rows = list(reversed(self.discovery_rows))
+        with self.assertRaisesRegex(RuntimeError, "not strictly chronological"):
+            diagnostic.build_diagnostic_messages(self.target, reversed_rows)
+
+    def test_compact_diagnostic_prompt_rejects_out_of_scope_history(self):
+        invalid_rows = [
+            {
+                "date": "2020-08-01",
+                "numbers": [1, 7, 13, 22, 34, 48],
+            }
+        ]
+        with self.assertRaisesRegex(RuntimeError, "pre-scope or target/future"):
+            diagnostic.build_diagnostic_messages(self.target, invalid_rows)
+
     def test_requires_the_separate_diagnostic_approval_before_preflight(self):
         with patch.dict(
             os.environ,
