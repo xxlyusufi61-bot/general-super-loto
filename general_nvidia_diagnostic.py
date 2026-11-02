@@ -30,11 +30,18 @@ def build_diagnostic_messages(
 ) -> list[dict[str, str]]:
     """Build a compact, forward-only prompt for a bounded diagnostic response."""
     target_day = date.fromisoformat(target)
+    if target_day.isoformat() != target:
+        raise RuntimeError("Diagnostic target date is not canonical YYYY-MM-DD.")
     previous_day = None
     for row in discovery_rows:
         if not isinstance(row, dict) or set(row) != {"date", "numbers"}:
             raise RuntimeError("Diagnostic discovery contains a malformed row.")
-        day = date.fromisoformat(row["date"])
+        day_value = row["date"]
+        if not isinstance(day_value, str):
+            raise RuntimeError("Diagnostic discovery date must be canonical YYYY-MM-DD.")
+        day = date.fromisoformat(day_value)
+        if day.isoformat() != day_value:
+            raise RuntimeError("Diagnostic discovery date must be canonical YYYY-MM-DD.")
         if day < RESEARCH_SCOPE_START or day >= target_day:
             raise RuntimeError("Diagnostic discovery contains a pre-scope or target/future row.")
         if previous_day is not None and day <= previous_day:
