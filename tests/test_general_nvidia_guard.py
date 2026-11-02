@@ -15,6 +15,11 @@ from general_live_consent import CONFIRMATION_PHRASE
 from general_nvidia_guard import (
     NVIDIA_REQUESTS_PER_MINUTE,
     RATE_LIMIT_BRANCH,
+    DIAGNOSTIC_REPOSITORY,
+    DIAGNOSTIC_WORKFLOW_ID,
+    DIAGNOSTIC_WORKFLOW_PATH,
+    DIAGNOSTIC_APPROVAL_PHRASE,
+    DIAGNOSTIC_REQUEST_SOURCE,
     initial_lock_state,
     initial_rate_limit_state,
     make_locked_state,
@@ -96,6 +101,262 @@ class GlobalNvidiaLockTests(unittest.TestCase):
         )
         self.assertLessEqual(len(state["reason"]), 320)
 
+
+
+    def _diagnostic_environment(self, run_id="987654321"):
+        return {
+            "GITHUB_REPOSITORY": DIAGNOSTIC_REPOSITORY,
+            "GITHUB_RUN_ID": run_id,
+            "GITHUB_RUN_ATTEMPT": "1",
+            "GITHUB_EVENT_NAME": "workflow_dispatch",
+            "GITHUB_REF": "refs/heads/main",
+            "GITHUB_WORKFLOW_REF": (
+                DIAGNOSTIC_REPOSITORY + "/" + DIAGNOSTIC_WORKFLOW_PATH + "@refs/heads/main"
+            ),
+            "GITHUB_SHA": "a" * 40,
+            "GENERAL_CONFIRM_LIVE_CALLS": DIAGNOSTIC_APPROVAL_PHRASE,
+        }
+
+    def _diagnostic_run(self, env=None):
+        env = env or self._diagnostic_environment()
+        return {
+            "id": int(env["GITHUB_RUN_ID"]),
+            "workflow_id": DIAGNOSTIC_WORKFLOW_ID,
+            "path": DIAGNOSTIC_WORKFLOW_PATH,
+            "event": "workflow_dispatch",
+            "head_branch": "main",
+            "head_sha": env["GITHUB_SHA"],
+            "run_attempt": 1,
+            "status": "in_progress",
+            "conclusion": None,
+            "repository": {"full_name": DIAGNOSTIC_REPOSITORY},
+            "head_repository": {"full_name": DIAGNOSTIC_REPOSITORY},
+        }
+
+    def test_diagnostic_workflow_identity_requires_every_exact_github_boundary(self):
+        env = self._diagnostic_environment()
+        valid = self._diagnostic_run(env)
+        self.assertEqual(
+            nvidia_guard.validate_diagnostic_workflow_run(valid, env),
+            env["GITHUB_RUN_ID"],
+        )
+
+        invalid_runs = [
+            ("wrong run ID", {"id": int(env["GITHUB_RUN_ID"]) + 1}),
+            ("wrong workflow ID", {"workflow_id": DIAGNOSTIC_WORKFLOW_ID + 1}),
+            ("wrong workflow path", {"path": ".github/workflows/nvidia-test.yml"}),
+            ("wrong event", {"event": "push"}),
+            ("wrong branch", {"head_branch": "feature/test"}),
+            ("wrong commit", {"head_sha": "b" * 40}),
+            ("rerun", {"run_attempt": 2}),
+            ("completed run", {"status": "completed"}),
+            ("completed conclusion", {"conclusion": "success"}),
+            ("wrong repository", {"repository": {"full_name": "someone/else"}}),
+            ("wrong head repository", {"head_repository": {"full_name": "someone/else"}}),
+        ]
+        for label, change in invalid_runs:
+            candidate = dict(valid)
+            candidate.update(change)
+            with self.subTest(label=label):
+                with self.assertRaises(RuntimeError):
+                    nvidia_guard.validate_diagnostic_workflow_run(candidate, env)
+
+        invalid_envs = [
+            ("wrong repository", {"GITHUB_REPOSITORY": "someone/else"}),
+            ("wrong event", {"GITHUB_EVENT_NAME": "push"}),
+            ("wrong ref", {"GITHUB_REF": "refs/heads/feature"}),
+            ("wrong workflow ref", {"GITHUB_WORKFLOW_REF": "someone/else/workflow.yml@refs/heads/main"}),
+            ("rerun attempt", {"GITHUB_RUN_ATTEMPT": "2"}),
+            ("wrong approval", {"GENERAL_CONFIRM_LIVE_CALLS": "YES"}),
+            ("missing run ID", {"GITHUB_RUN_ID": ""}),
+            ("noncanonical run ID", {"GITHUB_RUN_ID": "0987654321"}),
+        ]
+        for label, change in invalid_envs:
+            candidate_env = env | change
+            with self.subTest(label=label):
+                with self.assertRaises(RuntimeError):
+                    nvidia_guard.validate_diagnostic_workflow_run(valid, candidate_env)
+
+    def test_current_diagnostic_run_is_verified_through_github_api(self):
+        env = self._diagnostic_environment()
+        expected_run = self._diagnostic_run(env)
+        with patch.dict(os.environ, env | {
+            "GITHUB_TOKEN": "offline-test-token",
+            "GITHUB_API_URL": "https://api.github.com",
+        }, clear=True), patch.object(
+            nvidia_guard, "_api_request", return_value=expected_run
+        ) as mocked_api:
+            run_id = nvidia_guard.read_current_diagnostic_workflow_run()
+        self.assertEqual(run_id, env["GITHUB_RUN_ID"])
+        mocked_api.assert_called_once_with(
+            "GET",
+            "https://api.github.com/repos/"
+            + DIAGNOSTIC_REPOSITORY
+            + "/actions/runs/"
+            + env["GITHUB_RUN_ID"],
+        )
+
+    def test_diagnostic_one_shot_id_survives_rate_window_expiry(self):
+        now = datetime(2026, 11, 2, 12, 0, 0, tzinfo=timezone.utc)
+        state, wait = reserve_rate_limit_slot(
+            initial_rate_limit_state(),
+            DIAGNOSTIC_REQUEST_SOURCE,
+            now=now,
+            diagnostic_run_id="123456789",
+        )
+        self.assertEqual(wait, 0)
+        self.assertEqual(state["diagnostic_run_ids"], ["123456789"])
+
+        next_state, wait = reserve_rate_limit_slot(
+            state,
+            "ordinary-agent-after-window",
+            now=now + timedelta(seconds=62),
+        )
+        self.assertEqual(wait, 0)
+        self.assertEqual(len(next_state["requests"]), 1)
+        self.assertEqual(next_state["diagnostic_run_ids"], ["123456789"])
+        with self.assertRaisesRegex(ValueError, "already reserved"):
+            reserve_rate_limit_slot(
+                next_state,
+                DIAGNOSTIC_REQUEST_SOURCE,
+                now=now + timedelta(seconds=63),
+                diagnostic_run_id="123456789",
+            )
+
+    def test_diagnostic_run_id_is_validated_and_legacy_rate_state_is_accepted(self):
+        legacy_state = {
+            "schema_version": 1,
+            "window_seconds": 60,
+            "max_requests": 40,
+            "requests": [],
+            "updated_at_utc": None,
+        }
+        validate_rate_limit_state(legacy_state)
+        for invalid_id in ("0", "01", "-1", "12x", "１2", "", "1" * 33):
+            with self.subTest(invalid_id=invalid_id):
+                with self.assertRaises(ValueError):
+                    reserve_rate_limit_slot(
+                        legacy_state,
+                        DIAGNOSTIC_REQUEST_SOURCE,
+                        diagnostic_run_id=invalid_id,
+                    )
+
+        with self.assertRaises(ValueError):
+            validate_rate_limit_state(legacy_state | {"diagnostic_run_ids": ["123", "123"]})
+
+    def test_locked_diagnostic_reservation_is_single_use_and_uses_shared_rate_limit(self):
+        active_lock = make_locked_state(
+            initial_lock_state(),
+            "offline diagnostic exception test",
+            stamp="2026-11-02T12:00:00+00:00",
+            locked_by="offline-test",
+        )
+        rate_state = initial_rate_limit_state()
+        with patch.object(
+            nvidia_guard,
+            "read_current_diagnostic_workflow_run",
+            return_value="987654321",
+        ) as mocked_auth, patch.object(
+            nvidia_guard,
+            "read_remote_lock",
+            return_value=(active_lock, "locked-sha"),
+        ) as mocked_lock, patch.object(
+            nvidia_guard,
+            "read_remote_rate_limit",
+            return_value=(rate_state, "rate-limit-head"),
+        ) as mocked_read_rate, patch.object(
+            nvidia_guard,
+            "write_remote_rate_limit",
+            return_value="rate-limit-head-after",
+        ) as mocked_write_rate:
+            reservation = nvidia_guard.reserve_nvidia_request(
+                DIAGNOSTIC_REQUEST_SOURCE,
+                diagnostic_exception=True,
+            )
+
+        self.assertEqual(reservation["source"], DIAGNOSTIC_REQUEST_SOURCE)
+        mocked_auth.assert_called_once_with()
+        mocked_lock.assert_called_once_with()
+        mocked_read_rate.assert_called_once_with()
+        written_state = mocked_write_rate.call_args.args[0]
+        self.assertEqual(written_state["diagnostic_run_ids"], ["987654321"])
+        self.assertEqual(len(written_state["requests"]), 1)
+        self.assertIs(validate_lock_state(active_lock)["locked"], True)
+
+    def test_active_global_lock_still_blocks_every_normal_request(self):
+        active_lock = make_locked_state(
+            initial_lock_state(),
+            "offline normal-request lock test",
+            stamp="2026-11-02T12:00:00+00:00",
+            locked_by="offline-test",
+        )
+        with patch.object(
+            nvidia_guard,
+            "read_remote_lock",
+            return_value=(active_lock, "locked-sha"),
+        ), patch.object(nvidia_guard, "read_remote_rate_limit") as read_rate:
+            with self.assertRaisesRegex(RuntimeError, "Global NVIDIA safety lock is active"):
+                nvidia_guard.reserve_nvidia_request("general-core")
+        read_rate.assert_not_called()
+
+    def test_diagnostic_exception_cannot_be_used_for_other_request_sources(self):
+        with patch.object(nvidia_guard, "read_current_diagnostic_workflow_run") as auth, patch.object(
+            nvidia_guard, "read_remote_lock"
+        ) as read_lock:
+            with self.assertRaisesRegex(RuntimeError, "non-diagnostic request source"):
+                nvidia_guard.reserve_nvidia_request(
+                    "general-core",
+                    diagnostic_exception=True,
+                )
+        auth.assert_not_called()
+        read_lock.assert_not_called()
+
+    def test_diagnostic_exception_requires_global_lock_to_remain_active(self):
+        with patch.object(
+            nvidia_guard,
+            "read_current_diagnostic_workflow_run",
+            return_value="987654321",
+        ), patch.object(
+            nvidia_guard,
+            "read_remote_lock",
+            return_value=(initial_lock_state(), "clear-sha"),
+        ), patch.object(nvidia_guard, "read_remote_rate_limit") as read_rate:
+            with self.assertRaisesRegex(RuntimeError, "requires the global safety lock to remain active"):
+                nvidia_guard.reserve_nvidia_request(
+                    DIAGNOSTIC_REQUEST_SOURCE,
+                    diagnostic_exception=True,
+                )
+        read_rate.assert_not_called()
+
+    def test_diagnostic_check_requires_verified_context_and_active_global_lock(self):
+        active_lock = make_locked_state(
+            initial_lock_state(),
+            "offline diagnostic check test",
+            stamp="2026-11-02T12:00:00+00:00",
+            locked_by="offline-test",
+        )
+        with patch.object(
+            nvidia_guard, "read_current_diagnostic_workflow_run", return_value="987654321"
+        ), patch.object(
+            nvidia_guard, "read_remote_lock", return_value=(active_lock, "locked-sha")
+        ):
+            self.assertEqual(nvidia_guard.command_diagnostic_check(), 0)
+
+        with patch.object(
+            nvidia_guard, "read_current_diagnostic_workflow_run", return_value="987654321"
+        ), patch.object(
+            nvidia_guard, "read_remote_lock", return_value=(initial_lock_state(), "clear-sha")
+        ):
+            self.assertEqual(nvidia_guard.command_diagnostic_check(), 2)
+
+    def test_diagnostic_workflow_preflight_is_separate_and_scoped(self):
+        workflow = Path(".github/workflows/nvidia-diagnostic.yml").read_text(encoding="utf-8")
+        self.assertIn("      actions: read", workflow)
+        self.assertIn("GENERAL_CONFIRM_LIVE_CALLS: ${{ inputs.confirm_single_request }}", workflow)
+        self.assertIn("python3 general_nvidia_guard.py diagnostic-check", workflow)
+        self.assertNotIn("python3 general_nvidia_guard.py check", workflow)
+        self.assertIn("GENERAL_DIAGNOSTIC_MODE: \"true\"", workflow)
+        self.assertIn("group: general-nvidia-api", workflow)
 
     def test_shared_rate_limiter_allows_40_and_blocks_the_41st_request(self):
         now = datetime(2026, 11, 1, 1, 0, 0, tzinfo=timezone.utc)
@@ -250,6 +511,7 @@ class GlobalNvidiaLockTests(unittest.TestCase):
             "open-research.yml",
             "nvidia-chat-test.yml",
             "nvidia-test.yml",
+            "nvidia-diagnostic.yml",
         )
         for workflow_name in workflow_names:
             path = Path(".github/workflows") / workflow_name
