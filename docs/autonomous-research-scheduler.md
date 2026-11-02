@@ -63,7 +63,10 @@ diagnostic request while the lock remains active. Its preflight and provider
 reservation both query the GitHub Actions run API and require the canonical
 repository, the fixed diagnostic workflow ID and path, `workflow_dispatch`,
 the `main` branch, the exact one-request approval phrase, matching run/commit
-identity, an in-progress run, and `run_attempt=1`. The diagnostic job grants
+identity, an in-progress run, `run_attempt=1`, and the GitHub API `actor` must
+match the fixed authorized account login and immutable numeric user ID. The
+runner-supplied actor environment values are not trusted. The authorized account
+is the repository-connected administrator verified during PR review. The diagnostic job grants
 `actions: read` for this metadata check and retains `contents: write` only for
 the existing shared rate-limit and failure-lock state operations. A runner
 environment flag alone never authorizes the exception.
