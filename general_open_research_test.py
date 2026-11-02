@@ -855,7 +855,7 @@ class NvidiaUsageObservationTests(unittest.TestCase):
             self.assertEqual(len(saved), 1)
             self.assertEqual(saved[0]["http_status"], 200)
             self.assertEqual(
-                saved[0]["rate_limit_headers_returned"]["x-ratelimit-remaining-requests"],
+                saved[0]["rate_limit_headers_returned"]["X-RateLimit-Remaining-Requests"],
                 "39",
             )
             self.assertEqual(
