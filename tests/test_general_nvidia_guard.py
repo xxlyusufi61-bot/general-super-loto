@@ -268,12 +268,15 @@ class GlobalNvidiaLockTests(unittest.TestCase):
             nvidia_guard,
             "write_remote_rate_limit",
             return_value="rate-limit-head-after",
-        ) as mocked_write_rate:
+        ) as mocked_write_rate, patch.object(
+            nvidia_guard, "write_remote_lock"
+        ) as mocked_write_lock:
             reservation = nvidia_guard.reserve_nvidia_request(
                 DIAGNOSTIC_REQUEST_SOURCE,
                 diagnostic_exception=True,
             )
 
+        mocked_write_lock.assert_not_called()
         self.assertEqual(reservation["source"], DIAGNOSTIC_REQUEST_SOURCE)
         mocked_auth.assert_called_once_with()
         mocked_lock.assert_called_once_with()
