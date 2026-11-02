@@ -290,7 +290,15 @@ class GlobalNvidiaLockTests(unittest.TestCase):
             stamp="2026-11-02T12:00:00+00:00",
             locked_by="offline-test",
         )
-        with patch.object(
+        with patch.dict(
+            os.environ,
+            {
+                "GENERAL_NVIDIA_GUARD_PASSED": "1",
+                "GENERAL_DIAGNOSTIC_MODE": "true",
+                "GENERAL_ALLOW_NVIDIA_CALL": "true",
+            },
+            clear=True,
+        ), patch.object(
             nvidia_guard,
             "read_remote_lock",
             return_value=(active_lock, "locked-sha"),
@@ -327,6 +335,19 @@ class GlobalNvidiaLockTests(unittest.TestCase):
                     diagnostic_exception=True,
                 )
         read_rate.assert_not_called()
+
+    def test_ordinary_check_still_fails_closed_while_diagnostic_check_is_separate(self):
+        active_lock = make_locked_state(
+            initial_lock_state(),
+            "offline ordinary check lock test",
+            stamp="2026-11-02T12:00:00+00:00",
+            locked_by="offline-test",
+        )
+        with patch.object(
+            nvidia_guard, "read_remote_lock", return_value=(active_lock, "locked-sha")
+        ), patch.object(nvidia_guard, "send_telegram") as telegram:
+            self.assertEqual(nvidia_guard.command_check(), 2)
+        telegram.assert_called_once()
 
     def test_diagnostic_check_requires_verified_context_and_active_global_lock(self):
         active_lock = make_locked_state(
