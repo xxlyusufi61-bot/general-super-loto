@@ -373,12 +373,22 @@ class NvidiaUsageObservationTests(unittest.TestCase):
         response.readline.side_effect = [
             b'data: {"choices":[{"delta":{"content":"partial answer"},"finish_reason":"length"}]}\n',
             b"\n",
+            b'data: {"choices":[],"usage":{"prompt_tokens":120,"completion_tokens":1800,"total_tokens":1920}}\n',
+            b"\n",
             b"data: [DONE]\n",
             b"\n",
             b"",
         ]
-        with self.assertRaisesRegex(RuntimeError, "reached max_tokens"):
+        with self.assertRaisesRegex(
+            research.IncompleteModelResponseError, "reached max_tokens"
+        ) as raised:
             research._parse_streamed_chat_completion(response)
+        self.assertEqual(raised.exception.stream_event_count, 2)
+        self.assertTrue(raised.exception.stream_completed)
+        self.assertEqual(raised.exception.stream_finish_reason, "length")
+        self.assertEqual(raised.exception.usage["total_tokens"], 1920)
+        self.assertFalse(hasattr(raised.exception, "partial_content"))
+        self.assertNotIn("partial answer", repr(raised.exception))
 
     def test_stream_parser_rejects_reasoning_only_output(self):
         response = MagicMock()
@@ -602,6 +612,8 @@ class NvidiaUsageObservationTests(unittest.TestCase):
         response.readline.side_effect = [
             b'data: {"choices":[{"delta":{"content":"partial"},"finish_reason":"length"}]}\n',
             b"\n",
+            b'data: {"choices":[],"usage":{"prompt_tokens":333,"completion_tokens":1800,"total_tokens":2133}}\n',
+            b"\n",
             b"data: [DONE]\n",
             b"\n",
             b"",
@@ -624,10 +636,22 @@ class NvidiaUsageObservationTests(unittest.TestCase):
                         request_label="forward",
                     )
                 self.assertEqual(mocked_urlopen.call_count, 1)
+                sent_body = json.loads(mocked_urlopen.call_args.args[0].data.decode("utf-8"))
+                self.assertEqual(sent_body["max_tokens"], research.DEFAULT_MAX_COMPLETION_TOKENS)
             self.assertEqual(len(saved), 1)
             self.assertEqual(saved[0]["failure_stage"], "model_finish")
             self.assertEqual(saved[0]["network_error_type"], "IncompleteModelResponse")
             self.assertEqual(saved[0]["automatic_retries"], 0)
+            self.assertEqual(saved[0]["stream_event_count"], 2)
+            self.assertTrue(saved[0]["stream_completed"])
+            self.assertEqual(saved[0]["stream_finish_reason"], "length")
+            self.assertFalse(saved[0]["response_complete"])
+            self.assertEqual(saved[0]["max_tokens_requested"], 1800)
+            self.assertEqual(
+                saved[0]["token_usage_returned_by_provider"]["total_tokens"],
+                2133,
+            )
+            self.assertNotIn("partial", json.dumps(saved[0]))
         finally:
             Path("/tmp/general_nvidia_api_attempted").unlink(missing_ok=True)
             Path("/tmp/general_nvidia_api_succeeded").unlink(missing_ok=True)

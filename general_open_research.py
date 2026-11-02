@@ -41,6 +41,8 @@ API_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
 DOCUMENTATION_REVIEW_DATE = "2026-10-25"
 
 MAX_NVIDIA_REQUESTS_PER_RUN = 2
+DEFAULT_MAX_COMPLETION_TOKENS = 1800
+DIAGNOSTIC_MAX_COMPLETION_TOKENS = 8192
 _NVIDIA_REQUESTS_ATTEMPTED = 0
 _NVIDIA_REQUEST_LABELS_ATTEMPTED: set[str] = set()
 
@@ -363,6 +365,8 @@ def build_usage_observation(
     stream_finish_reason: str | None = None,
     failure_stage: str | None = None,
     error_type: str | None = None,
+    response_complete: bool | None = None,
+    max_tokens_requested: int | None = None,
 ) -> dict[str, Any]:
     """Build a cautious report without treating token usage as remaining quota or cost."""
     usage = payload.get("usage") if isinstance(payload, Mapping) else None
@@ -385,6 +389,8 @@ def build_usage_observation(
         "stream_event_count": stream_event_count,
         "stream_completed": stream_completed,
         "stream_finish_reason": stream_finish_reason,
+        "response_complete": response_complete,
+        "max_tokens_requested": max_tokens_requested,
         "failure_stage": failure_stage,
         "network_error_type": error_type,
         "rate_limit_headers_returned": filter_usage_headers(headers),
@@ -672,6 +678,26 @@ def _iter_sse_data(response):
             data_lines.append(value)
 
 
+class IncompleteModelResponseError(RuntimeError):
+    """A complete SSE stream whose model answer was cut off by its token limit."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        usage: dict[str, Any] | None,
+        stream_event_count: int,
+        stream_completed: bool,
+        stream_finish_reason: str | None,
+    ) -> None:
+        super().__init__(message)
+        # Keep only provider token-usage metadata; never retain partial answer text.
+        self.usage = dict(usage) if isinstance(usage, dict) else None
+        self.stream_event_count = stream_event_count
+        self.stream_completed = stream_completed
+        self.stream_finish_reason = stream_finish_reason
+
+
 def _parse_streamed_chat_completion(response) -> tuple[dict[str, Any], dict[str, Any]]:
     """Parse NVIDIA's data-only SSE stream; reasoning is never treated as final content."""
     content_parts: list[str] = []
@@ -731,9 +757,13 @@ def _parse_streamed_chat_completion(response) -> tuple[dict[str, Any], dict[str,
             "reasoning-only output is not accepted."
         )
     if finish_reason == "length":
-        raise RuntimeError(
+        raise IncompleteModelResponseError(
             "Research model stream reached max_tokens before completion; "
-            "the partial response was rejected."
+            "the partial response was rejected.",
+            usage=usage,
+            stream_event_count=event_count,
+            stream_completed=saw_done,
+            stream_finish_reason=finish_reason,
         )
     result = {
         "choices": [
@@ -824,10 +854,15 @@ def call_model(
                 "Directional NVIDIA requests must run once each in forward-then-reverse order."
             )
 
+    request_max_tokens = (
+        DIAGNOSTIC_MAX_COMPLETION_TOKENS
+        if diagnostic_mode
+        else DEFAULT_MAX_COMPLETION_TOKENS
+    )
     body = json.dumps({
         "model": MODEL,
         "messages": messages,
-        "max_tokens": 1800,
+        "max_tokens": request_max_tokens,
         "temperature": 0.2,
         "reasoning_effort": "low",
         "chat_template_kwargs": {"clear_thinking": True},
@@ -872,6 +907,7 @@ def call_model(
                 exc.headers,
                 None,
                 response_mode="sse",
+                max_tokens_requested=request_max_tokens,
                 request_duration_seconds=time.monotonic() - request_started,
                 failure_stage="http_response",
                 error_type="HTTPError",
@@ -901,6 +937,7 @@ def call_model(
                 None,
                 None,
                 response_mode="sse",
+                max_tokens_requested=request_max_tokens,
                 request_duration_seconds=time.monotonic() - request_started,
                 failure_stage=stage,
                 error_type=error_type,
@@ -920,6 +957,7 @@ def call_model(
                 None,
                 None,
                 response_mode="sse",
+                max_tokens_requested=request_max_tokens,
                 request_duration_seconds=time.monotonic() - request_started,
                 failure_stage=stage,
                 error_type=error_type,
@@ -932,14 +970,30 @@ def call_model(
             "no automatic retry was attempted. Inspect " + request_usage_name + "."
         ) from None
     except RuntimeError as exc:
-        incomplete_model_response = "reached max_tokens" in str(exc)
+        incomplete_model_response = isinstance(exc, IncompleteModelResponseError)
+        error_usage = (
+            {"usage": exc.usage}
+            if incomplete_model_response and exc.usage is not None
+            else None
+        )
         save_usage_observation(
             build_usage_observation(
                 getattr(response, "status", None) if "response" in locals() else None,
                 getattr(response, "headers", None) if "response" in locals() else None,
-                None,
+                error_usage,
                 response_mode="sse",
+                max_tokens_requested=request_max_tokens,
                 request_duration_seconds=time.monotonic() - request_started,
+                stream_event_count=(
+                    exc.stream_event_count if incomplete_model_response else None
+                ),
+                stream_completed=(
+                    exc.stream_completed if incomplete_model_response else None
+                ),
+                stream_finish_reason=(
+                    exc.stream_finish_reason if incomplete_model_response else None
+                ),
+                response_complete=False if incomplete_model_response else None,
                 failure_stage=(
                     "model_finish" if incomplete_model_response else "sse_protocol"
                 ),
@@ -964,6 +1018,8 @@ def call_model(
             stream_event_count=stream_metadata["stream_event_count"],
             stream_completed=stream_metadata["stream_completed"],
             stream_finish_reason=stream_metadata["finish_reason"],
+            response_complete=True,
+            max_tokens_requested=request_max_tokens,
         ),
         request_label=request_label,
     )

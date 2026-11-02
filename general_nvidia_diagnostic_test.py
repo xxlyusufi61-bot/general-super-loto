@@ -71,6 +71,31 @@ class SingleRequestDiagnosticTests(unittest.TestCase):
             "GENERAL_NVIDIA_GUARD_PASSED": "1",
         }
 
+    def test_compact_diagnostic_prompt_rejects_nonchronological_history(self):
+        reversed_rows = list(reversed(self.discovery_rows))
+        with self.assertRaisesRegex(RuntimeError, "not strictly chronological"):
+            diagnostic.build_diagnostic_messages(self.target, reversed_rows)
+
+    def test_compact_diagnostic_prompt_rejects_out_of_scope_history(self):
+        invalid_rows = [
+            {
+                "date": "2020-08-01",
+                "numbers": [1, 7, 13, 22, 34, 48],
+            }
+        ]
+        with self.assertRaisesRegex(RuntimeError, "pre-scope or target/future"):
+            diagnostic.build_diagnostic_messages(self.target, invalid_rows)
+
+    def test_compact_diagnostic_prompt_rejects_noncanonical_dates(self):
+        noncanonical_rows = [
+            {
+                "date": "20261021",
+                "numbers": [2, 8, 14, 23, 35, 49],
+            }
+        ]
+        with self.assertRaisesRegex(RuntimeError, "canonical YYYY-MM-DD"):
+            diagnostic.build_diagnostic_messages(self.target, noncanonical_rows)
+
     def test_requires_the_separate_diagnostic_approval_before_preflight(self):
         with patch.dict(
             os.environ,
@@ -155,10 +180,17 @@ class SingleRequestDiagnosticTests(unittest.TestCase):
         payload = json.loads(messages[1]["content"])
         self.assertEqual(payload["discovery_direction"], "forward")
         self.assertEqual(payload["history_order"], "oldest_to_newest")
+        self.assertEqual(payload["discovery_scope"], "pre_target_discovery_only")
         self.assertEqual(payload["target_date_metadata_only"], self.target)
         self.assertFalse(payload["target_numbers_included"])
         self.assertFalse(payload["post_target_records_included"])
+        self.assertFalse(payload["sealed_validation_rows_included"])
+        self.assertFalse(payload["reverse_discovery_included"])
         self.assertEqual(payload["discovery_history_by_regime"]["R60"], self.discovery_rows)
+        self.assertIn("under 300 words", messages[0]["content"])
+        self.assertIn("OPEN_DEFINITION", messages[0]["content"])
+        self.assertNotIn("HYPOTHESIS_EXECUTION_SPECS_JSON", messages[0]["content"])
+        self.assertNotIn("RULE_CHANGE_REQUEST_JSON", messages[0]["content"])
         sent_dates = {
             row["date"]
             for row in payload["discovery_history_by_regime"]["R60"]
@@ -170,6 +202,8 @@ class SingleRequestDiagnosticTests(unittest.TestCase):
         self.assertEqual(result["status"], "RESPONSE_RECEIVED")
         self.assertEqual(result["provider_requests_attempted"], 1)
         self.assertEqual(result["automatic_retries"], 0)
+        self.assertEqual(result["max_tokens_requested"], 8192)
+        self.assertEqual(result["prompt_version"], "compact-forward-diagnostic-v1")
         self.assertFalse(result["reverse_request_sent"])
         self.assertEqual(result["sealed_validation_rows_sent"], 0)
         self.assertFalse(result["target_values_sent"])
@@ -214,11 +248,14 @@ class SingleRequestDiagnosticTests(unittest.TestCase):
             "GENERAL_NVIDIA_FREE_USAGE_VERIFIED": "true",
             "NVIDIA_API_KEY": "test-secret",
         }
+        saved_observations = []
         try:
             with patch.dict(os.environ, env, clear=True), patch.object(
                 research, "reserve_nvidia_request"
             ) as reserve, patch.object(
-                research, "save_usage_observation"
+                research,
+                "save_usage_observation",
+                side_effect=lambda observation, **kwargs: saved_observations.append(observation),
             ), patch(
                 "general_open_research.urllib.request.urlopen",
                 side_effect=[self.successful_response(), self.successful_response()],
@@ -228,6 +265,16 @@ class SingleRequestDiagnosticTests(unittest.TestCase):
                     request_label="forward",
                 )
                 self.assertEqual(answer, "synthetic response")
+                sent_body = json.loads(urlopen.call_args.args[0].data.decode("utf-8"))
+                self.assertEqual(sent_body["max_tokens"], 8192)
+                self.assertEqual(sent_body["reasoning_effort"], "low")
+                self.assertTrue(sent_body["stream"])
+                self.assertEqual(len(saved_observations), 1)
+                self.assertTrue(saved_observations[0]["response_complete"])
+                self.assertEqual(saved_observations[0]["max_tokens_requested"], 8192)
+                self.assertTrue(saved_observations[0]["stream_completed"])
+                self.assertEqual(saved_observations[0]["stream_finish_reason"], "stop")
+                self.assertEqual(saved_observations[0]["token_usage_returned_by_provider"]["total_tokens"], 2)
                 with self.assertRaisesRegex(RuntimeError, "Single-request diagnostic cap reached"):
                     research.call_model(
                         [{"role": "user", "content": "second request must be blocked"}],
