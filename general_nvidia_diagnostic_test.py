@@ -155,10 +155,17 @@ class SingleRequestDiagnosticTests(unittest.TestCase):
         payload = json.loads(messages[1]["content"])
         self.assertEqual(payload["discovery_direction"], "forward")
         self.assertEqual(payload["history_order"], "oldest_to_newest")
+        self.assertEqual(payload["discovery_scope"], "pre_target_discovery_only")
         self.assertEqual(payload["target_date_metadata_only"], self.target)
         self.assertFalse(payload["target_numbers_included"])
         self.assertFalse(payload["post_target_records_included"])
+        self.assertFalse(payload["sealed_validation_rows_included"])
+        self.assertFalse(payload["reverse_discovery_included"])
         self.assertEqual(payload["discovery_history_by_regime"]["R60"], self.discovery_rows)
+        self.assertIn("under 300 words", messages[0]["content"])
+        self.assertIn("OPEN_DEFINITION", messages[0]["content"])
+        self.assertNotIn("HYPOTHESIS_EXECUTION_SPECS_JSON", messages[0]["content"])
+        self.assertNotIn("RULE_CHANGE_REQUEST_JSON", messages[0]["content"])
         sent_dates = {
             row["date"]
             for row in payload["discovery_history_by_regime"]["R60"]
@@ -170,6 +177,8 @@ class SingleRequestDiagnosticTests(unittest.TestCase):
         self.assertEqual(result["status"], "RESPONSE_RECEIVED")
         self.assertEqual(result["provider_requests_attempted"], 1)
         self.assertEqual(result["automatic_retries"], 0)
+        self.assertEqual(result["max_tokens_requested"], 8192)
+        self.assertEqual(result["prompt_version"], "compact-forward-diagnostic-v1")
         self.assertFalse(result["reverse_request_sent"])
         self.assertEqual(result["sealed_validation_rows_sent"], 0)
         self.assertFalse(result["target_values_sent"])
@@ -228,6 +237,10 @@ class SingleRequestDiagnosticTests(unittest.TestCase):
                     request_label="forward",
                 )
                 self.assertEqual(answer, "synthetic response")
+                sent_body = json.loads(urlopen.call_args.args[0].data.decode("utf-8"))
+                self.assertEqual(sent_body["max_tokens"], 8192)
+                self.assertEqual(sent_body["reasoning_effort"], "low")
+                self.assertTrue(sent_body["stream"])
                 with self.assertRaisesRegex(RuntimeError, "Single-request diagnostic cap reached"):
                     research.call_model(
                         [{"role": "user", "content": "second request must be blocked"}],
