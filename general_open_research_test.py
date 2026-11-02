@@ -315,14 +315,83 @@ class NvidiaUsageObservationTests(unittest.TestCase):
     def successful_response():
         response = MagicMock()
         response.status = 200
-        response.headers = {}
-        response.read.return_value = (
-            b'{"choices":[{"message":{"content":"synthetic response"}}],'
-            b'"usage":{"total_tokens":1}}'
-        )
+        response.headers = {"x-request-id": "synthetic-request"}
+        response.__enter__.return_value = response
+        response.__exit__.return_value = False
+        response.readline.side_effect = [
+            b'data: {"choices":[{"delta":{"reasoning_content":"hidden reasoning"}}]}\n',
+            b'\n',
+            b'data: {"choices":[{"delta":{"content":"synthetic "}}]}\n',
+            b'\n',
+            b'data: {"choices":[{"delta":{"content":"response"},"finish_reason":"stop"}]}\n',
+            b'\n',
+            b'data: {"choices":[],"usage":{"total_tokens":1}}\n',
+            b'\n',
+            b'data: [DONE]\n',
+            b'\n',
+            b"",
+        ]
         response.__enter__.return_value = response
         response.__exit__.return_value = False
         return response
+
+    def test_stream_parser_joins_content_and_ignores_reasoning(self):
+        response = MagicMock()
+        response.readline.side_effect = [
+            b": keep-alive\n",
+            b'data: {"choices":[{"delta":{"reasoning_content":"not final text"}}]}\n',
+            b"\n",
+            b'data: {"choices":[{"delta":{"content":"GENERAL "}}]}\n',
+            b"\n",
+            b'data: {"choices":[{"delta":{"content":"stream"},"finish_reason":"stop"}]}\n',
+            b"\n",
+            b'data: {"choices":[],"usage":{"total_tokens":12}}\n',
+            b"\n",
+            b"data: [DONE]\n",
+            b"\n",
+            b"",
+        ]
+        payload, metadata = research._parse_streamed_chat_completion(response)
+        self.assertEqual(payload["choices"][0]["message"]["content"], "GENERAL stream")
+        self.assertEqual(payload["choices"][0]["finish_reason"], "stop")
+        self.assertEqual(payload["usage"]["total_tokens"], 12)
+        self.assertEqual(metadata["stream_event_count"], 4)
+        self.assertTrue(metadata["stream_completed"])
+
+    def test_stream_parser_rejects_missing_done_marker(self):
+        response = MagicMock()
+        response.readline.side_effect = [
+            b'data: {"choices":[{"delta":{"content":"partial"}}]}\n',
+            b"\n",
+            b"",
+        ]
+        with self.assertRaisesRegex(RuntimeError, "before the \\[DONE\\] marker"):
+            research._parse_streamed_chat_completion(response)
+
+    def test_stream_parser_rejects_token_limit_truncation(self):
+        response = MagicMock()
+        response.readline.side_effect = [
+            b'data: {"choices":[{"delta":{"content":"partial answer"},"finish_reason":"length"}]}\n',
+            b"\n",
+            b"data: [DONE]\n",
+            b"\n",
+            b"",
+        ]
+        with self.assertRaisesRegex(RuntimeError, "reached max_tokens"):
+            research._parse_streamed_chat_completion(response)
+
+    def test_stream_parser_rejects_reasoning_only_output(self):
+        response = MagicMock()
+        response.readline.side_effect = [
+            b'data: {"choices":[{"delta":{"reasoning_content":"private"}}]}\n',
+            b"\n",
+            b"data: [DONE]\n",
+            b"\n",
+            b"",
+        ]
+        with self.assertRaisesRegex(RuntimeError, "reasoning-only output is not accepted"):
+            research._parse_streamed_chat_completion(response)
+
 
     def test_only_safe_rate_limit_headers_are_recorded(self):
         observed = research.build_usage_observation(
@@ -445,6 +514,15 @@ class NvidiaUsageObservationTests(unittest.TestCase):
                 )
                 self.assertEqual(forward, "synthetic response")
                 self.assertEqual(reverse, "synthetic response")
+                sent_request = mocked_urlopen.call_args_list[0].args[0]
+                sent_payload = json.loads(sent_request.data.decode("utf-8"))
+                self.assertTrue(sent_payload["stream"])
+                self.assertEqual(sent_payload["reasoning_effort"], "low")
+                self.assertEqual(
+                    sent_payload["chat_template_kwargs"],
+                    {"clear_thinking": True},
+                )
+                self.assertEqual(sent_request.get_header("Accept"), "text/event-stream")
                 with self.assertRaisesRegex(RuntimeError, "request cap reached"):
                     research.call_model([{"role": "user", "content": "third"}])
                 self.assertEqual(mocked_urlopen.call_count, 2)
@@ -471,6 +549,128 @@ class NvidiaUsageObservationTests(unittest.TestCase):
                     request_label="reverse",
                 )
             mocked_urlopen.assert_not_called()
+
+    def test_stream_timeout_is_diagnosed_and_never_retried(self):
+        env = {
+            "GENERAL_CONFIRM_LIVE_CALLS": CONFIRMATION_PHRASE,
+            "GENERAL_NVIDIA_GUARD_PASSED": "1",
+            "GENERAL_ALLOW_NVIDIA_CALL": "true",
+            "GENERAL_NVIDIA_FREE_USAGE_VERIFIED": "true",
+            "NVIDIA_API_KEY": "test-secret",
+        }
+        saved = []
+        try:
+            with patch.dict(os.environ, env, clear=True), patch.object(
+                research, "reserve_nvidia_request"
+            ), patch.object(
+                research,
+                "save_usage_observation",
+                side_effect=lambda observation, **kwargs: saved.append(observation),
+            ), patch(
+                "general_open_research.urllib.request.urlopen",
+                side_effect=TimeoutError("synthetic stream timeout"),
+            ) as mocked_urlopen:
+                with self.assertRaisesRegex(RuntimeError, "during connect_or_wait_for_headers"):
+                    research.call_model(
+                        [{"role": "user", "content": "test"}],
+                        request_label="forward",
+                    )
+                self.assertEqual(mocked_urlopen.call_count, 1)
+            self.assertEqual(len(saved), 1)
+            self.assertEqual(saved[0]["response_mode"], "sse")
+            self.assertEqual(saved[0]["failure_stage"], "connect_or_wait_for_headers")
+            self.assertEqual(saved[0]["network_error_type"], "TimeoutError")
+            self.assertEqual(saved[0]["automatic_retries"], 0)
+            self.assertIsNone(saved[0]["http_status"])
+        finally:
+            Path("/tmp/general_nvidia_api_attempted").unlink(missing_ok=True)
+            Path("/tmp/general_nvidia_api_succeeded").unlink(missing_ok=True)
+
+    def test_token_limit_failure_is_recorded_as_incomplete_model_response(self):
+        env = {
+            "GENERAL_CONFIRM_LIVE_CALLS": CONFIRMATION_PHRASE,
+            "GENERAL_NVIDIA_GUARD_PASSED": "1",
+            "GENERAL_ALLOW_NVIDIA_CALL": "true",
+            "GENERAL_NVIDIA_FREE_USAGE_VERIFIED": "true",
+            "NVIDIA_API_KEY": "test-secret",
+        }
+        response = MagicMock()
+        response.status = 200
+        response.headers = {"x-request-id": "synthetic-request"}
+        response.__enter__.return_value = response
+        response.__exit__.return_value = False
+        response.readline.side_effect = [
+            b'data: {"choices":[{"delta":{"content":"partial"},"finish_reason":"length"}]}\n',
+            b"\n",
+            b"data: [DONE]\n",
+            b"\n",
+            b"",
+        ]
+        saved = []
+        try:
+            with patch.dict(os.environ, env, clear=True), patch.object(
+                research, "reserve_nvidia_request"
+            ), patch.object(
+                research,
+                "save_usage_observation",
+                side_effect=lambda observation, **kwargs: saved.append(observation),
+            ), patch(
+                "general_open_research.urllib.request.urlopen",
+                return_value=response,
+            ) as mocked_urlopen:
+                with self.assertRaisesRegex(RuntimeError, "reached max_tokens"):
+                    research.call_model(
+                        [{"role": "user", "content": "test"}],
+                        request_label="forward",
+                    )
+                self.assertEqual(mocked_urlopen.call_count, 1)
+            self.assertEqual(len(saved), 1)
+            self.assertEqual(saved[0]["failure_stage"], "model_finish")
+            self.assertEqual(saved[0]["network_error_type"], "IncompleteModelResponse")
+            self.assertEqual(saved[0]["automatic_retries"], 0)
+        finally:
+            Path("/tmp/general_nvidia_api_attempted").unlink(missing_ok=True)
+            Path("/tmp/general_nvidia_api_succeeded").unlink(missing_ok=True)
+
+    def test_stream_read_timeout_is_distinguished_from_connection_timeout(self):
+        env = {
+            "GENERAL_CONFIRM_LIVE_CALLS": CONFIRMATION_PHRASE,
+            "GENERAL_NVIDIA_GUARD_PASSED": "1",
+            "GENERAL_ALLOW_NVIDIA_CALL": "true",
+            "GENERAL_NVIDIA_FREE_USAGE_VERIFIED": "true",
+            "NVIDIA_API_KEY": "test-secret",
+        }
+        response = self.successful_response()
+        response.readline.side_effect = [
+            b'data: {"choices":[{"delta":{"content":"partial"}}]}\n',
+            b"\n",
+            TimeoutError("synthetic idle timeout"),
+        ]
+        saved = []
+        try:
+            with patch.dict(os.environ, env, clear=True), patch.object(
+                research, "reserve_nvidia_request"
+            ), patch.object(
+                research,
+                "save_usage_observation",
+                side_effect=lambda observation, **kwargs: saved.append(observation),
+            ), patch(
+                "general_open_research.urllib.request.urlopen",
+                return_value=response,
+            ) as mocked_urlopen:
+                with self.assertRaisesRegex(RuntimeError, "during read_stream"):
+                    research.call_model(
+                        [{"role": "user", "content": "test"}],
+                        request_label="forward",
+                    )
+                self.assertEqual(mocked_urlopen.call_count, 1)
+            self.assertEqual(len(saved), 1)
+            self.assertEqual(saved[0]["failure_stage"], "read_stream")
+            self.assertEqual(saved[0]["network_error_type"], "TimeoutError")
+            self.assertEqual(saved[0]["automatic_retries"], 0)
+        finally:
+            Path("/tmp/general_nvidia_api_attempted").unlink(missing_ok=True)
+            Path("/tmp/general_nvidia_api_succeeded").unlink(missing_ok=True)
 
     def test_rate_limit_error_is_not_retried_and_metadata_is_saved(self):
         with tempfile.TemporaryDirectory() as temp_dir:
