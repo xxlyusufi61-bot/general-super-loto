@@ -1,9 +1,13 @@
+import http.client
 import json
 import os
 import tempfile
+import threading
+import time
 import unittest
 import urllib.error
 from datetime import date, timedelta
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -768,6 +772,160 @@ class NvidiaUsageObservationTests(unittest.TestCase):
                 2133,
             )
             self.assertNotIn("partial", json.dumps(saved[0]))
+        finally:
+            Path("/tmp/general_nvidia_api_attempted").unlink(missing_ok=True)
+            Path("/tmp/general_nvidia_api_succeeded").unlink(missing_ok=True)
+
+    def test_response_socket_timeout_survives_connection_close_handoff(self):
+        class CloseAfterResponseHandler(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def do_POST(self):
+                body_length = int(self.headers.get("Content-Length", "0"))
+                self.rfile.read(body_length)
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Connection", "close")
+                self.send_header("X-RateLimit-Remaining-Requests", "39")
+                self.send_header("X-Request-ID", "local-sse-close-test")
+                self.send_header("Authorization", "synthetic-secret-header")
+                self.send_header("Set-Cookie", "synthetic-secret-cookie")
+                self.end_headers()
+                self.wfile.write(
+                    b'data: {"choices":[{"delta":{"content":"socket handoff works"},'
+                    b'"finish_reason":"stop"}]}\n\n'
+                )
+                self.wfile.write(b'data: {"choices":[],"usage":{"total_tokens":7}}\n\n')
+                self.wfile.write(b"data: [DONE]\n\n")
+                self.wfile.flush()
+                self.close_connection = True
+
+            def log_message(self, format, *args):
+                return
+
+        server = HTTPServer(("127.0.0.1", 0), CloseAfterResponseHandler)
+        server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        server_thread.start()
+        connections = []
+        saved = []
+        original_parser = research._parse_streamed_chat_completion
+
+        def connection_factory(timeout_seconds):
+            connection = http.client.HTTPConnection(
+                "127.0.0.1",
+                server.server_port,
+                timeout=timeout_seconds,
+            )
+            connections.append(connection)
+            return connection
+
+        def parse_after_connection_handoff(response, *, before_read=None):
+            self.assertEqual(len(connections), 1)
+            self.assertIsNone(connections[0].sock)
+            self.assertFalse(response.isclosed())
+            return original_parser(response, before_read=before_read)
+
+        env = {
+            "GENERAL_CONFIRM_LIVE_CALLS": CONFIRMATION_PHRASE,
+            "GENERAL_NVIDIA_GUARD_PASSED": "1",
+            "GENERAL_ALLOW_NVIDIA_CALL": "true",
+            "GENERAL_NVIDIA_FREE_USAGE_VERIFIED": "true",
+            "NVIDIA_API_KEY": "test-secret",
+        }
+        try:
+            with patch.dict(os.environ, env, clear=True), patch.object(
+                research, "reserve_nvidia_request"
+            ), patch.object(
+                research,
+                "save_usage_observation",
+                side_effect=lambda observation, **kwargs: saved.append(observation),
+            ), patch(
+                "general_open_research._create_nvidia_connection",
+                side_effect=connection_factory,
+            ), patch(
+                "general_open_research._parse_streamed_chat_completion",
+                side_effect=parse_after_connection_handoff,
+            ):
+                answer = research.call_model(
+                    [{"role": "user", "content": "local SSE socket handoff test"}],
+                    request_label="forward",
+                )
+
+            self.assertEqual(answer, "socket handoff works")
+            self.assertEqual(len(saved), 1)
+            self.assertEqual(saved[0]["http_status"], 200)
+            self.assertEqual(
+                saved[0]["rate_limit_headers_returned"]["X-RateLimit-Remaining-Requests"],
+                "39",
+            )
+            self.assertEqual(
+                saved[0]["rate_limit_headers_returned"]["X-Request-ID"],
+                "local-sse-close-test",
+            )
+            serialized = json.dumps(saved[0])
+            self.assertNotIn("synthetic-secret-header", serialized)
+            self.assertNotIn("synthetic-secret-cookie", serialized)
+            self.assertNotIn("test-secret", serialized)
+        finally:
+            for marker in (
+                Path("/tmp/general_nvidia_api_attempted"),
+                Path("/tmp/general_nvidia_api_succeeded"),
+            ):
+                marker.unlink(missing_ok=True)
+            server.shutdown()
+            server.server_close()
+            server_thread.join(timeout=2)
+
+    def test_stream_network_failure_preserves_only_safe_response_metadata(self):
+        env = {
+            "GENERAL_CONFIRM_LIVE_CALLS": CONFIRMATION_PHRASE,
+            "GENERAL_NVIDIA_GUARD_PASSED": "1",
+            "GENERAL_ALLOW_NVIDIA_CALL": "true",
+            "GENERAL_NVIDIA_FREE_USAGE_VERIFIED": "true",
+            "NVIDIA_API_KEY": "test-secret",
+        }
+        response = MagicMock()
+        response.status = 200
+        response.headers = {
+            "x-ratelimit-remaining-requests": "38",
+            "x-request-id": "synthetic-stream-failure",
+            "Authorization": "synthetic-secret-header",
+            "Set-Cookie": "synthetic-secret-cookie",
+        }
+        response.readline.side_effect = OSError("synthetic stream reset")
+        saved = []
+        try:
+            with patch.dict(os.environ, env, clear=True), patch.object(
+                research, "reserve_nvidia_request"
+            ), patch.object(
+                research,
+                "save_usage_observation",
+                side_effect=lambda observation, **kwargs: saved.append(observation),
+            ), patch(
+                "general_open_research._create_nvidia_connection",
+                return_value=make_fake_connection(response),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "during read_stream"):
+                    research.call_model(
+                        [{"role": "user", "content": "metadata after HTTP response"}],
+                        request_label="forward",
+                    )
+
+            self.assertEqual(len(saved), 1)
+            self.assertEqual(saved[0]["http_status"], 200)
+            self.assertEqual(
+                saved[0]["rate_limit_headers_returned"]["x-ratelimit-remaining-requests"],
+                "38",
+            )
+            self.assertEqual(
+                saved[0]["rate_limit_headers_returned"]["x-request-id"],
+                "synthetic-stream-failure",
+            )
+            serialized = json.dumps(saved[0])
+            self.assertNotIn("synthetic-secret-header", serialized)
+            self.assertNotIn("synthetic-secret-cookie", serialized)
+            self.assertNotIn("test-secret", serialized)
+            self.assertEqual(saved[0]["automatic_retries"], 0)
         finally:
             Path("/tmp/general_nvidia_api_attempted").unlink(missing_ok=True)
             Path("/tmp/general_nvidia_api_succeeded").unlink(missing_ok=True)
