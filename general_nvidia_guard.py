@@ -30,6 +30,8 @@ DIAGNOSTIC_WORKFLOW_ID = 403997867
 DIAGNOSTIC_WORKFLOW_PATH = ".github/workflows/nvidia-diagnostic.yml"
 DIAGNOSTIC_APPROVAL_PHRASE = "I_APPROVE_ONE_DIAGNOSTIC_REQUEST"
 DIAGNOSTIC_REQUEST_SOURCE = "open-research-forward"
+DIAGNOSTIC_AUTHORIZED_ACTOR_LOGIN = "xxlyusufi61-bot"
+DIAGNOSTIC_AUTHORIZED_ACTOR_ID = 345811504
 GIT_COMMAND_TIMEOUT_SECONDS = 30
 _RATE_LIMIT_WORKTREE = None
 
@@ -364,6 +366,16 @@ def validate_diagnostic_workflow_run(run, env=None):
         raise RuntimeError("The workflow-run path is not the approved diagnostic workflow.")
     if run.get("event") != "workflow_dispatch":
         raise RuntimeError("GitHub did not record this run as workflow_dispatch.")
+    actor = run.get("actor")
+    if (
+        not isinstance(actor, dict)
+        or type(actor.get("id")) is not int
+        or actor.get("id") != DIAGNOSTIC_AUTHORIZED_ACTOR_ID
+        or actor.get("login") != DIAGNOSTIC_AUTHORIZED_ACTOR_LOGIN
+    ):
+        raise RuntimeError(
+            "Only the explicitly authorized GitHub account may dispatch this diagnostic workflow."
+        )
     if run.get("head_branch") != "main":
         raise RuntimeError("GitHub did not record main as the workflow branch.")
     if run.get("head_sha") != expected_sha:
