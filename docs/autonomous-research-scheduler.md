@@ -57,6 +57,25 @@ timestamp safety margin accounts for the bounded state-operation time. When all
 provider call. Failed and uncertain provider attempts still consume their
 reserved slot; no automatic provider retry is performed.
 
+The global lock has one narrowly scoped exception: the dedicated
+`.github/workflows/nvidia-diagnostic.yml` may reserve exactly one forward-only
+diagnostic request while the lock remains active. Its preflight and provider
+reservation both query the GitHub Actions run API and require the canonical
+repository, the fixed diagnostic workflow ID and path, `workflow_dispatch`,
+the `main` branch, the exact one-request approval phrase, matching run/commit
+identity, an in-progress run, and `run_attempt=1`. The job token has only the
+`actions: read` permission needed to verify that run. A runner environment
+flag alone never authorizes the exception.
+
+The diagnostic run ID is permanently recorded in
+`diagnostic_run_ids` in the same shared rate-limit ledger commit that reserves
+its 40-per-60-second slot. That one-shot history survives expiry of the rolling
+rate window, so a second reservation or workflow rerun using the same run ID is
+rejected. Normal GENERAL and agent requests continue to use the ordinary
+`check` path and remain blocked by an active global lock. The diagnostic
+exception does not edit or clear `general_nvidia_lock.json`; every reservation
+still requires the lock to be active and the shared rate-limit push to succeed.
+
 The state branch is operational safety data and must not be deleted or merged into
 `main`. The 40-per-60-second accounting covers requests routed through this
 repository's shared GENERAL NVIDIA key; it cannot observe manual calls or other
