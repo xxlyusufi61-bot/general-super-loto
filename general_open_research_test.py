@@ -613,6 +613,62 @@ class NvidiaUsageObservationTests(unittest.TestCase):
             Path("/tmp/general_nvidia_api_attempted").unlink(missing_ok=True)
             Path("/tmp/general_nvidia_api_succeeded").unlink(missing_ok=True)
 
+    def test_request_send_timeout_is_recorded_without_retry_or_false_delivery_claim(self):
+        env = {
+            "GENERAL_CONFIRM_LIVE_CALLS": CONFIRMATION_PHRASE,
+            "GENERAL_NVIDIA_GUARD_PASSED": "1",
+            "GENERAL_ALLOW_NVIDIA_CALL": "true",
+            "GENERAL_NVIDIA_FREE_USAGE_VERIFIED": "true",
+            "NVIDIA_API_KEY": "test-secret",
+        }
+        saved = []
+        connection = make_fake_connection()
+        connection.endheaders.side_effect = TimeoutError("synthetic request-send timeout")
+        system_text = "system instructions must not be persisted"
+        user_text = "user prompt content must not be persisted"
+        try:
+            with patch.dict(os.environ, env, clear=True), patch.object(
+                research, "reserve_nvidia_request"
+            ), patch.object(
+                research,
+                "save_usage_observation",
+                side_effect=lambda observation, **kwargs: saved.append(observation),
+            ), patch(
+                "general_open_research._create_nvidia_connection",
+                return_value=connection,
+            ) as mocked_connection_factory:
+                with self.assertRaisesRegex(RuntimeError, "during send_request"):
+                    research.call_model(
+                        [
+                            {"role": "system", "content": system_text},
+                            {"role": "user", "content": user_text},
+                        ],
+                        request_label="forward",
+                    )
+                self.assertEqual(mocked_connection_factory.call_count, 1)
+                connection.endheaders.assert_called_once()
+            self.assertEqual(len(saved), 1)
+            self.assertEqual(saved[0]["failure_stage"], "send_request")
+            self.assertEqual(saved[0]["request_delivery_state"], "unknown_send_in_progress")
+            self.assertEqual(saved[0]["network_error_type"], "TimeoutError")
+            self.assertEqual(saved[0]["automatic_retries"], 0)
+            self.assertGreater(saved[0]["request_body_bytes"], 0)
+            self.assertEqual(
+                saved[0]["system_prompt_bytes"],
+                len(system_text.encode("utf-8")),
+            )
+            self.assertEqual(
+                saved[0]["user_prompt_bytes"],
+                len(user_text.encode("utf-8")),
+            )
+            serialized = json.dumps(saved[0])
+            self.assertNotIn(system_text, serialized)
+            self.assertNotIn(user_text, serialized)
+            self.assertNotIn("test-secret", serialized)
+        finally:
+            Path("/tmp/general_nvidia_api_attempted").unlink(missing_ok=True)
+            Path("/tmp/general_nvidia_api_succeeded").unlink(missing_ok=True)
+
     def test_stream_timeout_is_diagnosed_and_never_retried(self):
         env = {
             "GENERAL_CONFIRM_LIVE_CALLS": CONFIRMATION_PHRASE,
