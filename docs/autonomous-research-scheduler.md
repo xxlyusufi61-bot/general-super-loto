@@ -63,9 +63,10 @@ diagnostic request while the lock remains active. Its preflight and provider
 reservation both query the GitHub Actions run API and require the canonical
 repository, the fixed diagnostic workflow ID and path, `workflow_dispatch`,
 the `main` branch, the exact one-request approval phrase, matching run/commit
-identity, an in-progress run, and `run_attempt=1`. The job token has only the
-`actions: read` permission needed to verify that run. A runner environment
-flag alone never authorizes the exception.
+identity, an in-progress run, and `run_attempt=1`. The diagnostic job grants
+`actions: read` for this metadata check and retains `contents: write` only for
+the existing shared rate-limit and failure-lock state operations. A runner
+environment flag alone never authorizes the exception.
 
 The diagnostic run ID is permanently recorded in
 `diagnostic_run_ids` in the same shared rate-limit ledger commit that reserves
