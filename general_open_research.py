@@ -382,7 +382,7 @@ def build_usage_observation(
     system_prompt_bytes: int | None = None,
     user_prompt_bytes: int | None = None,
     request_delivery_state: str | None = None,
-    dns_tcp_tls_connect_seconds: float | None = None,
+    tcp_tls_establishment_seconds: float | None = None,
     request_send_seconds: float | None = None,
     response_header_wait_seconds: float | None = None,
     stream_read_seconds: float | None = None,
@@ -419,7 +419,7 @@ def build_usage_observation(
         "system_prompt_bytes": system_prompt_bytes,
         "user_prompt_bytes": user_prompt_bytes,
         "request_delivery_state": request_delivery_state,
-        "dns_tcp_tls_connect_seconds": dns_tcp_tls_connect_seconds,
+        "tcp_tls_establishment_seconds": tcp_tls_establishment_seconds,
         "request_send_seconds": request_send_seconds,
         "response_header_wait_seconds": response_header_wait_seconds,
         "stream_read_seconds": stream_read_seconds,
@@ -962,7 +962,7 @@ def call_model(
     stream_idle_timeout_seconds = request_timeout_seconds
     request_started = time.monotonic()
     request_deadline = request_started + request_timeout_seconds
-    stage = "dns_tcp_tls_connect"
+    stage = "tcp_tls_establishment"
     request_delivery_state = "not_sent"
     phase_started = request_started
     phase_durations: dict[str, float] = {}
@@ -970,7 +970,7 @@ def call_model(
     response = None
 
     phase_metric = {
-        "dns_tcp_tls_connect": "dns_tcp_tls_connect_seconds",
+        "tcp_tls_establishment": "tcp_tls_establishment_seconds",
         "send_request": "request_send_seconds",
         "wait_for_headers": "response_header_wait_seconds",
         "read_stream": "stream_read_seconds",
@@ -1008,7 +1008,7 @@ def call_model(
                 system_prompt_bytes=system_prompt_bytes,
                 user_prompt_bytes=user_prompt_bytes,
                 request_delivery_state=request_delivery_state,
-                dns_tcp_tls_connect_seconds=phase_durations.get("dns_tcp_tls_connect_seconds"),
+                tcp_tls_establishment_seconds=phase_durations.get("tcp_tls_establishment_seconds"),
                 request_send_seconds=phase_durations.get("request_send_seconds"),
                 response_header_wait_seconds=phase_durations.get("response_header_wait_seconds"),
                 stream_read_seconds=phase_durations.get("stream_read_seconds"),
@@ -1022,7 +1022,7 @@ def call_model(
     try:
         connection = _create_nvidia_connection(connect_timeout_seconds)
         connection.connect()
-        phase_durations["dns_tcp_tls_connect_seconds"] = round(
+        phase_durations["tcp_tls_establishment_seconds"] = round(
             time.monotonic() - phase_started, 3
         )
 
@@ -1088,7 +1088,7 @@ def call_model(
                 system_prompt_bytes=system_prompt_bytes,
                 user_prompt_bytes=user_prompt_bytes,
                 request_delivery_state=request_delivery_state,
-                dns_tcp_tls_connect_seconds=phase_durations.get("dns_tcp_tls_connect_seconds"),
+                tcp_tls_establishment_seconds=phase_durations.get("tcp_tls_establishment_seconds"),
                 request_send_seconds=phase_durations.get("request_send_seconds"),
                 response_header_wait_seconds=phase_durations.get("response_header_wait_seconds"),
                 stream_read_seconds=phase_durations.get("stream_read_seconds"),
@@ -1147,7 +1147,7 @@ def call_model(
                 system_prompt_bytes=system_prompt_bytes,
                 user_prompt_bytes=user_prompt_bytes,
                 request_delivery_state=request_delivery_state,
-                dns_tcp_tls_connect_seconds=phase_durations.get("dns_tcp_tls_connect_seconds"),
+                tcp_tls_establishment_seconds=phase_durations.get("tcp_tls_establishment_seconds"),
                 request_send_seconds=phase_durations.get("request_send_seconds"),
                 response_header_wait_seconds=phase_durations.get("response_header_wait_seconds"),
                 stream_read_seconds=phase_durations.get("stream_read_seconds"),
@@ -1205,7 +1205,7 @@ def call_model(
             system_prompt_bytes=system_prompt_bytes,
             user_prompt_bytes=user_prompt_bytes,
             request_delivery_state=request_delivery_state,
-            dns_tcp_tls_connect_seconds=phase_durations.get("dns_tcp_tls_connect_seconds"),
+            tcp_tls_establishment_seconds=phase_durations.get("tcp_tls_establishment_seconds"),
             request_send_seconds=phase_durations.get("request_send_seconds"),
             response_header_wait_seconds=phase_durations.get("response_header_wait_seconds"),
             stream_read_seconds=phase_durations.get("stream_read_seconds"),
