@@ -20,6 +20,8 @@ from general_nvidia_guard import (
     DIAGNOSTIC_WORKFLOW_PATH,
     DIAGNOSTIC_APPROVAL_PHRASE,
     DIAGNOSTIC_REQUEST_SOURCE,
+    DIAGNOSTIC_AUTHORIZED_ACTOR_LOGIN,
+    DIAGNOSTIC_AUTHORIZED_ACTOR_ID,
     initial_lock_state,
     initial_rate_limit_state,
     make_locked_state,
@@ -129,6 +131,10 @@ class GlobalNvidiaLockTests(unittest.TestCase):
             "run_attempt": 1,
             "status": "in_progress",
             "conclusion": None,
+            "actor": {
+                "login": DIAGNOSTIC_AUTHORIZED_ACTOR_LOGIN,
+                "id": DIAGNOSTIC_AUTHORIZED_ACTOR_ID,
+            },
             "repository": {"full_name": DIAGNOSTIC_REPOSITORY},
             "head_repository": {"full_name": DIAGNOSTIC_REPOSITORY},
         }
@@ -151,6 +157,9 @@ class GlobalNvidiaLockTests(unittest.TestCase):
             ("rerun", {"run_attempt": 2}),
             ("completed run", {"status": "completed"}),
             ("completed conclusion", {"conclusion": "success"}),
+            ("unauthorized actor ID", {"actor": {"login": DIAGNOSTIC_AUTHORIZED_ACTOR_LOGIN, "id": 123}}),
+            ("lookalike actor login", {"actor": {"login": "another-account", "id": DIAGNOSTIC_AUTHORIZED_ACTOR_ID}}),
+            ("missing actor metadata", {"actor": None}),
             ("wrong repository", {"repository": {"full_name": "someone/else"}}),
             ("wrong head repository", {"head_repository": {"full_name": "someone/else"}}),
         ]
@@ -176,6 +185,15 @@ class GlobalNvidiaLockTests(unittest.TestCase):
             with self.subTest(label=label):
                 with self.assertRaises(RuntimeError):
                     nvidia_guard.validate_diagnostic_workflow_run(valid, candidate_env)
+
+    def test_runner_supplied_actor_values_cannot_override_github_api_actor(self):
+        env = self._diagnostic_environment()
+        env["GITHUB_ACTOR"] = DIAGNOSTIC_AUTHORIZED_ACTOR_LOGIN
+        env["GITHUB_ACTOR_ID"] = str(DIAGNOSTIC_AUTHORIZED_ACTOR_ID)
+        unauthorized = self._diagnostic_run(env)
+        unauthorized["actor"] = {"login": "untrusted-writer", "id": 987654}
+        with self.assertRaisesRegex(RuntimeError, "explicitly authorized GitHub account"):
+            nvidia_guard.validate_diagnostic_workflow_run(unauthorized, env)
 
     def test_current_diagnostic_run_is_verified_through_github_api(self):
         env = self._diagnostic_environment()
