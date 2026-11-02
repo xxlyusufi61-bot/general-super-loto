@@ -86,6 +86,16 @@ class SingleRequestDiagnosticTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "pre-scope or target/future"):
             diagnostic.build_diagnostic_messages(self.target, invalid_rows)
 
+    def test_compact_diagnostic_prompt_rejects_noncanonical_dates(self):
+        noncanonical_rows = [
+            {
+                "date": "20261021",
+                "numbers": [2, 8, 14, 23, 35, 49],
+            }
+        ]
+        with self.assertRaisesRegex(RuntimeError, "canonical YYYY-MM-DD"):
+            diagnostic.build_diagnostic_messages(self.target, noncanonical_rows)
+
     def test_requires_the_separate_diagnostic_approval_before_preflight(self):
         with patch.dict(
             os.environ,
