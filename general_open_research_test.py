@@ -636,6 +636,8 @@ class NvidiaUsageObservationTests(unittest.TestCase):
                         request_label="forward",
                     )
                 self.assertEqual(mocked_urlopen.call_count, 1)
+                sent_body = json.loads(mocked_urlopen.call_args.args[0].data.decode("utf-8"))
+                self.assertEqual(sent_body["max_tokens"], research.DEFAULT_MAX_COMPLETION_TOKENS)
             self.assertEqual(len(saved), 1)
             self.assertEqual(saved[0]["failure_stage"], "model_finish")
             self.assertEqual(saved[0]["network_error_type"], "IncompleteModelResponse")
