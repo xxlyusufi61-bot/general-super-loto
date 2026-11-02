@@ -65,7 +65,8 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.confirm_single_request == 'I_APPROVE_ONE_DIAGNOSTIC_REQUEST' }}
     needs: tests
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Leave time after the bounded request step for lock activation and artifact upload.
+    timeout-minutes: 35
     permissions:
       contents: write
     concurrency:
@@ -90,6 +91,7 @@ jobs:
           echo "GENERAL_NVIDIA_GUARD_PASSED=1" >> "$GITHUB_ENV"
       - name: Run exactly one forward diagnostic request
         id: nvidia-diagnostic
+        timeout-minutes: 32
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           GITHUB_TOKEN: ${{ github.token }}

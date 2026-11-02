@@ -281,8 +281,59 @@ class SingleRequestDiagnosticTests(unittest.TestCase):
                         request_label="forward",
                     )
                 self.assertEqual(urlopen.call_count, 1)
+                self.assertEqual(
+                    urlopen.call_args.kwargs["timeout"],
+                    research.DIAGNOSTIC_REQUEST_TIMEOUT_SECONDS,
+                )
+                self.assertEqual(
+                    saved_observations[0]["request_timeout_seconds"],
+                    research.DIAGNOSTIC_REQUEST_TIMEOUT_SECONDS,
+                )
                 self.assertEqual(reserve.call_count, 1)
                 self.assertEqual(research._NVIDIA_REQUESTS_ATTEMPTED, 1)
+        finally:
+            Path("/tmp/general_nvidia_api_attempted").unlink(missing_ok=True)
+            Path("/tmp/general_nvidia_api_succeeded").unlink(missing_ok=True)
+
+
+    def test_diagnostic_connection_timeout_uses_extended_wait_without_retry(self):
+        env = self._environment() | {
+            "GENERAL_ALLOW_NVIDIA_CALL": "true",
+            "GENERAL_NVIDIA_FREE_USAGE_VERIFIED": "true",
+            "NVIDIA_API_KEY": "test-secret",
+            "GENERAL_DIAGNOSTIC_MODE": "true",
+        }
+        saved = []
+        try:
+            with patch.dict(os.environ, env, clear=True), patch.object(
+                research, "reserve_nvidia_request"
+            ), patch.object(
+                research,
+                "save_usage_observation",
+                side_effect=lambda observation, **kwargs: saved.append(observation),
+            ), patch(
+                "general_open_research.urllib.request.urlopen",
+                side_effect=TimeoutError("synthetic diagnostic connect timeout"),
+            ) as urlopen:
+                with self.assertRaisesRegex(
+                    RuntimeError, "during connect_or_wait_for_headers"
+                ):
+                    research.call_model(
+                        [{"role": "user", "content": "diagnostic timeout test"}],
+                        request_label="forward",
+                    )
+                self.assertEqual(urlopen.call_count, 1)
+                self.assertEqual(
+                    urlopen.call_args.kwargs["timeout"],
+                    research.DIAGNOSTIC_REQUEST_TIMEOUT_SECONDS,
+                )
+            self.assertEqual(len(saved), 1)
+            self.assertEqual(
+                saved[0]["request_timeout_seconds"],
+                research.DIAGNOSTIC_REQUEST_TIMEOUT_SECONDS,
+            )
+            self.assertEqual(saved[0]["automatic_retries"], 0)
+            self.assertEqual(saved[0]["network_error_type"], "TimeoutError")
         finally:
             Path("/tmp/general_nvidia_api_attempted").unlink(missing_ok=True)
             Path("/tmp/general_nvidia_api_succeeded").unlink(missing_ok=True)
@@ -302,6 +353,26 @@ class SingleRequestDiagnosticTests(unittest.TestCase):
                     request_label="reverse",
                 )
             urlopen.assert_not_called()
+
+
+
+class DiagnosticWorkflowBudgetTests(unittest.TestCase):
+    def test_live_diagnostic_has_bounded_step_and_job_timeouts(self):
+        workflow_path = Path(__file__).resolve().parent / ".github" / "workflows" / "nvidia-diagnostic.yml"
+        workflow = workflow_path.read_text(encoding="utf-8")
+        newline = chr(10)
+        job_marker = "  diagnostic:" + newline
+        self.assertIn(job_marker, workflow)
+        diagnostic_job = workflow.split(job_marker, 1)[1]
+        self.assertIn("    timeout-minutes: 35" + newline, diagnostic_job)
+
+        request_step_marker = "      - name: Run exactly one forward diagnostic request" + newline
+        self.assertIn(request_step_marker, diagnostic_job)
+        request_step = diagnostic_job.split(request_step_marker, 1)[1].split(
+            "      - name: Activate global lock after", 1
+        )[0]
+        self.assertIn("        timeout-minutes: 32" + newline, request_step)
+        self.assertGreater(35, 32)
 
 
 if __name__ == "__main__":
