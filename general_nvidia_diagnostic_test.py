@@ -248,11 +248,14 @@ class SingleRequestDiagnosticTests(unittest.TestCase):
             "GENERAL_NVIDIA_FREE_USAGE_VERIFIED": "true",
             "NVIDIA_API_KEY": "test-secret",
         }
+        saved_observations = []
         try:
             with patch.dict(os.environ, env, clear=True), patch.object(
                 research, "reserve_nvidia_request"
             ) as reserve, patch.object(
-                research, "save_usage_observation"
+                research,
+                "save_usage_observation",
+                side_effect=lambda observation, **kwargs: saved_observations.append(observation),
             ), patch(
                 "general_open_research.urllib.request.urlopen",
                 side_effect=[self.successful_response(), self.successful_response()],
@@ -266,6 +269,12 @@ class SingleRequestDiagnosticTests(unittest.TestCase):
                 self.assertEqual(sent_body["max_tokens"], 8192)
                 self.assertEqual(sent_body["reasoning_effort"], "low")
                 self.assertTrue(sent_body["stream"])
+                self.assertEqual(len(saved_observations), 1)
+                self.assertTrue(saved_observations[0]["response_complete"])
+                self.assertEqual(saved_observations[0]["max_tokens_requested"], 8192)
+                self.assertTrue(saved_observations[0]["stream_completed"])
+                self.assertEqual(saved_observations[0]["stream_finish_reason"], "stop")
+                self.assertEqual(saved_observations[0]["token_usage_returned_by_provider"]["total_tokens"], 2)
                 with self.assertRaisesRegex(RuntimeError, "Single-request diagnostic cap reached"):
                     research.call_model(
                         [{"role": "user", "content": "second request must be blocked"}],
