@@ -49,6 +49,13 @@ class LiveModelConsentGateTests(unittest.TestCase):
                 self.assertIn("nvidia", no_consent.lower())
                 self.assertIn("made", no_consent.lower())
 
+    def test_manual_agent_workflow_is_restricted_to_main(self):
+        source = (WORKFLOWS / "general-agent.yml").read_text(encoding="utf-8")
+        self.assertIn(
+            "  run-agent:\n    if: ${{ github.ref == 'refs/heads/main' }}",
+            source,
+        )
+
     def test_single_agent_memory_is_persisted_only_through_optional_review_pr(self):
         source = (WORKFLOWS / "general-agent.yml").read_text(encoding="utf-8")
         self.assertIn("      publish_memory_pr:", source)

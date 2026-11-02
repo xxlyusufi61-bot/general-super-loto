@@ -36,18 +36,26 @@ class GeneralCoordinatorPlanTests(unittest.TestCase):
         self.assertFalse(plan["execution_ready"])
         self.assertEqual(plan["target_resolution"], "explicit_target_requires_archive_guard_validation")
 
-    def test_formula_research_task_adds_research(self):
+    def test_formula_research_task_requires_dedicated_workflow(self):
         plan = build_plan("mode=data target_date=2026-10-20 research formula patterns")
         self.assertEqual(plan["agent_order"], ["validation", "research"])
+        self.assertTrue(plan["specialized_data_path_required"])
+        self.assertEqual(plan["execution_path"], "staged_specialist_workflow_required")
+        self.assertFalse(plan["execution_ready"])
+        self.assertTrue(any("open-research workflow" in note for note in plan["notes"]))
 
-    def test_comparison_task_adds_research_and_crossover(self):
+    def test_comparison_task_requires_staged_specialist_workflow(self):
         plan = build_plan("mode=data target_date=2026-10-20 compare methods with crossover")
         self.assertEqual(plan["agent_order"], ["validation", "research", "crossover"])
+        self.assertTrue(plan["specialized_data_path_required"])
+        self.assertFalse(plan["execution_ready"])
 
-    def test_formula_and_comparison_task_routes_three_agents(self):
+    def test_formula_and_comparison_plan_is_not_generic_execution_ready(self):
         plan = build_plan("mode=data target_date=2026-10-20 research formula and compare methods")
         self.assertEqual(plan["agent_order"], ["validation", "research", "crossover"])
         self.assertLessEqual(plan["agent_count"], 3)
+        self.assertTrue(plan["specialized_data_path_required"])
+        self.assertFalse(plan["execution_ready"])
 
     def test_implicit_data_task_requires_guarded_target_resolution(self):
         plan = build_plan("Analyze Super Loto frequency and formula patterns")
@@ -198,41 +206,30 @@ class GeneralCoordinatorExecutionTests(unittest.TestCase):
                     },
                 )
 
-    def test_data_task_freezes_latest_target_and_preflights_before_agents(self):
-        target = "2026-10-27"
-        calls = []
-        prepare_calls = []
-        sample = self.good_preflight(target, latest=True)
-
-        def prepare(value):
-            prepare_calls.append(value)
-            return sample
-
-        def runner(agent, task, coordinator_context=None):
-            calls.append((agent, task, coordinator_context))
-            return "UNVERIFIED-" + agent
-
+    def test_generic_coordinator_blocks_research_and_crossover_before_any_call(self):
+        runner = Mock()
+        tasks = (
+            "Analyze Super Loto formula patterns and compare methods",
+            "mode=data target_date=2026-10-27 compare methods with crossover",
+        )
         with (
-            patch.dict(os.environ, {"NVIDIA_API_KEY": "MOCK_KEY", "GENERAL_NVIDIA_GUARD_PASSED": "1"}, clear=False),
-            patch.object(core, "latest_archive_target_date", return_value=target),
-            patch.object(core, "prepare_data", side_effect=prepare),
+            patch.object(core, "latest_archive_target_date") as latest,
+            patch.object(core, "prepare_data") as prepare,
         ):
-            result = execute_plan(
-                "Analyze Super Loto formula patterns and compare methods",
-                EXECUTION_CONFIRMATION,
-                agent_runner=runner,
-            )
-
-        self.assertEqual(prepare_calls, [target])
-        self.assertEqual(result["target_date"], target)
-        self.assertEqual([item[0] for item in calls], ["validation", "research", "crossover"])
-        self.assertTrue(all("mode=data target_date=" + target in item[1] for item in calls))
-        self.assertEqual(calls[2][2], [
-            {"agent": "validation", "report": "UNVERIFIED-validation"},
-            {"agent": "research", "report": "UNVERIFIED-research"},
-        ])
-        self.assertFalse(result["target_numbers_in_coordinator_report"])
-        self.assertFalse(result["binding_rules_changed"])
+            for task in tasks:
+                with self.subTest(task=task):
+                    with self.assertRaisesRegex(
+                        RuntimeError,
+                        "blocked for data research/crossover",
+                    ):
+                        execute_plan(
+                            task,
+                            EXECUTION_CONFIRMATION,
+                            agent_runner=runner,
+                        )
+        runner.assert_not_called()
+        latest.assert_not_called()
+        prepare.assert_not_called()
 
     def test_failed_data_preflight_prevents_every_model_call(self):
         runner = Mock()
@@ -245,7 +242,7 @@ class GeneralCoordinatorExecutionTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(RuntimeError, "training_dates_match_archive"):
                 execute_plan(
-                    "Analyze Super Loto formula patterns",
+                    "mode=data target_date=2026-10-27 validate archive integrity",
                     EXECUTION_CONFIRMATION,
                     agent_runner=runner,
                 )
@@ -261,7 +258,7 @@ class GeneralCoordinatorExecutionTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(RuntimeError, "not the latest archive date"):
                 execute_plan(
-                    "Analyze Super Loto formula patterns",
+                    "Validate Super Loto archive integrity",
                     EXECUTION_CONFIRMATION,
                     agent_runner=runner,
                 )
@@ -286,6 +283,28 @@ class GeneralCoordinatorExecutionTests(unittest.TestCase):
         self.assertEqual(result["status"], "failed")
         self.assertEqual(result["agent_results"][0]["error_type"], "TimeoutError")
         self.assertFalse(result["next_agent_started_after_failure"])
+
+
+class GeneralCoreDataAgentBoundaryTests(unittest.TestCase):
+    def test_only_validation_role_can_enter_core_data_mode(self):
+        for agent in ("research", "debug", "crossover"):
+            with self.subTest(agent=agent):
+                with (
+                    patch.object(core, "latest_archive_target_date") as latest,
+                    patch.object(core, "prepare_data") as prepare,
+                    patch.object(core, "ask_nvidia") as ask,
+                ):
+                    with self.assertRaisesRegex(
+                        RuntimeError,
+                        "data mode is restricted to the validation agent",
+                    ):
+                        core.run_agent(
+                            agent,
+                            "mode=data target_date=2026-11-01 inspect guarded data",
+                        )
+                latest.assert_not_called()
+                prepare.assert_not_called()
+                ask.assert_not_called()
 
 
 class GeneralCorePriorReportTests(unittest.TestCase):

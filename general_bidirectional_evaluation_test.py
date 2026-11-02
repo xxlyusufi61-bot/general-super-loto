@@ -3,11 +3,12 @@ from datetime import date, timedelta
 
 from general_bidirectional_evaluation import (
     CATALOG_ID,
+    MIN_SELECTION_DRAWS,
     _rank_catalog_history,
     evaluate_bidirectional_full_history,
     fixed_candidate_catalog,
 )
-from general_hypothesis_execution import rank_candidates
+from general_hypothesis_execution import DEFAULT_MIN_TRAIN_DRAWS, rank_candidates
 
 
 def make_rows(start: date, count: int, pool_size: int = 60, step: int = 2):
@@ -83,6 +84,34 @@ class BidirectionalFullHistoryTests(unittest.TestCase):
         self.assertTrue(all(row["test_date"] < target_date for row in details["forward_per_draw"] + details["reverse_per_draw"]))
         self.assertTrue(all(not row["target_numbers_reported"] and not row["predicted_number_values_reported"] for row in details["forward_per_draw"] + details["reverse_per_draw"]))
         self.assertEqual(set(report["regimes"]), {"R60"})
+        self.assertEqual(report["catalog_id"], CATALOG_ID)
+        required_history = DEFAULT_MIN_TRAIN_DRAWS + MIN_SELECTION_DRAWS
+        forward_by_date = {
+            item["test_date"]: item for item in details["forward_per_draw"]
+        }
+        reverse_by_date = {
+            item["test_date"]: item for item in details["reverse_per_draw"]
+        }
+        # Replaying this adaptive baseline must rebuild selection from the
+        # direction-appropriate history at every individual historical cutoff.
+        for index, target in enumerate(rows):
+            if index >= required_history:
+                item = forward_by_date[target["date"]]
+                self.assertEqual(item["direction"], "forward")
+                self.assertEqual(item["training_draw_count"], index)
+                self.assertIn(
+                    item["selected_spec_id"],
+                    {candidate["spec_id"] for candidate in fixed_candidate_catalog()},
+                )
+            later_count = len(rows) - index - 1
+            if later_count >= required_history:
+                item = reverse_by_date[target["date"]]
+                self.assertEqual(item["direction"], "reverse_retrospective")
+                self.assertEqual(item["later_training_draw_count"], later_count)
+                self.assertIn(
+                    item["selected_spec_id"],
+                    {candidate["spec_id"] for candidate in fixed_candidate_catalog()},
+                )
 
     def test_reverse_is_retrospective_not_predictive(self):
         rows = make_rows(date(2020, 8, 2), 90)

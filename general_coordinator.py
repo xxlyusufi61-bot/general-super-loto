@@ -87,6 +87,10 @@ def build_plan(raw_task: str) -> dict[str, Any]:
         agents = ["validation", "debug"]
 
     data_requires_preflight = task_type == "data"
+    specialized_data_path_required = (
+        task_type == "data"
+        and any(agent in {"research", "crossover"} for agent in agents)
+    )
     if target:
         target_resolution = "explicit_target_requires_archive_guard_validation"
     elif data_requires_preflight:
@@ -109,14 +113,23 @@ def build_plan(raw_task: str) -> dict[str, Any]:
         "model_requests_made": 0,
         "agents_executed": False,
         "requires_guarded_archive_preflight": data_requires_preflight,
-        "execution_ready": not data_requires_preflight,
+        "specialized_data_path_required": specialized_data_path_required,
+        "execution_path": (
+            "staged_specialist_workflow_required"
+            if specialized_data_path_required
+            else "general_agent_validation" if data_requires_preflight
+            else "general_agent"
+        ),
+        "execution_ready": not data_requires_preflight and not specialized_data_path_required,
         "binding_rules_changed": False,
         "notes": [
             "This is a routing plan only; no agent has been executed.",
             "Data tasks must pass archive validation and target isolation before any model request.",
             "Target-draw numbers are not loaded or used by this planner.",
             "The estimated request count is conditional on a future sequential execution; it is not a quota guarantee."
-        ],
+        ] + ([
+            "Data research/crossover cannot execute through the generic sequential agent path. Formula discovery requires the independent forward/reverse open-research workflow; crossover remains blocked until a dedicated staged evaluator exists."
+        ] if specialized_data_path_required else []),
     }
 
 
@@ -176,6 +189,12 @@ def execute_plan(
     plan = build_plan(raw_task)
     if plan["agent_count"] > 3 or not plan["agent_order"]:
         raise RuntimeError("Coordinator plan is empty or exceeds the three-agent limit.")
+    if plan["specialized_data_path_required"]:
+        raise RuntimeError(
+            "Generic coordinator execution is blocked for data research/crossover. "
+            "Use the isolated open-research workflow for forward/reverse discovery; "
+            "crossover requires a separately staged evaluator. No agent was invoked."
+        )
     if os.environ.get("GENERAL_NVIDIA_GUARD_PASSED") != "1":
         raise RuntimeError("Global NVIDIA safety guard has not been confirmed; no agent was invoked.")
     if not os.environ.get("NVIDIA_API_KEY", "").strip():
