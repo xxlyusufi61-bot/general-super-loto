@@ -833,6 +833,30 @@ def _create_nvidia_connection(timeout_seconds: int):
     )
 
 
+def _set_nvidia_socket_timeout(
+    connection: http.client.HTTPConnection | None,
+    response_socket: Any | None,
+    configured_seconds: int,
+    request_deadline: float,
+) -> None:
+    """Refresh timeout on the socket that still owns the HTTP response stream.
+
+    HTTPConnection.getresponse() may detach and close its own socket reference
+    when the server sends Connection: close. HTTPResponse keeps the socket's
+    makefile open while the response body is being read, so retain the original
+    socket object and use it after that handoff.
+    """
+    active_socket = connection.sock if connection is not None else None
+    if active_socket is None:
+        active_socket = response_socket
+    if active_socket is None:
+        raise OSError("HTTPS response socket is unavailable.")
+    remaining = request_deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError("Overall NVIDIA request deadline exceeded.")
+    active_socket.settimeout(min(configured_seconds, remaining))
+
+
 def call_model(
     messages: list[dict[str, str]],
     *,
@@ -968,6 +992,7 @@ def call_model(
     phase_durations: dict[str, float] = {}
     connection = None
     response = None
+    response_socket = None
 
     phase_metric = {
         "tcp_tls_establishment": "tcp_tls_establishment_seconds",
@@ -977,12 +1002,12 @@ def call_model(
     }
 
     def set_socket_timeout(configured_seconds: int) -> None:
-        if connection is None or connection.sock is None:
-            raise OSError("HTTPS socket is unavailable.")
-        remaining = request_deadline - time.monotonic()
-        if remaining <= 0:
-            raise TimeoutError("Overall NVIDIA request deadline exceeded.")
-        connection.sock.settimeout(min(configured_seconds, remaining))
+        _set_nvidia_socket_timeout(
+            connection,
+            response_socket,
+            configured_seconds,
+            request_deadline,
+        )
 
     def refresh_stream_timeout() -> None:
         set_socket_timeout(stream_idle_timeout_seconds)
@@ -992,10 +1017,12 @@ def call_model(
         metric_name = phase_metric.get(stage)
         if metric_name:
             phase_durations[metric_name] = round(elapsed, 3)
+        response_status = getattr(response, "status", None) if response is not None else None
+        response_headers = getattr(response, "headers", None) if response is not None else None
         save_usage_observation(
             build_usage_observation(
-                None,
-                None,
+                response_status,
+                response_headers,
                 None,
                 response_mode="sse",
                 max_tokens_requested=request_max_tokens,
@@ -1022,6 +1049,9 @@ def call_model(
     try:
         connection = _create_nvidia_connection(connect_timeout_seconds)
         connection.connect()
+        response_socket = connection.sock
+        if response_socket is None:
+            raise OSError("HTTPS connection socket is unavailable after connect.")
         phase_durations["tcp_tls_establishment_seconds"] = round(
             time.monotonic() - phase_started, 3
         )
