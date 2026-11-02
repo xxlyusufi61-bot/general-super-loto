@@ -887,7 +887,10 @@ def call_model(
         },
         method="POST",
     )
-    reserve_nvidia_request("open-research-" + request_key)
+    reserve_nvidia_request(
+        "open-research-" + request_key,
+        diagnostic_exception=diagnostic_mode,
+    )
     attempt_marker = Path("/tmp/general_nvidia_api_attempted")
     success_marker = Path("/tmp/general_nvidia_api_succeeded")
     for marker in (attempt_marker, success_marker):

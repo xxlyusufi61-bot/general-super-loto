@@ -24,6 +24,14 @@ NVIDIA_REQUESTS_PER_MINUTE = 40
 NVIDIA_RATE_WINDOW_SECONDS = 60
 RATE_LIMIT_RESERVATION_SAFETY_SECONDS = 30
 MAX_REASON_LENGTH = 320
+MAX_DIAGNOSTIC_RUN_IDS = 10000
+DIAGNOSTIC_REPOSITORY = "xxlyusufi61-bot/general-super-loto"
+DIAGNOSTIC_WORKFLOW_ID = 403997867
+DIAGNOSTIC_WORKFLOW_PATH = ".github/workflows/nvidia-diagnostic.yml"
+DIAGNOSTIC_APPROVAL_PHRASE = "I_APPROVE_ONE_DIAGNOSTIC_REQUEST"
+DIAGNOSTIC_REQUEST_SOURCE = "open-research-forward"
+DIAGNOSTIC_AUTHORIZED_ACTOR_LOGIN = "xxlyusufi61-bot"
+DIAGNOSTIC_AUTHORIZED_ACTOR_ID = 345811504
 GIT_COMMAND_TIMEOUT_SECONDS = 30
 _RATE_LIMIT_WORKTREE = None
 
@@ -109,6 +117,7 @@ def initial_rate_limit_state():
         "window_seconds": NVIDIA_RATE_WINDOW_SECONDS,
         "max_requests": NVIDIA_REQUESTS_PER_MINUTE,
         "requests": [],
+        "diagnostic_run_ids": [],
         "updated_at_utc": None,
     }
 
@@ -151,17 +160,48 @@ def validate_rate_limit_state(value):
         if previous is not None and stamp < previous:
             raise ValueError("NVIDIA rate-limit history is not chronological")
         previous = stamp
+    diagnostic_run_ids = value.get("diagnostic_run_ids", [])
+    if not isinstance(diagnostic_run_ids, list) or len(diagnostic_run_ids) > MAX_DIAGNOSTIC_RUN_IDS:
+        raise ValueError("diagnostic run-id history is invalid")
+    seen_diagnostic_run_ids = set()
+    for run_id in diagnostic_run_ids:
+        if (
+            not isinstance(run_id, str)
+            or not run_id.isascii()
+            or not run_id.isdigit()
+            or len(run_id) > 32
+            or str(int(run_id)) != run_id
+            or int(run_id) < 1
+            or run_id in seen_diagnostic_run_ids
+        ):
+            raise ValueError("diagnostic run-id history contains an invalid or duplicate ID")
+        seen_diagnostic_run_ids.add(run_id)
     updated = value.get("updated_at_utc")
     if updated is not None:
         _parse_aware_timestamp(updated, "NVIDIA rate-limit updated_at_utc")
     return value
 
 
-def reserve_rate_limit_slot(previous, source, now=None):
+def reserve_rate_limit_slot(previous, source, now=None, *, diagnostic_run_id=None):
     previous = validate_rate_limit_state(previous)
     source = " ".join(str(source).split())[:80]
     if not source:
         raise ValueError("NVIDIA request source is required")
+    diagnostic_run_ids = list(previous.get("diagnostic_run_ids", []))
+    if diagnostic_run_id is not None:
+        if (
+            not isinstance(diagnostic_run_id, str)
+            or not diagnostic_run_id.isascii()
+            or not diagnostic_run_id.isdigit()
+            or len(diagnostic_run_id) > 32
+            or str(int(diagnostic_run_id)) != diagnostic_run_id
+            or int(diagnostic_run_id) < 1
+        ):
+            raise ValueError("diagnostic run ID is invalid")
+        if diagnostic_run_id in diagnostic_run_ids:
+            raise ValueError("this diagnostic workflow run has already reserved its one request")
+        if len(diagnostic_run_ids) >= MAX_DIAGNOSTIC_RUN_IDS:
+            raise ValueError("diagnostic one-shot history is full; provider request blocked")
     now = now or datetime.now(timezone.utc)
     if not isinstance(now, datetime) or now.tzinfo is None or now.utcoffset() is None:
         raise ValueError("NVIDIA rate-limit clock must be timezone-aware")
@@ -200,6 +240,7 @@ def reserve_rate_limit_slot(previous, source, now=None):
         "window_seconds": NVIDIA_RATE_WINDOW_SECONDS,
         "max_requests": NVIDIA_REQUESTS_PER_MINUTE,
         "requests": active,
+        "diagnostic_run_ids": diagnostic_run_ids + ([diagnostic_run_id] if diagnostic_run_id is not None else []),
         "updated_at_utc": now.isoformat(),
     }
     return validate_rate_limit_state(state), 0
@@ -279,6 +320,93 @@ def _api_request(method, url, payload=None):
     if not isinstance(result, dict):
         raise RuntimeError("GitHub lock-state API returned an invalid object")
     return result
+
+
+
+def validate_diagnostic_workflow_run(run, env=None):
+    """Validate an active, first-attempt run of the one approved diagnostic workflow."""
+    env = os.environ if env is None else env
+    if not isinstance(run, dict):
+        raise RuntimeError("GitHub workflow-run metadata is not an object; diagnostic request blocked.")
+
+    repository = env.get("GITHUB_REPOSITORY", "")
+    run_id = env.get("GITHUB_RUN_ID", "")
+    if repository != DIAGNOSTIC_REPOSITORY:
+        raise RuntimeError("Diagnostic exception is restricted to the canonical repository.")
+    if env.get("GITHUB_EVENT_NAME") != "workflow_dispatch":
+        raise RuntimeError("Diagnostic exception requires workflow_dispatch.")
+    if env.get("GITHUB_REF") != "refs/heads/main":
+        raise RuntimeError("Diagnostic exception requires the main branch.")
+    if env.get("GITHUB_WORKFLOW_REF") != (
+        DIAGNOSTIC_REPOSITORY + "/" + DIAGNOSTIC_WORKFLOW_PATH + "@refs/heads/main"
+    ):
+        raise RuntimeError("Diagnostic exception requires the exact diagnostic workflow reference.")
+    if (
+        not isinstance(run_id, str)
+        or not run_id.isascii()
+        or not run_id.isdigit()
+        or len(run_id) > 32
+        or str(int(run_id)) != run_id
+        or int(run_id) < 1
+    ):
+        raise RuntimeError("GitHub workflow run ID is missing or invalid.")
+    if env.get("GITHUB_RUN_ATTEMPT") != "1":
+        raise RuntimeError("Diagnostic workflow reruns are not permitted.")
+    if env.get("GENERAL_CONFIRM_LIVE_CALLS") != DIAGNOSTIC_APPROVAL_PHRASE:
+        raise RuntimeError("The exact one-request diagnostic approval is required.")
+
+    expected_sha = env.get("GITHUB_SHA", "")
+    if not isinstance(expected_sha, str) or len(expected_sha) != 40:
+        raise RuntimeError("GitHub workflow commit identity is missing or invalid.")
+    if type(run.get("id")) is not int or run.get("id") != int(run_id):
+        raise RuntimeError("GitHub workflow run identity does not match the current runner.")
+    if type(run.get("workflow_id")) is not int or run.get("workflow_id") != DIAGNOSTIC_WORKFLOW_ID:
+        raise RuntimeError("The run does not belong to the approved NVIDIA diagnostic workflow.")
+    if run.get("path") != DIAGNOSTIC_WORKFLOW_PATH:
+        raise RuntimeError("The workflow-run path is not the approved diagnostic workflow.")
+    if run.get("event") != "workflow_dispatch":
+        raise RuntimeError("GitHub did not record this run as workflow_dispatch.")
+    actor = run.get("actor")
+    if (
+        not isinstance(actor, dict)
+        or type(actor.get("id")) is not int
+        or actor.get("id") != DIAGNOSTIC_AUTHORIZED_ACTOR_ID
+        or actor.get("login") != DIAGNOSTIC_AUTHORIZED_ACTOR_LOGIN
+    ):
+        raise RuntimeError(
+            "Only the explicitly authorized GitHub account may dispatch this diagnostic workflow."
+        )
+    if run.get("head_branch") != "main":
+        raise RuntimeError("GitHub did not record main as the workflow branch.")
+    if run.get("head_sha") != expected_sha:
+        raise RuntimeError("GitHub workflow commit does not match the current runner commit.")
+    if type(run.get("run_attempt")) is not int or run.get("run_attempt") != 1:
+        raise RuntimeError("Only the first attempt of a diagnostic workflow run is permitted.")
+    if run.get("status") != "in_progress" or run.get("conclusion") is not None:
+        raise RuntimeError("The diagnostic workflow run is not currently active.")
+    repository_metadata = run.get("repository")
+    head_repository = run.get("head_repository")
+    if not isinstance(repository_metadata, dict) or repository_metadata.get("full_name") != DIAGNOSTIC_REPOSITORY:
+        raise RuntimeError("GitHub workflow metadata belongs to a different repository.")
+    if not isinstance(head_repository, dict) or head_repository.get("full_name") != DIAGNOSTIC_REPOSITORY:
+        raise RuntimeError("GitHub workflow head repository is not the canonical repository.")
+    return run_id
+
+
+def read_current_diagnostic_workflow_run():
+    """Read and validate the real GitHub Actions run; runner environment alone is insufficient."""
+    repository = _required_env("GITHUB_REPOSITORY")
+    run_id = _required_env("GITHUB_RUN_ID")
+    api_base = os.environ.get("GITHUB_API_URL", "https://api.github.com").rstrip("/")
+    url = (
+        api_base
+        + "/repos/"
+        + urllib.parse.quote(repository, safe="/")
+        + "/actions/runs/"
+        + urllib.parse.quote(run_id, safe="")
+    )
+    run = _api_request("GET", url)
+    return validate_diagnostic_workflow_run(run)
 
 
 def _lock_url():
@@ -402,24 +530,43 @@ def write_remote_rate_limit(state, sha):
     return new_head
 
 
-def reserve_nvidia_request(source):
-    """Persist one global request reservation before any outbound NVIDIA call."""
+def reserve_nvidia_request(source, *, diagnostic_exception=False):
+    """Persist one shared request slot; a locked exception is limited to a verified diagnostic run."""
     source = " ".join(str(source).split())[:80]
     if not source:
         raise RuntimeError("NVIDIA request source is required; no provider request was sent.")
+    if type(diagnostic_exception) is not bool:
+        raise RuntimeError("Diagnostic exception flag must be an explicit boolean.")
+    if diagnostic_exception and source != DIAGNOSTIC_REQUEST_SOURCE:
+        raise RuntimeError("The diagnostic exception cannot authorize a non-diagnostic request source.")
 
     while True:
-        # Re-read the remote global lock before every reserved provider request.
-        # A successful earlier check must never authorize later requests in the same
-        # process after another workflow or operator activates the safety lock.
+        # The GitHub API identity is rechecked at the reservation boundary. A
+        # runner-provided environment flag or an earlier preflight is not enough.
+        diagnostic_run_id = (
+            read_current_diagnostic_workflow_run()
+            if diagnostic_exception
+            else None
+        )
+        # Every provider reservation reads the remote lock again. Normal GENERAL
+        # and agent requests remain blocked whenever the shared lock is active.
         lock_state, _ = read_remote_lock()
-        if lock_state["locked"]:
+        if diagnostic_exception:
+            if not lock_state["locked"]:
+                raise RuntimeError(
+                    "The one-request diagnostic exception requires the global safety lock to remain active."
+                )
+        elif lock_state["locked"]:
             raise RuntimeError(
                 "Global NVIDIA safety lock is active; no provider request was sent."
             )
 
         previous, sha = read_remote_rate_limit()
-        next_state, wait_seconds = reserve_rate_limit_slot(previous, source)
+        next_state, wait_seconds = reserve_rate_limit_slot(
+            previous,
+            source,
+            diagnostic_run_id=diagnostic_run_id,
+        )
         if next_state is None:
             print(
                 "GENERAL NVIDIA RATE LIMIT: 40 requests are already reserved in the "
@@ -472,6 +619,26 @@ def send_telegram(message):
         return False
     print("TELEGRAM_NOTIFICATION: delivered")
     return True
+
+
+def command_diagnostic_check():
+    """Preflight only the exact approved diagnostic while the global lock remains active."""
+    try:
+        run_id = read_current_diagnostic_workflow_run()
+        state, _ = read_remote_lock()
+        if not state["locked"]:
+            raise RuntimeError(
+                "The diagnostic lock exception is available only while the global NVIDIA lock is active."
+            )
+    except Exception as error:
+        print("GENERAL NVIDIA DIAGNOSTIC EXCEPTION: BLOCKED")
+        print("Reason:", str(error))
+        print("No NVIDIA provider request was sent and the global lock was not changed.")
+        return 2
+    print("GENERAL NVIDIA GLOBAL SAFETY LOCK: ACTIVE")
+    print("Exact diagnostic workflow verified; one request may be reserved for run:", run_id)
+    print("Normal GENERAL and agent requests remain blocked; no request has been reserved yet.")
+    return 0
 
 
 def command_check():
@@ -574,6 +741,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("check", help="Fail closed unless the default-branch lock is verified clear")
+    subparsers.add_parser("diagnostic-check", help="Verify the exact one-request diagnostic while the global lock stays active")
     reserve_parser = subparsers.add_parser("reserve", help="Atomically reserve one shared NVIDIA request slot")
     reserve_parser.add_argument("--source", required=True)
     lock_parser = subparsers.add_parser("lock", help="Persist a global lock and notify Telegram")
@@ -583,6 +751,8 @@ def main():
 
     if args.command == "check":
         return command_check()
+    if args.command == "diagnostic-check":
+        return command_diagnostic_check()
     if args.command == "reserve":
         reserve_nvidia_request(args.source)
         return 0
