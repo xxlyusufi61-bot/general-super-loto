@@ -51,12 +51,10 @@ class LiveModelConsentGateTests(unittest.TestCase):
 
     def test_manual_agent_workflow_is_restricted_to_main(self):
         source = (WORKFLOWS / "general-agent.yml").read_text(encoding="utf-8")
-        job_marker = "  run-agent:\\n"
-        self.assertEqual(source.count(job_marker), 1)
-        job_start = source.index(job_marker)
-        next_job = source.find("\\n  ", job_start + len(job_marker))
-        job_block = source[job_start:next_job if next_job >= 0 else len(source)]
-        self.assertIn("if: ${{ github.ref == 'refs/heads/main' }}", job_block)
+        self.assertIn(
+            "  run-agent:\n    if: ${{ github.ref == 'refs/heads/main' }}",
+            source,
+        )
 
     def test_single_agent_memory_is_persisted_only_through_optional_review_pr(self):
         source = (WORKFLOWS / "general-agent.yml").read_text(encoding="utf-8")
