@@ -113,14 +113,23 @@ def build_plan(raw_task: str) -> dict[str, Any]:
         "model_requests_made": 0,
         "agents_executed": False,
         "requires_guarded_archive_preflight": data_requires_preflight,
-        "execution_ready": not data_requires_preflight,
+        "specialized_data_path_required": specialized_data_path_required,
+        "execution_path": (
+            "staged_specialist_workflow_required"
+            if specialized_data_path_required
+            else "general_agent_validation" if data_requires_preflight
+            else "general_agent"
+        ),
+        "execution_ready": not data_requires_preflight and not specialized_data_path_required,
         "binding_rules_changed": False,
         "notes": [
             "This is a routing plan only; no agent has been executed.",
             "Data tasks must pass archive validation and target isolation before any model request.",
             "Target-draw numbers are not loaded or used by this planner.",
             "The estimated request count is conditional on a future sequential execution; it is not a quota guarantee."
-        ],
+        ] + ([
+            "Data research/crossover cannot execute through the generic sequential agent path. Formula discovery requires the independent forward/reverse open-research workflow; crossover remains blocked until a dedicated staged evaluator exists."
+        ] if specialized_data_path_required else []),
     }
 
 
