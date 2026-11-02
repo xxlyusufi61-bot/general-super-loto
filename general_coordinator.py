@@ -87,6 +87,10 @@ def build_plan(raw_task: str) -> dict[str, Any]:
         agents = ["validation", "debug"]
 
     data_requires_preflight = task_type == "data"
+    specialized_data_path_required = (
+        task_type == "data"
+        and any(agent in {"research", "crossover"} for agent in agents)
+    )
     if target:
         target_resolution = "explicit_target_requires_archive_guard_validation"
     elif data_requires_preflight:
