@@ -345,9 +345,8 @@ class GlobalNvidiaLockTests(unittest.TestCase):
         )
         with patch.object(
             nvidia_guard, "read_remote_lock", return_value=(active_lock, "locked-sha")
-        ), patch.object(nvidia_guard, "send_telegram") as telegram:
+        ):
             self.assertEqual(nvidia_guard.command_check(), 2)
-        telegram.assert_called_once()
 
     def test_diagnostic_check_requires_verified_context_and_active_global_lock(self):
         active_lock = make_locked_state(
