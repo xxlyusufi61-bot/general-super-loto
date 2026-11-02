@@ -1,0 +1,129 @@
+name: GENERAL NVIDIA One-Request Diagnostic
+
+'on':
+  push:
+    branches:
+      - main
+    paths:
+      - "general_nvidia_diagnostic.py"
+      - "general_nvidia_diagnostic_test.py"
+      - "general_open_research.py"
+      - "general_live_consent.py"
+      - "general_nvidia_guard.py"
+      - "general_data_guard.py"
+      - "general_sealed_evaluation.py"
+      - "general_evaluation_ledger.json"
+      - ".github/workflows/nvidia-diagnostic.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "general_nvidia_diagnostic.py"
+      - "general_nvidia_diagnostic_test.py"
+      - "general_open_research.py"
+      - "general_live_consent.py"
+      - "general_nvidia_guard.py"
+      - "general_data_guard.py"
+      - "general_sealed_evaluation.py"
+      - "general_evaluation_ledger.json"
+      - ".github/workflows/nvidia-diagnostic.yml"
+  workflow_dispatch:
+    inputs:
+      task:
+        description: "Optional forward-only research focus; number predictions are not permitted"
+        required: false
+        type: string
+        default: "Explore the pre-target archive from scratch and propose testable hypotheses."
+      confirm_single_request:
+        description: "Enter the exact approval phrase to authorize one diagnostic request. Leave NO to run tests only."
+        required: true
+        type: string
+        default: "NO"
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile diagnostic and research modules
+        run: |
+          python3 -m py_compile general_nvidia_diagnostic.py general_nvidia_diagnostic_test.py general_open_research.py general_open_research_test.py general_live_consent.py general_nvidia_guard.py general_data_guard.py general_sealed_evaluation.py general_hypothesis_proposals.py general_hypothesis_execution.py general_bidirectional_evaluation.py general_execution_spec_parser.py general_source_context.py
+      - name: Run synthetic-only regression suite
+        run: |
+          python3 -m unittest -v general_nvidia_diagnostic_test general_hypothesis_proposals_test general_open_research_test general_hypothesis_execution_test general_bidirectional_evaluation_test general_execution_spec_parser_test general_sealed_evaluation_test general_source_context_test
+
+  diagnostic:
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.confirm_single_request == 'I_APPROVE_ONE_DIAGNOSTIC_REQUEST' }}
+    needs: tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    concurrency:
+      group: general-nvidia-api
+      cancel-in-progress: false
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Verify global NVIDIA safety lock
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GENERAL_DEFAULT_BRANCH: main
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python3 general_nvidia_guard.py check
+          echo "GENERAL_NVIDIA_GUARD_PASSED=1" >> "$GITHUB_ENV"
+      - name: Run exactly one forward diagnostic request
+        id: nvidia-diagnostic
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GENERAL_DEFAULT_BRANCH: main
+          GENERAL_ARCHIVE_FILE: super_loto_archive.json
+          TASK_TEXT: ${{ inputs.task }}
+          GENERAL_CONFIRM_LIVE_CALLS: ${{ inputs.confirm_single_request }}
+          GENERAL_ALLOW_NVIDIA_CALL: "true"
+          GENERAL_NVIDIA_FREE_USAGE_VERIFIED: "true"
+          GENERAL_DIAGNOSTIC_MODE: "true"
+        run: |
+          python3 general_nvidia_diagnostic.py
+      - name: Activate global lock after an incomplete provider request
+        if: ${{ failure() && steps.nvidia-diagnostic.outcome == 'failure' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GENERAL_DEFAULT_BRANCH: main
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -f /tmp/general_nvidia_api_attempted ] && [ ! -f /tmp/general_nvidia_api_succeeded ]; then
+            python3 general_nvidia_guard.py lock --reason "GENERAL single-request diagnostic failed or its response could not be validated; global safety pause is required."
+          else
+            echo "No incomplete provider request detected; global lock unchanged."
+          fi
+      - name: Upload sanitized diagnostic metadata
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: general-nvidia-single-request-diagnostic
+          path: |
+            general_nvidia_diagnostic_result.json
+            open_research_usage_forward.json
+          if-no-files-found: ignore
+          retention-days: 14

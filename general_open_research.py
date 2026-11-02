@@ -22,7 +22,7 @@ from typing import Any, Mapping
 
 import general_data_guard as guard
 from general_nvidia_guard import reserve_nvidia_request
-from general_live_consent import has_explicit_live_consent
+from general_live_consent import has_explicit_diagnostic_consent, has_explicit_live_consent
 from general_hypothesis_proposals import parse_hypothesis_proposals
 from general_execution_spec_parser import parse_execution_spec_block
 import general_sealed_evaluation as sealed
@@ -765,11 +765,22 @@ def call_model(
         if request_label is None
         else USAGE_REPORT.stem + "_" + request_label + USAGE_REPORT.suffix
     )
-    if not has_explicit_live_consent(
-        os.environ.get("GENERAL_CONFIRM_LIVE_CALLS", "")
-    ):
+    diagnostic_mode = os.environ.get("GENERAL_DIAGNOSTIC_MODE", "").strip().lower() == "true"
+    if diagnostic_mode:
+        if request_label != "forward":
+            raise RuntimeError(
+                "Single-request diagnostic mode permits only one forward request; no provider request was sent."
+            )
+        consent_ok = has_explicit_diagnostic_consent(
+            os.environ.get("GENERAL_CONFIRM_LIVE_CALLS", "")
+        )
+    else:
+        consent_ok = has_explicit_live_consent(
+            os.environ.get("GENERAL_CONFIRM_LIVE_CALLS", "")
+        )
+    if not consent_ok:
         raise RuntimeError(
-            "NVIDIA inference was not explicitly approved by exact confirmation phrase; "
+            "NVIDIA inference was not explicitly approved for this operation; "
             "no provider request was sent."
         )
     if os.environ.get("GENERAL_NVIDIA_GUARD_PASSED") != "1":
@@ -780,9 +791,8 @@ def call_model(
         raise RuntimeError(
             "NVIDIA inference was not explicitly approved; no provider request was sent."
         )
-    # Every individual hosted request remains blocked unless the operator has
-    # independently verified free-only/no-billing status. The two directional calls
-    # are separate and no network error is ever retried automatically.
+    # Preserve the existing per-request gate and ensure the diagnostic mode has
+    # its own one-call ceiling. No network error is ever retried automatically.
     if os.environ.get("GENERAL_NVIDIA_FREE_USAGE_VERIFIED", "").strip().lower() != "true":
         raise RuntimeError(
             "Free-use status was not independently verified; NVIDIA inference blocked. "
@@ -792,7 +802,12 @@ def call_model(
     if not key:
         raise RuntimeError("NVIDIA_API_KEY missing; research stopped.")
 
-    if _NVIDIA_REQUESTS_ATTEMPTED >= MAX_NVIDIA_REQUESTS_PER_RUN:
+    request_limit = 1 if diagnostic_mode else MAX_NVIDIA_REQUESTS_PER_RUN
+    if _NVIDIA_REQUESTS_ATTEMPTED >= request_limit:
+        if diagnostic_mode:
+            raise RuntimeError(
+                "Single-request diagnostic cap reached; no additional provider request was sent."
+            )
         raise RuntimeError(
             "Autonomous research request cap reached (2 total); no additional provider request was sent."
         )
@@ -802,7 +817,8 @@ def call_model(
             "This directional NVIDIA request was already attempted; no duplicate request was sent."
         )
     if request_label is not None:
-        expected_direction = ("forward", "reverse")[_NVIDIA_REQUESTS_ATTEMPTED]
+        direction_order = ("forward",) if diagnostic_mode else ("forward", "reverse")
+        expected_direction = direction_order[_NVIDIA_REQUESTS_ATTEMPTED]
         if request_label != expected_direction:
             raise RuntimeError(
                 "Directional NVIDIA requests must run once each in forward-then-reverse order."
