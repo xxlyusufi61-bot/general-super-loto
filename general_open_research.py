@@ -11,11 +11,13 @@ only safe usage metadata returned by each directional inference request, when pr
 """
 from __future__ import annotations
 
+import http.client
 import json
 import os
+import ssl
 import time
 import urllib.error
-import urllib.request
+from urllib.parse import urlsplit
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
@@ -45,6 +47,8 @@ DEFAULT_MAX_COMPLETION_TOKENS = 1800
 DIAGNOSTIC_MAX_COMPLETION_TOKENS = 8192
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 240
 DIAGNOSTIC_REQUEST_TIMEOUT_SECONDS = 600
+DEFAULT_CONNECT_TIMEOUT_SECONDS = 30
+DEFAULT_REQUEST_SEND_TIMEOUT_SECONDS = 30
 _NVIDIA_REQUESTS_ATTEMPTED = 0
 _NVIDIA_REQUEST_LABELS_ATTEMPTED: set[str] = set()
 
@@ -370,6 +374,18 @@ def build_usage_observation(
     response_complete: bool | None = None,
     max_tokens_requested: int | None = None,
     request_timeout_seconds: int | None = None,
+    connect_timeout_seconds: int | None = None,
+    request_send_timeout_seconds: int | None = None,
+    response_header_timeout_seconds: int | None = None,
+    stream_idle_timeout_seconds: int | None = None,
+    request_body_bytes: int | None = None,
+    system_prompt_bytes: int | None = None,
+    user_prompt_bytes: int | None = None,
+    request_delivery_state: str | None = None,
+    tcp_tls_establishment_seconds: float | None = None,
+    request_send_seconds: float | None = None,
+    response_header_wait_seconds: float | None = None,
+    stream_read_seconds: float | None = None,
 ) -> dict[str, Any]:
     """Build a cautious report without treating token usage as remaining quota or cost."""
     usage = payload.get("usage") if isinstance(payload, Mapping) else None
@@ -395,6 +411,18 @@ def build_usage_observation(
         "response_complete": response_complete,
         "max_tokens_requested": max_tokens_requested,
         "request_timeout_seconds": request_timeout_seconds,
+        "connect_timeout_seconds": connect_timeout_seconds,
+        "request_send_timeout_seconds": request_send_timeout_seconds,
+        "response_header_timeout_seconds": response_header_timeout_seconds,
+        "stream_idle_timeout_seconds": stream_idle_timeout_seconds,
+        "request_body_bytes": request_body_bytes,
+        "system_prompt_bytes": system_prompt_bytes,
+        "user_prompt_bytes": user_prompt_bytes,
+        "request_delivery_state": request_delivery_state,
+        "tcp_tls_establishment_seconds": tcp_tls_establishment_seconds,
+        "request_send_seconds": request_send_seconds,
+        "response_header_wait_seconds": response_header_wait_seconds,
+        "stream_read_seconds": stream_read_seconds,
         "failure_stage": failure_stage,
         "network_error_type": error_type,
         "rate_limit_headers_returned": filter_usage_headers(headers),
@@ -647,10 +675,12 @@ def combine_directional_results(
     return proposal_document, execution_document
 
 
-def _iter_sse_data(response):
-    """Yield data payloads from a UTF-8 server-sent-event response."""
+def _iter_sse_data(response, *, before_read=None):
+    """Yield data payloads, optionally refreshing a bounded socket read timeout."""
     data_lines: list[str] = []
     while True:
+        if before_read is not None:
+            before_read()
         raw_line = response.readline()
         if raw_line in (b"", ""):
             if data_lines:
@@ -702,7 +732,11 @@ class IncompleteModelResponseError(RuntimeError):
         self.stream_finish_reason = stream_finish_reason
 
 
-def _parse_streamed_chat_completion(response) -> tuple[dict[str, Any], dict[str, Any]]:
+def _parse_streamed_chat_completion(
+    response,
+    *,
+    before_read=None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
     """Parse NVIDIA's data-only SSE stream; reasoning is never treated as final content."""
     content_parts: list[str] = []
     usage: dict[str, Any] | None = None
@@ -710,7 +744,7 @@ def _parse_streamed_chat_completion(response) -> tuple[dict[str, Any], dict[str,
     event_count = 0
     saw_done = False
 
-    for event_data in _iter_sse_data(response):
+    for event_data in _iter_sse_data(response, before_read=before_read):
         if event_data.strip() == "[DONE]":
             saw_done = True
             break
@@ -784,6 +818,19 @@ def _parse_streamed_chat_completion(response) -> tuple[dict[str, Any], dict[str,
         "finish_reason": finish_reason,
     }
     return result, metadata
+
+
+def _create_nvidia_connection(timeout_seconds: int):
+    """Create a verified standard-library HTTPS connection to the configured API."""
+    endpoint = urlsplit(API_URL)
+    if endpoint.scheme != "https" or not endpoint.hostname:
+        raise RuntimeError("NVIDIA API endpoint must be an absolute HTTPS URL.")
+    return http.client.HTTPSConnection(
+        endpoint.hostname,
+        endpoint.port or 443,
+        timeout=timeout_seconds,
+        context=ssl.create_default_context(),
+    )
 
 
 def call_model(
@@ -877,16 +924,21 @@ def call_model(
         "chat_template_kwargs": {"clear_thinking": True},
         "stream": True,
     }).encode("utf-8")
-    request = urllib.request.Request(
-        API_URL,
-        data=body,
-        headers={
-            "Authorization": "Bearer " + key,
-            "Content-Type": "application/json",
-            "Accept": "text/event-stream",
-        },
-        method="POST",
+    system_prompt_bytes = sum(
+        len(str(item.get("content", "")).encode("utf-8"))
+        for item in messages
+        if item.get("role") == "system"
     )
+    user_prompt_bytes = sum(
+        len(str(item.get("content", "")).encode("utf-8"))
+        for item in messages
+        if item.get("role") == "user"
+    )
+    endpoint = urlsplit(API_URL)
+    request_path = endpoint.path or "/"
+    if endpoint.query:
+        request_path += "?" + endpoint.query
+
     reserve_nvidia_request(
         "open-research-" + request_key,
         diagnostic_exception=diagnostic_mode,
@@ -904,14 +956,121 @@ def call_model(
         datetime.now(timezone.utc).isoformat(), encoding="utf-8"
     )
 
+    connect_timeout_seconds = min(DEFAULT_CONNECT_TIMEOUT_SECONDS, request_timeout_seconds)
+    request_send_timeout_seconds = min(DEFAULT_REQUEST_SEND_TIMEOUT_SECONDS, request_timeout_seconds)
+    response_header_timeout_seconds = request_timeout_seconds
+    stream_idle_timeout_seconds = request_timeout_seconds
     request_started = time.monotonic()
-    stage = "connect_or_wait_for_headers"
+    request_deadline = request_started + request_timeout_seconds
+    stage = "tcp_tls_establishment"
+    request_delivery_state = "not_sent"
+    phase_started = request_started
+    phase_durations: dict[str, float] = {}
+    connection = None
+    response = None
+
+    phase_metric = {
+        "tcp_tls_establishment": "tcp_tls_establishment_seconds",
+        "send_request": "request_send_seconds",
+        "wait_for_headers": "response_header_wait_seconds",
+        "read_stream": "stream_read_seconds",
+    }
+
+    def set_socket_timeout(configured_seconds: int) -> None:
+        if connection is None or connection.sock is None:
+            raise OSError("HTTPS socket is unavailable.")
+        remaining = request_deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("Overall NVIDIA request deadline exceeded.")
+        connection.sock.settimeout(min(configured_seconds, remaining))
+
+    def refresh_stream_timeout() -> None:
+        set_socket_timeout(stream_idle_timeout_seconds)
+
+    def save_network_failure(exc: BaseException) -> None:
+        elapsed = time.monotonic() - phase_started
+        metric_name = phase_metric.get(stage)
+        if metric_name:
+            phase_durations[metric_name] = round(elapsed, 3)
+        save_usage_observation(
+            build_usage_observation(
+                None,
+                None,
+                None,
+                response_mode="sse",
+                max_tokens_requested=request_max_tokens,
+                request_timeout_seconds=request_timeout_seconds,
+                connect_timeout_seconds=connect_timeout_seconds,
+                request_send_timeout_seconds=request_send_timeout_seconds,
+                response_header_timeout_seconds=response_header_timeout_seconds,
+                stream_idle_timeout_seconds=stream_idle_timeout_seconds,
+                request_body_bytes=len(body),
+                system_prompt_bytes=system_prompt_bytes,
+                user_prompt_bytes=user_prompt_bytes,
+                request_delivery_state=request_delivery_state,
+                tcp_tls_establishment_seconds=phase_durations.get("tcp_tls_establishment_seconds"),
+                request_send_seconds=phase_durations.get("request_send_seconds"),
+                response_header_wait_seconds=phase_durations.get("response_header_wait_seconds"),
+                stream_read_seconds=phase_durations.get("stream_read_seconds"),
+                request_duration_seconds=time.monotonic() - request_started,
+                failure_stage=stage,
+                error_type=type(exc).__name__,
+            ),
+            request_label=request_label,
+        )
+
     try:
-        with urllib.request.urlopen(request, timeout=request_timeout_seconds) as response:
-            status = getattr(response, "status", 200)
-            headers = response.headers
-            stage = "read_stream"
-            result, stream_metadata = _parse_streamed_chat_completion(response)
+        connection = _create_nvidia_connection(connect_timeout_seconds)
+        connection.connect()
+        phase_durations["tcp_tls_establishment_seconds"] = round(
+            time.monotonic() - phase_started, 3
+        )
+
+        stage = "send_request"
+        phase_started = time.monotonic()
+        set_socket_timeout(request_send_timeout_seconds)
+        connection.putrequest("POST", request_path)
+        connection.putheader("Authorization", "Bearer " + key)
+        connection.putheader("Content-Type", "application/json")
+        connection.putheader("Accept", "text/event-stream")
+        connection.putheader("Content-Length", str(len(body)))
+        connection.putheader("Connection", "close")
+        request_delivery_state = "unknown_send_in_progress"
+        connection.endheaders(body)
+        request_delivery_state = "sent_to_socket_provider_receipt_unconfirmed"
+        phase_durations["request_send_seconds"] = round(
+            time.monotonic() - phase_started, 3
+        )
+
+        stage = "wait_for_headers"
+        phase_started = time.monotonic()
+        set_socket_timeout(response_header_timeout_seconds)
+        response = connection.getresponse()
+        phase_durations["response_header_wait_seconds"] = round(
+            time.monotonic() - phase_started, 3
+        )
+        status = getattr(response, "status", 200)
+        headers = response.headers
+        request_delivery_state = "response_received"
+
+        if status >= 400:
+            raise urllib.error.HTTPError(
+                API_URL,
+                status,
+                "NVIDIA API returned an HTTP error",
+                headers,
+                None,
+            )
+
+        stage = "read_stream"
+        phase_started = time.monotonic()
+        result, stream_metadata = _parse_streamed_chat_completion(
+            response,
+            before_read=refresh_stream_timeout,
+        )
+        phase_durations["stream_read_seconds"] = round(
+            time.monotonic() - phase_started, 3
+        )
     except urllib.error.HTTPError as exc:
         save_usage_observation(
             build_usage_observation(
@@ -921,6 +1080,18 @@ def call_model(
                 response_mode="sse",
                 max_tokens_requested=request_max_tokens,
                 request_timeout_seconds=request_timeout_seconds,
+                connect_timeout_seconds=connect_timeout_seconds,
+                request_send_timeout_seconds=request_send_timeout_seconds,
+                response_header_timeout_seconds=response_header_timeout_seconds,
+                stream_idle_timeout_seconds=stream_idle_timeout_seconds,
+                request_body_bytes=len(body),
+                system_prompt_bytes=system_prompt_bytes,
+                user_prompt_bytes=user_prompt_bytes,
+                request_delivery_state=request_delivery_state,
+                tcp_tls_establishment_seconds=phase_durations.get("tcp_tls_establishment_seconds"),
+                request_send_seconds=phase_durations.get("request_send_seconds"),
+                response_header_wait_seconds=phase_durations.get("response_header_wait_seconds"),
+                stream_read_seconds=phase_durations.get("stream_read_seconds"),
                 request_duration_seconds=time.monotonic() - request_started,
                 failure_stage="http_response",
                 error_type="HTTPError",
@@ -941,48 +1112,13 @@ def call_model(
             "Research model HTTP error " + str(exc.code) +
             "; no automatic retry was attempted; inspect " + request_usage_name + "."
         ) from None
-    except urllib.error.URLError as exc:
-        reason = getattr(exc, "reason", None)
-        error_type = type(reason).__name__ if reason is not None else type(exc).__name__
-        save_usage_observation(
-            build_usage_observation(
-                None,
-                None,
-                None,
-                response_mode="sse",
-                max_tokens_requested=request_max_tokens,
-                request_timeout_seconds=request_timeout_seconds,
-                request_duration_seconds=time.monotonic() - request_started,
-                failure_stage=stage,
-                error_type=error_type,
-            ),
-            request_label=request_label,
-        )
+    except (TimeoutError, OSError, http.client.HTTPException) as exc:
+        save_network_failure(exc)
         raise RuntimeError(
-            "Research model connection/timeout error during " + stage +
-            " (" + error_type + "). Whether the provider received the request is unknown; "
-            "no automatic retry was attempted. Inspect " + request_usage_name + "."
-        ) from None
-    except (TimeoutError, OSError) as exc:
-        error_type = type(exc).__name__
-        save_usage_observation(
-            build_usage_observation(
-                None,
-                None,
-                None,
-                response_mode="sse",
-                max_tokens_requested=request_max_tokens,
-                request_timeout_seconds=request_timeout_seconds,
-                request_duration_seconds=time.monotonic() - request_started,
-                failure_stage=stage,
-                error_type=error_type,
-            ),
-            request_label=request_label,
-        )
-        raise RuntimeError(
-            "Research model connection/stream timeout during " + stage +
-            " (" + error_type + "). Whether the provider received the request is unknown; "
-            "no automatic retry was attempted. Inspect " + request_usage_name + "."
+            "Research model network/timeout error during " + stage +
+            " (" + type(exc).__name__ + "). Request delivery state: " +
+            request_delivery_state + ". No automatic retry was attempted; inspect " +
+            request_usage_name + "."
         ) from None
     except RuntimeError as exc:
         incomplete_model_response = isinstance(exc, IncompleteModelResponseError)
@@ -991,14 +1127,30 @@ def call_model(
             if incomplete_model_response and exc.usage is not None
             else None
         )
+        elapsed = time.monotonic() - phase_started
+        metric_name = phase_metric.get(stage)
+        if metric_name:
+            phase_durations[metric_name] = round(elapsed, 3)
         save_usage_observation(
             build_usage_observation(
-                getattr(response, "status", None) if "response" in locals() else None,
-                getattr(response, "headers", None) if "response" in locals() else None,
+                getattr(response, "status", None) if response is not None else None,
+                getattr(response, "headers", None) if response is not None else None,
                 error_usage,
                 response_mode="sse",
                 max_tokens_requested=request_max_tokens,
                 request_timeout_seconds=request_timeout_seconds,
+                connect_timeout_seconds=connect_timeout_seconds,
+                request_send_timeout_seconds=request_send_timeout_seconds,
+                response_header_timeout_seconds=response_header_timeout_seconds,
+                stream_idle_timeout_seconds=stream_idle_timeout_seconds,
+                request_body_bytes=len(body),
+                system_prompt_bytes=system_prompt_bytes,
+                user_prompt_bytes=user_prompt_bytes,
+                request_delivery_state=request_delivery_state,
+                tcp_tls_establishment_seconds=phase_durations.get("tcp_tls_establishment_seconds"),
+                request_send_seconds=phase_durations.get("request_send_seconds"),
+                response_header_wait_seconds=phase_durations.get("response_header_wait_seconds"),
+                stream_read_seconds=phase_durations.get("stream_read_seconds"),
                 request_duration_seconds=time.monotonic() - request_started,
                 stream_event_count=(
                     exc.stream_event_count if incomplete_model_response else None
@@ -1023,6 +1175,14 @@ def call_model(
         raise RuntimeError(
             str(exc) + " No automatic retry was attempted; inspect " + request_usage_name + "."
         ) from None
+    finally:
+        if response is not None:
+            try:
+                response.close()
+            except Exception:
+                pass
+        if connection is not None:
+            connection.close()
 
     save_usage_observation(
         build_usage_observation(
@@ -1037,6 +1197,18 @@ def call_model(
             response_complete=True,
             max_tokens_requested=request_max_tokens,
             request_timeout_seconds=request_timeout_seconds,
+            connect_timeout_seconds=connect_timeout_seconds,
+            request_send_timeout_seconds=request_send_timeout_seconds,
+            response_header_timeout_seconds=response_header_timeout_seconds,
+            stream_idle_timeout_seconds=stream_idle_timeout_seconds,
+            request_body_bytes=len(body),
+            system_prompt_bytes=system_prompt_bytes,
+            user_prompt_bytes=user_prompt_bytes,
+            request_delivery_state=request_delivery_state,
+            tcp_tls_establishment_seconds=phase_durations.get("tcp_tls_establishment_seconds"),
+            request_send_seconds=phase_durations.get("request_send_seconds"),
+            response_header_wait_seconds=phase_durations.get("response_header_wait_seconds"),
+            stream_read_seconds=phase_durations.get("stream_read_seconds"),
         ),
         request_label=request_label,
     )
@@ -1045,7 +1217,6 @@ def call_model(
         datetime.now(timezone.utc).isoformat(), encoding="utf-8"
     )
     return content.strip()
-
 def main() -> int:
     try:
         ledger_path = BASE / "general_evaluation_ledger.json"
