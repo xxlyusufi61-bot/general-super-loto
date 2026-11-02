@@ -793,10 +793,10 @@ class NvidiaUsageObservationTests(unittest.TestCase):
                 self.end_headers()
                 self.wfile.write(
                     b'data: {"choices":[{"delta":{"content":"socket handoff works"},'
-                    b'"finish_reason":"stop"}]}\\n\\n'
+                    b'"finish_reason":"stop"}]}\n\n'
                 )
-                self.wfile.write(b'data: {"choices":[],"usage":{"total_tokens":7}}\\n\\n')
-                self.wfile.write(b"data: [DONE]\\n\\n")
+                self.wfile.write(b'data: {"choices":[],"usage":{"total_tokens":7}}\n\n')
+                self.wfile.write(b"data: [DONE]\n\n")
                 self.wfile.flush()
                 self.close_connection = True
 
