@@ -753,6 +753,25 @@ def run_agent(agent, task, coordinator_context=None):
             )
         )
     )
+
+    # The generic Core data path is not the bidirectional research engine.
+    # Validation receives aggregate Data Guard metadata only; formula discovery
+    # must use the separately isolated forward/reverse workflow. Debug remains
+    # code/system-only, and crossover is not enabled until a staged evaluator
+    # exists. Refuse before target resolution, archive loading, or model access.
+    would_use_data_mode = (
+        mode == "data"
+        or target is not None
+        or (mode is None and needs_automatic_target)
+    )
+    if would_use_data_mode and agent != "validation":
+        raise RuntimeError(
+            "GENERAL Core data mode is restricted to the validation agent. "
+            "Route formula discovery through .github/workflows/open-research.yml; "
+            "debug must use mode=code/system, and crossover requires a dedicated "
+            "staged evaluator."
+        )
+
     if target is None and needs_automatic_target:
         target = latest_archive_target_date()
         print("Dynamic target selected from validated archive:", target)
