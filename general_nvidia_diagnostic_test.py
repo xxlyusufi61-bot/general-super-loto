@@ -242,6 +242,14 @@ class SingleRequestDiagnosticTests(unittest.TestCase):
         ]
         return response
 
+    @classmethod
+    def fake_connection(cls, response=None):
+        connection = MagicMock()
+        connection.sock = MagicMock()
+        if response is not None:
+            connection.getresponse.return_value = response
+        return connection
+
     def test_call_model_hard_stops_after_one_diagnostic_request(self):
         env = self._environment() | {
             "GENERAL_ALLOW_NVIDIA_CALL": "true",
@@ -249,6 +257,7 @@ class SingleRequestDiagnosticTests(unittest.TestCase):
             "NVIDIA_API_KEY": "test-secret",
         }
         saved_observations = []
+        connection = self.fake_connection(self.successful_response())
         try:
             with patch.dict(os.environ, env, clear=True), patch.object(
                 research, "reserve_nvidia_request"
@@ -257,15 +266,15 @@ class SingleRequestDiagnosticTests(unittest.TestCase):
                 "save_usage_observation",
                 side_effect=lambda observation, **kwargs: saved_observations.append(observation),
             ), patch(
-                "general_open_research.urllib.request.urlopen",
-                side_effect=[self.successful_response(), self.successful_response()],
-            ) as urlopen:
+                "general_open_research._create_nvidia_connection",
+                return_value=connection,
+            ) as connection_factory:
                 answer = research.call_model(
                     [{"role": "user", "content": "synthetic diagnostic"}],
                     request_label="forward",
                 )
                 self.assertEqual(answer, "synthetic response")
-                sent_body = json.loads(urlopen.call_args.args[0].data.decode("utf-8"))
+                sent_body = json.loads(connection.endheaders.call_args.args[0].decode("utf-8"))
                 self.assertEqual(sent_body["max_tokens"], 8192)
                 self.assertEqual(sent_body["reasoning_effort"], "low")
                 self.assertTrue(sent_body["stream"])
@@ -280,13 +289,17 @@ class SingleRequestDiagnosticTests(unittest.TestCase):
                         [{"role": "user", "content": "second request must be blocked"}],
                         request_label="forward",
                     )
-                self.assertEqual(urlopen.call_count, 1)
+                self.assertEqual(connection_factory.call_count, 1)
                 self.assertEqual(
-                    urlopen.call_args.kwargs["timeout"],
-                    research.DIAGNOSTIC_REQUEST_TIMEOUT_SECONDS,
+                    connection_factory.call_args.args[0],
+                    research.DEFAULT_CONNECT_TIMEOUT_SECONDS,
                 )
                 self.assertEqual(
                     saved_observations[0]["request_timeout_seconds"],
+                    research.DIAGNOSTIC_REQUEST_TIMEOUT_SECONDS,
+                )
+                self.assertEqual(
+                    saved_observations[0]["response_header_timeout_seconds"],
                     research.DIAGNOSTIC_REQUEST_TIMEOUT_SECONDS,
                 )
                 reserve.assert_called_once_with(
@@ -307,6 +320,8 @@ class SingleRequestDiagnosticTests(unittest.TestCase):
             "GENERAL_DIAGNOSTIC_MODE": "true",
         }
         saved = []
+        connection = self.fake_connection()
+        connection.getresponse.side_effect = TimeoutError("synthetic diagnostic header timeout")
         try:
             with patch.dict(os.environ, env, clear=True), patch.object(
                 research, "reserve_nvidia_request"
@@ -315,31 +330,42 @@ class SingleRequestDiagnosticTests(unittest.TestCase):
                 "save_usage_observation",
                 side_effect=lambda observation, **kwargs: saved.append(observation),
             ), patch(
-                "general_open_research.urllib.request.urlopen",
-                side_effect=TimeoutError("synthetic diagnostic connect timeout"),
-            ) as urlopen:
+                "general_open_research._create_nvidia_connection",
+                return_value=connection,
+            ) as connection_factory:
                 with self.assertRaisesRegex(
-                    RuntimeError, "during connect_or_wait_for_headers"
+                    RuntimeError, "during wait_for_headers"
                 ):
                     research.call_model(
                         [{"role": "user", "content": "diagnostic timeout test"}],
                         request_label="forward",
                     )
-                self.assertEqual(urlopen.call_count, 1)
+                self.assertEqual(connection_factory.call_count, 1)
                 self.assertEqual(
-                    urlopen.call_args.kwargs["timeout"],
-                    research.DIAGNOSTIC_REQUEST_TIMEOUT_SECONDS,
+                    connection_factory.call_args.args[0],
+                    research.DEFAULT_CONNECT_TIMEOUT_SECONDS,
                 )
+                connection.endheaders.assert_called_once()
             self.assertEqual(len(saved), 1)
             self.assertEqual(
                 saved[0]["request_timeout_seconds"],
                 research.DIAGNOSTIC_REQUEST_TIMEOUT_SECONDS,
             )
+            self.assertEqual(
+                saved[0]["response_header_timeout_seconds"],
+                research.DIAGNOSTIC_REQUEST_TIMEOUT_SECONDS,
+            )
+            self.assertEqual(
+                saved[0]["request_delivery_state"],
+                "sent_to_socket_provider_receipt_unconfirmed",
+            )
             self.assertEqual(saved[0]["automatic_retries"], 0)
+            self.assertEqual(saved[0]["failure_stage"], "wait_for_headers")
             self.assertEqual(saved[0]["network_error_type"], "TimeoutError")
         finally:
             Path("/tmp/general_nvidia_api_attempted").unlink(missing_ok=True)
             Path("/tmp/general_nvidia_api_succeeded").unlink(missing_ok=True)
+
 
     def test_reverse_label_is_rejected_in_diagnostic_mode_before_network(self):
         env = self._environment() | {
@@ -348,14 +374,14 @@ class SingleRequestDiagnosticTests(unittest.TestCase):
             "NVIDIA_API_KEY": "test-secret",
         }
         with patch.dict(os.environ, env, clear=True), patch(
-            "general_open_research.urllib.request.urlopen"
-        ) as urlopen:
+            "general_open_research._create_nvidia_connection"
+        ) as connection_factory:
             with self.assertRaisesRegex(RuntimeError, "only one forward request"):
                 research.call_model(
                     [{"role": "user", "content": "reverse"}],
                     request_label="reverse",
                 )
-            urlopen.assert_not_called()
+            connection_factory.assert_not_called()
 
 
 
