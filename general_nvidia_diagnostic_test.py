@@ -141,8 +141,6 @@ class SingleRequestDiagnosticTests(unittest.TestCase):
         ), patch.object(
             diagnostic.sealed, "split_archive", return_value=self.partition
         ), patch.object(
-            diagnostic, "_unused", create=True
-        ), patch.object(
             diagnostic.research, "call_model", side_effect=fake_call_model
         ):
             result = diagnostic.run_diagnostic()
