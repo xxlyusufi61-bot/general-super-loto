@@ -289,7 +289,10 @@ class SingleRequestDiagnosticTests(unittest.TestCase):
                     saved_observations[0]["request_timeout_seconds"],
                     research.DIAGNOSTIC_REQUEST_TIMEOUT_SECONDS,
                 )
-                self.assertEqual(reserve.call_count, 1)
+                reserve.assert_called_once_with(
+                    "open-research-forward",
+                    diagnostic_exception=True,
+                )
                 self.assertEqual(research._NVIDIA_REQUESTS_ATTEMPTED, 1)
         finally:
             Path("/tmp/general_nvidia_api_attempted").unlink(missing_ok=True)
