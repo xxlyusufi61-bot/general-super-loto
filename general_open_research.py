@@ -43,6 +43,8 @@ DOCUMENTATION_REVIEW_DATE = "2026-10-25"
 MAX_NVIDIA_REQUESTS_PER_RUN = 2
 DEFAULT_MAX_COMPLETION_TOKENS = 1800
 DIAGNOSTIC_MAX_COMPLETION_TOKENS = 8192
+DEFAULT_REQUEST_TIMEOUT_SECONDS = 240
+DIAGNOSTIC_REQUEST_TIMEOUT_SECONDS = 600
 _NVIDIA_REQUESTS_ATTEMPTED = 0
 _NVIDIA_REQUEST_LABELS_ATTEMPTED: set[str] = set()
 
@@ -367,6 +369,7 @@ def build_usage_observation(
     error_type: str | None = None,
     response_complete: bool | None = None,
     max_tokens_requested: int | None = None,
+    request_timeout_seconds: int | None = None,
 ) -> dict[str, Any]:
     """Build a cautious report without treating token usage as remaining quota or cost."""
     usage = payload.get("usage") if isinstance(payload, Mapping) else None
@@ -391,6 +394,7 @@ def build_usage_observation(
         "stream_finish_reason": stream_finish_reason,
         "response_complete": response_complete,
         "max_tokens_requested": max_tokens_requested,
+        "request_timeout_seconds": request_timeout_seconds,
         "failure_stage": failure_stage,
         "network_error_type": error_type,
         "rate_limit_headers_returned": filter_usage_headers(headers),
@@ -859,6 +863,11 @@ def call_model(
         if diagnostic_mode
         else DEFAULT_MAX_COMPLETION_TOKENS
     )
+    request_timeout_seconds = (
+        DIAGNOSTIC_REQUEST_TIMEOUT_SECONDS
+        if diagnostic_mode
+        else DEFAULT_REQUEST_TIMEOUT_SECONDS
+    )
     body = json.dumps({
         "model": MODEL,
         "messages": messages,
@@ -895,7 +904,7 @@ def call_model(
     request_started = time.monotonic()
     stage = "connect_or_wait_for_headers"
     try:
-        with urllib.request.urlopen(request, timeout=240) as response:
+        with urllib.request.urlopen(request, timeout=request_timeout_seconds) as response:
             status = getattr(response, "status", 200)
             headers = response.headers
             stage = "read_stream"
@@ -908,6 +917,7 @@ def call_model(
                 None,
                 response_mode="sse",
                 max_tokens_requested=request_max_tokens,
+                request_timeout_seconds=request_timeout_seconds,
                 request_duration_seconds=time.monotonic() - request_started,
                 failure_stage="http_response",
                 error_type="HTTPError",
@@ -938,6 +948,7 @@ def call_model(
                 None,
                 response_mode="sse",
                 max_tokens_requested=request_max_tokens,
+                request_timeout_seconds=request_timeout_seconds,
                 request_duration_seconds=time.monotonic() - request_started,
                 failure_stage=stage,
                 error_type=error_type,
@@ -958,6 +969,7 @@ def call_model(
                 None,
                 response_mode="sse",
                 max_tokens_requested=request_max_tokens,
+                request_timeout_seconds=request_timeout_seconds,
                 request_duration_seconds=time.monotonic() - request_started,
                 failure_stage=stage,
                 error_type=error_type,
@@ -983,6 +995,7 @@ def call_model(
                 error_usage,
                 response_mode="sse",
                 max_tokens_requested=request_max_tokens,
+                request_timeout_seconds=request_timeout_seconds,
                 request_duration_seconds=time.monotonic() - request_started,
                 stream_event_count=(
                     exc.stream_event_count if incomplete_model_response else None
@@ -1020,6 +1033,7 @@ def call_model(
             stream_finish_reason=stream_metadata["finish_reason"],
             response_complete=True,
             max_tokens_requested=request_max_tokens,
+            request_timeout_seconds=request_timeout_seconds,
         ),
         request_label=request_label,
     )

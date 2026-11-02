@@ -536,6 +536,10 @@ class NvidiaUsageObservationTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "request cap reached"):
                     research.call_model([{"role": "user", "content": "third"}])
                 self.assertEqual(mocked_urlopen.call_count, 2)
+                self.assertEqual(
+                    [call.kwargs["timeout"] for call in mocked_urlopen.call_args_list],
+                    [research.DEFAULT_REQUEST_TIMEOUT_SECONDS] * 2,
+                )
                 self.assertEqual(mocked_reserve.call_count, 2)
                 self.assertEqual(research._NVIDIA_REQUESTS_ATTEMPTED, 2)
         finally:
@@ -592,6 +596,10 @@ class NvidiaUsageObservationTests(unittest.TestCase):
             self.assertEqual(saved[0]["network_error_type"], "TimeoutError")
             self.assertEqual(saved[0]["automatic_retries"], 0)
             self.assertIsNone(saved[0]["http_status"])
+            self.assertEqual(
+                saved[0]["request_timeout_seconds"],
+                research.DEFAULT_REQUEST_TIMEOUT_SECONDS,
+            )
         finally:
             Path("/tmp/general_nvidia_api_attempted").unlink(missing_ok=True)
             Path("/tmp/general_nvidia_api_succeeded").unlink(missing_ok=True)
