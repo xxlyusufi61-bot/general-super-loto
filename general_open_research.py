@@ -1014,7 +1014,6 @@ def call_model(
             headers,
             result,
             response_mode="sse",
-                max_tokens_requested=request_max_tokens,
             request_duration_seconds=time.monotonic() - request_started,
             stream_event_count=stream_metadata["stream_event_count"],
             stream_completed=stream_metadata["stream_completed"],
