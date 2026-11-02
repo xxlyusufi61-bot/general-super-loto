@@ -4,6 +4,7 @@ name: GENERAL NVIDIA One-Request Diagnostic
   push:
     branches:
       - main
+      - fix/locked-diagnostic-run-authorized-one-shot-20261102
     paths:
       - "general_nvidia_diagnostic.py"
       - "general_nvidia_diagnostic_test.py"
