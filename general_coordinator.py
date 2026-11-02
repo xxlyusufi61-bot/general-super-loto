@@ -189,6 +189,12 @@ def execute_plan(
     plan = build_plan(raw_task)
     if plan["agent_count"] > 3 or not plan["agent_order"]:
         raise RuntimeError("Coordinator plan is empty or exceeds the three-agent limit.")
+    if plan["specialized_data_path_required"]:
+        raise RuntimeError(
+            "Generic coordinator execution is blocked for data research/crossover. "
+            "Use the isolated open-research workflow for forward/reverse discovery; "
+            "crossover requires a separately staged evaluator. No agent was invoked."
+        )
     if os.environ.get("GENERAL_NVIDIA_GUARD_PASSED") != "1":
         raise RuntimeError("Global NVIDIA safety guard has not been confirmed; no agent was invoked.")
     if not os.environ.get("NVIDIA_API_KEY", "").strip():
