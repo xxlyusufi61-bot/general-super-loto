@@ -68,6 +68,7 @@ jobs:
     # Leave time after the bounded request step for lock activation and artifact upload.
     timeout-minutes: 35
     permissions:
+      actions: read
       contents: write
     concurrency:
       group: general-nvidia-api
@@ -84,10 +85,11 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           GENERAL_DEFAULT_BRANCH: main
+          GENERAL_CONFIRM_LIVE_CALLS: ${{ inputs.confirm_single_request }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          python3 general_nvidia_guard.py check
+          python3 general_nvidia_guard.py diagnostic-check
           echo "GENERAL_NVIDIA_GUARD_PASSED=1" >> "$GITHUB_ENV"
       - name: Run exactly one forward diagnostic request
         id: nvidia-diagnostic
