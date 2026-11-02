@@ -795,7 +795,7 @@ def call_model(
     # its own one-call ceiling. No network error is ever retried automatically.
     if os.environ.get("GENERAL_NVIDIA_FREE_USAGE_VERIFIED", "").strip().lower() != "true":
         raise RuntimeError(
-            "NVIDIA inference is blocked because the required usage-status gate is not set. "
+            "Free-use status was not independently verified; NVIDIA inference blocked. "
             "No provider request was sent."
         )
     key = os.environ.get("NVIDIA_API_KEY")
