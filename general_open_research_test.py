@@ -576,6 +576,43 @@ class NvidiaUsageObservationTests(unittest.TestCase):
                 )
             mocked_connection_factory.assert_not_called()
 
+    def test_connection_timeout_is_distinguished_from_header_timeout(self):
+        env = {
+            "GENERAL_CONFIRM_LIVE_CALLS": CONFIRMATION_PHRASE,
+            "GENERAL_NVIDIA_GUARD_PASSED": "1",
+            "GENERAL_ALLOW_NVIDIA_CALL": "true",
+            "GENERAL_NVIDIA_FREE_USAGE_VERIFIED": "true",
+            "NVIDIA_API_KEY": "test-secret",
+        }
+        saved = []
+        connection = make_fake_connection()
+        connection.connect.side_effect = TimeoutError("synthetic TCP/TLS timeout")
+        try:
+            with patch.dict(os.environ, env, clear=True), patch.object(
+                research, "reserve_nvidia_request"
+            ), patch.object(
+                research, "save_usage_observation",
+                side_effect=lambda observation, **kwargs: saved.append(observation),
+            ), patch(
+                "general_open_research._create_nvidia_connection",
+                return_value=connection,
+            ) as mocked_connection_factory:
+                with self.assertRaisesRegex(RuntimeError, "during tcp_tls_establishment"):
+                    research.call_model(
+                        [{"role": "user", "content": "test"}],
+                        request_label="forward",
+                    )
+                self.assertEqual(mocked_connection_factory.call_count, 1)
+                connection.putrequest.assert_not_called()
+                connection.endheaders.assert_not_called()
+            self.assertEqual(len(saved), 1)
+            self.assertEqual(saved[0]["failure_stage"], "tcp_tls_establishment")
+            self.assertEqual(saved[0]["request_delivery_state"], "not_sent")
+            self.assertEqual(saved[0]["automatic_retries"], 0)
+        finally:
+            Path("/tmp/general_nvidia_api_attempted").unlink(missing_ok=True)
+            Path("/tmp/general_nvidia_api_succeeded").unlink(missing_ok=True)
+
     def test_stream_timeout_is_diagnosed_and_never_retried(self):
         env = {
             "GENERAL_CONFIRM_LIVE_CALLS": CONFIRMATION_PHRASE,
@@ -594,7 +631,7 @@ class NvidiaUsageObservationTests(unittest.TestCase):
                 side_effect=lambda observation, **kwargs: saved.append(observation),
             ), patch(
                 "general_open_research._create_nvidia_connection",
-                side_effect=TimeoutError("synthetic stream timeout"),
+                return_value=make_fake_connection(),
             ) as mocked_connection_factory:
                 mocked_connection_factory.return_value.getresponse.side_effect = TimeoutError("synthetic header timeout")
                 with self.assertRaisesRegex(RuntimeError, "during wait_for_headers"):
@@ -606,6 +643,8 @@ class NvidiaUsageObservationTests(unittest.TestCase):
             self.assertEqual(len(saved), 1)
             self.assertEqual(saved[0]["response_mode"], "sse")
             self.assertEqual(saved[0]["failure_stage"], "wait_for_headers")
+            self.assertEqual(saved[0]["request_delivery_state"], "sent_to_socket_provider_receipt_unconfirmed")
+            self.assertEqual(saved[0]["automatic_retries"], 0)
             self.assertEqual(saved[0]["network_error_type"], "TimeoutError")
             self.assertEqual(saved[0]["automatic_retries"], 0)
             self.assertIsNone(saved[0]["http_status"])
@@ -649,7 +688,7 @@ class NvidiaUsageObservationTests(unittest.TestCase):
                 side_effect=lambda observation, **kwargs: saved.append(observation),
             ), patch(
                 "general_open_research._create_nvidia_connection",
-                return_value=response,
+                return_value=make_fake_connection(response),
             ) as mocked_connection_factory:
                 with self.assertRaisesRegex(RuntimeError, "reached max_tokens"):
                     research.call_model(
@@ -701,7 +740,7 @@ class NvidiaUsageObservationTests(unittest.TestCase):
                 side_effect=lambda observation, **kwargs: saved.append(observation),
             ), patch(
                 "general_open_research._create_nvidia_connection",
-                return_value=response,
+                return_value=make_fake_connection(response),
             ) as mocked_connection_factory:
                 with self.assertRaisesRegex(RuntimeError, "during read_stream"):
                     research.call_model(
@@ -738,7 +777,7 @@ class NvidiaUsageObservationTests(unittest.TestCase):
                     "NVIDIA_API_KEY": "test-secret",
                 },
             ), patch.object(research, "reserve_nvidia_request"), patch(
-                "general_open_research._create_nvidia_connection", side_effect=error
+                "general_open_research._create_nvidia_connection", return_value=connection
             ) as mocked_connection_factory:
                 with self.assertRaisesRegex(RuntimeError, "HTTP 429"):
                     research.call_model([{"role": "user", "content": "test"}])
