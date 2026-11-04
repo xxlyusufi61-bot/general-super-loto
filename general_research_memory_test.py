@@ -164,6 +164,7 @@ class ResearchMemoryValidationTests(unittest.TestCase):
             "1; 5; 9; 12; 20; 45",
             "1 5 9 12 20 45",
             "1/5/9/12/20/45",
+            '"1", "5", "9", "12", "20", "45"',
         ):
             with self.subTest(value=value):
                 with self.assertRaisesRegex(memory.ResearchMemoryError, "six-number value set"):
