@@ -94,7 +94,7 @@ class ResearchMemoryValidationTests(unittest.TestCase):
         entry = sample_entry()
         entry["evaluation_feedback"] = {
             "holdout_consumed": False,
-            "predictive_evidence": True,
+            "retrospective_only": False,
             "holdout": {},
             "cross_validation": {},
         }
@@ -322,7 +322,7 @@ class ResearchMemoryPersistenceTests(unittest.TestCase):
                     "test_draw_count": 10,
                     "mean_hits_out_of_6": 0.62,
                     "uniform_random_expected_hits_out_of_6": 0.6,
-                    "predictive_evidence": False,
+                    "retrospective_only": True,
                 },
                 "reverse_time_ordered_cross_validation": {
                     "folds": 5,
@@ -358,9 +358,9 @@ class ResearchMemoryPersistenceTests(unittest.TestCase):
         self.assertEqual(saved["entries"][0]["proposals"][0]["hypothesis_id"], "HYP-001")
         self.assertEqual(saved["entries"][1]["proposals"][0]["hypothesis_id"], "HYP-501")
         self.assertTrue(saved["entries"][0]["evaluation_feedback"]["holdout_consumed"])
-        self.assertTrue(saved["entries"][0]["evaluation_feedback"]["predictive_evidence"])
+        self.assertTrue(not saved["entries"][0]["evaluation_feedback"]["retrospective_only"])
         self.assertTrue(saved["entries"][1]["evaluation_feedback"]["holdout_consumed"])
-        self.assertFalse(saved["entries"][1]["evaluation_feedback"]["predictive_evidence"])
+        self.assertFalse(saved["entries"][1]["evaluation_feedback"]["retrospective_only"])
         self.assertNotIn("per_draw", serialized)
         self.assertNotIn("validation_dates", serialized)
         self.assertNotIn("reverse_validation_dates", serialized)
