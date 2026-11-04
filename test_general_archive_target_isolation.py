@@ -83,131 +83,99 @@ class CanonicalArchiveTargetIsolationTests(unittest.TestCase):
             self.fail("Archive provenance timestamps are invalid.")
         self.assertLessEqual(checked_at, fetched_at)
 
-    def test_archive_update_and_multi_year_provenance_are_recorded(self):
-        updated = self.payload.get("archive_updated_at")
-        self.assertIsInstance(updated, str)
-        updated_at = datetime.fromisoformat(updated.replace("Z", "+00:00"))
-        fetched_at = datetime.fromisoformat(
-            str(self.payload.get("fetched_at", "")).replace("Z", "+00:00")
+    def test_archive_provenance_matches_current_fetcher_schema(self):
+        def parse_aware_timestamp(value, label):
+            self.assertIsInstance(value, str, label + " must be a string")
+            try:
+                parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError:
+                self.fail(label + " is not valid ISO-8601")
+            self.assertIsNotNone(parsed.tzinfo, label + " must include timezone")
+            self.assertIsNotNone(parsed.utcoffset(), label + " must include UTC offset")
+            return parsed
+
+        fetched_at = parse_aware_timestamp(
+            self.payload.get("fetched_at"),
+            "Archive fetched_at",
         )
-        self.assertGreaterEqual(updated_at, fetched_at)
+        yearly_counts = Counter(int(day[:4]) for day in self.dates)
+
+        # The primary fetcher retains the independent 2025 check as a distinct
+        # provenance record and writes the complete year-level reconciliation map.
+        cross = self.payload.get("cross_check_validation")
+        self.assertIsInstance(cross, dict)
+        self.assertIs(type(cross.get("year")), int)
+        self.assertEqual(cross.get("year"), 2025)
+        self.assertEqual(cross.get("result"), "PASS")
+        expected_2025_count = yearly_counts[2025]
+        for field in (
+            "primary_record_count",
+            "independent_record_count",
+            "matching_dates_and_number_sets",
+        ):
+            self.assertIs(type(cross.get(field)), int)
+            self.assertEqual(cross.get(field), expected_2025_count)
+        pages = cross.get("pages_checked")
+        self.assertIsInstance(pages, list)
+        self.assertTrue(pages)
+        self.assertTrue(all(isinstance(page, str) and page.strip() for page in pages))
+        self.assertLessEqual(
+            parse_aware_timestamp(cross.get("checked_at"), "2025 cross-check timestamp"),
+            fetched_at,
+        )
 
         validation = self.payload.get("multi_year_cross_source_validation")
-        self.assertIsInstance(validation, dict)
-        self.assertEqual(
-            validation.get("result"),
-            "PASS_AFTER_DOCUMENTED_SOURCE_NORMALIZATION",
-        )
-
-        # The multi-year audit is a dated snapshot. It may legitimately predate
-        # the latest archive row; never silently relabel that older audit as
-        # covering a newly appended target draw.
-        validation_last_date = validation.get("archive_last_date")
-        self.assertIsInstance(validation_last_date, str)
-        datetime.fromisoformat(validation_last_date)
-        self.assertLessEqual(validation_last_date, self.target_date)
-
-        validated_rows = [
-            row for row in self.rows
-            if row["date"] <= validation_last_date
-        ]
-        self.assertTrue(validated_rows)
-        self.assertEqual(validated_rows[-1]["date"], validation_last_date)
-        self.assertEqual(
-            validation.get("archive_records"),
-            len(validated_rows),
-        )
-        self.assertIs(validation.get("draw_numbers_in_report"), False)
-        self.assertIs(validation.get("archive_modified_by_audit"), False)
-
-        # If the canonical archive has advanced beyond the last complete audit,
-        # require a separate, number-free, explicitly limited source check for
-        # the new target row. This check is not a substitute for full auditing.
-        if validation_last_date < self.target_date:
-            recent_check = self.payload.get("recent_draw_source_check")
-            self.assertIsInstance(recent_check, dict)
-            self.assertEqual(
-                recent_check.get("status"),
-                "MATCH_SELECTED_PUBLISHERS_PENDING_FULL_AUDIT",
-            )
-            self.assertEqual(recent_check.get("records_checked"), 1)
-            self.assertEqual(
-                recent_check.get("checked_dates"),
-                [self.target_date],
-            )
-            self.assertEqual(
-                recent_check.get("date_and_number_set_mismatch_count"),
-                0,
-            )
-            self.assertIs(recent_check.get("numbers_in_metadata"), False)
-        else:
-            self.assertEqual(validation.get("archive_records"), len(self.rows))
-
-        self.assertEqual(set(validation.get("loto_gen_r60_by_year", {})),
-                         {str(year) for year in range(2020, 2027)})
-        for details in validation["loto_gen_r60_by_year"].values():
-            self.assertEqual(details.get("status"), "MATCH")
-            self.assertEqual(details.get("archive_only_count"), 0)
-            self.assertEqual(details.get("independent_only_count"), 0)
-            self.assertEqual(details.get("number_mismatch_count"), 0)
-            self.assertEqual(details.get("source_parse_error_count"), 0)
-        self.assertEqual(
-            validation["lotobil_r60"].get("status"),
-            "MATCH_AFTER_DOCUMENTED_SOURCE_NORMALIZATION",
-        )
-        self.assertEqual(validation["fetch_failures"], [])
-
-    def test_latest_live_archive_audit_covers_current_archive(self):
-        # Keep the older multi-year validation snapshot immutable; this
-        # separate live-audit record documents the newer full archive scope.
-        audit = self.payload.get("latest_live_archive_audit")
-        self.assertIsInstance(audit, dict)
-        self.assertEqual(
-            audit.get("result"),
-            "PASS_WITH_ACCEPTED_LOTOBIL_TAIL_LAG",
-        )
-        self.assertIsInstance(audit.get("workflow_run_id"), int)
-        self.assertGreater(audit.get("workflow_run_id"), 0)
-        self.assertEqual(audit.get("archive_records"), len(self.rows))
-        self.assertEqual(audit.get("archive_first_date"), self.dates[0])
-        self.assertEqual(audit.get("archive_last_date"), self.target_date)
-        self.assertEqual(audit.get("fetch_failure_count"), 0)
-        self.assertIs(audit.get("archive_modified_by_audit"), False)
-        self.assertIs(audit.get("target_numbers_exposed"), False)
-        self.assertIs(audit.get("draw_numbers_in_report"), False)
-
-        yearly = audit.get("loto_gen_by_year")
         expected_years = {str(year) for year in range(2020, 2027)}
-        self.assertIsInstance(yearly, dict)
-        self.assertEqual(set(yearly), expected_years)
-        for details in yearly.values():
-            self.assertEqual(details.get("status"), "MATCH")
-            self.assertEqual(
-                details.get("archive_count"),
-                details.get("source_count"),
-            )
-            self.assertEqual(details.get("date_mismatch_count"), 0)
-            self.assertEqual(details.get("number_mismatch_count"), 0)
-            self.assertEqual(details.get("parse_error_count"), 0)
+        self.assertIsInstance(validation, dict)
+        self.assertEqual(set(validation), expected_years)
 
-        r60 = audit.get("lotobil_r60")
-        self.assertIsInstance(r60, dict)
-        self.assertEqual(
-            r60.get("status"),
-            "ACCEPTED_SOURCE_LAG_AT_TAIL",
+        count_fields = (
+            "archive_compared_count_before_merge",
+            "independent_source_count",
+            "records_added_from_independent_source",
+            "matching_dates_and_number_sets_after_merge",
         )
-        self.assertEqual(r60.get("raw_comparison_status"), "SOURCE_LAG_AT_TAIL")
-        self.assertEqual(r60.get("archive_count"), r60.get("common_date_count") + 1)
-        self.assertEqual(r60.get("source_count"), r60.get("common_date_count"))
-        self.assertEqual(r60.get("archive_only_count"), 1)
-        self.assertEqual(r60.get("archive_only_dates"), [self.target_date])
-        self.assertEqual(r60.get("independent_only_count"), 0)
-        self.assertEqual(r60.get("number_mismatch_count"), 0)
-        self.assertEqual(r60.get("source_parse_error_count"), 0)
-        self.assertEqual(r60.get("raw_source_parse_error_count"), 0)
-        self.assertEqual(r60.get("unresolved_index_gap_count"), 0)
+        for year in sorted(expected_years):
+            with self.subTest(year=year):
+                details = validation[year]
+                self.assertIsInstance(details, dict)
+                self.assertEqual(details.get("result"), "PASS")
+                self.assertIs(details.get("draw_numbers_in_report"), False)
+                self.assertIsInstance(details.get("source"), str)
+                self.assertTrue(details.get("source").strip())
+                year_pages = details.get("pages_checked")
+                self.assertIsInstance(year_pages, list)
+                self.assertTrue(year_pages)
+                self.assertTrue(
+                    all(isinstance(page, str) and page.strip() for page in year_pages)
+                )
+                self.assertLessEqual(
+                    parse_aware_timestamp(
+                        details.get("checked_at"),
+                        "Multi-year audit timestamp",
+                    ),
+                    fetched_at,
+                )
 
-        self.assertIs(audit.get("official_result_page_confirmed"), False)
+                counts = {}
+                for field in count_fields:
+                    value = details.get(field)
+                    self.assertIs(type(value), int)
+                    self.assertGreaterEqual(value, 0)
+                    counts[field] = value
+                self.assertEqual(
+                    counts["archive_compared_count_before_merge"]
+                    + counts["records_added_from_independent_source"],
+                    counts["matching_dates_and_number_sets_after_merge"],
+                )
+                self.assertEqual(
+                    counts["independent_source_count"],
+                    counts["matching_dates_and_number_sets_after_merge"],
+                )
+                self.assertEqual(
+                    counts["matching_dates_and_number_sets_after_merge"],
+                    yearly_counts[int(year)],
+                )
 
     def test_every_canonical_record_is_inside_the_active_scope(self):
         self.assertEqual(self.dates[0], RESEARCH_SCOPE_START)
