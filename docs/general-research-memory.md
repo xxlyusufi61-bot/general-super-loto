@@ -20,7 +20,7 @@ Forward and reverse research have distinct memory contexts:
 - A forward request receives only prior `forward` entries.
 - A reverse request receives only prior `reverse` entries.
 - The context is bounded to at most six recent eligible entries and 18 KB.
-- Only entries whose stored target date is strictly earlier than the current isolated target are eligible.
+- Eligible entries may have the same target date as the current run, but only when they were created by an earlier run; entries with a later target date are excluded.
 - A context entry's claims are explicitly unverified. The model must verify relevant claims using its current direction's permitted discovery history.
 
 No forward candidate list, report, or memory item is passed to reverse discovery, and vice versa. Crossover remains subject to its separate staged evaluator and existing restrictions.
@@ -51,9 +51,9 @@ The memory writer checks that evaluation feedback matches the candidate/specific
 
 ## Persistence and immutability
 
-`general_research_memory.json` is append-only. Existing entries cannot be edited, reordered, or deleted by the memory writer. Duplicate run/direction entries are rejected. Each entry has a SHA-256 content hash. The file has a bounded safety limit of 10,000 entries; when that limit is reached, writes fail closed rather than deleting history.
+`general_research_memory.json` is append-only. Existing entries cannot be edited, reordered, or deleted by the memory writer. Duplicate run/direction entries are rejected. Each entry has a SHA-256 content hash. The file has a bounded safety limit of 10,000 entries; when that limit is reached, writes fail closed rather than deleting history. New entries must preserve non-decreasing target-date chronology.
 
-Both the manual blank-slate workflow and the scheduled autonomous workflow use the same memory writer after the research/evaluation outcome is known. The workflow commits only `general_research_memory.json`; it does not rewrite the archive, evaluation ledger, method registry, global NVIDIA lock, or autonomous authorization state as part of the memory step.
+Both the manual blank-slate workflow and the scheduled autonomous workflow use the same memory writer after the research/evaluation outcome is known. The workflow commits `general_research_memory.json` together with any still-pending append-only evaluation-ledger or immutable-snapshot changes, so a successful memory publication cannot leave a just-created sealed claim only in the temporary runner workspace. It does not rewrite the archive, method registry, global NVIDIA lock, or autonomous authorization state as part of the memory step.
 
 ## Verification boundaries
 
