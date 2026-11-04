@@ -454,5 +454,27 @@ class ResearchMemoryPersistenceTests(unittest.TestCase):
             )
 
 
+class ResearchMemoryWorkflowWiringTests(unittest.TestCase):
+    def test_manual_research_workflow_persists_memory_with_archive_and_ledger(self):
+        workflow = Path(".github/workflows/open-research.yml").read_text(encoding="utf-8")
+        self.assertIn("python3 general_research_memory.py record-cycle", workflow)
+        self.assertIn("general_research_memory.json", workflow)
+        self.assertIn("general_evaluation_ledger.json", workflow)
+        self.assertIn("super_loto_archive.json", workflow)
+        self.assertIn("git rebase origin/main", workflow)
+        self.assertIn("general_research_memory_test.py", workflow)
+
+    def test_autonomous_workflow_persists_memory_without_enabling_automation(self):
+        workflow = Path(".github/workflows/general-autonomous-research.yml").read_text(encoding="utf-8")
+        self.assertIn("python3 general_research_memory.py record-cycle", workflow)
+        self.assertIn("general_research_memory.json", workflow)
+        self.assertIn("general_evaluation_ledger.json", workflow)
+        self.assertIn("general_autonomous_research_state.json", workflow)
+        self.assertIn("git rebase origin/main", workflow)
+        self.assertIn("steps.attempt_reservation.outputs.attempt_id != ''", workflow)
+
+
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
