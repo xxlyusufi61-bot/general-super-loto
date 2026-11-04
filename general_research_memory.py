@@ -26,6 +26,7 @@ VERSION = "0.1.0"
 SCHEMA_VERSION = 1
 PROJECT = "GENERAL Super Loto"
 RESEARCH_EPOCH = "general-open-research-memory-v1"
+RESEARCH_SCOPE_START = date(2020, 8, 2)
 SOURCE = "GENERAL/open-research"
 MEMORY_PATH = Path("general_research_memory.json")
 RUN_STATUS_PATH = Path("open_research_run_status.json")
@@ -166,6 +167,8 @@ def _validate_entry(entry: Any, expected_id: int) -> dict[str, Any]:
         raise ResearchMemoryError("Research-memory target date is invalid.") from None
     if day.isoformat() != entry["target_date"]:
         raise ResearchMemoryError("Research-memory target date is not canonical.")
+    if day < RESEARCH_SCOPE_START:
+        raise ResearchMemoryError("Research-memory target is before the active 2020-08-02 scope.")
     for name in ("archive_sha256", "research_report_sha256", "content_sha256"):
         value = entry[name]
         if value is not None and (not isinstance(value, str) or not HEX64.fullmatch(value)):
@@ -223,9 +226,40 @@ def _validate_entry(entry: Any, expected_id: int) -> dict[str, Any]:
             raise ResearchMemoryError("Evaluation feedback direction classification is invalid.")
     if entry["failure"] is not None and not isinstance(entry["failure"], dict):
         raise ResearchMemoryError("Failure metadata must be an object or null.")
-    if not isinstance(entry["discovery_window"], dict):
+    window = entry["discovery_window"]
+    if not isinstance(window, dict) or set(window) != {
+        "start_date", "end_date", "draw_count", "holdout_dates_copied", "archive_rows_copied"
+    }:
         raise ResearchMemoryError("Discovery-window metadata is invalid.")
-    _reject_number_values(entry["discovery_window"], "Discovery-window metadata")
+    if window.get("holdout_dates_copied") is not False or window.get("archive_rows_copied") is not False:
+        raise ResearchMemoryError("Raw holdout/archive rows cannot be copied into research memory.")
+    count = window.get("draw_count")
+    if count is not None and (type(count) is not int or count < 0):
+        raise ResearchMemoryError("Discovery-window draw count is invalid.")
+    start = window.get("start_date")
+    end = window.get("end_date")
+    if (start is None) != (end is None):
+        raise ResearchMemoryError("Discovery-window date bounds must both be present or both be null.")
+    if start is None:
+        if count not in {None, 0}:
+            raise ResearchMemoryError("A non-empty discovery window must have date bounds.")
+    else:
+        try:
+            start_day = date.fromisoformat(start)
+            end_day = date.fromisoformat(end)
+        except (TypeError, ValueError):
+            raise ResearchMemoryError("Discovery-window dates are invalid.") from None
+        if (
+            start_day.isoformat() != start
+            or end_day.isoformat() != end
+            or start_day < RESEARCH_SCOPE_START
+            or end_day < start_day
+            or end_day >= day
+            or count is None
+            or count < 1
+        ):
+            raise ResearchMemoryError("Discovery-window chronology or scope is invalid.")
+    _reject_number_values(window, "Discovery-window metadata")
     if entry["content_sha256"] != _entry_hash(entry):
         raise ResearchMemoryError("Research-memory entry hash mismatch.")
     return entry
