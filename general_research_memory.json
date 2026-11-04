@@ -1,7 +1,0 @@
-{
-  "schema_version": 2,
-  "project": "GENERAL Super Loto",
-  "research_epoch": "general-open-research-memory-v2",
-  "purpose": "Append-only GENERAL-origin directional research memory. It may retain validated hypotheses, safe execution specifications, sanitized same-direction report narratives, and safe aggregate feedback. No legacy user/Pydroid experiments, raw archive rows, consumed holdout rows/dates, target values, or predicted number values are permitted.",
-  "entries": []
-}
