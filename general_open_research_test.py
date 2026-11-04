@@ -674,6 +674,21 @@ class NvidiaUsageObservationTests(unittest.TestCase):
         )
         connection.set_tunnel.assert_not_called()
 
+    def test_zero_port_https_proxy_fails_closed_before_connection(self):
+        with patch.object(
+            research.urllib.request,
+            "getproxies",
+            return_value={"https": "http://proxy.example:0"},
+        ), patch.object(
+            research.urllib.request, "proxy_bypass", return_value=False
+        ), patch(
+            "general_open_research.http.client.HTTPSConnection"
+        ) as https_connection:
+            with self.assertRaisesRegex(RuntimeError, "valid TCP range"):
+                research._create_nvidia_connection(11)
+        https_connection.assert_not_called()
+
+
     def test_unsupported_https_proxy_fails_closed_before_connection(self):
         with patch.object(
             research.urllib.request,
