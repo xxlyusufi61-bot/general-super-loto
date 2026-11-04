@@ -2,8 +2,41 @@
   "schema_version": 1,
   "store_id": "GENERAL_AUTOMATION_STATE",
   "branch": "general-automation-state",
-  "status": "BOOTSTRAP_ONLY",
-  "generation": 0,
-  "entries": {},
-  "updated_at_utc": null
+  "status": "ACTIVE",
+  "generation": 1,
+  "entries": {
+    "archive": {
+      "path": "super_loto_archive.json",
+      "blob_sha": "aecec003c4c9af1f97dcc9c3928b24e7afdd11ca",
+      "content_sha256": "b2e7c0f1e2df907f14f58267a0799b61a1affc0b72a2742df9a50f014c9dbccd",
+      "byte_length": 140555,
+      "generation": 1,
+      "updated_at_utc": "2026-11-04T13:33:19.369Z"
+    },
+    "evaluation_ledger": {
+      "path": "general_evaluation_ledger.json",
+      "blob_sha": "93885f974e188e0a4e6d45ad7da0b81a305e92c6",
+      "content_sha256": "2054a22cd4dd2faedab03ad7b940cd84020163d3fd7de030461a42aedf35453e",
+      "byte_length": 164,
+      "generation": 1,
+      "updated_at_utc": "2026-11-04T13:33:19.369Z"
+    },
+    "autonomous_research_state": {
+      "path": "general_autonomous_research_state.json",
+      "blob_sha": "e78338148ad6b726a1b01f7bd8e231bb6f706d3c",
+      "content_sha256": "adeb7dfc120e182c0aea10c09010344008994f8be5013d6998c25d3d7c65d9f1",
+      "byte_length": 330,
+      "generation": 1,
+      "updated_at_utc": "2026-11-04T13:33:19.369Z"
+    },
+    "research_memory": {
+      "path": "general_research_memory.json",
+      "blob_sha": "68fa1edee3e3db188a7499d3dbe9990076915d7f",
+      "content_sha256": "15ffa541cdcdbc38ffffec4073e402130cf5b65f6d5c6ade8c5374e76f9fa2d9",
+      "byte_length": 485,
+      "generation": 1,
+      "updated_at_utc": "2026-11-04T13:33:19.369Z"
+    }
+  },
+  "updated_at_utc": "2026-11-04T13:33:19.369Z"
 }

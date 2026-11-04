@@ -1,0 +1,5 @@
+{
+  "schema_version": 1,
+  "purpose": "Append-only one-shot claims for non-overlapping sealed validation dates. No draw-number sets are stored.",
+  "entries": []
+}
