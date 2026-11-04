@@ -65,6 +65,10 @@ DRAW_SET_TEXT = re.compile(
     r"(?<![0-9.])(?:[1-9]|[1-5][0-9]|60)"
     r"(?:(?:\s*[,;|/]\s*|\s+)(?:[1-9]|[1-5][0-9]|60)){5}(?![0-9.])"
 )
+DRAW_SET_QUOTED_TEXT = re.compile(
+    r"""(?<![0-9.])["']?(?:[1-9]|[1-5][0-9]|60)["']?"""
+    r"""(?:(?:\s*[,;|/]\s*|\s+)["']?(?:[1-9]|[1-5][0-9]|60)["']?){5}(?![0-9.])"""
+)
 ALLOWED_STATUSES = {
     "HYPOTHESES_CAPTURED",
     "NO_VALID_HYPOTHESIS",
@@ -103,7 +107,10 @@ def _sha(value: bytes) -> str:
 
 def _contains_six_number_set(value: Any) -> bool:
     if isinstance(value, str):
-        return DRAW_SET_TEXT.search(value) is not None
+        return (
+            DRAW_SET_TEXT.search(value) is not None
+            or DRAW_SET_QUOTED_TEXT.search(value) is not None
+        )
     if isinstance(value, list):
         if (
             len(value) == 6
