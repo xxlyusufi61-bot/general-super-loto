@@ -53,13 +53,13 @@ MAX_CONTEXT_CHARS = 18000
 MAX_REPORT_CHARS = 9000
 MAX_ENTRIES = 10000
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
-REPORT_DATE_PATTERN = re.compile(r"(?<![0-9])\\d{4}-\\d{2}-\\d{2}(?![0-9])")
+REPORT_DATE_PATTERN = re.compile(r"(?<![0-9])\d{4}-\d{2}-\d{2}(?![0-9])")
 REPORT_SECRET_PATTERN = re.compile(
-    r"(?i)(?:\\bnvapi-[A-Za-z0-9_-]{12,}\\b|"
-    r"\\bgh[pousr]_[A-Za-z0-9]{20,}\\b|"
-    r"\\b(?:sk|pk)-[A-Za-z0-9_-]{20,}\\b|"
-    r"\\bBearer\\s+[A-Za-z0-9._~+/-]{20,}\\b|"
-    r"\\b[0-9]{8,12}:[A-Za-z0-9_-]{25,}\\b)"
+    r"(?i)(?:\bnvapi-[A-Za-z0-9_-]{12,}\b|"
+    r"\bgh[pousr]_[A-Za-z0-9]{20,}\b|"
+    r"\b(?:sk|pk)-[A-Za-z0-9_-]{20,}\b|"
+    r"\bBearer\s+[A-Za-z0-9._~+/-]{20,}\b|"
+    r"\b[0-9]{8,12}:[A-Za-z0-9_-]{25,}\b)"
 )
 DRAW_SET_TEXT = re.compile(
     r"(?<![0-9.])(?:[1-9]|[1-5][0-9]|60)"
@@ -484,7 +484,7 @@ def _sanitize_research_report(
     """
     if not isinstance(report, str):
         return None, "OMITTED_UNSUPPORTED_FORMAT"
-    normalized = report.replace("\\r\\n", "\\n").replace("\\r", "\\n")
+    normalized = report.replace("\r\n", "\n").replace("\r", "\n")
     if len(normalized) > MAX_REPORT_CHARS:
         return None, "OMITTED_SIZE_LIMIT"
 
@@ -511,9 +511,9 @@ def _sanitize_research_report(
             return None, "OMITTED_UNSUPPORTED_FORMAT"
         normalized = (
             normalized[:start]
-            + "\\n"
+            + "\n"
             + placeholder
-            + "\\n"
+            + "\n"
             + normalized[end + len(closing):]
         )
 
