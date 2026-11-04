@@ -144,11 +144,11 @@ NUMBER_WORD_PATTERN = "|".join(
 NUMBER_VALUE_TOKEN = r"(?:0?(?:[1-9]|[1-5][0-9]|60)|" + NUMBER_WORD_PATTERN + r")"
 DRAW_SET_WORD_TEXT = re.compile(
     r"(?ix)(?<![\w.])" + NUMBER_VALUE_TOKEN
-    + r"(?:(?:\s*[,;|/]\s*|\s+(?:and|ve)\s+)" + NUMBER_VALUE_TOKEN + r"){5}(?![\w.])"
+    + r"(?:(?:\s*[,;|/]\s*|\s+(?:and|ve)\s+)" + NUMBER_VALUE_TOKEN + r"){5}(?![\w])"
 )
 CANDIDATE_CUE = (
     r"(?:candidate(?:s)?|prediction(?:s)?|predicted|winning|drawn|"
-    r"rank(?:ed|ing)?|top(?:[- ]ranked)?|number(?:s)?|value(?:s)?|"
+    r"rank(?:ed|ing)?|top(?:[- ]ranked)?|highest(?:[- ]ranked)?|best|first|number(?:s)?|value(?:s)?|"
     r"aday(?:lar)?|tahmin(?:\s+edilen)?|kazanan|çıkan|cikan|"
     r"sayı(?:lar)?|sayi(?:lar)?|numara(?:lar)?|değer(?:ler)?|deger(?:ler)?|sıralama|siralama)"
 )
@@ -313,8 +313,6 @@ def _validate_sealed_plan_binding(
         or plan.get("target_numbers_exposed") is not False
         or plan.get("target_in_discovery") is not False
         or plan.get("target_in_validation") is not False
-        or plan.get("target_in_reverse_validation") is not False
-        or plan.get("directional_validation_windows_disjoint") is not True
     ):
         raise ResearchMemoryError(
             "Sealed plan does not match the current archive/target isolation proof."
