@@ -99,7 +99,7 @@ class ResearchMemoryValidationTests(unittest.TestCase):
             "cross_validation": {},
         }
         entry["content_sha256"] = _hash_entry(entry)
-        with self.assertRaisesRegex(memory.ResearchMemoryError, "permanently consumed"):
+        with self.assertRaisesRegex(memory.ResearchMemoryError, "safe summary schema"):
             memory._validate_entry(entry, 1)
 
     def test_memory_rejects_tampered_content_hash(self):
@@ -364,6 +364,11 @@ class ResearchMemoryPersistenceTests(unittest.TestCase):
         self.assertEqual(saved["entries"][0]["proposals"][0]["hypothesis_id"], "HYP-001")
         self.assertEqual(saved["entries"][1]["proposals"][0]["hypothesis_id"], "HYP-501")
         self.assertTrue(saved["entries"][0]["evaluation_feedback"]["holdout_consumed"])
+        invalid_feedback_entry = copy.deepcopy(saved["entries"][0])
+        invalid_feedback_entry["evaluation_feedback"]["holdout_consumed"] = False
+        invalid_feedback_entry["content_sha256"] = _hash_entry(invalid_feedback_entry)
+        with self.assertRaisesRegex(memory.ResearchMemoryError, "permanently consumed"):
+            memory._validate_entry(invalid_feedback_entry, 1)
         self.assertTrue(not saved["entries"][0]["evaluation_feedback"]["retrospective_only"])
         self.assertTrue(saved["entries"][1]["evaluation_feedback"]["holdout_consumed"])
         self.assertFalse(saved["entries"][1]["evaluation_feedback"]["retrospective_only"])
