@@ -80,9 +80,9 @@ class FakeShadowReader(FakeReader):
         main_tree_truncated=False,
     ):
         super().__init__(
-            branch=state_client.branch,
-            tree=state_client.tree,
-            blobs=state_client.blobs,
+            branch=copy.deepcopy(state_client.branch),
+            tree=copy.deepcopy(state_client.tree),
+            blobs=copy.deepcopy(state_client.blobs),
             branch_sequence=state_branch_sequence,
         )
         self.main_branch_sequence = (

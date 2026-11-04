@@ -241,6 +241,8 @@ class GitHubStateStoreReader:
             if not isinstance(item, dict):
                 raise StateStoreReadError("main branch tree contains a malformed entry")
             path = item.get("path")
+            if not isinstance(path, str):
+                raise StateStoreReadError("main branch tree contains a non-text path")
             if path not in required_paths:
                 continue
             if path in main_files:
