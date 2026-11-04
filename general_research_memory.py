@@ -794,13 +794,13 @@ def record_cycle(
     """Append one entry per completed/failed direction; raw draws never enter this function."""
     if not run_id or not run_attempt:
         raise ResearchMemoryError("GitHub run ID and attempt are required for idempotent memory records.")
-    from general_sealed_evaluation import load_archive, load_ledger
+    from general_sealed_evaluation import get_used_validation_dates, load_archive, load_ledger
 
     archive = load_archive(archive_path)
     target = archive["last_date"]
     archive_hash = archive["archive_sha256"]
     ledger = load_ledger(ledger_path)
-    used_validation_dates = sealed.get_used_validation_dates(ledger)
+    used_validation_dates = get_used_validation_dates(ledger)
     run_status = _load_optional_json(run_status_path) or {}
     claim = _load_optional_json(claim_path)
     evaluation_report = _load_optional_json(evaluation_path)
