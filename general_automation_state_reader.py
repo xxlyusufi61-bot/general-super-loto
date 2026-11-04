@@ -11,6 +11,7 @@ import argparse
 import base64
 import binascii
 import json
+import hashlib
 import os
 import re
 import sys
@@ -85,25 +86,27 @@ class GitHubStateStoreReader:
             raise StateStoreReadError("GitHub API response root must be an object")
         return value
 
-    def _branch_head(self) -> tuple[str, str]:
+    def _branch_head(self, branch_name: str = contract.STATE_BRANCH) -> tuple[str, str]:
+        if branch_name not in {contract.STATE_BRANCH, "main"}:
+            raise StateStoreReadError("branch is not approved for a read-only comparison")
         owner, name = self.repository.split("/", 1)
         route = (
             "repos/" + urllib.parse.quote(owner, safe="")
             + "/" + urllib.parse.quote(name, safe="")
-            + "/branches/" + urllib.parse.quote(contract.STATE_BRANCH, safe="")
+            + "/branches/" + urllib.parse.quote(branch_name, safe="")
         )
         value = self._get_json(route)
-        if value.get("name") != contract.STATE_BRANCH:
-            raise StateStoreReadError("GitHub returned the wrong state branch")
+        if value.get("name") != branch_name:
+            raise StateStoreReadError("GitHub returned the wrong branch")
         commit = value.get("commit")
         commit_data = commit.get("commit") if isinstance(commit, dict) else None
         tree = commit_data.get("tree") if isinstance(commit_data, dict) else None
         commit_sha = commit.get("sha") if isinstance(commit, dict) else None
         tree_sha = tree.get("sha") if isinstance(tree, dict) else None
         if not isinstance(commit_sha, str) or not contract.SHA1_RE.fullmatch(commit_sha):
-            raise StateStoreReadError("state branch commit SHA is invalid")
+            raise StateStoreReadError("branch commit SHA is invalid")
         if not isinstance(tree_sha, str) or not contract.SHA1_RE.fullmatch(tree_sha):
-            raise StateStoreReadError("state branch tree SHA is invalid")
+            raise StateStoreReadError("branch tree SHA is invalid")
         return commit_sha, tree_sha
 
     def _blob_text(self, blob_sha: str) -> str:
@@ -210,6 +213,91 @@ class GitHubStateStoreReader:
         }
 
 
+
+    def read_shadow_comparison(self) -> dict[str, Any]:
+        """Compare registered state blobs with main without making either authoritative.
+
+        The main branch remains the runtime source of truth. Missing registrations
+        are reported as NOT_REGISTERED; mismatches are reported, never repaired.
+        """
+        state_snapshot = self.read_snapshot()
+        main_commit_sha, main_tree_sha = self._branch_head("main")
+        owner, name = self.repository.split("/", 1)
+        route = (
+            "repos/" + urllib.parse.quote(owner, safe="")
+            + "/" + urllib.parse.quote(name, safe="")
+            + "/git/trees/" + main_tree_sha + "?recursive=1"
+        )
+        tree = self._get_json(route)
+        if tree.get("sha") != main_tree_sha or tree.get("truncated") is not False:
+            raise StateStoreReadError("main branch tree identity is invalid or truncated")
+        raw_entries = tree.get("tree")
+        if not isinstance(raw_entries, list) or len(raw_entries) > 10000:
+            raise StateStoreReadError("main branch tree is missing or exceeds its entry limit")
+
+        required_paths = set(contract.STATE_OBJECTS.values())
+        main_files: dict[str, str] = {}
+        for item in raw_entries:
+            if not isinstance(item, dict):
+                raise StateStoreReadError("main branch tree contains a malformed entry")
+            path = item.get("path")
+            if path not in required_paths:
+                continue
+            if path in main_files:
+                raise StateStoreReadError("main branch contains a duplicate state-object path")
+            if item.get("type") != "blob" or item.get("mode") != "100644":
+                raise StateStoreReadError("main state object is not a regular file")
+            blob_sha = item.get("sha")
+            if not isinstance(blob_sha, str) or not contract.SHA1_RE.fullmatch(blob_sha):
+                raise StateStoreReadError("main state object has an invalid Git blob SHA")
+            main_files[path] = blob_sha
+
+        missing_paths = required_paths - set(main_files)
+        if missing_paths:
+            raise StateStoreReadError("main branch is missing a required persistent state object")
+
+        comparisons: dict[str, str] = {}
+        for object_key, path in contract.STATE_OBJECTS.items():
+            main_blob_sha = main_files[path]
+            main_content = self._blob_text(main_blob_sha)
+            contract.validate_state_document(object_key, main_content)
+            encoded = main_content.encode("utf-8")
+            entry = state_snapshot["manifest"]["entries"].get(object_key)
+            if entry is None:
+                comparisons[object_key] = "NOT_REGISTERED"
+                continue
+            same_content = (
+                entry["blob_sha"] == main_blob_sha
+                and entry["content_sha256"] == hashlib.sha256(encoded).hexdigest()
+                and entry["byte_length"] == len(encoded)
+            )
+            comparisons[object_key] = "MATCH" if same_content else "DIVERGED"
+
+        final_main_sha, _ = self._branch_head("main")
+        if final_main_sha != main_commit_sha:
+            raise StateStoreReadError("main branch moved during the comparison; result discarded")
+        final_state_sha, _ = self._branch_head(contract.STATE_BRANCH)
+        if final_state_sha != state_snapshot["commit_sha"]:
+            raise StateStoreReadError("state branch moved during the comparison; result discarded")
+
+        diverged_count = sum(value == "DIVERGED" for value in comparisons.values())
+        matched_count = sum(value == "MATCH" for value in comparisons.values())
+        not_registered_count = sum(value == "NOT_REGISTERED" for value in comparisons.values())
+        return {
+            "mode": "SHADOW_COMPARE",
+            "main_commit_sha": main_commit_sha,
+            "state_store_commit_sha": state_snapshot["commit_sha"],
+            "state_store_status": state_snapshot["manifest"]["status"],
+            "state_store_generation": state_snapshot["manifest"]["generation"],
+            "comparisons": comparisons,
+            "matched_count": matched_count,
+            "not_registered_count": not_registered_count,
+            "diverged_count": diverged_count,
+            "diverged": diverged_count > 0,
+            "authoritative_source": "main",
+            "read_only": True,
+        }
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -222,11 +310,21 @@ def main(argv: list[str] | None = None) -> int:
         default=os.environ.get("GITHUB_TOKEN"),
         help="Optional read-only GitHub token (defaults to GITHUB_TOKEN)",
     )
+    parser.add_argument(
+        "--shadow-compare",
+        action="store_true",
+        help="Compare registered state-store objects against main without changing either branch",
+    )
     args = parser.parse_args(argv)
     if not args.repository:
         parser.error("--repository or GITHUB_REPOSITORY is required")
+    reader = GitHubStateStoreReader(args.repository, args.token)
     try:
-        snapshot = GitHubStateStoreReader(args.repository, args.token).read_snapshot()
+        if args.shadow_compare:
+            comparison = reader.read_shadow_comparison()
+            print(json.dumps(comparison, sort_keys=True))
+            return 2 if comparison["diverged"] else 0
+        snapshot = reader.read_snapshot()
     except (StateStoreReadError, contract.AutomationStateError) as exc:
         print("STATE STORE READ FAILED:", type(exc).__name__, str(exc), file=sys.stderr)
         return 1
