@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This file documents the dedicated, persistent memory used only by GENERAL's blank-slate Super Loto formula-research runner. Later cycles may use the safe text-only narrative portions of GENERAL's own earlier reports, validated hypotheses and definitions, failed approaches, structured learning notes, safe aggregate evaluation feedback, and failure metadata. Narrative retention is intentionally conservative: free-form narrative containing any Arabic digit is omitted.
+This file documents the dedicated, persistent memory used only by GENERAL's blank-slate Super Loto formula-research runner. Later cycles may use the safe text-only narrative portions of GENERAL's own earlier reports, validated hypotheses and definitions, failed approaches, structured learning notes, safe aggregate evaluation feedback, and failure metadata. Narrative retention is intentionally conservative: free-form narrative containing any Arabic digit is omitted. Structured text is separately screened for numeric and written-out candidate values, partial rankings, and holdout dates written with English or Turkish month names.
 
 The memory begins empty. It is not backfilled from existing Actions artifacts, generic agent memory, old reports, or any earlier manual formula experiment.
 
@@ -34,12 +34,12 @@ Each direction may retain:
 - A single matching validated execution specification, if the proposal parser and restricted DSL accepted one.
 - The safe text-only narrative portion of the directional report, with a source-report SHA-256 and a separate hash for the stored sanitized narrative. Structured proposal/specification/learning-note blocks are extracted into their validated fields; structured rule-change requests are omitted because they use a separate approval path.
 - Narrative storage fails closed when it contains a six-number set, any date in the current sealed forward or reverse validation windows (even before those dates are written to the evaluation ledger), any previously consumed validation date, secret-like text, malformed structured-block boundaries, any Arabic digit, or text exceeding the report-size limit. Numeric narrative is omitted with the status `OMITTED_NUMERIC_CONTENT`; sensitive-date/secret/number-set findings use the sensitive-content omission status. No omitted text is copied into memory.
-- Structured proposals and learning notes are separately checked for explicit single candidate/predicted values and partial rankings as well as complete six-number sets. The check is applied again when stored entries are loaded, so editing the JSON and recomputing its hash cannot bypass it. Restricted execution-spec DSL constants are validated by their own schema and are not treated as narrative predictions.
+- Structured proposals and learning notes are separately checked for explicit single candidate/predicted values and partial rankings in Arabic numerals and common English/Turkish number words, as well as complete six-number sets written with numeric or word-form values. The check is applied again when stored entries are loaded, so editing the JSON and recomputing its hash cannot bypass it. Restricted execution-spec DSL constants are validated by their own schema and are not treated as narrative predictions.
 - Bounded structured learning notes: observations, failed approaches, and useful next tests.
 - Safe aggregate evaluation summaries, when the append-only evaluation ledger confirms the claim reached `EVALUATED`.
 - Sanitized failure stage/type metadata when a request, parsing step, claim, or evaluation did not complete.
 
-The record may include target-date metadata, the archive hash, and the discovery-window date range/count. It does not copy archive rows, draw-number sets, prediction values, individual holdout dates, per-draw hit records, API credentials, or raw structured rule-change requests. The exact sealed validation windows are used transiently for redaction; their dates are not written into memory.
+The record may include target-date metadata, the archive hash, and the discovery-window date range/count. It does not copy archive rows, draw-number sets, prediction values, individual holdout dates, per-draw hit records, API credentials, or raw structured rule-change requests. The exact sealed validation windows are used transiently for redaction; their dates are not written into memory. Before any directional memory write, the writer verifies that the plan's target date, archive SHA-256, and archive record count match the loaded archive, then reconstructs the chronological partition using the claim's immutable prior-consumption snapshot (or the current ledger when no claim exists). Any mismatch or altered window metadata fails closed.
 
 ## Consumed validation feedback
 
@@ -72,6 +72,8 @@ The offline test suite covers:
 - Exclusion of per-draw data and holdout date lists from memory.
 - Sanitization of safe same-direction text-only narratives, including reserved validation-window dates before ledger consumption, previously consumed dates, secrets, number sets, Arabic-digit narrative, malformed blocks, and size-limit rejection.
 - Fail-closed rejection of incomplete, reversed, malformed, or oversized reserved validation windows.
+- Detection of numeric and English/Turkish word-form number sets, explicit single candidate values and partial rankings, plus English/Turkish month-name dates in structured text.
+- Sealed-plan binding to the exact archive SHA-256, target date, record count, target-isolation flags, and archive-derived directional partition; claimed cycles are checked against the immutable prior-consumption snapshot.
 - Validation of candidate-value and partial-ranking rejection both before persistence and when loading stored entries.
 - Same-direction memory data placed in a user-role JSON field, with tests proving that report text never appears in the system message and cross-direction memory is absent.
 
