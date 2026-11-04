@@ -168,6 +168,9 @@ class ResearchMemoryValidationTests(unittest.TestCase):
 
     def test_invalid_or_oversized_reserved_validation_windows_fail_closed(self):
         invalid_plans = (
+            {},
+            {"regimes": {}},
+            {"regimes": {"R60": {}}},
             {
                 "regimes": {"R60": {
                     "validation_start_date": "2026-10-20",
@@ -211,6 +214,8 @@ class ResearchMemoryValidationTests(unittest.TestCase):
             {"output_rule": "Top-ranked values: 17, 22 and 31."},
             {"known_risks": ["Predicted number: 22."]},
             {"hypothesis": "17 is the highest-ranked candidate."},
+            {"hypothesis": "Number 17 remains only a candidate value."},
+            {"output_rule": "Candidate values include 17 and 22."},
         )
         for value in unsafe_values:
             with self.subTest(value=value):
@@ -227,6 +232,16 @@ class ResearchMemoryValidationTests(unittest.TestCase):
     def test_stored_proposal_cannot_bypass_candidate_value_guard(self):
         entry = sample_entry()
         entry["proposals"][0]["hypothesis"] = "The candidate is 17."
+        entry["content_sha256"] = _hash_entry(entry)
+        with self.assertRaisesRegex(
+            memory.ResearchMemoryError, "candidate/predicted number value"
+        ):
+            memory._validate_entry(entry, 1)
+
+        entry = sample_entry()
+        entry["learning_notes"]["observations"] = [
+            "Predicted value 22 is not permitted in persistent memory."
+        ]
         entry["content_sha256"] = _hash_entry(entry)
         with self.assertRaisesRegex(
             memory.ResearchMemoryError, "candidate/predicted number value"
