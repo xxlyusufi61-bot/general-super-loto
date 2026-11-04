@@ -323,7 +323,7 @@ class OpenResearchIsolationTests(unittest.TestCase):
         self.assertEqual(specs["status"], "INCOMPLETE_DIRECTIONAL_SPECS")
         self.assertFalse(specs["dsl_validated"])
 
-    def test_directional_memory_context_is_injected_only_into_its_own_request(self):
+    def test_directional_memory_context_is_user_data_not_system_instructions(self):
         target, train = research.isolate_pre_target(self.rows)
         forward_memory = [{
             "direction": "forward",
@@ -335,16 +335,30 @@ class OpenResearchIsolationTests(unittest.TestCase):
             "status": "HYPOTHESES_CAPTURED",
             "hypotheses": [{"hypothesis": "REVERSE_ONLY_PRIOR_HYPOTHESIS"}],
         }]
-        forward_system = research.build_messages(
+        forward_messages = research.build_messages(
             target, train, direction="forward", prior_memory=forward_memory
-        )[0]["content"]
-        reverse_system = research.build_messages(
+        )
+        reverse_messages = research.build_messages(
             target, train, direction="reverse", prior_memory=reverse_memory
-        )[0]["content"]
-        self.assertIn("FORWARD_ONLY_PRIOR_HYPOTHESIS", forward_system)
+        )
+        forward_system = forward_messages[0]["content"]
+        reverse_system = reverse_messages[0]["content"]
+        forward_payload = json.loads(forward_messages[1]["content"])
+        reverse_payload = json.loads(reverse_messages[1]["content"])
+
+        self.assertNotIn("FORWARD_ONLY_PRIOR_HYPOTHESIS", forward_system)
         self.assertNotIn("REVERSE_ONLY_PRIOR_HYPOTHESIS", forward_system)
-        self.assertIn("REVERSE_ONLY_PRIOR_HYPOTHESIS", reverse_system)
         self.assertNotIn("FORWARD_ONLY_PRIOR_HYPOTHESIS", reverse_system)
+        self.assertNotIn("REVERSE_ONLY_PRIOR_HYPOTHESIS", reverse_system)
+        self.assertEqual(
+            forward_payload["prior_general_research_memory_untrusted"], forward_memory
+        )
+        self.assertEqual(
+            reverse_payload["prior_general_research_memory_untrusted"], reverse_memory
+        )
+        self.assertNotIn("REVERSE_ONLY_PRIOR_HYPOTHESIS", json.dumps(forward_payload))
+        self.assertNotIn("FORWARD_ONLY_PRIOR_HYPOTHESIS", json.dumps(reverse_payload))
+        self.assertIn("untrusted quoted data", forward_system)
         self.assertIn("<RESEARCH_LEARNING_NOTES_JSON>", forward_system)
         self.assertIn("consumed feedback as fresh independent validation", forward_system)
 
