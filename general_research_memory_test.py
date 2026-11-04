@@ -1,12 +1,16 @@
+import contextlib
 import copy
 import hashlib
+import io
 import json
 import tempfile
 import unittest
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
+import general_autonomous_research as autonomous
 import general_research_memory as memory
+from general_nvidia_guard import initial_lock_state
 
 
 def _hash_entry(entry):
@@ -900,7 +904,302 @@ class ResearchMemoryWorkflowWiringTests(unittest.TestCase):
         self.assertIn("general_autonomous_research_state.json", workflow)
         self.assertIn("git rebase origin/main", workflow)
         self.assertIn("steps.attempt_reservation.outputs.attempt_id != ''", workflow)
+        memory_step = workflow.index("- name: Append sanitized GENERAL research memory")
+        self.assertLess(workflow.index("- name: Record successful evaluation outcome"), memory_step)
+        self.assertLess(workflow.index("- name: Record no-candidate outcome without scoring the archive"), memory_step)
+        self.assertLess(workflow.index("- name: Record failed claimed cycle"), memory_step)
 
+
+
+
+class AutonomousResearchMemoryIntegrationTests(unittest.TestCase):
+    AUTONOMOUS_NOW = datetime(2026, 11, 1, 0, 0, tzinfo=timezone.utc)
+    GITHUB_RUN_ID = "987654321"
+
+    def _make_claimed_cycle(self, root):
+        import general_sealed_evaluation as sealed
+
+        start = date(2026, 8, 1)
+        rows = []
+        for index in range(90):
+            draw_day = (start + timedelta(days=index)).isoformat()
+            base = (index * 7) % 60 + 1
+            numbers = sorted({
+                ((base + offset * 11 - 1) % 60) + 1
+                for offset in range(6)
+            })
+            rows.append({"date": draw_day, "numbers": numbers})
+
+        target_base = (90 * 7) % 60 + 1
+        rows.append({
+            "date": (start + timedelta(days=90)).isoformat(),
+            "numbers": sorted({
+                ((target_base + offset * 11 - 1) % 60) + 1
+                for offset in range(6)
+            }),
+        })
+
+        archive_path = root / "archive.json"
+        ledger_path = root / "ledger.json"
+        lock_path = root / "global-lock.json"
+        scheduler_state_path = root / "autonomous-state.json"
+        sealed_plan_path = root / "sealed-plan.json"
+
+        write_json(archive_path, {"draws": rows})
+        archive = sealed.load_archive(archive_path)
+        write_json(ledger_path, {
+            "schema_version": 1,
+            "purpose": "synthetic autonomous memory integration test",
+            "entries": [],
+        })
+        write_json(lock_path, initial_lock_state())
+
+        partition = sealed.split_archive(
+            archive["rows"],
+            archive_sha256=archive["archive_sha256"],
+            used_validation_dates=set(),
+        )
+        sealed_plan = sealed.public_plan(partition)
+        write_json(sealed_plan_path, sealed_plan)
+
+        state = autonomous.activate_state(
+            autonomous.initial_state(),
+            confirmation=autonomous.AUTO_CONFIRMATION_PHRASE,
+            free_usage_verified=True,
+            authorization_days=7,
+            global_lock=initial_lock_state(),
+            now=self.AUTONOMOUS_NOW,
+        )
+        prepared = autonomous.prepare_cycle(
+            state,
+            archive_path=archive_path,
+            ledger_path=ledger_path,
+            global_lock_path=lock_path,
+            now=self.AUTONOMOUS_NOW,
+        )
+        self.assertTrue(prepared["eligible"], prepared)
+        self.assertEqual(prepared["status"], "READY")
+        self.assertIs(prepared["target_numbers_exposed"], False)
+        self.assertNotIn("numbers", prepared)
+
+        attempt = autonomous.claim_attempt(
+            state,
+            prepared,
+            github_run_id=self.GITHUB_RUN_ID,
+            now=self.AUTONOMOUS_NOW,
+        )
+        write_json(scheduler_state_path, state)
+
+        return {
+            "archive": archive,
+            "archive_path": archive_path,
+            "attempt": attempt,
+            "ledger_path": ledger_path,
+            "lock_path": lock_path,
+            "memory_path": root / "general_research_memory.json",
+            "run_status_path": root / "open_research_run_status.json",
+            "forward_report_path": root / "open_research_forward_report.md",
+            "reverse_report_path": root / "open_research_reverse_report.md",
+            "scheduler_state_path": scheduler_state_path,
+            "sealed_plan_path": sealed_plan_path,
+        }
+
+    def _finish_attempt(self, cycle, *, outcome, reason_code):
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            exit_code = autonomous.main([
+                "finish",
+                "--state", str(cycle["scheduler_state_path"]),
+                "--attempt-id", cycle["attempt"]["attempt_id"],
+                "--outcome", outcome,
+                "--reason-code", reason_code,
+            ])
+        self.assertEqual(exit_code, 0, stderr.getvalue() or stdout.getvalue())
+        saved_state = autonomous.read_state(cycle["scheduler_state_path"])
+        self.assertEqual(len(saved_state["events"]), 1)
+        self.assertEqual(
+            saved_state["events"][0]["attempt_id"],
+            cycle["attempt"]["attempt_id"],
+        )
+        self.assertEqual(saved_state["events"][0]["outcome"], outcome)
+        return saved_state
+
+    def _record_memory_via_workflow_cli(self, cycle):
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            exit_code = memory.main([
+                "record-cycle",
+                "--run-id", self.GITHUB_RUN_ID,
+                "--run-attempt", "1",
+                "--memory", str(cycle["memory_path"]),
+                "--archive", str(cycle["archive_path"]),
+                "--ledger", str(cycle["ledger_path"]),
+                "--run-status", str(cycle["run_status_path"]),
+                "--forward-report", str(cycle["forward_report_path"]),
+                "--reverse-report", str(cycle["reverse_report_path"]),
+                "--sealed-plan", str(cycle["sealed_plan_path"]),
+                "--claim", str(cycle["memory_path"].parent / "claim.json"),
+                "--evaluation", str(cycle["memory_path"].parent / "evaluation.json"),
+            ])
+        self.assertEqual(exit_code, 0, stderr.getvalue() or stdout.getvalue())
+        return json.loads(stdout.getvalue())
+
+    def test_successful_autonomous_finish_flows_into_two_directional_memory_entries(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cycle = self._make_claimed_cycle(root)
+            target = cycle["archive"]["last_date"]
+            archive_sha = cycle["archive"]["archive_sha256"]
+
+            write_json(cycle["run_status_path"], {
+                "schema_version": 1,
+                "status": "RESEARCH_COMPLETE",
+                "stage": "research_complete",
+                "target_date": target,
+                "archive_sha256": archive_sha,
+                "failed_direction": None,
+                "error_type": None,
+                "target_numbers_stored": False,
+                "archive_rows_stored": False,
+            })
+            cycle["forward_report_path"].write_text(
+                directional_report("forward"), encoding="utf-8"
+            )
+            cycle["reverse_report_path"].write_text(
+                directional_report("reverse"), encoding="utf-8"
+            )
+
+            scheduler_state = self._finish_attempt(
+                cycle,
+                outcome="SUCCEEDED",
+                reason_code="EVALUATION_COMPLETED",
+            )
+            result = self._record_memory_via_workflow_cli(cycle)
+            saved = memory.load_memory(cycle["memory_path"])
+
+            self.assertEqual(result["status"], "APPENDED")
+            self.assertEqual(result["entries_added"], 2)
+            self.assertEqual(
+                [item["direction"] for item in saved["entries"]],
+                ["forward", "reverse"],
+            )
+            self.assertEqual(
+                [item["status"] for item in saved["entries"]],
+                ["HYPOTHESES_CAPTURED", "HYPOTHESES_CAPTURED"],
+            )
+            for item in saved["entries"]:
+                self.assertEqual(item["target_date"], target)
+                self.assertEqual(item["archive_sha256"], archive_sha)
+                self.assertNotIn("numbers", item)
+                self.assertIsNone(item["evaluation_feedback"])
+
+            attempt = scheduler_state["attempts"][0]
+            self.assertEqual(attempt["target_date"], target)
+            self.assertEqual(attempt["archive_sha256"], archive_sha)
+            self.assertEqual(scheduler_state["events"][0]["outcome"], "SUCCEEDED")
+
+            forward_context = memory.direction_context(
+                "forward", target, memory_path=cycle["memory_path"]
+            )
+            reverse_context = memory.direction_context(
+                "reverse", target, memory_path=cycle["memory_path"]
+            )
+            self.assertEqual(len(forward_context), 1)
+            self.assertEqual(len(reverse_context), 1)
+            self.assertEqual(forward_context[0]["direction"], "forward")
+            self.assertEqual(reverse_context[0]["direction"], "reverse")
+            self.assertNotIn(
+                "Complete narrative report for reverse direction.",
+                forward_context[0]["research_report_content"],
+            )
+            self.assertNotIn(
+                "Complete narrative report for forward direction.",
+                reverse_context[0]["research_report_content"],
+            )
+
+            with self.assertRaisesRegex(
+                memory.ResearchMemoryError, "already exists in memory"
+            ):
+                memory.record_cycle(
+                    memory_path=cycle["memory_path"],
+                    archive_path=cycle["archive_path"],
+                    ledger_path=cycle["ledger_path"],
+                    run_status_path=cycle["run_status_path"],
+                    forward_report_path=cycle["forward_report_path"],
+                    reverse_report_path=cycle["reverse_report_path"],
+                    sealed_plan_path=cycle["sealed_plan_path"],
+                    claim_path=root / "claim.json",
+                    evaluation_path=root / "evaluation.json",
+                    run_id=self.GITHUB_RUN_ID,
+                    run_attempt="1",
+                )
+            self.assertEqual(len(memory.load_memory(cycle["memory_path"])["entries"]), 2)
+
+    def test_failed_reverse_attempt_persists_forward_report_and_reverse_failure_metadata(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cycle = self._make_claimed_cycle(root)
+            target = cycle["archive"]["last_date"]
+            archive_sha = cycle["archive"]["archive_sha256"]
+
+            write_json(cycle["run_status_path"], {
+                "schema_version": 1,
+                "status": "FAILED",
+                "stage": "reverse_model_request",
+                "target_date": target,
+                "archive_sha256": archive_sha,
+                "failed_direction": "reverse",
+                "error_type": "TimeoutError",
+                "target_numbers_stored": False,
+                "archive_rows_stored": False,
+            })
+            cycle["forward_report_path"].write_text(
+                directional_report("forward"), encoding="utf-8"
+            )
+
+            scheduler_state = self._finish_attempt(
+                cycle,
+                outcome="FAILED",
+                reason_code="WORKFLOW_FAILED",
+            )
+            result = self._record_memory_via_workflow_cli(cycle)
+            saved = memory.load_memory(cycle["memory_path"])
+
+            self.assertEqual(result["status"], "APPENDED")
+            self.assertEqual(result["entries_added"], 2)
+            self.assertEqual(
+                [item["direction"] for item in saved["entries"]],
+                ["forward", "reverse"],
+            )
+            self.assertEqual(saved["entries"][0]["status"], "HYPOTHESES_CAPTURED")
+            self.assertEqual(saved["entries"][1]["status"], "REQUEST_FAILED")
+            self.assertIsNone(saved["entries"][1]["research_report_content"])
+            self.assertEqual(
+                saved["entries"][1]["failure"],
+                {
+                    "stage": "reverse_model_request",
+                    "error_type": "TimeoutError",
+                    "failure_metadata_only": True,
+                },
+            )
+            self.assertEqual(scheduler_state["events"][0]["outcome"], "FAILED")
+            self.assertEqual(
+                scheduler_state["events"][0]["reason_code"], "WORKFLOW_FAILED"
+            )
+            self.assertEqual(
+                len(memory.direction_context(
+                    "forward", target, memory_path=cycle["memory_path"]
+                )),
+                1,
+            )
+            self.assertEqual(
+                len(memory.direction_context(
+                    "reverse", target, memory_path=cycle["memory_path"]
+                )),
+                1,
+            )
 
 
 
