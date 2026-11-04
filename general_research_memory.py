@@ -78,9 +78,9 @@ DRAW_SET_FLEX_TEXT = re.compile(
 
 CANDIDATE_VALUE_AFTER_CUE = re.compile(
     r"(?ix)\b(?:candidate|candidates|prediction|predictions|predicted|winning|drawn|"
-    r"rank|ranked|ranking|top[- ]ranked|top|aday|tahmin|kazanan|sıralama)\b"
+    r"rank|ranked|ranking|top[- ]ranked|top|number|numbers|value|values|aday|tahmin|kazanan|sıralama)\b"
     r"(?:(?:\s+|[:#=])(?:number|numbers|value|values|no\.?|is|are|was|were|of|at|"
-    r"include|includes|candidate|candidates|ranked|first|one|two)){0,3}"
+    r"include|includes|include|list|set|output|result|pick|picks|candidate|candidates|ranked|first|one|two)){0,3}"
     r"[\s:#=]*0?(?:[1-9]|[1-5][0-9]|60)\b"
 )
 CANDIDATE_VALUE_BEFORE_CUE = re.compile(
@@ -211,9 +211,11 @@ def _reject_consumed_validation_dates(
 
 def _reserved_validation_dates(plan: dict[str, Any]) -> set[str]:
     """Expand the current sealed holdout windows so guessed dates cannot enter memory."""
-    regimes = plan.get("regimes", {})
-    if not isinstance(regimes, dict):
-        raise ResearchMemoryError("Sealed-plan regimes are invalid for memory redaction.")
+    if not isinstance(plan, dict):
+        raise ResearchMemoryError("Sealed-plan metadata is invalid for memory redaction.")
+    regimes = plan.get("regimes")
+    if not isinstance(regimes, dict) or not regimes:
+        raise ResearchMemoryError("Sealed-plan regimes are missing for memory redaction.")
     reserved: set[str] = set()
     pairs = (
         ("validation_start_date", "validation_end_date"),
@@ -226,7 +228,7 @@ def _reserved_validation_dates(plan: dict[str, Any]) -> set[str]:
             start = regime.get(start_key)
             end = regime.get(end_key)
             if start is None and end is None:
-                continue
+                raise ResearchMemoryError("A sealed validation window is missing its bounds.")
             if not isinstance(start, str) or not isinstance(end, str):
                 raise ResearchMemoryError("Sealed validation-window bounds are incomplete.")
             try:
@@ -957,7 +959,15 @@ def record_cycle(
     ):
         raise ResearchMemoryError("An evaluation report without its successful current-cycle claim cannot enter memory.")
     plan = _load_optional_json(sealed_plan_path) or {}
-    forbidden_report_dates = used_validation_dates | _reserved_validation_dates(plan)
+    has_any_directional_report = (
+        Path(forward_report_path).is_file() or Path(reverse_report_path).is_file()
+    )
+    needs_directional_record = (
+        has_any_directional_report
+        or run_status.get("failed_direction") in {"forward", "reverse"}
+    )
+    reserved_report_dates = _reserved_validation_dates(plan) if needs_directional_record else set()
+    forbidden_report_dates = used_validation_dates | reserved_report_dates
     r60 = plan.get("regimes", {}).get("R60", {}) if isinstance(plan.get("regimes"), dict) else {}
     discovery_window = {
         "start_date": r60.get("discovery_start_date"),
@@ -966,10 +976,7 @@ def record_cycle(
         "holdout_dates_copied": False,
         "archive_rows_copied": False,
     }
-    has_any_directional_report = (
-        Path(forward_report_path).is_file() or Path(reverse_report_path).is_file()
-    )
-    if has_any_directional_report or run_status.get("failed_direction") in {"forward", "reverse"}:
+    if needs_directional_record:
         if (
             not isinstance(discovery_window["start_date"], str)
             or not isinstance(discovery_window["end_date"], str)
