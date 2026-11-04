@@ -8,6 +8,8 @@ It never writes GitHub state, never moves data, and never calls NVIDIA.
 from __future__ import annotations
 
 import argparse
+from collections import Counter
+from datetime import datetime
 import hashlib
 import json
 import os
@@ -69,17 +71,16 @@ def _canonical_json(value: Any) -> bytes:
     ).encode("utf-8")
 
 
-def _validate_utc_text(value: Any, label: str) -> None:
+def _validate_utc_text(value: Any, label: str) -> datetime:
     if not isinstance(value, str) or not value:
         raise SyncPreflightError(label + " is missing.")
-    from datetime import datetime
-
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         raise SyncPreflightError(label + " is not a valid ISO-8601 timestamp.") from None
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise SyncPreflightError(label + " must include a timezone.")
+    return parsed
 
 
 def _read_source_object(root: Path, object_key: str) -> tuple[str, dict[str, Any], dict[str, Any]]:
@@ -120,27 +121,49 @@ def _validate_archive(root: Path, archive: dict[str, Any]) -> dict[str, Any]:
         raise SyncPreflightError("Canonical archive draws must be a list.")
 
     # Reuse the existing sealed-evaluation loader and Data Guard. This validates
-    # strict scope, sorted number sets, chronological order and unique dates.
+    # active scope, sorted number sets, chronology, and unique draw dates.
     try:
         loaded = sealed_evaluation.load_archive(root / contract.STATE_OBJECTS["archive"])
         summary = data_guard.validate_archive(rows)
     except Exception as exc:
-        raise SyncPreflightError("Canonical archive or Data Guard validation failed: " + type(exc).__name__) from None
+        raise SyncPreflightError(
+            "Canonical archive or Data Guard validation failed: " + type(exc).__name__
+        ) from None
     if loaded.get("record_count") != summary.get("record_count"):
         raise SyncPreflightError("Archive loader and Data Guard record counts disagree.")
 
-    # Preserve the currently established cross-source evidence. A migration
-    # preflight does not fetch new third-party data or rewrite archive metadata.
+    # The canonical fetcher writes a fetched_at timestamp plus a 2025
+    # independent cross-check and a per-year 2020-2026 reconciliation map.
+    # Validate the actual stored evidence; never synthesize missing audit fields.
+    fetched_at = _validate_utc_text(archive.get("fetched_at"), "Archive fetched_at")
+    year_counts = Counter(row["date"][:4] for row in rows)
+
     cross = archive.get("cross_check_validation")
+    expected_2025_count = year_counts.get("2025", 0)
     if (
         not isinstance(cross, dict)
-        or cross.get("result") != "PASS"
+        or type(cross.get("year")) is not int
         or cross.get("year") != 2025
-        or cross.get("primary_record_count") != 156
-        or cross.get("independent_record_count") != 156
-        or cross.get("matching_dates_and_number_sets") != 156
+        or cross.get("result") != "PASS"
     ):
-        raise SyncPreflightError("The recorded 2025 cross-source validation is missing or not passing.")
+        raise SyncPreflightError("The independent 2025 cross-source validation is missing or not passing.")
+    for field in (
+        "primary_record_count",
+        "independent_record_count",
+        "matching_dates_and_number_sets",
+    ):
+        value = cross.get(field)
+        if type(value) is not int or value != expected_2025_count:
+            raise SyncPreflightError("The recorded 2025 cross-source counts do not match the canonical archive.")
+    cross_pages = cross.get("pages_checked")
+    if (
+        not isinstance(cross_pages, list)
+        or not cross_pages
+        or any(not isinstance(page, str) or not page.strip() for page in cross_pages)
+    ):
+        raise SyncPreflightError("The recorded 2025 independent-source page coverage is incomplete.")
+    if _validate_utc_text(cross.get("checked_at"), "2025 cross-source audit timestamp") > fetched_at:
+        raise SyncPreflightError("The 2025 cross-source audit timestamp is later than the archive fetch.")
 
     multi = archive.get("multi_year_cross_source_validation")
     if not isinstance(multi, dict) or set(multi) != set(EXPECTED_YEARS):
@@ -152,12 +175,41 @@ def _validate_archive(root: Path, archive: dict[str, Any]) -> dict[str, Any]:
             or item.get("result") != "PASS"
             or item.get("draw_numbers_in_report") is not False
             or not isinstance(item.get("source"), str)
-            or not item.get("source")
-            or not isinstance(item.get("pages_checked"), list)
-            or not item.get("pages_checked")
+            or not item.get("source").strip()
         ):
             raise SyncPreflightError("A year in the recorded multi-year cross-source audit is not passing.")
-        _validate_utc_text(item.get("checked_at"), "Multi-year audit timestamp")
+        pages = item.get("pages_checked")
+        if (
+            not isinstance(pages, list)
+            or not pages
+            or any(not isinstance(page, str) or not page.strip() for page in pages)
+        ):
+            raise SyncPreflightError("A year in the multi-year cross-source audit has incomplete page coverage.")
+        if _validate_utc_text(item.get("checked_at"), "Multi-year audit timestamp") > fetched_at:
+            raise SyncPreflightError("A multi-year audit timestamp is later than the archive fetch.")
+
+        count_fields = (
+            "archive_compared_count_before_merge",
+            "independent_source_count",
+            "records_added_from_independent_source",
+            "matching_dates_and_number_sets_after_merge",
+        )
+        counts = {}
+        for field in count_fields:
+            value = item.get(field)
+            if type(value) is not int or value < 0:
+                raise SyncPreflightError("A multi-year cross-source count is missing or invalid.")
+            counts[field] = value
+        if (
+            counts["archive_compared_count_before_merge"]
+            + counts["records_added_from_independent_source"]
+            != counts["matching_dates_and_number_sets_after_merge"]
+            or counts["independent_source_count"]
+            != counts["matching_dates_and_number_sets_after_merge"]
+            or counts["matching_dates_and_number_sets_after_merge"]
+            != year_counts.get(year, 0)
+        ):
+            raise SyncPreflightError("A multi-year cross-source count does not reconcile with the canonical archive.")
 
     # The latest archived draw is treated as the sealed target only for this
     # internal isolation check. Neither its date nor its values enter the plan.
@@ -168,7 +220,8 @@ def _validate_archive(root: Path, archive: dict[str, Any]) -> dict[str, Any]:
         raise SyncPreflightError("Latest-target isolation failed: " + type(exc).__name__) from None
     expected_count = summary.get("record_count")
     if (
-        isolated.get("target_present_in_archive") is not True
+        isolated.get("isolation_pass") is not True
+        or isolated.get("target_present_in_archive") is not True
         or isolated.get("target_numbers_exposed") is not False
         or isolated.get("archive_record_count") != expected_count
         or isolated.get("excluded_record_count") != 1
@@ -179,8 +232,7 @@ def _validate_archive(root: Path, archive: dict[str, Any]) -> dict[str, Any]:
     ):
         raise SyncPreflightError("Latest-target isolation did not produce exactly one sealed exclusion.")
 
-    # Return aggregate-only diagnostics. Do not return safe_summary() because it
-    # contains the target date; no date or draw values are needed for migration.
+    # Aggregate-only diagnostics: no target date or draw values enter the plan.
     return {
         "status": "PASS",
         "record_count": expected_count,
