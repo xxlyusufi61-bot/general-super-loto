@@ -414,26 +414,26 @@ class GitHubStateStoreReaderTests(unittest.TestCase):
         with self.assertRaises(reader.StateStoreReadError):
             client.read_shadow_comparison()
 
-    def test_scheduled_research_runs_shadow_read_before_authorization_without_token(self):
+    def test_scheduled_research_hydrates_and_audits_state_before_authorization(self):
         workflow = (
             Path(__file__).resolve().parent
             / ".github" / "workflows" / "general-autonomous-research.yml"
         ).read_text(encoding="utf-8")
-        marker = "      - name: Compare automation state in read-only shadow mode\n"
-        start = workflow.find(marker)
+        marker = "      - name: Hydrate verified GENERAL state-store data\n"
+        schedule_start = workflow.find("  scheduled-cycle:")
+        start = workflow.find(marker, schedule_start)
         self.assertGreaterEqual(start, 0)
-        end = workflow.find("\n      - name:", start + len(marker))
-        self.assertGreater(end, start)
-        step = workflow[start:end]
-        status_step = workflow.find("      - name: Check explicit authorization and local global-lock state\n")
-        self.assertLess(start, status_step)
-        self.assertIn("general_automation_state_reader.py --shadow-compare", step)
+        status_step = workflow.find(
+            "      - name: Check explicit authorization and local global-lock state\n"
+        )
+        self.assertGreater(status_step, start)
+        step = workflow[start:status_step]
+        self.assertIn("./.github/actions/hydrate-automation-state", step)
+        self.assertIn("general_automation_state_runtime_audit.py --state-authoritative", step)
         self.assertIn("GITHUB_REPOSITORY:", step)
-        self.assertNotIn("GITHUB_TOKEN", step)
-        self.assertIn("main remains authoritative", step)
-        self.assertIn("shadow_status", step)
-        self.assertNotIn("git push", step)
+        self.assertIn("GITHUB_TOKEN:", step)
         self.assertNotIn("NVIDIA_API_KEY", step)
+        self.assertNotIn("git push", step)
 
 
     def test_shadow_read_rejects_a_non_text_main_tree_path(self):
@@ -465,13 +465,13 @@ class GitHubStateStoreReaderTests(unittest.TestCase):
                 0,
             )
 
-    def test_safety_ci_runs_active_state_integrity_audit_with_read_only_permissions(self):
+    def test_safety_ci_runs_active_authoritative_state_audit_with_read_only_permissions(self):
         workflow = (
             Path(__file__).resolve().parent
             / ".github" / "workflows" / "nvidia-safety-tests.yml"
         ).read_text(encoding="utf-8")
         self.assertIn("permissions:\n  contents: read", workflow)
-        marker = "      - name: Run active state-store integrity and pre-cutover parity audit\n"
+        marker = "      - name: Run active authoritative state-store integrity audit\n"
         start = workflow.find(marker)
         self.assertGreaterEqual(start, 0)
         end = workflow.find("\n      - name:", start + len(marker))
@@ -479,7 +479,7 @@ class GitHubStateStoreReaderTests(unittest.TestCase):
             end = len(workflow)
         step = workflow[start:end]
         self.assertIn("GITHUB_TOKEN: ${{ github.token }}", step)
-        self.assertIn("general_automation_state_runtime_audit.py", step)
+        self.assertIn("general_automation_state_runtime_audit.py --state-authoritative", step)
         self.assertNotIn("git push", step)
         self.assertNotIn("NVIDIA_API_KEY", step)
 

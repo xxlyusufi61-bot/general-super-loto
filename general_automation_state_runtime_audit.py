@@ -145,7 +145,7 @@ def main(argv: list[str] | None = None) -> int:
             snapshot, shadow, lock_state,
             mode="state-authoritative" if args.state_authoritative else "pre-cutover",
         )
-    except (RuntimeStateAuditError, StateStoreReadError, contract.AutomationStateError) as exc:
+    except (RuntimeStateAuditError, StateStoreReadError, contract.AutomationStateError, state_writer.StateStoreWriteError) as exc:
         print("STATE RUNTIME AUDIT FAILED:", type(exc).__name__, str(exc), file=sys.stderr)
         return 1
     print(json.dumps(report, sort_keys=True))

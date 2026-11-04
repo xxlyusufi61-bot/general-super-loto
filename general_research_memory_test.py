@@ -887,29 +887,32 @@ class ResearchMemoryPersistenceTests(unittest.TestCase):
 
 
 class ResearchMemoryWorkflowWiringTests(unittest.TestCase):
-    def test_manual_research_workflow_persists_memory_with_archive_and_ledger(self):
+    def test_manual_research_workflow_persists_runtime_objects_to_state_store(self):
         workflow = Path(".github/workflows/open-research.yml").read_text(encoding="utf-8")
         self.assertIn("python3 general_research_memory.py record-cycle", workflow)
-        self.assertIn("general_research_memory.json", workflow)
-        self.assertIn("general_evaluation_ledger.json", workflow)
-        self.assertIn("super_loto_archive.json", workflow)
-        self.assertIn("git rebase origin/main", workflow)
+        self.assertIn("objects: archive", workflow)
+        self.assertIn("objects: evaluation_ledger", workflow)
+        self.assertIn("objects: research_memory", workflow)
+        self.assertIn("general_evaluation_snapshots/", workflow)
+        self.assertIn("git push origin HEAD:main", workflow)
+        self.assertNotIn("git rebase origin/main", workflow)
+        self.assertNotIn("git add general_evaluation_ledger.json", workflow)
+        self.assertNotIn("git add general_research_memory.json", workflow)
         self.assertIn("general_research_memory_test.py", workflow)
 
     def test_autonomous_workflow_persists_memory_without_enabling_automation(self):
         workflow = Path(".github/workflows/general-autonomous-research.yml").read_text(encoding="utf-8")
         self.assertIn("python3 general_research_memory.py record-cycle", workflow)
-        self.assertIn("general_research_memory.json", workflow)
-        self.assertIn("general_evaluation_ledger.json", workflow)
-        self.assertIn("general_autonomous_research_state.json", workflow)
-        self.assertIn("git rebase origin/main", workflow)
+        self.assertIn("objects: archive", workflow)
+        self.assertIn("objects: evaluation_ledger", workflow)
+        self.assertIn("objects: autonomous_research_state research_memory", workflow)
+        self.assertIn("general_evaluation_snapshots/", workflow)
+        self.assertNotIn("git rebase origin/main", workflow)
         self.assertIn("steps.attempt_reservation.outputs.attempt_id != ''", workflow)
         memory_step = workflow.index("- name: Append sanitized GENERAL research memory")
         self.assertLess(workflow.index("- name: Record successful evaluation outcome"), memory_step)
         self.assertLess(workflow.index("- name: Record no-candidate outcome without scoring the archive"), memory_step)
         self.assertLess(workflow.index("- name: Record failed claimed cycle"), memory_step)
-
-
 
 
 class AutonomousResearchMemoryIntegrationTests(unittest.TestCase):
