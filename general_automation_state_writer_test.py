@@ -182,7 +182,7 @@ class GitHubStateStoreWriterTests(unittest.TestCase):
             )
         self.assertEqual(self.transport.calls, [])
 
-    def test_branch_moved_before_tree_creation_is_rejected(self):
+    def test_branch_moved_before_ref_update_is_rejected(self):
         reader = FakeReader(head_sequence=[
             (BASE_COMMIT, BASE_TREE),
             ("e" * 40, "f" * 40),
@@ -198,7 +198,9 @@ class GitHubStateStoreWriterTests(unittest.TestCase):
                 expected_generation=1,
                 message="Race test",
             )
-        self.assertEqual(transport.calls, [])
+        # The unreachable tree/commit objects may be created, but the branch ref must not move.
+        self.assertEqual([call[0] for call in transport.calls], ["POST", "POST"])
+        self.assertFalse(any(call[0] == "PATCH" for call in transport.calls))
 
     def test_failed_non_fast_forward_ref_update_is_not_retried(self):
         transport = FakeTransport(patch_error=writer_module.StateStoreWriteConflict("race"))
