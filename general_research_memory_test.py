@@ -41,9 +41,14 @@ def sample_entry(direction="forward", entry_id=1, target="2026-10-20", status="H
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "target_date": target,
         "archive_sha256": "a" * 64,
-        "runner_version": "0.8.0",
+        "runner_version": "0.9.0",
         "status": status,
         "research_report_sha256": "b" * 64,
+        "research_report_content": "Synthetic report narrative for the " + direction + " direction.",
+        "research_report_content_sha256": hashlib.sha256(
+            ("Synthetic report narrative for the " + direction + " direction.").encode("utf-8")
+        ).hexdigest(),
+        "research_report_content_status": "STORED",
         "proposal_status": "VALID_PROPOSALS",
         "proposals": [proposal],
         "execution_spec_status": "VALID_EMPTY",
@@ -68,6 +73,62 @@ class ResearchMemoryValidationTests(unittest.TestCase):
     def test_valid_entry_passes_schema_and_hash(self):
         entry = sample_entry()
         self.assertEqual(memory._validate_entry(entry, 1), entry)
+
+    def test_report_content_hash_is_required_and_verified(self):
+        entry = sample_entry()
+        self.assertEqual(entry["research_report_content_status"], "STORED")
+        broken = copy.deepcopy(entry)
+        broken["research_report_content"] += " changed"
+        broken["content_sha256"] = _hash_entry(broken)
+        with self.assertRaisesRegex(memory.ResearchMemoryError, "report content or its hash"):
+            memory._validate_entry(broken, 1)
+
+    def test_report_content_cannot_retain_number_sets_or_secret_like_values(self):
+        for unsafe in (
+            "Candidate values: 1, 7, 13, 22, 34, 48.",
+            "Provider credential: nvapi-abcdefghijklmnopqrstuvwxyz123456.",
+        ):
+            entry = sample_entry()
+            entry["research_report_content"] = unsafe
+            entry["research_report_content_sha256"] = hashlib.sha256(unsafe.encode("utf-8")).hexdigest()
+            entry["content_sha256"] = _hash_entry(entry)
+            with self.assertRaises(memory.ResearchMemoryError):
+                memory._validate_entry(entry, 1)
+
+    def test_report_sanitizer_extracts_machine_blocks_and_preserves_full_narrative(self):
+        report = (
+            "Narrative section A.\\n"
+            "<HYPOTHESIS_PROPOSALS_JSON>machine block</HYPOTHESIS_PROPOSALS_JSON>\\n"
+            "Narrative section B."
+        )
+        sanitized, status = memory._sanitize_research_report(report)
+        self.assertEqual(status, "STORED")
+        self.assertIn("Narrative section A.", sanitized)
+        self.assertIn("Narrative section B.", sanitized)
+        self.assertIn("stored in their structured directional fields", sanitized)
+        self.assertNotIn("machine block", sanitized)
+
+    def test_report_sanitizer_omits_consumed_dates_number_sets_and_secrets(self):
+        cases = (
+            ("The consumed validation date was 2026-10-20.", {"2026-10-20"}),
+            ("A list appeared: 1, 7, 13, 22, 34, 48.", set()),
+            ("An echoed credential was nvapi-abcdefghijklmnopqrstuvwxyz123456.", set()),
+        )
+        for report, forbidden_dates in cases:
+            with self.subTest(report=report):
+                sanitized, status = memory._sanitize_research_report(
+                    report,
+                    forbidden_validation_dates=forbidden_dates,
+                )
+                self.assertIsNone(sanitized)
+                self.assertEqual(status, "OMITTED_SENSITIVE_CONTENT")
+
+    def test_report_sanitizer_omits_malformed_structured_blocks(self):
+        sanitized, status = memory._sanitize_research_report(
+            "Narrative <HYPOTHESIS_PROPOSALS_JSON>missing close marker"
+        )
+        self.assertIsNone(sanitized)
+        self.assertEqual(status, "OMITTED_UNSUPPORTED_FORMAT")
 
     def test_legacy_source_or_epoch_is_rejected(self):
         entry = sample_entry()
@@ -235,6 +296,7 @@ def directional_report(direction):
         },
     }
     return (
+        "Complete narrative report for " + direction + " direction.\\n\\n"
         "<HYPOTHESIS_PROPOSALS_JSON>"
         + json.dumps({"schema_version": 2, "proposals": [proposal]})
         + "</HYPOTHESIS_PROPOSALS_JSON>"
@@ -427,6 +489,13 @@ class ResearchMemoryPersistenceTests(unittest.TestCase):
             self.assertEqual(len(reverse_context), 1)
             self.assertEqual(forward_context[0]["direction"], "forward")
             self.assertEqual(reverse_context[0]["direction"], "reverse")
+            self.assertIn("Complete narrative report for forward direction.", forward_context[0]["research_report_content"])
+            self.assertNotIn("Complete narrative report for reverse direction.", forward_context[0]["research_report_content"])
+            self.assertIn("Complete narrative report for reverse direction.", reverse_context[0]["research_report_content"])
+            self.assertNotIn("Complete narrative report for forward direction.", reverse_context[0]["research_report_content"])
+            self.assertTrue(forward_context[0]["research_report_content_is_unverified"])
+            self.assertTrue(reverse_context[0]["research_report_content_is_unverified"])
+            self.assertEqual(saved["entries"][0]["research_report_content_status"], "STORED")
 
             # A local evaluation report is not trusted while the append-only
             # ledger still says the claim is only CLAIMED.
