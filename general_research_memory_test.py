@@ -162,9 +162,9 @@ class DirectionalMemoryContextTests(unittest.TestCase):
         self.assertEqual(len(context), 1)
         self.assertEqual(context[0]["proposals_in_memory"], 5)
         self.assertEqual(len(context[0]["hypotheses"]), 2)
-        self.assertLessEqual(len(context[0]["hypotheses"][0]["exact_definition"]), 850)
-        self.assertIn("exact_definition", context[0]["hypotheses"][0]["truncated_fields"])
-        self.assertIn("[TRUNCATED]", context[0]["hypotheses"][0]["exact_definition"])
+        self.assertLessEqual(len(context[0]["hypotheses"][1]["exact_definition"]), 850)
+        self.assertIn("exact_definition", context[0]["hypotheses"][1]["truncated_fields"])
+        self.assertIn("[TRUNCATED]", context[0]["hypotheses"][1]["exact_definition"])
         self.assertLessEqual(len(memory._canonical(context)), memory.MAX_CONTEXT_CHARS)
 
     def test_direction_context_refuses_invalid_direction(self):
