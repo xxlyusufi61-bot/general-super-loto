@@ -43,20 +43,22 @@ write `nvidia_lock`, change the NVIDIA rate-limit branch, or update `main`.
 It prints only object keys, generation, and commit identifiers; it does not emit
 draw rows or number sets.
 
-## Current deployment status
+## Pre-merge deployment status
 
-This module is a writer primitive, not an operational cutover. Until separate
-workflow integration and parity verification are completed, `main` remains the
-runtime source of truth. The global NVIDIA lock stays locked and no NVIDIA
-requests are made by this module.
+The state branch has been populated and integrity-verified, but the currently
+deployed workflows still use `main` until this PR is merged. This PR contains
+the writer primitive, the coordinated workflow reader/writer integration, and
+the cutover audit. No live workflow is dispatched by these changes and no
+NVIDIA request is made by the writer or its tests.
 
 
 ## Workflow integration map
 
-The canonical runtime read path is now the composite hydrate action followed by
-the read-only active-store audit. All consuming workflows hydrate the exact
-four-object state snapshot before any application module reads an archive,
-evaluation ledger, autonomous scheduler state, or research memory:
+The canonical runtime read path defined by this PR is the composite hydrate
+action followed by the read-only active-store audit. After merge, every
+consuming workflow will hydrate the exact four-object state snapshot before
+any application module reads an archive, evaluation ledger, autonomous
+scheduler state, or research memory:
 
 - autonomous research control, scheduled archive refresh, and scheduled cycle;
 - blank-slate open research;
@@ -95,9 +97,10 @@ change does not enable branch protection.
 
 ## Operational transition
 
-After this PR is merged, the updated workflows will begin hydrating and
-publishing state-store data when they are next invoked. The state branch is
-not changed by this PR, no live workflow is dispatched here, and no data is
-written to GitHub by CI. The NVIDIA lock remains locked and autonomous
-research remains paused. Existing main copies of the four migrated files are
-historical shadows and are not consumed by the updated workflows.
+After merge, the updated workflows will begin hydrating and publishing
+state-store data when they are next invoked. The state branch is not changed
+by this PR: CI exercises the writer only with fake transport, while the real
+state-branch checks are GET-only. No workflow is manually dispatched. The
+NVIDIA lock remains locked and autonomous research remains paused. Existing
+main copies of the four migrated files become historical shadows and are not
+consumed by the updated workflows.
