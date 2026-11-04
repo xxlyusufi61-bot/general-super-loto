@@ -11,13 +11,15 @@ only safe usage metadata returned by each directional inference request, when pr
 """
 from __future__ import annotations
 
+import base64
 import http.client
 import json
 import os
 import ssl
 import time
 import urllib.error
-from urllib.parse import urlsplit
+import urllib.request
+from urllib.parse import unquote, urlsplit
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
@@ -867,17 +869,80 @@ def _parse_streamed_chat_completion(
     return result, metadata
 
 
+def _configured_https_proxy(target_host: str) -> tuple[str, int, dict[str, str]] | None:
+    """Resolve standard HTTPS proxy settings without exposing credentials.
+
+    The phase-aware transport supports HTTP CONNECT proxies. NO_PROXY bypasses
+    are honored using urllib's platform-aware matcher. Unsupported proxy forms
+    fail closed instead of silently connecting by a different route.
+    """
+    proxies = urllib.request.getproxies()
+    proxy_url = proxies.get("https") or proxies.get("all")
+    if not proxy_url or urllib.request.proxy_bypass(target_host):
+        return None
+    if not isinstance(proxy_url, str):
+        raise RuntimeError("Configured HTTPS proxy is invalid; no provider request was sent.")
+    normalized_proxy_url = (
+        proxy_url if "://" in proxy_url else "http://" + proxy_url
+    )
+    try:
+        proxy = urlsplit(normalized_proxy_url)
+        proxy_port = proxy.port or 80
+    except ValueError:
+        raise RuntimeError(
+            "Configured HTTPS proxy is malformed; no provider request was sent."
+        ) from None
+    if (
+        proxy.scheme.lower() != "http"
+        or not proxy.hostname
+        or proxy.path not in ("", "/")
+        or proxy.query
+        or proxy.fragment
+    ):
+        raise RuntimeError(
+            "Configured HTTPS proxy must be an HTTP CONNECT endpoint; "
+            "no provider request was sent."
+        )
+
+    tunnel_headers: dict[str, str] = {}
+    if proxy.username is not None or proxy.password is not None:
+        credentials = (
+            unquote(proxy.username or "") + ":" + unquote(proxy.password or "")
+        ).encode("utf-8")
+        tunnel_headers["Proxy-Authorization"] = (
+            "Basic " + base64.b64encode(credentials).decode("ascii")
+        )
+    return proxy.hostname, proxy_port, tunnel_headers
+
+
 def _create_nvidia_connection(timeout_seconds: int):
-    """Create a verified standard-library HTTPS connection to the configured API."""
+    """Create an HTTPS connection, honoring standard HTTP CONNECT proxy settings."""
     endpoint = urlsplit(API_URL)
     if endpoint.scheme != "https" or not endpoint.hostname:
         raise RuntimeError("NVIDIA API endpoint must be an absolute HTTPS URL.")
-    return http.client.HTTPSConnection(
+    context = ssl.create_default_context()
+    proxy = _configured_https_proxy(endpoint.hostname)
+    if proxy is None:
+        return http.client.HTTPSConnection(
+            endpoint.hostname,
+            endpoint.port or 443,
+            timeout=timeout_seconds,
+            context=context,
+        )
+
+    proxy_host, proxy_port, tunnel_headers = proxy
+    connection = http.client.HTTPSConnection(
+        proxy_host,
+        proxy_port,
+        timeout=timeout_seconds,
+        context=context,
+    )
+    connection.set_tunnel(
         endpoint.hostname,
         endpoint.port or 443,
-        timeout=timeout_seconds,
-        context=ssl.create_default_context(),
+        headers=tunnel_headers,
     )
+    return connection
 
 
 def _set_nvidia_socket_timeout(
