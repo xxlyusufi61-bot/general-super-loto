@@ -311,7 +311,7 @@ jobs:
             echo "GENERAL research-memory append failed; the existing ledger and target isolation were not modified."
             exit 1
           fi
-          git add -- general_research_memory.json general_evaluation_ledger.json
+          git add -- general_research_memory.json general_evaluation_ledger.json super_loto_archive.json general_autonomous_research_state.json
           if [ -d general_evaluation_snapshots ]; then
             git add -- general_evaluation_snapshots/
           fi
