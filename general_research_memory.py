@@ -251,8 +251,17 @@ def load_memory(path: str | Path = MEMORY_PATH) -> dict[str, Any]:
         or len(payload["entries"]) > MAX_ENTRIES
     ):
         raise ResearchMemoryError("Research-memory file has an invalid schema; failing closed.")
+    seen_cycles: set[str] = set()
+    previous_target: date | None = None
     for index, entry in enumerate(payload["entries"], start=1):
-        _validate_entry(entry, index)
+        checked = _validate_entry(entry, index)
+        if checked["cycle_id"] in seen_cycles:
+            raise ResearchMemoryError("Research-memory cycle IDs must be unique.")
+        seen_cycles.add(checked["cycle_id"])
+        current_target = date.fromisoformat(checked["target_date"])
+        if previous_target is not None and current_target < previous_target:
+            raise ResearchMemoryError("Research-memory entries must remain chronological.")
+        previous_target = current_target
     return payload
 
 
@@ -683,7 +692,7 @@ def direction_context(
     memory_path: str | Path = MEMORY_PATH,
     limit: int = MAX_CONTEXT_ENTRIES,
 ) -> list[dict[str, Any]]:
-    """Return bounded same-direction GENERAL history strictly older than this target."""
+    """Return bounded same-direction GENERAL history from prior runs no later than this target."""
     if direction not in {"forward", "reverse"}:
         raise ResearchMemoryError("Direction must be forward or reverse.")
     try:
@@ -696,7 +705,7 @@ def direction_context(
     entries = [
         item for item in memory["entries"]
         if item["direction"] == direction
-        and date.fromisoformat(item["target_date"]) < current_target
+        and date.fromisoformat(item["target_date"]) <= current_target
         and _validate_timestamp(item["created_at_utc"]) < datetime.now(timezone.utc)
     ]
     context = []
