@@ -371,6 +371,32 @@ class ResearchMemoryPersistenceTests(unittest.TestCase):
         self.assertEqual(len(reverse_context), 1)
         self.assertEqual(forward_context[0]["direction"], "forward")
         self.assertEqual(reverse_context[0]["direction"], "reverse")
+
+        # A local evaluation report is not trusted while the append-only
+        # ledger still says the claim is only CLAIMED.
+        claimed_ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+        claimed_ledger["entries"][0]["state"] = "CLAIMED"
+        write_json(ledger_path, claimed_ledger)
+        claimed_memory_path = root / "claimed-memory.json"
+        claimed_result = memory.record_cycle(
+            memory_path=claimed_memory_path,
+            archive_path=archive_path,
+            ledger_path=ledger_path,
+            run_status_path=root / "run-status.json",
+            forward_report_path=root / "forward.md",
+            reverse_report_path=root / "reverse.md",
+            sealed_plan_path=root / "sealed-plan.json",
+            claim_path=root / "claim.json",
+            evaluation_path=root / "evaluation.json",
+            run_id="123456790",
+            run_attempt="1",
+        )
+        claimed_memory = memory.load_memory(claimed_memory_path)
+        self.assertEqual(claimed_result["entries_added"], 2)
+        self.assertTrue(all(item["status"] == "CLAIMED_EVALUATION_FAILED" for item in claimed_memory["entries"]))
+        self.assertTrue(all(item["evaluation_feedback"] is None for item in claimed_memory["entries"]))
+        self.assertTrue(all(item["failure"]["failure_metadata_only"] for item in claimed_memory["entries"]))
+
         with self.assertRaisesRegex(memory.ResearchMemoryError, "already exists"):
             memory.record_cycle(
                 memory_path=memory_path,
