@@ -187,7 +187,6 @@ def _validate_entry(entry: Any, expected_id: int) -> dict[str, Any]:
         if not isinstance(proposal, dict) or set(proposal) != PROPOSAL_KEYS:
             raise ResearchMemoryError("Stored proposal does not match the validated proposal schema.")
         proposal_id = proposal.get("hypothesis_id")
-        expected_prefix = "HYP-0" if entry["direction"] == "forward" else "HYP-5"
         if not isinstance(proposal_id, str) or not re.fullmatch(r"HYP-[0-9]{3}", proposal_id):
             raise ResearchMemoryError("Stored proposal ID is invalid.")
         numeric_id = int(proposal_id[-3:])
@@ -220,8 +219,8 @@ def _validate_entry(entry: Any, expected_id: int) -> dict[str, Any]:
         _reject_number_values(entry["evaluation_feedback"], "Evaluation feedback")
         if entry["evaluation_feedback"].get("holdout_consumed") is not True:
             raise ResearchMemoryError("Evaluation feedback must mark the sealed holdout as consumed.")
-        expected_predictive = entry["direction"] == "forward"
-        if entry["evaluation_feedback"].get("predictive_evidence") is not expected_predictive:
+        expected_retrospective = entry["direction"] == "reverse"
+        if entry["evaluation_feedback"].get("retrospective_only") is not expected_retrospective:
             raise ResearchMemoryError("Evaluation feedback direction classification is invalid.")
     if entry["failure"] is not None and not isinstance(entry["failure"], dict):
         raise ResearchMemoryError("Failure metadata must be an object or null.")
@@ -336,13 +335,13 @@ def _extract_evaluation_feedback(
         spec_hash = selection.get("forward_spec_sha256")
         holdout = _safe_metric_summary(report.get("forward_walk_forward"))
         cv = _safe_metric_summary(report.get("time_ordered_cross_validation"))
-        predictive = True
+        retrospective_only = False
     else:
         candidate_id = selection.get("reverse_hypothesis_id")
         spec_hash = selection.get("reverse_spec_sha256")
         holdout = _safe_metric_summary(report.get("reverse_discovered_candidate_holdout"))
         cv = _safe_metric_summary(report.get("reverse_time_ordered_cross_validation"))
-        predictive = False
+        retrospective_only = True
     if not isinstance(candidate_id, str) or not isinstance(spec_hash, str) or not HEX64.fullmatch(spec_hash):
         raise ResearchMemoryError("Directional evaluation candidate provenance is invalid.")
     return {
@@ -353,7 +352,7 @@ def _extract_evaluation_feedback(
         "holdout": holdout,
         "cross_validation": cv,
         "holdout_consumed": True,
-        "predictive_evidence": predictive,
+        "retrospective_only": retrospective_only,
         "raw_holdout_dates_stored": False,
         "per_draw_results_stored": False,
         "draw_number_values_stored": False,
