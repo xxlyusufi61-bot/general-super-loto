@@ -2,8 +2,9 @@
 
 This module deliberately never imports general_memory.json, legacy formula files,
 or archive rows into model context. It stores validated GENERAL-origin hypotheses,
-safe execution specifications, aggregate evaluation feedback, and sanitized
-failure metadata. Consumed holdout rows are never copied into this memory.
+safe execution specifications, safe aggregate evaluation feedback, sanitized full
+report narratives, and sanitized failure metadata. Consumed holdout rows are never
+copied into this memory.
 """
 from __future__ import annotations
 
@@ -24,10 +25,10 @@ from general_hypothesis_proposals import (
 from general_execution_spec_parser import parse_execution_spec_block
 from general_hypothesis_execution import validate_execution_spec
 
-VERSION = "0.1.0"
-SCHEMA_VERSION = 1
+VERSION = "0.2.0"
+SCHEMA_VERSION = 2
 PROJECT = "GENERAL Super Loto"
-RESEARCH_EPOCH = "general-open-research-memory-v1"
+RESEARCH_EPOCH = "general-open-research-memory-v2"
 RESEARCH_SCOPE_START = date(2020, 8, 2)
 SOURCE = "GENERAL/open-research"
 MEMORY_PATH = Path("general_research_memory.json")
@@ -49,11 +50,24 @@ MAX_LESSON_ITEMS = 6
 MAX_LESSON_CHARS = 700
 MAX_CONTEXT_ENTRIES = 6
 MAX_CONTEXT_CHARS = 18000
+MAX_REPORT_CHARS = 9000
 MAX_ENTRIES = 10000
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
+REPORT_DATE_PATTERN = re.compile(r"(?<![0-9])\d{4}-\d{2}-\d{2}(?![0-9])")
+REPORT_SECRET_PATTERN = re.compile(
+    r"(?i)(?:\bnvapi-[A-Za-z0-9_-]{12,}\b|"
+    r"\bgh[pousr]_[A-Za-z0-9]{20,}\b|"
+    r"\b(?:sk|pk)-[A-Za-z0-9_-]{20,}\b|"
+    r"\bBearer\s+[A-Za-z0-9._~+/-]{20,}\b|"
+    r"\b[0-9]{8,12}:[A-Za-z0-9_-]{25,}\b)"
+)
 DRAW_SET_TEXT = re.compile(
     r"(?<![0-9.])(?:[1-9]|[1-5][0-9]|60)"
     r"(?:(?:\s*[,;|/]\s*|\s+)(?:[1-9]|[1-5][0-9]|60)){5}(?![0-9.])"
+)
+DRAW_SET_QUOTED_TEXT = re.compile(
+    r"""(?<![0-9.])["']?(?:[1-9]|[1-5][0-9]|60)["']?"""
+    r"""(?:(?:\s*[,;|/]\s*|\s+)["']?(?:[1-9]|[1-5][0-9]|60)["']?){5}(?![0-9.])"""
 )
 ALLOWED_STATUSES = {
     "HYPOTHESES_CAPTURED",
@@ -93,7 +107,10 @@ def _sha(value: bytes) -> str:
 
 def _contains_six_number_set(value: Any) -> bool:
     if isinstance(value, str):
-        return DRAW_SET_TEXT.search(value) is not None
+        return (
+            DRAW_SET_TEXT.search(value) is not None
+            or DRAW_SET_QUOTED_TEXT.search(value) is not None
+        )
     if isinstance(value, list):
         if (
             len(value) == 6
@@ -112,15 +129,28 @@ def _reject_number_values(value: Any, label: str) -> None:
         raise ResearchMemoryError(label + " contains a six-number value set; memory write refused.")
 
 
+def _reject_consumed_validation_dates(
+    value: Any,
+    forbidden_dates: set[str] | None,
+    label: str,
+) -> None:
+    if not forbidden_dates:
+        return
+    serialized = _canonical(value).decode("utf-8")
+    if set(REPORT_DATE_PATTERN.findall(serialized)).intersection(forbidden_dates):
+        raise ResearchMemoryError(label + " contains a consumed validation date; memory write refused.")
+
+
 def empty_memory() -> dict[str, Any]:
     return {
         "schema_version": SCHEMA_VERSION,
         "project": PROJECT,
         "research_epoch": RESEARCH_EPOCH,
         "purpose": (
-            "Append-only GENERAL-origin directional research memory. No legacy user/Pydroid "
-            "experiments, raw archive rows, consumed holdout rows, target values, or predicted "
-            "number values are permitted."
+            "Append-only GENERAL-origin directional research memory. It may retain validated "
+            "hypotheses, safe execution specifications, sanitized same-direction report narratives, "
+            "and safe aggregate feedback. No legacy user/Pydroid experiments, raw archive rows, "
+            "consumed holdout rows/dates, target values, or predicted number values are permitted."
         ),
         "entries": [],
     }
@@ -147,8 +177,10 @@ def _validate_entry(entry: Any, expected_id: int) -> dict[str, Any]:
     required = {
         "entry_id", "cycle_id", "source", "research_epoch", "direction",
         "created_at_utc", "target_date", "archive_sha256", "runner_version",
-        "status", "research_report_sha256", "proposal_status", "proposals",
-        "execution_spec_status", "execution_spec", "execution_spec_sha256",
+        "status", "research_report_sha256", "research_report_content",
+        "research_report_content_sha256", "research_report_content_status",
+        "proposal_status", "proposals", "execution_spec_status", "execution_spec",
+        "execution_spec_sha256",
         "learning_notes", "evaluation_feedback", "failure", "discovery_window",
         "content_sha256",
     }
@@ -175,10 +207,37 @@ def _validate_entry(entry: Any, expected_id: int) -> dict[str, Any]:
         raise ResearchMemoryError("Research-memory archive provenance is required.")
     if entry["research_report_sha256"] is None and entry["status"] != "REQUEST_FAILED":
         raise ResearchMemoryError("A report-backed research entry must include its report hash.")
-    for name in ("archive_sha256", "research_report_sha256", "content_sha256"):
+    for name in (
+        "archive_sha256", "research_report_sha256",
+        "research_report_content_sha256", "content_sha256",
+    ):
         value = entry[name]
         if value is not None and (not isinstance(value, str) or not HEX64.fullmatch(value)):
             raise ResearchMemoryError("Research-memory " + name + " is invalid.")
+    report_content_status = entry["research_report_content_status"]
+    if report_content_status not in {
+        "STORED", "OMITTED_SENSITIVE_CONTENT", "OMITTED_UNSUPPORTED_FORMAT",
+        "OMITTED_SIZE_LIMIT", "NOT_AVAILABLE",
+    }:
+        raise ResearchMemoryError("Research-report content status is invalid.")
+    report_content = entry["research_report_content"]
+    if entry["research_report_sha256"] is None:
+        if report_content_status != "NOT_AVAILABLE" or report_content is not None or entry["research_report_content_sha256"] is not None:
+            raise ResearchMemoryError("A missing source report cannot have retained report content.")
+    elif report_content_status == "NOT_AVAILABLE":
+        raise ResearchMemoryError("A present source report cannot be marked unavailable.")
+    if report_content_status == "STORED":
+        if (
+            not isinstance(report_content, str)
+            or not 1 <= len(report_content) <= MAX_REPORT_CHARS
+            or entry["research_report_content_sha256"] != _sha(report_content.encode("utf-8"))
+        ):
+            raise ResearchMemoryError("Stored research-report content or its hash is invalid.")
+        _reject_number_values(report_content, "Stored research-report content")
+        if REPORT_SECRET_PATTERN.search(report_content):
+            raise ResearchMemoryError("Stored research-report content contains a secret-like value.")
+    elif report_content is not None or entry["research_report_content_sha256"] is not None:
+        raise ResearchMemoryError("Omitted research-report content must not retain text or a content hash.")
     if entry["status"] not in ALLOWED_STATUSES:
         raise ResearchMemoryError("Research-memory status is invalid.")
     if not isinstance(entry["runner_version"], str) or not entry["runner_version"]:
@@ -360,6 +419,8 @@ def _validate_entry(entry: Any, expected_id: int) -> dict[str, Any]:
         ):
             raise ResearchMemoryError("Discovery-window chronology or scope is invalid.")
     _reject_number_values(window, "Discovery-window metadata")
+    if REPORT_SECRET_PATTERN.search(_canonical(entry).decode("utf-8")):
+        raise ResearchMemoryError("Research-memory entry contains a secret-like value.")
     if entry["content_sha256"] != _entry_hash(entry):
         raise ResearchMemoryError("Research-memory entry hash mismatch.")
     return entry
@@ -429,6 +490,69 @@ def _parse_learning_notes(report: str) -> dict[str, list[str]]:
         result[key] = checked
     _reject_number_values(result, "Learning-notes block")
     return result
+
+
+def _sanitize_research_report(
+    report: str,
+    *,
+    forbidden_validation_dates: set[str] | None = None,
+) -> tuple[str | None, str]:
+    """Retain complete safe report prose after separating validated machine blocks.
+
+    Structured proposals, execution specs, learning notes, and rule-change requests
+    are not copied as raw text. Their permitted fields are handled by their own
+    validators or their separate approval path.
+    """
+    if not isinstance(report, str):
+        return None, "OMITTED_UNSUPPORTED_FORMAT"
+    normalized = report.replace("\r\n", "\n").replace("\r", "\n")
+    if len(normalized) > MAX_REPORT_CHARS:
+        return None, "OMITTED_SIZE_LIMIT"
+
+    blocks = (
+        ("<RULE_CHANGE_REQUEST_JSON>", "</RULE_CHANGE_REQUEST_JSON>",
+         "[Structured rule-change request omitted from research memory; separate approval path applies.]"),
+        ("<HYPOTHESIS_PROPOSALS_JSON>", "</HYPOTHESIS_PROPOSALS_JSON>",
+         "[Validated hypothesis proposals are stored in their structured directional fields.]"),
+        ("<HYPOTHESIS_EXECUTION_SPECS_JSON>", "</HYPOTHESIS_EXECUTION_SPECS_JSON>",
+         "[Validated execution specification is stored in its structured directional field.]"),
+        (LESSONS_START, LESSONS_END,
+         "[Validated learning notes are stored in their structured directional field.]"),
+    )
+    for opening, closing, placeholder in blocks:
+        open_count = normalized.count(opening)
+        close_count = normalized.count(closing)
+        if open_count == 0 and close_count == 0:
+            continue
+        if open_count != 1 or close_count != 1:
+            return None, "OMITTED_UNSUPPORTED_FORMAT"
+        start = normalized.index(opening)
+        end = normalized.index(closing)
+        if end < start + len(opening):
+            return None, "OMITTED_UNSUPPORTED_FORMAT"
+        normalized = (
+            normalized[:start]
+            + "\n"
+            + placeholder
+            + "\n"
+            + normalized[end + len(closing):]
+        )
+
+    normalized = normalized.strip()
+    if not normalized:
+        return None, "OMITTED_UNSUPPORTED_FORMAT"
+
+    # Reports are public repository content. Fail closed rather than retaining
+    # number sets, already-consumed holdout dates, or secret-like strings.
+    if _contains_six_number_set(normalized):
+        return None, "OMITTED_SENSITIVE_CONTENT"
+    forbidden = forbidden_validation_dates or set()
+    report_dates = set(REPORT_DATE_PATTERN.findall(normalized))
+    if report_dates.intersection(forbidden):
+        return None, "OMITTED_SENSITIVE_CONTENT"
+    if REPORT_SECRET_PATTERN.search(normalized):
+        return None, "OMITTED_SENSITIVE_CONTENT"
+    return normalized, "STORED"
 
 
 def _safe_metric_summary(value: Any) -> dict[str, Any]:
@@ -520,10 +644,12 @@ def _load_optional_json(path: str | Path) -> dict[str, Any] | None:
 def _direction_artifacts(
     direction: str,
     report_path: str | Path,
-) -> tuple[str | None, dict[str, Any], dict[str, Any], dict[str, list[str]]]:
+    *,
+    forbidden_validation_dates: set[str] | None = None,
+) -> tuple[str | None, str | None, str, dict[str, Any], dict[str, Any], dict[str, list[str]]]:
     path = Path(report_path)
     if not path.is_file():
-        return None, {
+        return None, None, "NOT_AVAILABLE", {
             "status": "NOT_RUN", "proposals": [],
         }, {
             "status": "NOT_RUN", "specifications": [],
@@ -561,8 +687,20 @@ def _direction_artifacts(
     _reject_number_values(proposals["proposals"], "Directional proposals")
     _reject_number_values(specs["specifications"], "Directional specifications")
     _reject_number_values(notes, "Directional learning notes")
-    return report, proposals, specs, notes
-
+    _reject_consumed_validation_dates(
+        proposals["proposals"], forbidden_validation_dates, "Directional proposals"
+    )
+    _reject_consumed_validation_dates(
+        specs["specifications"], forbidden_validation_dates, "Directional specifications"
+    )
+    _reject_consumed_validation_dates(
+        notes, forbidden_validation_dates, "Directional learning notes"
+    )
+    safe_report, safe_report_status = _sanitize_research_report(
+        report,
+        forbidden_validation_dates=forbidden_validation_dates,
+    )
+    return report, safe_report, safe_report_status, proposals, specs, notes
 
 def _build_entry(
     *,
@@ -580,8 +718,15 @@ def _build_entry(
     error_type: str | None,
     shared_failure: bool,
     evaluation: dict[str, Any] | None,
+    forbidden_validation_dates: set[str] | None = None,
 ) -> dict[str, Any]:
-    report, proposal_doc, specs_doc, notes = _direction_artifacts(direction, report_path)
+    (
+        report, safe_report, safe_report_status, proposal_doc, specs_doc, notes
+    ) = _direction_artifacts(
+        direction,
+        report_path,
+        forbidden_validation_dates=forbidden_validation_dates,
+    )
     has_report = report is not None
     source_proposals = proposal_doc.get("proposals", [])
     offset = 0 if direction == "forward" else 500
@@ -638,9 +783,12 @@ def _build_entry(
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "target_date": target_date,
         "archive_sha256": archive_sha256,
-        "runner_version": "0.8.0",
+        "runner_version": "0.9.0",
         "status": status,
         "research_report_sha256": _sha(report.encode("utf-8")) if report is not None else None,
+        "research_report_content": safe_report,
+        "research_report_content_sha256": _sha(safe_report.encode("utf-8")) if safe_report is not None else None,
+        "research_report_content_status": safe_report_status,
         "proposal_status": proposal_doc.get("status", "NOT_RUN"),
         "proposals": proposals,
         "execution_spec_status": specs_doc.get("status", "NOT_RUN"),
@@ -676,12 +824,13 @@ def record_cycle(
     """Append one entry per completed/failed direction; raw draws never enter this function."""
     if not run_id or not run_attempt:
         raise ResearchMemoryError("GitHub run ID and attempt are required for idempotent memory records.")
-    from general_sealed_evaluation import load_archive, load_ledger
+    from general_sealed_evaluation import get_used_validation_dates, load_archive, load_ledger
 
     archive = load_archive(archive_path)
     target = archive["last_date"]
     archive_hash = archive["archive_sha256"]
     ledger = load_ledger(ledger_path)
+    used_validation_dates = get_used_validation_dates(ledger)
     run_status = _load_optional_json(run_status_path) or {}
     claim = _load_optional_json(claim_path)
     evaluation_report = _load_optional_json(evaluation_path)
@@ -804,6 +953,7 @@ def record_cycle(
             error_type=error_type,
             shared_failure=shared_failure,
             evaluation=direction_eval,
+            forbidden_validation_dates=used_validation_dates,
         )
         if any(old["cycle_id"] == entry["cycle_id"] for old in memory["entries"]):
             raise ResearchMemoryError("This run/direction already exists in memory; refusing a duplicate append.")
@@ -917,6 +1067,9 @@ def direction_context(
             "archive_sha256": entry["archive_sha256"],
             "runner_version": entry["runner_version"],
             "research_report_sha256": entry["research_report_sha256"],
+            "research_report_content_status": entry["research_report_content_status"],
+            "research_report_content": entry["research_report_content"],
+            "research_report_content_is_unverified": True,
             "status": entry["status"],
             "proposal_status": entry["proposal_status"],
             "hypotheses": [_compact_proposal(item) for item in entry["proposals"][:2]],
