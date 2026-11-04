@@ -130,7 +130,7 @@ class DirectionalMemoryContextTests(unittest.TestCase):
             reverse = memory.direction_context("reverse", "2026-11-04", memory_path=path)
         self.assertEqual(len(forward), 2)
         self.assertEqual(forward[0]["direction"], "forward")
-        self.assertEqual(forward[1]["prior_target_date"], "2026-11-04")
+        self.assertEqual(forward[0]["prior_target_date"], "2026-11-04")
         self.assertEqual(len(reverse), 1)
         self.assertEqual(reverse[0]["direction"], "reverse")
         self.assertNotIn("2026-11-05", json.dumps(forward))
