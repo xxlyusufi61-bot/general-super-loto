@@ -60,6 +60,14 @@ def make_directional_report(direction):
         + "<HYPOTHESIS_EXECUTION_SPECS_JSON>\n"
         + json.dumps(specs)
         + "\n</HYPOTHESIS_EXECUTION_SPECS_JSON>\n"
+        + research.LESSONS_START
+        + json.dumps({
+            "schema_version": 1,
+            "observations": ["The fixed definition is reproducible."],
+            "failed_approaches": ["A moving threshold was not stable."],
+            "next_tests": ["Compare against a uniform random baseline."],
+        })
+        + research.LESSONS_END
     )
 
 
@@ -311,6 +319,41 @@ class OpenResearchIsolationTests(unittest.TestCase):
         self.assertEqual(proposals["status"], "VALID_PROPOSALS")
         self.assertEqual(specs["status"], "INCOMPLETE_DIRECTIONAL_SPECS")
         self.assertFalse(specs["dsl_validated"])
+
+    def test_directional_memory_context_is_injected_only_into_its_own_request(self):
+        target, train = research.isolate_pre_target(self.rows)
+        forward_memory = [{
+            "direction": "forward",
+            "status": "HYPOTHESES_CAPTURED",
+            "hypotheses": [{"hypothesis": "FORWARD_ONLY_PRIOR_HYPOTHESIS"}],
+        }]
+        reverse_memory = [{
+            "direction": "reverse",
+            "status": "HYPOTHESES_CAPTURED",
+            "hypotheses": [{"hypothesis": "REVERSE_ONLY_PRIOR_HYPOTHESIS"}],
+        }]
+        forward_system = research.build_messages(
+            target, train, direction="forward", prior_memory=forward_memory
+        )[0]["content"]
+        reverse_system = research.build_messages(
+            target, train, direction="reverse", prior_memory=reverse_memory
+        )[0]["content"]
+        self.assertIn("FORWARD_ONLY_PRIOR_HYPOTHESIS", forward_system)
+        self.assertNotIn("REVERSE_ONLY_PRIOR_HYPOTHESIS", forward_system)
+        self.assertIn("REVERSE_ONLY_PRIOR_HYPOTHESIS", reverse_system)
+        self.assertNotIn("FORWARD_ONLY_PRIOR_HYPOTHESIS", reverse_system)
+        self.assertIn("<RESEARCH_LEARNING_NOTES_JSON>", forward_system)
+        self.assertIn("consumed feedback as fresh independent validation", forward_system)
+
+    def test_cross_direction_memory_is_rejected_before_prompt_creation(self):
+        target, train = research.isolate_pre_target(self.rows)
+        with self.assertRaisesRegex(ValueError, "another direction"):
+            research.build_messages(
+                target,
+                train,
+                direction="forward",
+                prior_memory=[{"direction": "reverse", "status": "UNVERIFIED"}],
+            )
 
     def test_invalid_direction_is_rejected_before_payload_creation(self):
         target, train = research.isolate_pre_target(self.rows)
