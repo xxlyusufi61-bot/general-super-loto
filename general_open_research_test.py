@@ -626,6 +626,69 @@ class NvidiaUsageObservationTests(unittest.TestCase):
                 )
             mocked_connection_factory.assert_not_called()
 
+    def test_https_connection_uses_standard_http_connect_proxy_without_logging_credentials(self):
+        with patch.object(
+            research.urllib.request,
+            "getproxies",
+            return_value={"https": "http://proxy-user:proxy-pass@proxy.example:8080"},
+        ), patch.object(
+            research.urllib.request, "proxy_bypass", return_value=False
+        ), patch(
+            "general_open_research.http.client.HTTPSConnection"
+        ) as https_connection:
+            connection = https_connection.return_value
+            result = research._create_nvidia_connection(19)
+
+        self.assertIs(result, connection)
+        https_connection.assert_called_once_with(
+            "proxy.example",
+            8080,
+            timeout=19,
+            context=unittest.mock.ANY,
+        )
+        connection.set_tunnel.assert_called_once_with(
+            "integrate.api.nvidia.com",
+            443,
+            headers={"Proxy-Authorization": "Basic cHJveHktdXNlcjpwcm94eS1wYXNz"},
+        )
+
+    def test_https_connection_honors_no_proxy_bypass(self):
+        with patch.object(
+            research.urllib.request,
+            "getproxies",
+            return_value={"https": "http://proxy.example:8080"},
+        ), patch.object(
+            research.urllib.request, "proxy_bypass", return_value=True
+        ), patch(
+            "general_open_research.http.client.HTTPSConnection"
+        ) as https_connection:
+            connection = https_connection.return_value
+            result = research._create_nvidia_connection(11)
+
+        self.assertIs(result, connection)
+        https_connection.assert_called_once_with(
+            "integrate.api.nvidia.com",
+            443,
+            timeout=11,
+            context=unittest.mock.ANY,
+        )
+        connection.set_tunnel.assert_not_called()
+
+    def test_unsupported_https_proxy_fails_closed_before_connection(self):
+        with patch.object(
+            research.urllib.request,
+            "getproxies",
+            return_value={"https": "https://proxy.example:8443"},
+        ), patch.object(
+            research.urllib.request, "proxy_bypass", return_value=False
+        ), patch(
+            "general_open_research.http.client.HTTPSConnection"
+        ) as https_connection:
+            with self.assertRaisesRegex(RuntimeError, "HTTP CONNECT endpoint"):
+                research._create_nvidia_connection(11)
+        https_connection.assert_not_called()
+
+
     def test_connection_timeout_is_distinguished_from_header_timeout(self):
         env = {
             "GENERAL_CONFIRM_LIVE_CALLS": CONFIRMATION_PHRASE,
@@ -718,6 +781,59 @@ class NvidiaUsageObservationTests(unittest.TestCase):
         finally:
             Path("/tmp/general_nvidia_api_attempted").unlink(missing_ok=True)
             Path("/tmp/general_nvidia_api_succeeded").unlink(missing_ok=True)
+
+    def test_remote_disconnected_before_headers_is_recorded_and_never_retried(self):
+        env = {
+            "GENERAL_CONFIRM_LIVE_CALLS": CONFIRMATION_PHRASE,
+            "GENERAL_NVIDIA_GUARD_PASSED": "1",
+            "GENERAL_ALLOW_NVIDIA_CALL": "true",
+            "GENERAL_NVIDIA_FREE_USAGE_VERIFIED": "true",
+            "NVIDIA_API_KEY": "test-secret",
+        }
+        saved = []
+        connection = make_fake_connection()
+        connection.getresponse.side_effect = http.client.RemoteDisconnected(
+            "synthetic remote closed before HTTP response"
+        )
+        try:
+            with patch.dict(os.environ, env, clear=True), patch.object(
+                research, "reserve_nvidia_request"
+            ) as reserve, patch.object(
+                research,
+                "save_usage_observation",
+                side_effect=lambda observation, **kwargs: saved.append(observation),
+            ), patch(
+                "general_open_research._create_nvidia_connection",
+                return_value=connection,
+            ) as connection_factory:
+                with self.assertRaisesRegex(RuntimeError, "RemoteDisconnected"):
+                    research.call_model(
+                        [{"role": "user", "content": "synthetic header disconnect"}],
+                        request_label="forward",
+                    )
+                self.assertEqual(connection_factory.call_count, 1)
+                connection.endheaders.assert_called_once()
+                connection.getresponse.assert_called_once()
+                reserve.assert_called_once_with(
+                    "open-research-forward",
+                    diagnostic_exception=False,
+                )
+            self.assertEqual(len(saved), 1)
+            self.assertEqual(saved[0]["failure_stage"], "wait_for_headers")
+            self.assertEqual(
+                saved[0]["network_error_type"], "RemoteDisconnected"
+            )
+            self.assertEqual(
+                saved[0]["request_delivery_state"],
+                "sent_to_socket_provider_receipt_unconfirmed",
+            )
+            self.assertIsNone(saved[0]["http_status"])
+            self.assertEqual(saved[0]["automatic_retries"], 0)
+            self.assertEqual(research._NVIDIA_REQUESTS_ATTEMPTED, 1)
+        finally:
+            Path("/tmp/general_nvidia_api_attempted").unlink(missing_ok=True)
+            Path("/tmp/general_nvidia_api_succeeded").unlink(missing_ok=True)
+
 
     def test_stream_timeout_is_diagnosed_and_never_retried(self):
         env = {
@@ -938,8 +1054,9 @@ class NvidiaUsageObservationTests(unittest.TestCase):
             "Authorization": "synthetic-secret-header",
             "Set-Cookie": "synthetic-secret-cookie",
         }
-        response.readline.side_effect = OSError("synthetic stream reset")
+        response.readline.side_effect = ConnectionResetError("synthetic SSE connection reset")
         saved = []
+        connection = make_fake_connection(response)
         try:
             with patch.dict(os.environ, env, clear=True), patch.object(
                 research, "reserve_nvidia_request"
@@ -949,16 +1066,23 @@ class NvidiaUsageObservationTests(unittest.TestCase):
                 side_effect=lambda observation, **kwargs: saved.append(observation),
             ), patch(
                 "general_open_research._create_nvidia_connection",
-                return_value=make_fake_connection(response),
-            ):
+                return_value=connection,
+            ) as connection_factory:
                 with self.assertRaisesRegex(RuntimeError, "during read_stream"):
                     research.call_model(
                         [{"role": "user", "content": "metadata after HTTP response"}],
                         request_label="forward",
                     )
 
+            self.assertEqual(connection_factory.call_count, 1)
+            self.assertEqual(connection.getresponse.call_count, 1)
             self.assertEqual(len(saved), 1)
             self.assertEqual(saved[0]["http_status"], 200)
+            self.assertEqual(saved[0]["failure_stage"], "read_stream")
+            self.assertEqual(
+                saved[0]["network_error_type"], "ConnectionResetError"
+            )
+            self.assertEqual(saved[0]["request_delivery_state"], "response_received")
             self.assertEqual(
                 saved[0]["rate_limit_headers_returned"]["x-ratelimit-remaining-requests"],
                 "38",
