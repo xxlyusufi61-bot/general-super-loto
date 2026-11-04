@@ -67,7 +67,6 @@ METRIC_FIELDS = {
     "test_draw_count",
     "evaluated_draw_count",
     "validation_draw_count",
-    "test_draw_count",
     "folds",
     "fold_count",
     "zero_hit_count",
