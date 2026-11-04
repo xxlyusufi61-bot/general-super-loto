@@ -182,9 +182,22 @@ def _validate_entry(entry: Any, expected_id: int) -> dict[str, Any]:
         raise ResearchMemoryError("Proposal status is invalid.")
     if not isinstance(entry["proposals"], list) or len(entry["proposals"]) > 5:
         raise ResearchMemoryError("Stored proposal list is invalid.")
+    seen_proposals = set()
     for proposal in entry["proposals"]:
         if not isinstance(proposal, dict) or set(proposal) != PROPOSAL_KEYS:
             raise ResearchMemoryError("Stored proposal does not match the validated proposal schema.")
+        proposal_id = proposal.get("hypothesis_id")
+        expected_prefix = "HYP-0" if entry["direction"] == "forward" else "HYP-5"
+        if not isinstance(proposal_id, str) or not re.fullmatch(r"HYP-[0-9]{3}", proposal_id):
+            raise ResearchMemoryError("Stored proposal ID is invalid.")
+        numeric_id = int(proposal_id[-3:])
+        if (
+            proposal_id in seen_proposals
+            or (entry["direction"] == "forward" and not 1 <= numeric_id <= 5)
+            or (entry["direction"] == "reverse" and not 501 <= numeric_id <= 505)
+        ):
+            raise ResearchMemoryError("Stored proposal ID does not preserve its directional namespace.")
+        seen_proposals.add(proposal_id)
         if proposal.get("discovery_direction") != entry["direction"]:
             raise ResearchMemoryError("A directional memory entry contains another direction's proposal.")
         _reject_number_values(proposal, "Stored proposal")
@@ -421,20 +434,26 @@ def _build_entry(
 ) -> dict[str, Any]:
     report, proposal_doc, specs_doc, notes = _direction_artifacts(direction, report_path)
     has_report = report is not None
-    proposals = [
-        {key: item[key] for key in PROPOSAL_KEYS}
-        for item in proposal_doc.get("proposals", [])
-    ]
+    source_proposals = proposal_doc.get("proposals", [])
+    offset = 0 if direction == "forward" else 500
+    proposals = []
+    for index, item in enumerate(source_proposals):
+        mapped = {key: item[key] for key in PROPOSAL_KEYS}
+        mapped["hypothesis_id"] = "HYP-" + str(offset + index + 1).zfill(3)
+        proposals.append(mapped)
+    source_first_id = source_proposals[0]["hypothesis_id"] if source_proposals else None
     first_id = proposals[0]["hypothesis_id"] if proposals else None
     spec_items = specs_doc.get("specifications", [])
     matched_spec = next(
-        (item for item in spec_items if item.get("hypothesis_id") == first_id),
+        (item for item in spec_items if item.get("hypothesis_id") == source_first_id),
         None,
     )
     spec = matched_spec.get("execution_spec") if matched_spec else None
     spec_hash = _sha(_canonical(spec)) if isinstance(spec, dict) else None
     feedback = _extract_evaluation_feedback(evaluation, direction) if evaluation is not None else None
     if feedback is not None:
+        if feedback["candidate_id"] != first_id or feedback["spec_sha256"] != spec_hash:
+            raise ResearchMemoryError("Evaluation feedback does not match this direction's stored frozen candidate.")
         status = "EVALUATED"
     elif not has_report and failed_direction == direction:
         status = "REQUEST_FAILED"
@@ -534,6 +553,8 @@ def record_cycle(
         if (
             ledger_entry is None
             or ledger_entry.get("state") != "EVALUATED"
+            or ledger_entry.get("archive_sha256") != archive_hash
+            or ledger_entry.get("target_date") != target
             or evaluation_report.get("archive_sha256") != archive_hash
             or evaluation_report.get("target_date") != target
         ):
