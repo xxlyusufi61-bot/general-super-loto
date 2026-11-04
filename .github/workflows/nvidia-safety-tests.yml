@@ -26,6 +26,12 @@ jobs:
 
       - name: Run offline safety-lock and automation-state contract tests
         run: |
-          python3 -m py_compile general_automation_state.py general_automation_state_test.py
+          python3 -m py_compile general_automation_state.py general_automation_state_test.py general_automation_state_reader.py general_automation_state_reader_test.py
           python3 -m unittest discover -s tests -v
-          python3 -m unittest -v general_automation_state_test general_autonomous_research_test general_live_consent_test general_agent_workflow_guard_test
+          python3 -m unittest -v general_automation_state_test general_automation_state_reader_test general_autonomous_research_test general_live_consent_test general_agent_workflow_guard_test
+
+      - name: Verify the real state branch through read-only GitHub API calls
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python3 general_automation_state_reader.py
