@@ -171,6 +171,10 @@ def _validate_entry(entry: Any, expected_id: int) -> dict[str, Any]:
         raise ResearchMemoryError("Research-memory target date is not canonical.")
     if day < RESEARCH_SCOPE_START:
         raise ResearchMemoryError("Research-memory target is before the active 2020-08-02 scope.")
+    if entry["archive_sha256"] is None:
+        raise ResearchMemoryError("Research-memory archive provenance is required.")
+    if entry["research_report_sha256"] is None and entry["status"] != "REQUEST_FAILED":
+        raise ResearchMemoryError("A report-backed research entry must include its report hash.")
     for name in ("archive_sha256", "research_report_sha256", "content_sha256"):
         value = entry[name]
         if value is not None and (not isinstance(value, str) or not HEX64.fullmatch(value)):
@@ -298,8 +302,30 @@ def _validate_entry(entry: Any, expected_id: int) -> dict[str, Any]:
         )):
             raise ResearchMemoryError("Evaluation feedback must not contain raw holdout details or values.")
         _reject_number_values(feedback, "Evaluation feedback")
-    if entry["failure"] is not None and not isinstance(entry["failure"], dict):
-        raise ResearchMemoryError("Failure metadata must be an object or null.")
+    if entry["failure"] is not None:
+        failure = entry["failure"]
+        basic_failure_keys = {"stage", "error_type", "failure_metadata_only"}
+        rejection_failure_keys = basic_failure_keys | {"proposal_reasons", "execution_spec_reasons"}
+        if not isinstance(failure, dict) or set(failure) not in {frozenset(basic_failure_keys), frozenset(rejection_failure_keys)}:
+            raise ResearchMemoryError("Failure metadata does not match its safe schema.")
+        if (
+            not isinstance(failure.get("stage"), str)
+            or not 3 <= len(failure["stage"]) <= 80
+            or not isinstance(failure.get("error_type"), str)
+            or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,79}", failure["error_type"])
+            or failure.get("failure_metadata_only") is not True
+        ):
+            raise ResearchMemoryError("Failure metadata contains an invalid stage/type.")
+        for field in ("proposal_reasons", "execution_spec_reasons"):
+            if field in failure:
+                values = failure[field]
+                if (
+                    not isinstance(values, list)
+                    or len(values) > 4
+                    or any(not isinstance(item, str) or len(item) > 240 for item in values)
+                ):
+                    raise ResearchMemoryError("Structured rejection metadata is invalid.")
+        _reject_number_values(failure, "Failure metadata")
     window = entry["discovery_window"]
     if not isinstance(window, dict) or set(window) != {
         "start_date", "end_date", "draw_count", "holdout_dates_copied", "archive_rows_copied"
