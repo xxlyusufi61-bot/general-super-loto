@@ -293,7 +293,7 @@ def _validate_entry(entry: Any, expected_id: int) -> dict[str, Any]:
                 elif type(metric_value) not in {int, float} or not math.isfinite(float(metric_value)):
                     raise ResearchMemoryError("Evaluation aggregate metric is invalid.")
         if feedback.get("holdout_consumed") is not True:
-            raise ResearchMemoryError("Evaluation feedback must mark the sealed holdout as consumed.")
+            raise ResearchMemoryError("Evaluation feedback must mark the sealed holdout as permanently consumed.")
         expected_retrospective = entry["direction"] == "reverse"
         if feedback.get("retrospective_only") is not expected_retrospective:
             raise ResearchMemoryError("Evaluation feedback direction classification is invalid.")
