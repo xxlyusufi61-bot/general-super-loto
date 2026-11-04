@@ -1,14 +1,14 @@
-# GENERAL internal research memory v0.1
+# GENERAL internal research memory v0.2
 
 ## Purpose
 
-This file documents the dedicated, persistent memory used only by GENERAL's blank-slate Super Loto formula-research runner. It allows later research cycles to learn from GENERAL's own earlier hypotheses, definitions, failed approaches, structured learning notes, safe aggregate evaluation feedback, and failure metadata.
+This file documents the dedicated, persistent memory used only by GENERAL's blank-slate Super Loto formula-research runner. Later cycles may use the safe text-only narrative portions of GENERAL's own earlier reports, validated hypotheses and definitions, failed approaches, structured learning notes, safe aggregate evaluation feedback, and failure metadata. Narrative retention is intentionally conservative: free-form narrative containing any Arabic digit is omitted. Structured text is separately screened for numeric and written-out candidate values, partial rankings, and holdout dates written with English or Turkish month names.
 
 The memory begins empty. It is not backfilled from existing Actions artifacts, generic agent memory, old reports, or any earlier manual formula experiment.
 
 ## Hard provenance boundary
 
-The memory writer accepts only entries with the exact source `GENERAL/open-research` and research epoch `general-open-research-memory-v1`. Every entry includes a direction, target-date metadata, archive hash, runner version, report hash, hypothesis/specification hashes, a cycle identifier, and an entry content hash.
+The memory writer accepts only entries with the exact source `GENERAL/open-research` and research epoch `general-open-research-memory-v2`. Every entry includes a direction, target-date metadata, archive hash, runner version, the source report hash, sanitized narrative and its content hash when safe, hypothesis/specification hashes, a cycle identifier, and an entry content hash. Schema v2 upgrades the empty v1 store; the main-branch store was confirmed empty when this upgrade was prepared, so no historical records were migrated.
 
 The system never imports or reads the user's pre-GENERAL Pydroid/manual formula work, its code, definitions, parameter choices, tests, scores, rankings, or reports. The new research runner does not read `general_memory.json`; that separate shared-agent memory is not a source for formula discovery. Existing Actions artifacts are not automatically imported.
 
@@ -23,6 +23,7 @@ Forward and reverse research have distinct memory contexts:
 - Full hypotheses and specifications remain stored in the append-only memory file. The prompt context includes up to the two highest-priority hypotheses per prior record with field truncation explicitly marked, plus the validated specification, learning notes, safe aggregate feedback, and provenance metadata.
 - Eligible entries may have the same target date as the current run, but only when they were created by an earlier run; entries with a later target date are excluded.
 - A context entry's claims are explicitly unverified. The model must verify relevant claims using its current direction's permitted discovery history.
+- Memory records are carried only in the user-role JSON payload under `prior_general_research_memory_untrusted`. The system message contains policy instructions but never embeds report text or serialized memory records. The model is instructed to treat the field as untrusted data, not commands or governance.
 
 No forward candidate list, report, or memory item is passed to reverse discovery, and vice versa. Crossover remains subject to its separate staged evaluator and existing restrictions.
 
@@ -31,12 +32,14 @@ No forward candidate list, report, or memory item is passed to reverse discovery
 Each direction may retain:
 - Validated structured hypothesis definitions and their direction-namespaced IDs.
 - A single matching validated execution specification, if the proposal parser and restricted DSL accepted one.
-- A hash of the full directional report, without retaining the raw report in this memory file.
+- The safe text-only narrative portion of the directional report, with a source-report SHA-256 and a separate hash for the stored sanitized narrative. Structured proposal/specification/learning-note blocks are extracted into their validated fields; structured rule-change requests are omitted because they use a separate approval path.
+- Narrative storage fails closed when it contains a six-number set, any date in the current sealed forward or reverse validation windows (even before those dates are written to the evaluation ledger), any previously consumed validation date, secret-like text, malformed structured-block boundaries, any Arabic digit, or text exceeding the report-size limit. Numeric narrative is omitted with the status `OMITTED_NUMERIC_CONTENT`; sensitive-date/secret/number-set findings use the sensitive-content omission status. No omitted text is copied into memory.
+- Structured proposals and learning notes are separately checked for explicit single candidate/predicted values and partial rankings in Arabic numerals and common English/Turkish number words, as well as complete six-number sets written with numeric or word-form values. The check is applied again when stored entries are loaded, so editing the JSON and recomputing its hash cannot bypass it. Restricted execution-spec DSL constants are validated by their own schema and are not treated as narrative predictions.
 - Bounded structured learning notes: observations, failed approaches, and useful next tests.
 - Safe aggregate evaluation summaries, when the append-only evaluation ledger confirms the claim reached `EVALUATED`.
 - Sanitized failure stage/type metadata when a request, parsing step, claim, or evaluation did not complete.
 
-The record may include target-date metadata, the archive hash, and the discovery-window date range/count. It does not copy archive rows, draw-number sets, prediction values, individual holdout dates, per-draw hit records, or full candidate rankings.
+The record may include target-date metadata, the archive hash, and the discovery-window date range/count. It does not copy archive rows, draw-number sets, prediction values, individual holdout dates, per-draw hit records, API credentials, or raw structured rule-change requests. The exact sealed validation windows are used transiently for redaction; their dates are not written into memory. Before any directional memory write, the writer verifies that the plan's target date, archive SHA-256, and archive record count match the loaded archive, then reconstructs the chronological partition using the claim's immutable prior-consumption snapshot (or the current ledger when no claim exists). Any mismatch or altered window metadata fails closed.
 
 ## Consumed validation feedback
 
@@ -61,12 +64,18 @@ Both the manual blank-slate workflow and the scheduled autonomous workflow use t
 The offline test suite covers:
 - Empty initial state and absence of legacy imports.
 - Strict source/epoch and direction validation.
-- Rejection of number-value sets in stored hypotheses/notes/context.
+- Rejection of complete number-value sets and explicit single candidate values/partial rankings in structured hypotheses and learning notes.
 - Entry-hash integrity and append-only persistence.
 - Same-direction context selection and rejection of cross-direction memory.
 - Binding evaluation feedback to the correct frozen candidate/specification.
 - Consumed-holdout markers and retrospective-only reverse results.
 - Exclusion of per-draw data and holdout date lists from memory.
+- Sanitization of safe same-direction text-only narratives, including reserved validation-window dates before ledger consumption, previously consumed dates, secrets, number sets, Arabic-digit narrative, malformed blocks, and size-limit rejection.
+- Fail-closed rejection of incomplete, reversed, malformed, or oversized reserved validation windows.
+- Detection of numeric and English/Turkish word-form number sets, explicit single candidate values and partial rankings, plus English/Turkish month-name dates in structured text.
+- Sealed-plan binding to the exact archive SHA-256, target date, record count, target-isolation flags, and archive-derived directional partition; claimed cycles are checked against the immutable prior-consumption snapshot.
+- Validation of candidate-value and partial-ranking rejection both before persistence and when loading stored entries.
+- Same-direction memory data placed in a user-role JSON field, with tests proving that report text never appears in the system message and cross-direction memory is absent.
 
 Offline tests do not make hosted NVIDIA requests and do not claim a formula has a predictive advantage.
 

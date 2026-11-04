@@ -3,7 +3,7 @@ import hashlib
 import json
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import general_research_memory as memory
@@ -41,9 +41,14 @@ def sample_entry(direction="forward", entry_id=1, target="2026-10-20", status="H
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "target_date": target,
         "archive_sha256": "a" * 64,
-        "runner_version": "0.8.0",
+        "runner_version": "0.9.0",
         "status": status,
         "research_report_sha256": "b" * 64,
+        "research_report_content": "Synthetic report narrative for the " + direction + " direction.",
+        "research_report_content_sha256": hashlib.sha256(
+            ("Synthetic report narrative for the " + direction + " direction.").encode("utf-8")
+        ).hexdigest(),
+        "research_report_content_status": "STORED",
         "proposal_status": "VALID_PROPOSALS",
         "proposals": [proposal],
         "execution_spec_status": "VALID_EMPTY",
@@ -68,6 +73,253 @@ class ResearchMemoryValidationTests(unittest.TestCase):
     def test_valid_entry_passes_schema_and_hash(self):
         entry = sample_entry()
         self.assertEqual(memory._validate_entry(entry, 1), entry)
+
+    def test_report_content_hash_is_required_and_verified(self):
+        entry = sample_entry()
+        self.assertEqual(entry["research_report_content_status"], "STORED")
+        broken = copy.deepcopy(entry)
+        broken["research_report_content"] += " changed"
+        broken["content_sha256"] = _hash_entry(broken)
+        with self.assertRaisesRegex(memory.ResearchMemoryError, "report content or its hash"):
+            memory._validate_entry(broken, 1)
+
+    def test_report_content_cannot_retain_number_sets_or_secret_like_values(self):
+        for unsafe in (
+            "Candidate values: 1, 7, 13, 22, 34, 48.",
+            "Provider credential: nvapi-abcdefghijklmnopqrstuvwxyz123456.",
+        ):
+            entry = sample_entry()
+            entry["research_report_content"] = unsafe
+            entry["research_report_content_sha256"] = hashlib.sha256(unsafe.encode("utf-8")).hexdigest()
+            entry["content_sha256"] = _hash_entry(entry)
+            with self.assertRaises(memory.ResearchMemoryError):
+                memory._validate_entry(entry, 1)
+
+    def test_report_sanitizer_extracts_machine_blocks_and_preserves_full_narrative(self):
+        report = (
+            "Narrative section A.\\n"
+            "<HYPOTHESIS_PROPOSALS_JSON>machine block</HYPOTHESIS_PROPOSALS_JSON>\\n"
+            "Narrative section B."
+        )
+        sanitized, status = memory._sanitize_research_report(report)
+        self.assertEqual(status, "STORED")
+        self.assertIn("Narrative section A.", sanitized)
+        self.assertIn("Narrative section B.", sanitized)
+        self.assertIn("stored in their structured directional fields", sanitized)
+        self.assertNotIn("machine block", sanitized)
+
+    def test_report_sanitizer_omits_consumed_dates_number_sets_and_secrets(self):
+        cases = (
+            ("The consumed validation date was 2026-10-20.", {"2026-10-20"}),
+            ("The consumed validation date was 04.11.2026.", {"2026-11-04"}),
+            ("The consumed validation date was 11/04/2026.", {"2026-11-04"}),
+            ("A list appeared: 1, 7, 13, 22, 34, 48.", set()),
+            ("An echoed credential was nvapi-abcdefghijklmnopqrstuvwxyz123456.", set()),
+        )
+        for report, forbidden_dates in cases:
+            with self.subTest(report=report):
+                sanitized, status = memory._sanitize_research_report(
+                    report,
+                    forbidden_validation_dates=forbidden_dates,
+                )
+                self.assertIsNone(sanitized)
+                self.assertEqual(status, "OMITTED_SENSITIVE_CONTENT")
+
+    def test_report_sanitizer_omits_malformed_structured_blocks(self):
+        sanitized, status = memory._sanitize_research_report(
+            "Narrative <HYPOTHESIS_PROPOSALS_JSON>missing close marker"
+        )
+        self.assertIsNone(sanitized)
+        self.assertEqual(status, "OMITTED_UNSUPPORTED_FORMAT")
+
+    def test_consumed_validation_dates_are_rejected_from_structured_text_too(self):
+        with self.assertRaisesRegex(memory.ResearchMemoryError, "consumed validation date"):
+            memory._reject_consumed_validation_dates(
+                {"hypothesis": "Do not repeat date 2026-10-20."},
+                {"2026-10-20"},
+                "Synthetic proposal",
+            )
+
+
+    def test_written_month_dates_are_rejected_when_they_match_reserved_holdouts(self):
+        for report in (
+            "The sealed date is October 21, 2026.",
+            "Mühürlü tarih 21 Ekim 2026 olarak not edildi.",
+        ):
+            with self.subTest(report=report):
+                self.assertIsNone(
+                    memory._sanitize_research_report(
+                        report,
+                        forbidden_validation_dates={"2026-10-21"},
+                    )[0]
+                )
+                with self.assertRaisesRegex(memory.ResearchMemoryError, "reserved validation date"):
+                    memory._reject_consumed_validation_dates(
+                        {"hypothesis": report},
+                        {"2026-10-21"},
+                        "Synthetic proposal",
+                    )
+
+    def test_reserved_validation_windows_expand_forward_and_reverse_ranges(self):
+        plan = {
+            "regimes": {
+                "R60": {
+                    "validation_start_date": "2026-10-20",
+                    "validation_end_date": "2026-10-22",
+                    "reverse_validation_start_date": "2026-10-25",
+                    "reverse_validation_end_date": "2026-10-26",
+                }
+            }
+        }
+        reserved = memory._reserved_validation_dates(plan)
+        self.assertEqual(
+            reserved,
+            {
+                "2026-10-20", "2026-10-21", "2026-10-22",
+                "2026-10-25", "2026-10-26",
+            },
+        )
+        sanitized, status = memory._sanitize_research_report(
+            "The sealed validation interval includes 2026-10-21.",
+            forbidden_validation_dates=reserved,
+        )
+        self.assertIsNone(sanitized)
+        self.assertEqual(status, "OMITTED_SENSITIVE_CONTENT")
+
+    def test_invalid_or_oversized_reserved_validation_windows_fail_closed(self):
+        invalid_plans = (
+            {},
+            {"regimes": {}},
+            {"regimes": {"R60": {}}},
+            {
+                "regimes": {"R60": {
+                    "validation_start_date": "2026-10-20",
+                    "validation_end_date": None,
+                }}
+            },
+            {
+                "regimes": {"R60": {
+                    "validation_start_date": "not-a-date",
+                    "validation_end_date": "2026-10-22",
+                }}
+            },
+            {
+                "regimes": {"R60": {
+                    "validation_start_date": "2026-10-23",
+                    "validation_end_date": "2026-10-22",
+                }}
+            },
+            {
+                "regimes": {"R60": {
+                    "validation_start_date": "2020-01-01",
+                    "validation_end_date": "2030-02-01",
+                }}
+            },
+        )
+        for plan in invalid_plans:
+            with self.subTest(plan=plan):
+                with self.assertRaises(memory.ResearchMemoryError):
+                    memory._reserved_validation_dates(plan)
+
+    def test_numeric_freeform_narrative_is_omitted_even_without_a_six_number_set(self):
+        sanitized, status = memory._sanitize_research_report(
+            "The exploratory approach was reviewed in 4 separate folds."
+        )
+        self.assertIsNone(sanitized)
+        self.assertEqual(status, "OMITTED_NUMERIC_CONTENT")
+
+    def test_structured_candidate_values_and_partial_rankings_are_rejected(self):
+        unsafe_values = (
+            {"hypothesis": "The candidate is 17."},
+            {"output_rule": "Top-ranked values: 17, 22 and 31."},
+            {"known_risks": ["Predicted number: 22."]},
+            {"hypothesis": "17 is the highest-ranked candidate."},
+            {"hypothesis": "Number 17 remains only a candidate value."},
+            {"output_rule": "Candidate values include 17 and 22."},
+        )
+        for value in unsafe_values:
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(
+                    memory.ResearchMemoryError, "candidate/predicted number value"
+                ):
+                    memory._reject_candidate_value_references(value, "Synthetic proposal")
+
+        memory._reject_candidate_value_references(
+            {"exact_definition": "Use MOD5 and fixed 5-fold validation in R60."},
+            "Synthetic proposal",
+        )
+
+
+    def test_written_number_sets_and_candidate_values_are_rejected(self):
+        unsafe_sets = (
+            "Candidate values: three, nine, fifteen, twenty-four, thirty-six and fifty.",
+            "Aday sayıları: üç, dokuz, on beş, yirmi dört, otuz altı ve elli.",
+            "The winning numbers were 3, 9, 15, 24, 36 and 50.",
+        )
+        for value in unsafe_sets:
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(memory.ResearchMemoryError, "six-number value set"):
+                    memory._reject_number_values({"notes": [value]}, "test")
+
+        unsafe_candidates = (
+            {"hypothesis": "The winning number is seventeen."},
+            {"hypothesis": "The top-ranked value is twenty-four."},
+            {"hypothesis": "17 is the highest-ranked candidate."},
+            {"hypothesis": "Aday değer on yedi olarak seçildi."},
+            {"hypothesis": "Aday sayıları: on yedi."},
+            {"hypothesis": "Kazanan değerleri: yirmi dört."},
+            {"hypothesis": "On yedi aday olarak belirlendi."},
+            {"output_rule": "Predicted values: three, nine and fifteen."},
+        )
+        for value in unsafe_candidates:
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(
+                    memory.ResearchMemoryError, "candidate/predicted number value"
+                ):
+                    memory._reject_candidate_value_references(value, "Synthetic proposal")
+
+        memory._reject_candidate_value_references(
+            {"exact_definition": "Use MOD5 with fixed 5-fold validation in R60."},
+            "Synthetic proposal",
+        )
+
+    def test_stored_proposal_cannot_bypass_candidate_value_guard(self):
+        entry = sample_entry()
+        entry["proposals"][0]["hypothesis"] = "The candidate is 17."
+        entry["content_sha256"] = _hash_entry(entry)
+        with self.assertRaisesRegex(
+            memory.ResearchMemoryError, "candidate/predicted number value"
+        ):
+            memory._validate_entry(entry, 1)
+
+        entry = sample_entry()
+        entry["learning_notes"]["observations"] = [
+            "Predicted value 22 is not permitted in persistent memory."
+        ]
+        entry["content_sha256"] = _hash_entry(entry)
+        with self.assertRaisesRegex(
+            memory.ResearchMemoryError, "candidate/predicted number value"
+        ):
+            memory._validate_entry(entry, 1)
+
+    def test_stored_entries_reject_inflected_turkish_candidate_values(self):
+        entry = sample_entry()
+        entry["proposals"][0]["hypothesis"] = "Aday sayıları: on yedi."
+        entry["content_sha256"] = _hash_entry(entry)
+        with self.assertRaisesRegex(
+            memory.ResearchMemoryError, "candidate/predicted number value"
+        ):
+            memory._validate_entry(entry, 1)
+
+        entry = sample_entry()
+        entry["learning_notes"]["observations"] = [
+            "Kazanan değerleri: yirmi dört."
+        ]
+        entry["content_sha256"] = _hash_entry(entry)
+        with self.assertRaisesRegex(
+            memory.ResearchMemoryError, "candidate/predicted number value"
+        ):
+            memory._validate_entry(entry, 1)
 
     def test_legacy_source_or_epoch_is_rejected(self):
         entry = sample_entry()
@@ -95,6 +347,9 @@ class ResearchMemoryValidationTests(unittest.TestCase):
             "1; 5; 9; 12; 20; 45",
             "1 5 9 12 20 45",
             "1/5/9/12/20/45",
+            '"1", "5", "9", "12", "20", "45"',
+            "01, 07, 13, 22, 34, 48.",
+            "1-7-13-22-34-48",
         ):
             with self.subTest(value=value):
                 with self.assertRaisesRegex(memory.ResearchMemoryError, "six-number value set"):
@@ -201,6 +456,14 @@ class DirectionalMemoryContextTests(unittest.TestCase):
         bad = report.replace("A fixed tie-break improves reproducibility.", "Prediction: 3, 9, 15, 24, 36, 50")
         with self.assertRaisesRegex(memory.ResearchMemoryError, "six-number value set"):
             memory._parse_learning_notes(bad)
+        partial = report.replace(
+            "A fixed tie-break improves reproducibility.",
+            "The candidate is 17 and remains unverified.",
+        )
+        with self.assertRaisesRegex(
+            memory.ResearchMemoryError, "candidate/predicted number value"
+        ):
+            memory._parse_learning_notes(partial)
 
 
 def directional_report(direction):
@@ -235,6 +498,7 @@ def directional_report(direction):
         },
     }
     return (
+        "Complete narrative report for " + direction + " direction.\\n\\n"
         "<HYPOTHESIS_PROPOSALS_JSON>"
         + json.dumps({"schema_version": 2, "proposals": [proposal]})
         + "</HYPOTHESIS_PROPOSALS_JSON>"
@@ -254,6 +518,96 @@ def directional_report(direction):
 
 def write_json(path, value):
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+
+def make_archive_and_plan(root, used_validation_dates=None):
+    from general_sealed_evaluation import load_archive, public_plan, split_archive
+
+    start = date(2026, 9, 1)
+    rows = []
+    for index in range(60):
+        draw_day = (start + timedelta(days=index)).isoformat()
+        base = (index * 7) % 60 + 1
+        numbers = sorted({((base + offset * 11 - 1) % 60) + 1 for offset in range(6)})
+        rows.append({"date": draw_day, "numbers": numbers})
+    target_base = (60 * 7) % 60 + 1
+    rows.append({
+        "date": (start + timedelta(days=60)).isoformat(),
+        "numbers": sorted({((target_base + offset * 11 - 1) % 60) + 1 for offset in range(6)}),
+    })
+    archive_path = Path(root) / "archive.json"
+    write_json(archive_path, {"draws": rows})
+    archive = load_archive(archive_path)
+    partition = split_archive(
+        rows,
+        archive_sha256=archive["archive_sha256"],
+        used_validation_dates=set(used_validation_dates or set()),
+    )
+    return archive_path, archive, partition, public_plan(partition)
+
+
+class SealedPlanBindingTests(unittest.TestCase):
+    def test_plan_must_match_exact_archive_target_and_derived_partition(self):
+        with tempfile.TemporaryDirectory() as directory:
+            archive_path, archive, partition, plan = make_archive_and_plan(directory)
+            ledger = {"entries": []}
+            memory._validate_sealed_plan_binding(plan, archive, ledger, None)
+
+            changed_target = copy.deepcopy(plan)
+            changed_target["target_date"] = "2026-10-30"
+            with self.assertRaisesRegex(memory.ResearchMemoryError, "archive/target isolation"):
+                memory._validate_sealed_plan_binding(changed_target, archive, ledger, None)
+
+            changed_hash = copy.deepcopy(plan)
+            changed_hash["archive_sha256"] = "f" * 64
+            with self.assertRaisesRegex(memory.ResearchMemoryError, "archive/target isolation"):
+                memory._validate_sealed_plan_binding(changed_hash, archive, ledger, None)
+
+            changed_window = copy.deepcopy(plan)
+            changed_window["regimes"]["R60"]["validation_end_date"] = (
+                changed_window["regimes"]["R60"]["validation_start_date"]
+            )
+            with self.assertRaisesRegex(memory.ResearchMemoryError, "archive-derived chronological partition"):
+                memory._validate_sealed_plan_binding(changed_window, archive, ledger, None)
+
+    def test_claimed_plan_uses_immutable_prior_consumption_snapshot(self):
+        from general_sealed_evaluation import public_plan, split_archive
+
+        with tempfile.TemporaryDirectory() as directory:
+            archive_path, archive, _unused_partition, _unused_plan = make_archive_and_plan(directory)
+            rows = archive["rows"]
+            prior_date = rows[0]["date"]
+            prior_dates = {prior_date}
+            partition = split_archive(
+                rows,
+                archive_sha256=archive["archive_sha256"],
+                used_validation_dates=prior_dates,
+            )
+            plan = public_plan(partition)
+            current = partition["regimes"]["R60"]
+            claim_id = "c" * 64
+            ledger = {
+                "entries": [{
+                    "claim_id": claim_id,
+                    "target_date": archive["last_date"],
+                    "archive_sha256": archive["archive_sha256"],
+                    "previously_consumed_validation_dates": [prior_date],
+                    "validation_dates": [row["date"] for row in current["validation_rows"]],
+                    "reverse_validation_dates": [row["date"] for row in current["reverse_validation_rows"]],
+                }]
+            }
+            claim = {
+                "claim_created": True,
+                "claim_id": claim_id,
+                "target_date": archive["last_date"],
+                "archive_sha256": archive["archive_sha256"],
+            }
+            memory._validate_sealed_plan_binding(plan, archive, ledger, claim)
+
+            ledger["entries"][0]["previously_consumed_validation_dates"] = []
+            with self.assertRaisesRegex(memory.ResearchMemoryError, "archive-derived chronological partition"):
+                memory._validate_sealed_plan_binding(plan, archive, ledger, claim)
 
 
 class ResearchMemoryPersistenceTests(unittest.TestCase):
@@ -279,21 +633,16 @@ class ResearchMemoryPersistenceTests(unittest.TestCase):
                 memory._write_memory(backdated, path)
 
     def test_record_cycle_persists_only_directional_hypotheses_and_evaluation_feedback(self):
-        from general_sealed_evaluation import load_archive
-
-        rows = [
-            {"date": "2026-11-01", "numbers": [1, 7, 13, 22, 34, 48]},
-            {"date": "2026-11-02", "numbers": [2, 8, 14, 23, 35, 49]},
-            {"date": "2026-11-03", "numbers": [3, 9, 15, 24, 36, 50]},
-        ]
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            archive_path = root / "archive.json"
-            archive_bytes = json.dumps({"draws": rows}, ensure_ascii=False, indent=2).encode("utf-8")
-            archive_path.write_bytes(archive_bytes)
-            archive = load_archive(archive_path)
+            archive_path, archive, partition, sealed_plan = make_archive_and_plan(root)
             target = archive["last_date"]
             archive_hash = archive["archive_sha256"]
+            r60 = partition["regimes"]["R60"]
+            forward_validation_dates = [row["date"] for row in r60["validation_rows"]]
+            reverse_validation_dates = [row["date"] for row in r60["reverse_validation_rows"]]
+            consumed_date = forward_validation_dates[0]
+            reserved_date = forward_validation_dates[1]
             ledger_path = root / "ledger.json"
             claim_id = "d" * 64
             write_json(ledger_path, {
@@ -304,8 +653,9 @@ class ResearchMemoryPersistenceTests(unittest.TestCase):
                     "state": "EVALUATED",
                     "target_date": target,
                     "archive_sha256": archive_hash,
-                    "validation_dates": ["2026-10-20", "2026-10-21"],
-                    "reverse_validation_dates": ["2026-10-10", "2026-10-11"],
+                    "previously_consumed_validation_dates": [],
+                    "validation_dates": forward_validation_dates,
+                    "reverse_validation_dates": reverse_validation_dates,
                 }],
             })
             write_json(root / "run-status.json", {
@@ -321,15 +671,7 @@ class ResearchMemoryPersistenceTests(unittest.TestCase):
             })
             (root / "forward.md").write_text(directional_report("forward"), encoding="utf-8")
             (root / "reverse.md").write_text(directional_report("reverse"), encoding="utf-8")
-            write_json(root / "sealed-plan.json", {
-                "regimes": {
-                    "R60": {
-                        "discovery_start_date": "2026-09-01",
-                        "discovery_end_date": "2026-10-01",
-                        "discovery_count": 20,
-                    }
-                }
-            })
+            write_json(root / "sealed-plan.json", sealed_plan)
             write_json(root / "claim.json", {"claim_created": True, "claim_id": claim_id})
 
             spec = json.loads(
@@ -362,7 +704,7 @@ class ResearchMemoryPersistenceTests(unittest.TestCase):
                     "uniform_random_expected_hits_out_of_6": 0.6,
                     "validation_draw_count": 10,
                     "hit_distribution": {"0_hits": 1, "1_hit": 3, "2_hits": 4, "3_or_more_hits": 2},
-                    "per_draw": [{"test_date": "2026-10-20", "hit_count": 1}],
+                    "per_draw": [{"test_date": consumed_date, "hit_count": 1}],
                 },
                 "time_ordered_cross_validation": {
                     "folds": 5,
@@ -427,6 +769,77 @@ class ResearchMemoryPersistenceTests(unittest.TestCase):
             self.assertEqual(len(reverse_context), 1)
             self.assertEqual(forward_context[0]["direction"], "forward")
             self.assertEqual(reverse_context[0]["direction"], "reverse")
+            self.assertIn("Complete narrative report for forward direction.", forward_context[0]["research_report_content"])
+            self.assertNotIn("Complete narrative report for reverse direction.", forward_context[0]["research_report_content"])
+            self.assertIn("Complete narrative report for reverse direction.", reverse_context[0]["research_report_content"])
+            self.assertNotIn("Complete narrative report for forward direction.", reverse_context[0]["research_report_content"])
+            self.assertTrue(forward_context[0]["research_report_content_is_unverified"])
+            self.assertTrue(reverse_context[0]["research_report_content_is_unverified"])
+            self.assertEqual(saved["entries"][0]["research_report_content_status"], "STORED")
+
+            # The memory writer cross-checks report prose against every sealed
+            # validation date already consumed in the authoritative ledger.
+            (root / "forward.md").write_text(
+                directional_report("forward") + "\\nConsumed validation date: " + consumed_date + ".",
+                encoding="utf-8",
+            )
+            withheld_path = root / "withheld-report-memory.json"
+            withheld_result = memory.record_cycle(
+                memory_path=withheld_path,
+                archive_path=archive_path,
+                ledger_path=ledger_path,
+                run_status_path=root / "run-status.json",
+                forward_report_path=root / "forward.md",
+                reverse_report_path=root / "reverse.md",
+                sealed_plan_path=root / "sealed-plan.json",
+                claim_path=root / "claim.json",
+                evaluation_path=root / "evaluation.json",
+                run_id="123456791",
+                run_attempt="1",
+            )
+            withheld = memory.load_memory(withheld_path)
+            self.assertEqual(withheld_result["entries_added"], 2)
+            self.assertEqual(
+                withheld["entries"][0]["research_report_content_status"],
+                "OMITTED_SENSITIVE_CONTENT",
+            )
+            self.assertIsNone(withheld["entries"][0]["research_report_content"])
+            self.assertEqual(
+                withheld["entries"][1]["research_report_content_status"],
+                "STORED",
+            )
+            self.assertNotIn(consumed_date, json.dumps(withheld, ensure_ascii=False))
+
+            # A validation-window date is reserved before it appears in the
+            # append-only ledger, so an echoed date from that window is still
+            # omitted from the directional narrative.
+            (root / "forward.md").write_text(
+                directional_report("forward") + "\\nReserved validation date: " + reserved_date + ".",
+                encoding="utf-8",
+            )
+            reserved_path = root / "reserved-report-memory.json"
+            reserved_result = memory.record_cycle(
+                memory_path=reserved_path,
+                archive_path=archive_path,
+                ledger_path=ledger_path,
+                run_status_path=root / "run-status.json",
+                forward_report_path=root / "forward.md",
+                reverse_report_path=root / "reverse.md",
+                sealed_plan_path=root / "sealed-plan.json",
+                claim_path=root / "claim.json",
+                evaluation_path=root / "evaluation.json",
+                run_id="123456792",
+                run_attempt="1",
+            )
+            reserved_memory = memory.load_memory(reserved_path)
+            self.assertEqual(reserved_result["entries_added"], 2)
+            self.assertEqual(
+                reserved_memory["entries"][0]["research_report_content_status"],
+                "OMITTED_SENSITIVE_CONTENT",
+            )
+            self.assertIsNone(reserved_memory["entries"][0]["research_report_content"])
+            self.assertNotIn(reserved_date, json.dumps(reserved_memory, ensure_ascii=False))
+            (root / "forward.md").write_text(directional_report("forward"), encoding="utf-8")
 
             # A local evaluation report is not trusted while the append-only
             # ledger still says the claim is only CLAIMED.
