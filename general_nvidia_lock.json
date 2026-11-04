@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
-  "locked": true,
-  "reason": "The explicitly authorized one-request NVIDIA Chat Test #9 completed successfully; restoring the global lock before any further NVIDIA activity.",
-  "locked_at": "2026-11-04T20:49:00+00:00",
-  "locked_by": "GENERAL post-test safety restoration",
+  "locked": false,
+  "reason": "",
+  "locked_at": null,
+  "locked_by": null,
   "last_lock_reason": "The explicitly authorized one-request NVIDIA Chat Test #9 completed successfully; restoring the global lock before any further NVIDIA activity.",
-  "last_unlocked_at": "2026-11-04T20:28:05.099258+00:00",
-  "updated_at": "2026-11-04T20:49:00+00:00"
+  "last_unlocked_at": "2026-11-04T21:05:22.984070+00:00",
+  "updated_at": "2026-11-04T21:05:22.984070+00:00"
 }
