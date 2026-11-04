@@ -46,31 +46,39 @@ class StateSyncPreflightTests(unittest.TestCase):
             stamp=STAMP,
             locked_by="unit-test",
         )
+        years = range(2020, 2027)
+        dates = [f"{year}-01-02" for year in years]
         archive = {
             "source": "synthetic fixture",
             "cross_check_source": "synthetic independent source",
             "cross_check_validation": {
                 "year": 2025,
-                "primary_record_count": 156,
-                "independent_record_count": 156,
-                "matching_dates_and_number_sets": 156,
+                "primary_record_count": 1,
+                "independent_record_count": 1,
+                "matching_dates_and_number_sets": 1,
                 "result": "PASS",
+                "checked_at": STAMP,
+                "pages_checked": ["synthetic"],
             },
             "multi_year_cross_source_validation": {
                 str(year): {
                     "result": "PASS",
+                    "archive_compared_count_before_merge": 1,
+                    "independent_source_count": 1,
+                    "records_added_from_independent_source": 0,
+                    "matching_dates_and_number_sets_after_merge": 1,
                     "draw_numbers_in_report": False,
                     "source": "synthetic independent source",
                     "pages_checked": ["synthetic"],
                     "checked_at": STAMP,
                 }
-                for year in range(2020, 2027)
+                for year in years
             },
             "fetched_at": STAMP,
             "corrections_applied": [],
             "draws": [
-                {"date": "2020-08-02", "numbers": [1, 2, 3, 4, 5, 6]},
-                {"date": "2020-08-06", "numbers": [7, 8, 9, 10, 11, 12]},
+                {"date": draw_date, "numbers": [1, 2, 3, 4, 5, 6]}
+                for draw_date in dates
             ],
         }
         return {
@@ -113,7 +121,7 @@ class StateSyncPreflightTests(unittest.TestCase):
     def test_plan_contains_hashes_but_never_source_payloads_or_target_identifiers(self):
         plan = self._plan()
         rendered = json.dumps(plan, ensure_ascii=False, sort_keys=True)
-        self.assertNotIn("2020-08-06", rendered)
+        self.assertNotIn("2026-01-02", rendered)
         self.assertNotIn('"numbers"', rendered)
         self.assertNotIn('"draws"', rendered)
         self.assertNotIn("Synthetic test lock", rendered)
@@ -167,6 +175,22 @@ class StateSyncPreflightTests(unittest.TestCase):
 
     def test_rejects_noncanonical_archive_order_or_values(self):
         self.documents["archive"]["draws"].reverse()
+        self._write_documents()
+        with self.assertRaises(sync.SyncPreflightError):
+            self._plan()
+
+    def test_rejects_multi_year_source_counts_that_do_not_reconcile(self):
+        self.documents["archive"]["multi_year_cross_source_validation"]["2025"][
+            "matching_dates_and_number_sets_after_merge"
+        ] = 2
+        self._write_documents()
+        with self.assertRaises(sync.SyncPreflightError):
+            self._plan()
+
+    def test_rejects_audit_timestamp_later_than_archive_fetch(self):
+        self.documents["archive"]["multi_year_cross_source_validation"]["2024"][
+            "checked_at"
+        ] = "2026-11-05T12:00:00+00:00"
         self._write_documents()
         with self.assertRaises(sync.SyncPreflightError):
             self._plan()
