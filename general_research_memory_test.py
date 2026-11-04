@@ -130,6 +130,14 @@ class ResearchMemoryValidationTests(unittest.TestCase):
         self.assertIsNone(sanitized)
         self.assertEqual(status, "OMITTED_UNSUPPORTED_FORMAT")
 
+    def test_consumed_validation_dates_are_rejected_from_structured_text_too(self):
+        with self.assertRaisesRegex(memory.ResearchMemoryError, "consumed validation date"):
+            memory._reject_consumed_validation_dates(
+                {"hypothesis": "Do not repeat date 2026-10-20."},
+                {"2026-10-20"},
+                "Synthetic proposal",
+            )
+
     def test_legacy_source_or_epoch_is_rejected(self):
         entry = sample_entry()
         entry["source"] = "GENERAL/legacy"
@@ -496,6 +504,40 @@ class ResearchMemoryPersistenceTests(unittest.TestCase):
             self.assertTrue(forward_context[0]["research_report_content_is_unverified"])
             self.assertTrue(reverse_context[0]["research_report_content_is_unverified"])
             self.assertEqual(saved["entries"][0]["research_report_content_status"], "STORED")
+
+            # The memory writer cross-checks report prose against every sealed
+            # validation date already consumed in the authoritative ledger.
+            (root / "forward.md").write_text(
+                directional_report("forward") + "\\nConsumed validation date: 2026-10-20.",
+                encoding="utf-8",
+            )
+            withheld_path = root / "withheld-report-memory.json"
+            withheld_result = memory.record_cycle(
+                memory_path=withheld_path,
+                archive_path=archive_path,
+                ledger_path=ledger_path,
+                run_status_path=root / "run-status.json",
+                forward_report_path=root / "forward.md",
+                reverse_report_path=root / "reverse.md",
+                sealed_plan_path=root / "sealed-plan.json",
+                claim_path=root / "claim.json",
+                evaluation_path=root / "evaluation.json",
+                run_id="123456791",
+                run_attempt="1",
+            )
+            withheld = memory.load_memory(withheld_path)
+            self.assertEqual(withheld_result["entries_added"], 2)
+            self.assertEqual(
+                withheld["entries"][0]["research_report_content_status"],
+                "OMITTED_SENSITIVE_CONTENT",
+            )
+            self.assertIsNone(withheld["entries"][0]["research_report_content"])
+            self.assertEqual(
+                withheld["entries"][1]["research_report_content_status"],
+                "STORED",
+            )
+            self.assertNotIn("2026-10-20", json.dumps(withheld, ensure_ascii=False))
+            (root / "forward.md").write_text(directional_report("forward"), encoding="utf-8")
 
             # A local evaluation report is not trusted while the append-only
             # ledger still says the claim is only CLAIMED.
