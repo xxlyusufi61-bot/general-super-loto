@@ -64,7 +64,6 @@ class ResearchMemoryValidationTests(unittest.TestCase):
         self.assertEqual(value["entries"], [])
         self.assertEqual(value["research_epoch"], memory.RESEARCH_EPOCH)
         self.assertNotIn("general_memory", json.dumps(value).lower())
-        self.assertEqual(value["entries"], [])
 
     def test_valid_entry_passes_schema_and_hash(self):
         entry = sample_entry()
@@ -206,7 +205,7 @@ def directional_report(direction):
 
 
 def write_json(path, value):
-    path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\\n", encoding="utf-8")
+    path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
 class ResearchMemoryPersistenceTests(unittest.TestCase):
