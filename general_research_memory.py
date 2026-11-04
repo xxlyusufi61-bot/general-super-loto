@@ -306,7 +306,7 @@ def _validate_entry(entry: Any, expected_id: int) -> dict[str, Any]:
         failure = entry["failure"]
         basic_failure_keys = {"stage", "error_type", "failure_metadata_only"}
         rejection_failure_keys = basic_failure_keys | {"proposal_reasons", "execution_spec_reasons"}
-        if not isinstance(failure, dict) or set(failure) not in {frozenset(basic_failure_keys), frozenset(rejection_failure_keys)}:
+        if not isinstance(failure, dict) or frozenset(failure) not in {frozenset(basic_failure_keys), frozenset(rejection_failure_keys)}:
             raise ResearchMemoryError("Failure metadata does not match its safe schema.")
         if (
             not isinstance(failure.get("stage"), str)
