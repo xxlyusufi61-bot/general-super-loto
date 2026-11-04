@@ -685,6 +685,10 @@ def record_cycle(
     run_status = _load_optional_json(run_status_path) or {}
     claim = _load_optional_json(claim_path)
     evaluation_report = _load_optional_json(evaluation_path)
+    if evaluation_report is not None and (
+        not isinstance(claim, dict) or claim.get("claim_created") is not True
+    ):
+        raise ResearchMemoryError("An evaluation report without its successful current-cycle claim cannot enter memory.")
     plan = _load_optional_json(sealed_plan_path) or {}
     r60 = plan.get("regimes", {}).get("R60", {}) if isinstance(plan.get("regimes"), dict) else {}
     discovery_window = {
@@ -748,7 +752,9 @@ def record_cycle(
             or ledger_entry.get("target_date") != target
         ):
             raise ResearchMemoryError("Claimed holdout provenance does not match the current archive.")
-        outcome = "CLAIMED_EVALUATION_FAILED" if ledger_entry.get("state") == "CLAIMED" else "EVALUATED"
+        if ledger_entry.get("state") == "EVALUATED":
+            raise ResearchMemoryError("An evaluated ledger claim is missing its evaluation report.")
+        outcome = "CLAIMED_EVALUATION_FAILED"
     elif isinstance(claim, dict) and claim.get("claim_created") is False:
         outcome = "NO_ELIGIBLE_CANDIDATE"
 
