@@ -40,6 +40,15 @@ class AutomationStateContractTests(unittest.TestCase):
                 with self.assertRaises(state.AutomationStateError):
                     state.validate_state_document(excluded, "{}")
 
+    def test_rejects_duplicate_json_object_keys_at_every_depth(self):
+        for content in (
+            '{"entries": {}, "entries": {}}',
+            '{"outer": {"value": 1, "value": 2}}',
+        ):
+            with self.subTest(content=content):
+                with self.assertRaises(state.AutomationStateError):
+                    state.validate_state_document("research_memory", content)
+
     def test_rejects_non_json_and_non_object_documents(self):
         for content in ("{", "[]", "null", '{"x": NaN}'):
             with self.subTest(content=content):
@@ -87,6 +96,14 @@ class AutomationStateContractTests(unittest.TestCase):
             state.apply_manifest_update(
                 self.manifest, "research_memory", self.entry(generation=2), 0
             )
+
+    def test_manifest_rejects_non_integer_schema_version(self):
+        for schema_version in (True, 1.0):
+            with self.subTest(schema_version=schema_version):
+                invalid = copy.deepcopy(self.manifest)
+                invalid["schema_version"] = schema_version
+                with self.assertRaises(state.AutomationStateError):
+                    state.validate_manifest(invalid)
 
     def test_manifest_rejects_unknown_fields_identity_and_branch_mismatch(self):
         invalid = copy.deepcopy(self.manifest)
@@ -152,6 +169,28 @@ class AutomationStateContractTests(unittest.TestCase):
             state.apply_manifest_update(self.manifest, "research_memory", wrong, 0)
         with self.assertRaises(state.AutomationStateError):
             state.apply_manifest_update(self.manifest, "legacy_formula", entry, 0)
+
+    def test_timestamp_must_be_utc_not_merely_timezone_aware(self):
+        with self.assertRaises(state.AutomationStateError):
+            state.build_manifest_entry(
+                "research_memory", "{}", state.git_blob_sha("{}"), 1,
+                "2026-11-04T17:00:00+05:00",
+            )
+
+        active = state.apply_manifest_update(
+            self.manifest, "research_memory", self.entry(), 0
+        )
+        invalid_top_level = copy.deepcopy(active)
+        invalid_top_level["updated_at_utc"] = "2026-11-04T17:00:00+05:00"
+        with self.assertRaises(state.AutomationStateError):
+            state.validate_manifest(invalid_top_level)
+
+        invalid_entry = copy.deepcopy(active)
+        invalid_entry["entries"]["research_memory"]["updated_at_utc"] = (
+            "2026-11-04T17:00:00+05:00"
+        )
+        with self.assertRaises(state.AutomationStateError):
+            state.validate_manifest(invalid_entry)
 
     def test_timestamp_must_include_timezone(self):
         with self.assertRaises(state.AutomationStateError):
