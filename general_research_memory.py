@@ -66,6 +66,8 @@ METRIC_FIELDS = {
     "uniform_random_expected_hits_out_of_6",
     "test_draw_count",
     "evaluated_draw_count",
+    "validation_draw_count",
+    "test_draw_count",
     "folds",
     "fold_count",
     "zero_hit_count",
@@ -283,6 +285,19 @@ def _safe_metric_summary(value: Any) -> dict[str, Any]:
         item = value.get(key)
         if type(item) in {int, float} and math.isfinite(float(item)):
             summary[key] = item
+    distribution = value.get("hit_distribution")
+    if isinstance(distribution, dict) and len(distribution) <= 8:
+        safe_distribution = {}
+        for key, count in distribution.items():
+            if (
+                isinstance(key, str)
+                and len(key) <= 12
+                and type(count) is int
+                and 0 <= count <= 10000
+            ):
+                safe_distribution[key] = count
+        if safe_distribution:
+            summary["hit_distribution"] = safe_distribution
     return summary
 
 
@@ -401,6 +416,7 @@ def _build_entry(
     failed_direction: str | None,
     failed_stage: str | None,
     error_type: str | None,
+    shared_failure: bool,
     evaluation: dict[str, Any] | None,
 ) -> dict[str, Any]:
     report, proposal_doc, specs_doc, notes = _direction_artifacts(direction, report_path)
@@ -431,7 +447,7 @@ def _build_entry(
     else:
         status = "REQUEST_FAILED"
     failure = None
-    if failed_direction == direction or status == "CLAIMED_EVALUATION_FAILED":
+    if failed_direction == direction or status == "CLAIMED_EVALUATION_FAILED" or shared_failure:
         failure = {
             "stage": failed_stage or ("sealed_evaluation" if status == "CLAIMED_EVALUATION_FAILED" else "model_request"),
             "error_type": error_type or ("EvaluationIncomplete" if status == "CLAIMED_EVALUATION_FAILED" else "UnknownRequestFailure"),
@@ -540,9 +556,18 @@ def record_cycle(
     error_type = run_status.get("error_type")
     if failed_direction not in {None, "forward", "reverse"}:
         failed_direction = None
-    if isinstance(run_status, dict) and run_status.get("status") == "FAILED" and not failed_direction:
+    if run_status:
+        if run_status.get("target_date") not in {None, target}:
+            raise ResearchMemoryError("Run-status target does not match the validated archive.")
+        if run_status.get("archive_sha256") not in {None, archive_hash}:
+            raise ResearchMemoryError("Run-status archive hash does not match the validated archive.")
+    has_any_directional_report = (
+        Path(forward_report_path).is_file() or Path(reverse_report_path).is_file()
+    )
+    if run_status.get("status") == "FAILED" and not failed_direction and not has_any_directional_report:
         # Failures before a directional request are not research observations.
         return {"status": "SKIPPED_NO_DIRECTIONAL_FAILURE", "entries_added": 0}
+    shared_failure = run_status.get("status") == "FAILED" and failed_direction is None
 
     memory = load_memory(memory_path)
     next_id = len(memory["entries"]) + 1
@@ -568,6 +593,7 @@ def record_cycle(
             failed_direction=failed_direction,
             failed_stage=failed_stage,
             error_type=error_type,
+            shared_failure=shared_failure,
             evaluation=direction_eval,
         )
         if any(old["cycle_id"] == entry["cycle_id"] for old in memory["entries"]):
