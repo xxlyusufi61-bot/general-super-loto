@@ -230,10 +230,14 @@ def build_sync_preflight_plan(
     """Validate a pinned local main snapshot against the empty remote state store."""
     if not isinstance(expected_main_commit, str) or not COMMIT_SHA_RE.fullmatch(expected_main_commit):
         raise SyncPreflightError("Expected main commit must be a lowercase 40-character SHA.")
-    if not isinstance(shadow_comparison, dict):
+    if not isinstance(shadow_comparison, dict) or shadow_comparison.get("mode") != "SHADOW_COMPARE":
         raise SyncPreflightError("A verified read-only shadow comparison is required.")
     if shadow_comparison.get("main_commit_sha") != expected_main_commit:
-        raise SyncPreflightError("The checked-out main snapshot does not match the remotely verified main head.")
+        actual = shadow_comparison.get("main_commit_sha")
+        raise SyncPreflightError(
+            "Pinned main SHA mismatch (expected " + expected_main_commit
+            + ", shadow comparison returned " + str(actual) + ")."
+        )
     if (
         shadow_comparison.get("authoritative_source") != "main"
         or shadow_comparison.get("read_only") is not True
@@ -339,6 +343,17 @@ def build_sync_preflight_plan(
     }
 
 
+def _load_shadow_comparison(path: str | Path) -> dict[str, Any]:
+    try:
+        raw = Path(path).read_text(encoding="utf-8")
+        value = contract._strict_json_loads(raw)
+    except (OSError, UnicodeError, contract.AutomationStateError) as exc:
+        raise SyncPreflightError("The preceding read-only shadow comparison could not be loaded: " + type(exc).__name__) from None
+    if not isinstance(value, dict) or value.get("mode") != "SHADOW_COMPARE":
+        raise SyncPreflightError("The preceding step did not produce a valid shadow-comparison document.")
+    return value
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -356,6 +371,10 @@ def main(argv: list[str] | None = None) -> int:
         default=".",
         help="Directory containing the checked-out main state objects.",
     )
+    parser.add_argument(
+        "--shadow-comparison-file",
+        help="Reuse the verified JSON document from the immediately preceding read-only shadow step.",
+    )
     args = parser.parse_args(argv)
     if not args.repository:
         parser.error("--repository or GITHUB_REPOSITORY is required")
@@ -363,11 +382,14 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--expected-main-commit or GITHUB_SHA is required")
 
     try:
-        reader = GitHubStateStoreReader(
-            args.repository,
-            token=os.environ.get("GITHUB_TOKEN"),
-        )
-        comparison = reader.read_shadow_comparison()
+        if args.shadow_comparison_file:
+            comparison = _load_shadow_comparison(args.shadow_comparison_file)
+        else:
+            reader = GitHubStateStoreReader(
+                args.repository,
+                token=os.environ.get("GITHUB_TOKEN"),
+            )
+            comparison = reader.read_shadow_comparison()
         plan = build_sync_preflight_plan(
             args.source_root,
             args.expected_main_commit,
