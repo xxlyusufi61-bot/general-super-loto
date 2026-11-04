@@ -470,11 +470,11 @@ class GitHubStateStoreReaderTests(unittest.TestCase):
             Path(__file__).resolve().parent
             / ".github" / "workflows" / "nvidia-safety-tests.yml"
         ).read_text(encoding="utf-8")
-        self.assertIn("permissions:\\n  contents: read", workflow)
-        marker = "      - name: Run active state-store integrity and pre-cutover parity audit\\n"
+        self.assertIn("permissions:\n  contents: read", workflow)
+        marker = "      - name: Run active state-store integrity and pre-cutover parity audit\n"
         start = workflow.find(marker)
         self.assertGreaterEqual(start, 0)
-        end = workflow.find("\\n      - name:", start + len(marker))
+        end = workflow.find("\n      - name:", start + len(marker))
         if end < 0:
             end = len(workflow)
         step = workflow[start:end]
