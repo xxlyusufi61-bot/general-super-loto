@@ -227,6 +227,10 @@ class ResearchMemoryPersistenceTests(unittest.TestCase):
             tampered["entries"].append(sample_entry("forward", 3, "2026-10-22"))
             with self.assertRaisesRegex(memory.ResearchMemoryError, "not append-only"):
                 memory._write_memory(tampered, path)
+            backdated = copy.deepcopy(appended)
+            backdated["entries"].append(sample_entry("forward", 3, "2026-10-19"))
+            with self.assertRaisesRegex(memory.ResearchMemoryError, "chronology backwards"):
+                memory._write_memory(backdated, path)
 
     def test_record_cycle_persists_only_directional_hypotheses_and_evaluation_feedback(self):
         from general_sealed_evaluation import load_archive
