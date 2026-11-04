@@ -522,10 +522,13 @@ def record_cycle(
     run_attempt: str = "1",
     failure_stage_override: str | None = None,
     error_type_override: str | None = None,
+    evaluation_persisted: bool = True,
 ) -> dict[str, Any]:
     """Append one entry per completed/failed direction; raw draws never enter this function."""
     if not run_id or not run_attempt:
         raise ResearchMemoryError("GitHub run ID and attempt are required for idempotent memory records.")
+    if type(evaluation_persisted) is not bool:
+        raise ResearchMemoryError("Evaluation persistence state must be boolean.")
     from general_sealed_evaluation import load_archive, load_ledger
 
     archive = load_archive(archive_path)
@@ -568,7 +571,13 @@ def record_cycle(
                 or evaluation_report.get("target_date") != target
             ):
                 raise ResearchMemoryError("Evaluation report archive provenance does not match the ledger.")
-            outcome = "EVALUATED"
+            if evaluation_persisted:
+                outcome = "EVALUATED"
+            else:
+                # The evaluation report exists locally but its ledger commit did
+                # not persist. Its score feedback is therefore not eligible memory.
+                evaluation_report = None
+                outcome = "CLAIMED_EVALUATION_FAILED"
         elif ledger_entry.get("state") == "CLAIMED":
             # The report may have been written immediately before a crash, but
             # the append-only ledger is authoritative. Do not retain its scores.
@@ -738,6 +747,7 @@ def main(argv: list[str] | None = None) -> int:
     record.add_argument("--evaluation", type=Path, default=EVALUATION_PATH)
     record.add_argument("--failure-stage", default="")
     record.add_argument("--error-type", default="WorkflowStepFailure")
+    record.add_argument("--evaluation-persisted", choices={"true", "false"}, default="true")
     args = parser.parse_args(argv)
     try:
         result = record_cycle(
@@ -754,6 +764,7 @@ def main(argv: list[str] | None = None) -> int:
             run_attempt=args.run_attempt,
             failure_stage_override=args.failure_stage or None,
             error_type_override=args.error_type if args.failure_stage else None,
+            evaluation_persisted=args.evaluation_persisted == "true",
         )
     except (ResearchMemoryError, OSError, ValueError) as exc:
         print("RESEARCH MEMORY FAILED:", type(exc).__name__, str(exc))
