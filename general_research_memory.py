@@ -148,9 +148,10 @@ DRAW_SET_WORD_TEXT = re.compile(
 )
 CANDIDATE_CUE = (
     r"(?:candidate(?:s)?|prediction(?:s)?|predicted|winning|drawn|"
-    r"rank(?:ed|ing)?|top(?:[- ]ranked)?|highest(?:[- ]ranked)?|best|first|number(?:s)?|value(?:s)?|"
-    r"aday(?:lar)?|tahmin(?:\s+edilen)?|kazanan|çıkan|cikan|"
-    r"sayı(?:lar)?|sayi(?:lar)?|numara(?:lar)?|değer(?:ler)?|deger(?:ler)?|sıralama|siralama)"
+    r"rank(?:ed|ing)?|top(?:[- ]ranked)?|highest(?:[- ]ranked)?|best|first|number(?:s)?|value(?:s)?|winner|winning|"
+    r"aday(?:lar|ı|ın|ları)?|tahmin(?:i|ler|\s+edilen)?|kazanan(?:ı|lar|ları)?|çıkan|cikan|"
+    r"sayı(?:lar|ları|sı)?|sayi(?:lar|lari|si)?|numara(?:lar|ları|sı)?|numara(?:lar|lari|si)?|"
+    r"değer(?:ler|leri|i)?|deger(?:ler|leri|i)?|sıralama|siralama)"
 )
 CANDIDATE_CONNECTOR = (
     r"(?:the|number|numbers|value|values|no\.?|is|are|was|were|of|at|"
