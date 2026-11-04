@@ -694,6 +694,17 @@ def record_cycle(
         "holdout_dates_copied": False,
         "archive_rows_copied": False,
     }
+    has_any_directional_report = (
+        Path(forward_report_path).is_file() or Path(reverse_report_path).is_file()
+    )
+    if has_any_directional_report or run_status.get("failed_direction") in {"forward", "reverse"}:
+        if (
+            not isinstance(discovery_window["start_date"], str)
+            or not isinstance(discovery_window["end_date"], str)
+            or type(discovery_window["draw_count"]) is not int
+            or discovery_window["draw_count"] < 1
+        ):
+            raise ResearchMemoryError("A directional result requires its verified sealed discovery-window metadata.")
     outcome = "RESEARCH_COMPLETE_UNEVALUATED"
     claim_id = None
     if isinstance(claim, dict) and claim.get("claim_created") is True:
@@ -756,9 +767,6 @@ def record_cycle(
             raise ResearchMemoryError("Run-status target does not match the validated archive.")
         if run_status.get("archive_sha256") not in {None, archive_hash}:
             raise ResearchMemoryError("Run-status archive hash does not match the validated archive.")
-    has_any_directional_report = (
-        Path(forward_report_path).is_file() or Path(reverse_report_path).is_file()
-    )
     if run_status.get("status") == "FAILED" and not failed_direction and not has_any_directional_report:
         # Failures before a directional request are not research observations.
         return {"status": "SKIPPED_NO_DIRECTIONAL_FAILURE", "entries_added": 0}
