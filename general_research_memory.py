@@ -863,14 +863,25 @@ def _compact_proposal(proposal: dict[str, Any]) -> dict[str, Any]:
     compact = {
         "hypothesis_id": proposal["hypothesis_id"],
         "discovery_direction": proposal["discovery_direction"],
+        "truncated_fields": [],
     }
     for key, limit in limits.items():
         value = proposal.get(key)
-        compact[key] = value[:limit] if isinstance(value, str) else value
+        if isinstance(value, str) and len(value) > limit:
+            compact[key] = value[:limit - 16] + " [TRUNCATED]"
+            compact["truncated_fields"].append(key)
+        else:
+            compact[key] = value
     risks = proposal.get("known_risks", [])
-    compact["known_risks"] = [
-        item[:160] for item in risks[:2] if isinstance(item, str)
-    ]
+    compact["known_risks"] = []
+    for item in risks[:2]:
+        if not isinstance(item, str):
+            continue
+        if len(item) > 160:
+            compact["known_risks"].append(item[:144] + " [TRUNCATED]")
+            compact["truncated_fields"].append("known_risks")
+        else:
+            compact["known_risks"].append(item)
     compact["evaluation_protocols"] = list(proposal.get("evaluation_protocols", []))
     return compact
 
