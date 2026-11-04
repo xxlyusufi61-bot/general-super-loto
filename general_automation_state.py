@@ -48,8 +48,9 @@ def _utc_timestamp(value: Any, field: str) -> str:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError as exc:
         raise AutomationStateError(f"{field} is not a valid ISO-8601 timestamp") from exc
-    if parsed.tzinfo is None or parsed.utcoffset() is None:
-        raise AutomationStateError(f"{field} must include a timezone")
+    if (parsed.tzinfo is None or parsed.utcoffset() is None
+            or parsed.utcoffset().total_seconds() != 0):
+        raise AutomationStateError(f"{field} must use UTC (zero offset)")
     return value
 
 
@@ -60,8 +61,20 @@ def _strict_json_loads(content: str) -> Any:
     def reject_constant(value: str) -> None:
         raise AutomationStateError(f"non-standard JSON constant is forbidden: {value}")
 
+    def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise AutomationStateError(f"duplicate JSON object key is forbidden: {key}")
+            result[key] = value
+        return result
+
     try:
-        return json.loads(content, parse_constant=reject_constant)
+        return json.loads(
+            content,
+            parse_constant=reject_constant,
+            object_pairs_hook=reject_duplicate_keys,
+        )
     except (json.JSONDecodeError, UnicodeError) as exc:
         raise AutomationStateError("state object is not valid strict JSON") from exc
 
@@ -131,7 +144,8 @@ def validate_manifest(value: Any) -> dict[str, Any]:
     }
     if set(value) != expected_keys:
         raise AutomationStateError("manifest contains missing or unknown fields")
-    if value.get("schema_version") != SCHEMA_VERSION:
+    schema_version = value.get("schema_version")
+    if type(schema_version) is not int or schema_version != SCHEMA_VERSION:
         raise AutomationStateError("unsupported manifest schema")
     if value.get("store_id") != STORE_ID:
         raise AutomationStateError("unexpected state-store identity")
