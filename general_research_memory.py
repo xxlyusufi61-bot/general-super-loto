@@ -520,6 +520,8 @@ def record_cycle(
     evaluation_path: str | Path = EVALUATION_PATH,
     run_id: str,
     run_attempt: str = "1",
+    failure_stage_override: str | None = None,
+    error_type_override: str | None = None,
 ) -> dict[str, Any]:
     """Append one entry per completed/failed direction; raw draws never enter this function."""
     if not run_id or not run_attempt:
@@ -543,39 +545,59 @@ def record_cycle(
         "archive_rows_copied": False,
     }
     outcome = "RESEARCH_COMPLETE_UNEVALUATED"
-    if evaluation_report is not None:
+    claim_id = None
+    if isinstance(claim, dict) and claim.get("claim_created") is True:
+        claim_id = claim.get("claim_id")
+    elif evaluation_report is not None:
         claim_id = evaluation_report.get("claim_id")
-        ledger_entry = next(
-            (item for item in ledger["entries"] if item.get("claim_id") == claim_id),
-            None,
-        )
+    ledger_entry = next(
+        (item for item in ledger["entries"] if item.get("claim_id") == claim_id),
+        None,
+    ) if claim_id else None
+
+    if evaluation_report is not None:
         if (
             ledger_entry is None
-            or ledger_entry.get("state") != "EVALUATED"
             or ledger_entry.get("archive_sha256") != archive_hash
             or ledger_entry.get("target_date") != target
-            or evaluation_report.get("archive_sha256") != archive_hash
-            or evaluation_report.get("target_date") != target
         ):
-            raise ResearchMemoryError("Evaluation report is not backed by the current append-only ledger.")
-        outcome = "EVALUATED"
+            raise ResearchMemoryError("Evaluation report claim is not backed by the current append-only ledger.")
+        if ledger_entry.get("state") == "EVALUATED":
+            if (
+                evaluation_report.get("archive_sha256") != archive_hash
+                or evaluation_report.get("target_date") != target
+            ):
+                raise ResearchMemoryError("Evaluation report archive provenance does not match the ledger.")
+            outcome = "EVALUATED"
+        elif ledger_entry.get("state") == "CLAIMED":
+            # The report may have been written immediately before a crash, but
+            # the append-only ledger is authoritative. Do not retain its scores.
+            evaluation_report = None
+            outcome = "CLAIMED_EVALUATION_FAILED"
+        else:
+            raise ResearchMemoryError("Evaluation ledger state is not eligible for memory publication.")
     elif isinstance(claim, dict) and claim.get("claim_created") is True:
-        claim_id = claim.get("claim_id")
-        ledger_entry = next(
-            (item for item in ledger["entries"] if item.get("claim_id") == claim_id),
-            None,
-        )
-        if ledger_entry is None:
+        if ledger_entry is None or ledger_entry.get("state") not in {"CLAIMED", "EVALUATED"}:
             raise ResearchMemoryError("Claimed holdout is not present in the append-only ledger.")
-        outcome = "CLAIMED_EVALUATION_FAILED"
+        if (
+            ledger_entry.get("archive_sha256") != archive_hash
+            or ledger_entry.get("target_date") != target
+        ):
+            raise ResearchMemoryError("Claimed holdout provenance does not match the current archive.")
+        outcome = "CLAIMED_EVALUATION_FAILED" if ledger_entry.get("state") == "CLAIMED" else "EVALUATED"
     elif isinstance(claim, dict) and claim.get("claim_created") is False:
         outcome = "NO_ELIGIBLE_CANDIDATE"
 
     failed_direction = run_status.get("failed_direction")
-    failed_stage = run_status.get("stage")
-    error_type = run_status.get("error_type")
+    failed_stage = failure_stage_override or run_status.get("stage")
+    error_type = error_type_override or run_status.get("error_type")
     if failed_direction not in {None, "forward", "reverse"}:
         failed_direction = None
+    if failure_stage_override:
+        if not isinstance(failure_stage_override, str) or not 3 <= len(failure_stage_override) <= 80:
+            raise ResearchMemoryError("Workflow failure-stage override is invalid.")
+        run_status = dict(run_status)
+        run_status["status"] = "FAILED"
     if run_status:
         if run_status.get("target_date") not in {None, target}:
             raise ResearchMemoryError("Run-status target does not match the validated archive.")
@@ -714,6 +736,8 @@ def main(argv: list[str] | None = None) -> int:
     record.add_argument("--sealed-plan", type=Path, default=SEALED_PLAN_PATH)
     record.add_argument("--claim", type=Path, default=CLAIM_PATH)
     record.add_argument("--evaluation", type=Path, default=EVALUATION_PATH)
+    record.add_argument("--failure-stage", default="")
+    record.add_argument("--error-type", default="WorkflowStepFailure")
     args = parser.parse_args(argv)
     try:
         result = record_cycle(
@@ -728,6 +752,8 @@ def main(argv: list[str] | None = None) -> int:
             evaluation_path=args.evaluation,
             run_id=args.run_id,
             run_attempt=args.run_attempt,
+            failure_stage_override=args.failure_stage or None,
+            error_type_override=args.error_type if args.failure_stage else None,
         )
     except (ResearchMemoryError, OSError, ValueError) as exc:
         print("RESEARCH MEMORY FAILED:", type(exc).__name__, str(exc))
