@@ -302,6 +302,25 @@ class ResearchMemoryValidationTests(unittest.TestCase):
         ):
             memory._validate_entry(entry, 1)
 
+    def test_stored_entries_reject_inflected_turkish_candidate_values(self):
+        entry = sample_entry()
+        entry["proposals"][0]["hypothesis"] = "Aday sayıları: on yedi."
+        entry["content_sha256"] = _hash_entry(entry)
+        with self.assertRaisesRegex(
+            memory.ResearchMemoryError, "candidate/predicted number value"
+        ):
+            memory._validate_entry(entry, 1)
+
+        entry = sample_entry()
+        entry["learning_notes"]["observations"] = [
+            "Kazanan değerleri: yirmi dört."
+        ]
+        entry["content_sha256"] = _hash_entry(entry)
+        with self.assertRaisesRegex(
+            memory.ResearchMemoryError, "candidate/predicted number value"
+        ):
+            memory._validate_entry(entry, 1)
+
     def test_legacy_source_or_epoch_is_rejected(self):
         entry = sample_entry()
         entry["source"] = "GENERAL/legacy"
