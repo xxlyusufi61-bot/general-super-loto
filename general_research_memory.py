@@ -720,6 +720,10 @@ def direction_context(
     for entry in reversed(entries):
         compact = {
             "prior_target_date": entry["target_date"],
+            "prior_recorded_at_utc": entry["created_at_utc"],
+            "archive_sha256": entry["archive_sha256"],
+            "runner_version": entry["runner_version"],
+            "research_report_sha256": entry["research_report_sha256"],
             "status": entry["status"],
             "proposal_status": entry["proposal_status"],
             "hypotheses": entry["proposals"],
