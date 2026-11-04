@@ -522,13 +522,13 @@ def make_archive_and_plan(root, used_validation_dates=None):
         archive_sha256=archive["archive_sha256"],
         used_validation_dates=set(used_validation_dates or set()),
     )
-    return archive, partition, public_plan(partition)
+    return archive_path, archive, partition, public_plan(partition)
 
 
 class SealedPlanBindingTests(unittest.TestCase):
     def test_plan_must_match_exact_archive_target_and_derived_partition(self):
         with tempfile.TemporaryDirectory() as directory:
-            archive, partition, plan = make_archive_and_plan(directory)
+            archive_path, archive, partition, plan = make_archive_and_plan(directory)
             ledger = {"entries": []}
             memory._validate_sealed_plan_binding(plan, archive, ledger, None)
 
@@ -553,7 +553,7 @@ class SealedPlanBindingTests(unittest.TestCase):
         from general_sealed_evaluation import public_plan, split_archive
 
         with tempfile.TemporaryDirectory() as directory:
-            archive, _unused_partition, _unused_plan = make_archive_and_plan(directory)
+            archive_path, archive, _unused_partition, _unused_plan = make_archive_and_plan(directory)
             rows = archive["rows"]
             prior_date = rows[0]["date"]
             prior_dates = {prior_date}
@@ -613,7 +613,7 @@ class ResearchMemoryPersistenceTests(unittest.TestCase):
     def test_record_cycle_persists_only_directional_hypotheses_and_evaluation_feedback(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            archive, partition, sealed_plan = make_archive_and_plan(root)
+            archive_path, archive, partition, sealed_plan = make_archive_and_plan(root)
             target = archive["last_date"]
             archive_hash = archive["archive_sha256"]
             r60 = partition["regimes"]["R60"]
