@@ -30,7 +30,7 @@ from general_execution_spec_parser import parse_execution_spec_block
 import general_sealed_evaluation as sealed
 import general_research_memory as research_memory
 
-VERSION = "0.7.0"
+VERSION = "0.8.0"
 MODEL = "z-ai/glm-5.3-flash"
 BASE = Path(__file__).resolve().parent
 ARCHIVE = BASE / os.environ.get("GENERAL_ARCHIVE_FILE", "super_loto_archive.json")
