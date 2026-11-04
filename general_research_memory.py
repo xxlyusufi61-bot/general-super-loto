@@ -56,6 +56,30 @@ HEX64 = re.compile(r"^[0-9a-f]{64}$")
 REPORT_DATE_PATTERN = re.compile(
     r"(?<![0-9])(?:\d{4}[-/]\d{2}[-/]\d{2}|\d{1,2}[./]\d{1,2}[./]\d{4})(?![0-9])"
 )
+ENGLISH_MONTHS = {
+    "january": 1, "jan": 1, "february": 2, "feb": 2,
+    "march": 3, "mar": 3, "april": 4, "apr": 4, "may": 5,
+    "june": 6, "jun": 6, "july": 7, "jul": 7,
+    "august": 8, "aug": 8, "september": 9, "sep": 9, "sept": 9,
+    "october": 10, "oct": 10, "november": 11, "nov": 11,
+    "december": 12, "dec": 12,
+}
+TURKISH_MONTHS = {
+    "ocak": 1, "şubat": 2, "subat": 2, "mart": 3, "nisan": 4,
+    "mayıs": 5, "mayis": 5, "haziran": 6, "temmuz": 7,
+    "ağustos": 8, "agustos": 8, "eylül": 9, "eylul": 9,
+    "ekim": 10, "kasım": 11, "kasim": 11, "aralık": 12, "aralik": 12,
+}
+ALL_MONTHS = ENGLISH_MONTHS | TURKISH_MONTHS
+MONTH_PATTERN = "|".join(
+    re.escape(item) for item in sorted(ALL_MONTHS, key=len, reverse=True)
+)
+REPORT_TEXT_DATE_PATTERN = re.compile(
+    r"(?ix)(?<!\w)(?P<month_before>" + MONTH_PATTERN
+    + r")\s+(?P<day_before>\d{1,2})(?:st|nd|rd|th)?[,]?\s+(?P<year_before>\d{4})(?!\d)"
+    + r"|(?<!\d)(?P<day_after>\d{1,2})\s+(?P<month_after>" + MONTH_PATTERN
+    + r")\s+(?P<year_after>\d{4})(?!\d)"
+)
 REPORT_SECRET_PATTERN = re.compile(
     r"(?i)(?:\bnvapi-[A-Za-z0-9_-]{12,}\b|"
     r"\bgh[pousr]_[A-Za-z0-9]{20,}\b|"
@@ -76,17 +100,72 @@ DRAW_SET_FLEX_TEXT = re.compile(
     r"""(?:(?:\s*[,;|/\-]\s*|\s+)["']?0?(?:[1-9]|[1-5][0-9]|60)["']?){5}(?![0-9]|\.[0-9])"""
 )
 
+ENGLISH_NUMBER_WORDS = (
+    "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
+    "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen",
+    "seventeen", "eighteen", "nineteen", "twenty", "twenty one", "twenty-one",
+    "twenty two", "twenty-two", "twenty three", "twenty-three", "twenty four",
+    "twenty-four", "twenty five", "twenty-five", "twenty six", "twenty-six",
+    "twenty seven", "twenty-seven", "twenty eight", "twenty-eight", "twenty nine",
+    "twenty-nine", "thirty", "thirty one", "thirty-one", "thirty two", "thirty-two",
+    "thirty three", "thirty-three", "thirty four", "thirty-four", "thirty five",
+    "thirty-five", "thirty six", "thirty-six", "thirty seven", "thirty-seven",
+    "thirty eight", "thirty-eight", "thirty nine", "thirty-nine", "forty",
+    "forty one", "forty-one", "forty two", "forty-two", "forty three", "forty-three",
+    "forty four", "forty-four", "forty five", "forty-five", "forty six", "forty-six",
+    "forty seven", "forty-seven", "forty eight", "forty-eight", "forty nine",
+    "forty-nine", "fifty", "fifty one", "fifty-one", "fifty two", "fifty-two",
+    "fifty three", "fifty-three", "fifty four", "fifty-four", "fifty five",
+    "fifty-five", "fifty six", "fifty-six", "fifty seven", "fifty-seven",
+    "fifty eight", "fifty-eight", "fifty nine", "fifty-nine", "sixty",
+)
+TURKISH_NUMBER_WORDS = (
+    "bir", "iki", "üç", "uc", "dört", "dort", "beş", "bes", "altı", "alti",
+    "yedi", "sekiz", "dokuz", "on", "on bir", "on iki", "on üç", "on uc",
+    "on dört", "on dort", "on beş", "on bes", "on altı", "on alti",
+    "on yedi", "on sekiz", "on dokuz",
+    "yirmi", "yirmi bir", "yirmi iki", "yirmi üç", "yirmi uc", "yirmi dört",
+    "yirmi dort", "yirmi beş", "yirmi bes", "yirmi altı", "yirmi alti",
+    "yirmi yedi", "yirmi sekiz", "yirmi dokuz",
+    "otuz", "otuz bir", "otuz iki", "otuz üç", "otuz uc", "otuz dört",
+    "otuz dort", "otuz beş", "otuz bes", "otuz altı", "otuz alti",
+    "otuz yedi", "otuz sekiz", "otuz dokuz",
+    "kırk", "kirk", "kırk bir", "kirk bir", "kırk iki", "kirk iki",
+    "kırk üç", "kirk uc", "kırk dört", "kirk dort", "kırk beş", "kirk bes",
+    "kırk altı", "kirk alti", "kırk yedi", "kirk yedi", "kırk sekiz",
+    "kirk sekiz", "kırk dokuz", "kirk dokuz",
+    "elli", "elli bir", "elli iki", "elli üç", "elli uc", "elli dört",
+    "elli dort", "elli beş", "elli bes", "elli altı", "elli alti",
+    "elli yedi", "elli sekiz", "elli dokuz", "altmış", "altmis",
+)
+NUMBER_WORD_PATTERN = "|".join(
+    re.escape(item) for item in sorted(set(ENGLISH_NUMBER_WORDS + TURKISH_NUMBER_WORDS), key=len, reverse=True)
+)
+NUMBER_VALUE_TOKEN = r"(?:0?(?:[1-9]|[1-5][0-9]|60)|" + NUMBER_WORD_PATTERN + r")"
+DRAW_SET_WORD_TEXT = re.compile(
+    r"(?ix)(?<![\w.])" + NUMBER_VALUE_TOKEN
+    + r"(?:(?:\s*[,;|/]\s*|\s+(?:and|ve)\s+)" + NUMBER_VALUE_TOKEN + r"){5}(?![\w.])"
+)
+CANDIDATE_CUE = (
+    r"(?:candidate(?:s)?|prediction(?:s)?|predicted|winning|drawn|"
+    r"rank(?:ed|ing)?|top(?:[- ]ranked)?|number(?:s)?|value(?:s)?|"
+    r"aday(?:lar)?|tahmin(?:\s+edilen)?|kazanan|çıkan|cikan|"
+    r"sayı(?:lar)?|sayi(?:lar)?|numara(?:lar)?|değer(?:ler)?|deger(?:ler)?|sıralama|siralama)"
+)
+CANDIDATE_CONNECTOR = (
+    r"(?:the|number|numbers|value|values|no\.?|is|are|was|were|of|at|"
+    r"include|includes|list|set|output|result|pick|picks|first|"
+    r"birinci|seçilen|secilen|olarak|edilen|değeri|degeri|numarası|numarasi)"
+)
 CANDIDATE_VALUE_AFTER_CUE = re.compile(
-    r"(?ix)\b(?:candidate|candidates|prediction|predictions|predicted|winning|drawn|"
-    r"rank|ranked|ranking|top[- ]ranked|top|number|numbers|value|values|aday|tahmin|kazanan|sıralama)\b"
-    r"(?:(?:\s+|[:#=])(?:number|numbers|value|values|no\.?|is|are|was|were|of|at|"
-    r"include|includes|include|list|set|output|result|pick|picks|candidate|candidates|ranked|first|one|two)){0,3}"
-    r"[\s:#=]*0?(?:[1-9]|[1-5][0-9]|60)\b"
+    r"(?ix)\b" + CANDIDATE_CUE
+    + r"(?:[\s,:#=]+" + CANDIDATE_CONNECTOR + r"){0,4}"
+    + r"[\s:#=]*" + NUMBER_VALUE_TOKEN + r"\b"
 )
 CANDIDATE_VALUE_BEFORE_CUE = re.compile(
-    r"(?ix)\b0?(?:[1-9]|[1-5][0-9]|60)\b"
-    r"\s+(?:(?:is|was|as|became|ranked|selected|predicted)\s+){0,2}"
-    r"(?:the\s+)?(?:top|highest|first|best|winning|candidate|prediction)\b"
+    r"(?ix)\b" + NUMBER_VALUE_TOKEN
+    + r"(?:[\s,:#=]+" + CANDIDATE_CONNECTOR + r"){0,3}"
+    + r"[\s:#=]+\b" + CANDIDATE_CUE + r"\b"
 )
 
 
@@ -132,6 +211,7 @@ def _contains_six_number_set(value: Any) -> bool:
             DRAW_SET_TEXT.search(value) is not None
             or DRAW_SET_QUOTED_TEXT.search(value) is not None
             or DRAW_SET_FLEX_TEXT.search(value) is not None
+            or DRAW_SET_WORD_TEXT.search(value) is not None
         )
     if isinstance(value, list):
         if (
@@ -144,7 +224,6 @@ def _contains_six_number_set(value: Any) -> bool:
     if isinstance(value, dict):
         return any(_contains_six_number_set(item) for item in value.values())
     return False
-
 
 def _reject_number_values(value: Any, label: str) -> None:
     if _contains_six_number_set(value):
@@ -173,7 +252,7 @@ def _reject_candidate_value_references(value: Any, label: str) -> None:
 
 
 def _report_dates_in_text(value: str) -> set[str]:
-    """Normalize common date spellings so consumed holdouts cannot hide in prose."""
+    """Normalize numeric, English-month, and Turkish-month date spellings."""
     normalized: set[str] = set()
     for token in REPORT_DATE_PATTERN.findall(value):
         try:
@@ -194,8 +273,16 @@ def _report_dates_in_text(value: str) -> set[str]:
                         continue
         except (TypeError, ValueError):
             continue
+    for match in REPORT_TEXT_DATE_PATTERN.finditer(value):
+        month_name = match.group("month_before") or match.group("month_after")
+        day_value = match.group("day_before") or match.group("day_after")
+        year_value = match.group("year_before") or match.group("year_after")
+        try:
+            parsed = date(int(year_value), ALL_MONTHS[month_name.casefold()], int(day_value))
+        except (KeyError, TypeError, ValueError):
+            continue
+        normalized.add(parsed.isoformat())
     return normalized
-
 
 def _reject_consumed_validation_dates(
     value: Any,
@@ -207,6 +294,76 @@ def _reject_consumed_validation_dates(
     serialized = _canonical(value).decode("utf-8")
     if _report_dates_in_text(serialized).intersection(forbidden_dates):
         raise ResearchMemoryError(label + " contains a consumed validation date or a reserved validation date; memory write refused.")
+
+
+def _validate_sealed_plan_binding(
+    plan: dict[str, Any],
+    archive: dict[str, Any],
+    ledger: dict[str, Any],
+    claim: dict[str, Any] | None,
+) -> None:
+    """Prove that the redaction plan belongs to this exact archive/target."""
+    if not isinstance(plan, dict) or not isinstance(archive, dict) or not isinstance(ledger, dict):
+        raise ResearchMemoryError("Sealed-plan binding metadata is invalid.")
+    if (
+        plan.get("schema_version") != 1
+        or plan.get("target_date") != archive.get("last_date")
+        or plan.get("archive_sha256") != archive.get("archive_sha256")
+        or plan.get("archive_record_count") != archive.get("record_count")
+        or plan.get("target_numbers_exposed") is not False
+        or plan.get("target_in_discovery") is not False
+        or plan.get("target_in_validation") is not False
+        or plan.get("target_in_reverse_validation") is not False
+        or plan.get("directional_validation_windows_disjoint") is not True
+    ):
+        raise ResearchMemoryError(
+            "Sealed plan does not match the current archive/target isolation proof."
+        )
+    from general_sealed_evaluation import (
+        get_used_validation_dates,
+        public_plan,
+        split_archive,
+    )
+
+    prior_used_dates = get_used_validation_dates(ledger)
+    if isinstance(claim, dict) and claim.get("claim_created") is True:
+        claim_id = claim.get("claim_id")
+        if not isinstance(claim_id, str) or not HEX64.fullmatch(claim_id):
+            raise ResearchMemoryError("Current sealed claim ID is missing or invalid.")
+        matches = [
+            item for item in ledger.get("entries", [])
+            if isinstance(item, dict) and item.get("claim_id") == claim_id
+        ]
+        if len(matches) != 1:
+            raise ResearchMemoryError("Current sealed claim is not uniquely present in the evaluation ledger.")
+        current_claim = matches[0]
+        if (
+            current_claim.get("archive_sha256") != archive.get("archive_sha256")
+            or current_claim.get("target_date") != archive.get("last_date")
+        ):
+            raise ResearchMemoryError("Current sealed claim does not belong to this archive/target.")
+        prior_snapshot = current_claim.get("previously_consumed_validation_dates")
+        if (
+            not isinstance(prior_snapshot, list)
+            or any(not isinstance(item, str) for item in prior_snapshot)
+            or prior_snapshot != sorted(set(prior_snapshot))
+        ):
+            raise ResearchMemoryError("Current claim lacks a valid prior-consumption snapshot.")
+        prior_used_dates = set(prior_snapshot)
+    elif claim is not None and not isinstance(claim, dict):
+        raise ResearchMemoryError("Current claim metadata is malformed.")
+
+    expected = public_plan(
+        split_archive(
+            archive.get("rows"),
+            archive_sha256=archive.get("archive_sha256", ""),
+            used_validation_dates=prior_used_dates,
+        )
+    )
+    if plan != expected:
+        raise ResearchMemoryError(
+            "Sealed plan differs from the archive-derived chronological partition."
+        )
 
 
 def _reserved_validation_dates(plan: dict[str, Any]) -> set[str]:
@@ -966,6 +1123,8 @@ def record_cycle(
         has_any_directional_report
         or run_status.get("failed_direction") in {"forward", "reverse"}
     )
+    if needs_directional_record:
+        _validate_sealed_plan_binding(plan, archive, ledger, claim)
     reserved_report_dates = _reserved_validation_dates(plan) if needs_directional_record else set()
     forbidden_report_dates = used_validation_dates | reserved_report_dates
     r60 = plan.get("regimes", {}).get("R60", {}) if isinstance(plan.get("regimes"), dict) else {}
