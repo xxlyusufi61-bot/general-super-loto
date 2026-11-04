@@ -13,7 +13,7 @@ import hashlib
 import json
 import math
 import re
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -171,7 +171,44 @@ def _reject_consumed_validation_dates(
         return
     serialized = _canonical(value).decode("utf-8")
     if _report_dates_in_text(serialized).intersection(forbidden_dates):
-        raise ResearchMemoryError(label + " contains a consumed validation date; memory write refused.")
+        raise ResearchMemoryError(label + " contains a consumed or reserved validation date; memory write refused.")
+
+
+def _reserved_validation_dates(plan: dict[str, Any]) -> set[str]:
+    """Expand the current sealed holdout windows so guessed dates cannot enter memory."""
+    regimes = plan.get("regimes", {})
+    if not isinstance(regimes, dict):
+        raise ResearchMemoryError("Sealed-plan regimes are invalid for memory redaction.")
+    reserved: set[str] = set()
+    pairs = (
+        ("validation_start_date", "validation_end_date"),
+        ("reverse_validation_start_date", "reverse_validation_end_date"),
+    )
+    for regime_name, regime in regimes.items():
+        if not isinstance(regime, dict):
+            raise ResearchMemoryError("Sealed-plan regime metadata is invalid.")
+        for start_key, end_key in pairs:
+            start = regime.get(start_key)
+            end = regime.get(end_key)
+            if start is None and end is None:
+                continue
+            if not isinstance(start, str) or not isinstance(end, str):
+                raise ResearchMemoryError("Sealed validation-window bounds are incomplete.")
+            try:
+                first = date.fromisoformat(start)
+                last = date.fromisoformat(end)
+            except ValueError:
+                raise ResearchMemoryError("Sealed validation-window bounds are invalid.") from None
+            if first.isoformat() != start or last.isoformat() != end or last < first:
+                raise ResearchMemoryError("Sealed validation-window chronology is invalid.")
+            span = (last - first).days
+            if span > 3660:
+                raise ResearchMemoryError("Sealed validation-window span exceeds memory redaction limits.")
+            reserved.update(
+                (first + timedelta(days=offset)).isoformat()
+                for offset in range(span + 1)
+            )
+    return reserved
 
 
 def empty_memory() -> dict[str, Any]:
@@ -249,8 +286,8 @@ def _validate_entry(entry: Any, expected_id: int) -> dict[str, Any]:
             raise ResearchMemoryError("Research-memory " + name + " is invalid.")
     report_content_status = entry["research_report_content_status"]
     if report_content_status not in {
-        "STORED", "OMITTED_SENSITIVE_CONTENT", "OMITTED_UNSUPPORTED_FORMAT",
-        "OMITTED_SIZE_LIMIT", "NOT_AVAILABLE",
+        "STORED", "OMITTED_SENSITIVE_CONTENT", "OMITTED_NUMERIC_CONTENT",
+        "OMITTED_UNSUPPORTED_FORMAT", "OMITTED_SIZE_LIMIT", "NOT_AVAILABLE",
     }:
         raise ResearchMemoryError("Research-report content status is invalid.")
     report_content = entry["research_report_content"]
@@ -267,6 +304,8 @@ def _validate_entry(entry: Any, expected_id: int) -> dict[str, Any]:
         ):
             raise ResearchMemoryError("Stored research-report content or its hash is invalid.")
         _reject_number_values(report_content, "Stored research-report content")
+        if re.search(r"[0-9]", report_content):
+            raise ResearchMemoryError("Stored research-report content contains numeric content.")
         if REPORT_SECRET_PATTERN.search(report_content):
             raise ResearchMemoryError("Stored research-report content contains a secret-like value.")
     elif report_content is not None or entry["research_report_content_sha256"] is not None:
@@ -585,6 +624,12 @@ def _sanitize_research_report(
         return None, "OMITTED_SENSITIVE_CONTENT"
     if REPORT_SECRET_PATTERN.search(normalized):
         return None, "OMITTED_SENSITIVE_CONTENT"
+    # Free-form narrative is retained only when it has no Arabic numerals.
+    # Aggregate metrics and validated hypothesis/spec fields live separately;
+    # this prevents numeric candidate rankings and unstructured value lists
+    # from entering persistent prompt context.
+    if re.search(r"[0-9]", normalized):
+        return None, "OMITTED_NUMERIC_CONTENT"
     return normalized, "STORED"
 
 
@@ -872,6 +917,7 @@ def record_cycle(
     ):
         raise ResearchMemoryError("An evaluation report without its successful current-cycle claim cannot enter memory.")
     plan = _load_optional_json(sealed_plan_path) or {}
+    forbidden_report_dates = used_validation_dates | _reserved_validation_dates(plan)
     r60 = plan.get("regimes", {}).get("R60", {}) if isinstance(plan.get("regimes"), dict) else {}
     discovery_window = {
         "start_date": r60.get("discovery_start_date"),
@@ -986,7 +1032,7 @@ def record_cycle(
             error_type=error_type,
             shared_failure=shared_failure,
             evaluation=direction_eval,
-            forbidden_validation_dates=used_validation_dates,
+            forbidden_validation_dates=forbidden_report_dates,
         )
         if any(old["cycle_id"] == entry["cycle_id"] for old in memory["entries"]):
             raise ResearchMemoryError("This run/direction already exists in memory; refusing a duplicate append.")
