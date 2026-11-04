@@ -848,6 +848,33 @@ def _write_memory(memory: dict[str, Any], path: str | Path) -> None:
     temp.replace(target)
 
 
+def _compact_proposal(proposal: dict[str, Any]) -> dict[str, Any]:
+    """Keep the useful mathematical core while bounding prompt size."""
+    limits = {
+        "proposed_family": 180,
+        "hypothesis": 420,
+        "exact_definition": 850,
+        "inputs": 280,
+        "output_rule": 420,
+        "parameter_policy": 280,
+        "selection_policy": 280,
+        "falsification_criterion": 280,
+    }
+    compact = {
+        "hypothesis_id": proposal["hypothesis_id"],
+        "discovery_direction": proposal["discovery_direction"],
+    }
+    for key, limit in limits.items():
+        value = proposal.get(key)
+        compact[key] = value[:limit] if isinstance(value, str) else value
+    risks = proposal.get("known_risks", [])
+    compact["known_risks"] = [
+        item[:160] for item in risks[:2] if isinstance(item, str)
+    ]
+    compact["evaluation_protocols"] = list(proposal.get("evaluation_protocols", []))
+    return compact
+
+
 def direction_context(
     direction: str,
     target_date: str,
@@ -881,7 +908,8 @@ def direction_context(
             "research_report_sha256": entry["research_report_sha256"],
             "status": entry["status"],
             "proposal_status": entry["proposal_status"],
-            "hypotheses": entry["proposals"],
+            "hypotheses": [_compact_proposal(item) for item in entry["proposals"][:2]],
+            "proposals_in_memory": len(entry["proposals"]),
             "execution_spec_status": entry["execution_spec_status"],
             "execution_spec": entry["execution_spec"],
             "execution_spec_sha256": entry["execution_spec_sha256"],
@@ -895,7 +923,7 @@ def direction_context(
         _reject_number_values(compact, "Directional context")
         candidate = context + [compact]
         if len(candidate) > limit or len(_canonical(candidate)) > MAX_CONTEXT_CHARS:
-            break
+            continue
         context = candidate
     return context
 
