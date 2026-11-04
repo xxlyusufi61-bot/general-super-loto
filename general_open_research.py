@@ -41,6 +41,8 @@ PROPOSALS = BASE / "open_research_proposals.json"
 EXECUTION_SPECS = BASE / "open_research_execution_specs.json"
 USAGE_REPORT = BASE / "open_research_usage.json"
 RUN_STATUS = BASE / "open_research_run_status.json"
+LESSONS_START = research_memory.LESSONS_START
+LESSONS_END = research_memory.LESSONS_END
 API_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
 DOCUMENTATION_REVIEW_DATE = "2026-10-25"
 
