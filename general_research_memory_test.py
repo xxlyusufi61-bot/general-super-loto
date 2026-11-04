@@ -145,7 +145,7 @@ class DirectionalMemoryContextTests(unittest.TestCase):
                 "output_rule", "parameter_policy", "selection_policy",
                 "falsification_criterion",
             ):
-                proposal[key] = (key + " ") * 200
+                proposal[key] = "x" * 1800
             entry["proposals"].append(proposal)
         entry["learning_notes"] = {
             "observations": ["An observation with enough detail. " * 15],
