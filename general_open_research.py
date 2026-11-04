@@ -887,11 +887,16 @@ def _configured_https_proxy(target_host: str) -> tuple[str, int, dict[str, str]]
     )
     try:
         proxy = urlsplit(normalized_proxy_url)
-        proxy_port = proxy.port or 80
+        proxy_port = proxy.port if proxy.port is not None else 80
     except ValueError:
         raise RuntimeError(
             "Configured HTTPS proxy is malformed; no provider request was sent."
         ) from None
+    if not 1 <= proxy_port <= 65535:
+        raise RuntimeError(
+            "Configured HTTPS proxy port is outside the valid TCP range; "
+            "no provider request was sent."
+        )
     if (
         proxy.scheme.lower() != "http"
         or not proxy.hostname
