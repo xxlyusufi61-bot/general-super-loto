@@ -523,6 +523,14 @@ def _direction_artifacts(
         specs["status"] = "REJECTED"
         specs["specifications"] = []
         specs["rejection_reasons"] = ["Execution specification is not attached to this direction's proposal."]
+    if specs["status"] == "VALIDATED_SPECS" and (
+        not proposals["proposals"]
+        or len(specs["specifications"]) != 1
+        or specs["specifications"][0].get("hypothesis_id") != proposals["proposals"][0]["hypothesis_id"]
+    ):
+        specs["status"] = "REJECTED"
+        specs["specifications"] = []
+        specs["rejection_reasons"] = ["Only a specification for this direction's first proposal can be retained."]
     notes = _parse_learning_notes(report)
     _reject_number_values(proposals["proposals"], "Directional proposals")
     _reject_number_values(specs["specifications"], "Directional specifications")
