@@ -6,7 +6,6 @@ import general_automation_state as state
 
 
 STAMP = "2026-11-04T12:00:00+00:00"
-BLOB_SHA = "a" * 40
 
 
 class AutomationStateContractTests(unittest.TestCase):
@@ -15,7 +14,7 @@ class AutomationStateContractTests(unittest.TestCase):
 
     def entry(self, key="research_memory", content=None, generation=1):
         content = content if content is not None else '{"schema_version": 2, "entries": []}\n'
-        return state.build_manifest_entry(key, content, BLOB_SHA, generation, STAMP)
+        return state.build_manifest_entry(key, content, state.git_blob_sha(content), generation, STAMP)
 
     def test_initial_manifest_is_empty_bootstrap_contract(self):
         self.assertEqual(state.validate_manifest(self.manifest), self.manifest)
@@ -51,7 +50,7 @@ class AutomationStateContractTests(unittest.TestCase):
         content = '{"schema_version": 2, "entries": []}\n'
         entry = self.entry(content=content)
         self.assertEqual(entry["path"], "general_research_memory.json")
-        self.assertEqual(entry["blob_sha"], BLOB_SHA)
+        self.assertEqual(entry["blob_sha"], state.git_blob_sha(content))
         self.assertEqual(entry["byte_length"], len(content.encode("utf-8")))
         self.assertEqual(entry["generation"], 1)
         self.assertEqual(len(entry["content_sha256"]), 64)
@@ -60,11 +59,11 @@ class AutomationStateContractTests(unittest.TestCase):
         with self.assertRaises(state.AutomationStateError):
             state.build_manifest_entry("research_memory", "{}", "bad", 1, STAMP)
         with self.assertRaises(state.AutomationStateError):
-            state.build_manifest_entry("research_memory", "{}", BLOB_SHA, 0, STAMP)
+            state.build_manifest_entry("research_memory", "{}", state.git_blob_sha("{}"), 0, STAMP)
         with self.assertRaises(state.AutomationStateError):
-            state.build_manifest_entry("research_memory", "{}", BLOB_SHA, 1, "not-a-date")
+            state.build_manifest_entry("research_memory", "{}", state.git_blob_sha("{}"), 1, "not-a-date")
         with self.assertRaises(state.AutomationStateError):
-            state.build_manifest_entry("research_memory", "{}", BLOB_SHA, True, STAMP)
+            state.build_manifest_entry("research_memory", "{}", state.git_blob_sha("{}"), True, STAMP)
 
     def test_successful_manifest_update_advances_generation(self):
         entry = self.entry()
@@ -156,7 +155,7 @@ class AutomationStateContractTests(unittest.TestCase):
 
     def test_timestamp_must_include_timezone(self):
         with self.assertRaises(state.AutomationStateError):
-            state.build_manifest_entry("research_memory", "{}", BLOB_SHA, 1, "2026-11-04T12:00:00")
+            state.build_manifest_entry("research_memory", "{}", state.git_blob_sha("{}"), 1, "2026-11-04T12:00:00")
 
 
 if __name__ == "__main__":
