@@ -20,6 +20,7 @@ Forward and reverse research have distinct memory contexts:
 - A forward request receives only prior `forward` entries.
 - A reverse request receives only prior `reverse` entries.
 - The context is bounded to at most six recent eligible entries and 18 KB.
+- Full hypotheses and specifications remain stored in the append-only memory file. The prompt context includes up to the two highest-priority hypotheses per prior record with field truncation explicitly marked, plus the validated specification, learning notes, safe aggregate feedback, and provenance metadata.
 - Eligible entries may have the same target date as the current run, but only when they were created by an earlier run; entries with a later target date are excluded.
 - A context entry's claims are explicitly unverified. The model must verify relevant claims using its current direction's permitted discovery history.
 
