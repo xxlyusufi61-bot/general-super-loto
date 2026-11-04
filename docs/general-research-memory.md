@@ -1,14 +1,14 @@
-# GENERAL internal research memory v0.1
+# GENERAL internal research memory v0.2
 
 ## Purpose
 
-This file documents the dedicated, persistent memory used only by GENERAL's blank-slate Super Loto formula-research runner. It allows later research cycles to learn from GENERAL's own earlier hypotheses, definitions, failed approaches, structured learning notes, safe aggregate evaluation feedback, and failure metadata.
+This file documents the dedicated, persistent memory used only by GENERAL's blank-slate Super Loto formula-research runner. It allows later research cycles to learn from GENERAL's own earlier complete safe narrative reports, validated hypotheses and definitions, failed approaches, structured learning notes, safe aggregate evaluation feedback, and failure metadata.
 
 The memory begins empty. It is not backfilled from existing Actions artifacts, generic agent memory, old reports, or any earlier manual formula experiment.
 
 ## Hard provenance boundary
 
-The memory writer accepts only entries with the exact source `GENERAL/open-research` and research epoch `general-open-research-memory-v1`. Every entry includes a direction, target-date metadata, archive hash, runner version, report hash, hypothesis/specification hashes, a cycle identifier, and an entry content hash.
+The memory writer accepts only entries with the exact source `GENERAL/open-research` and research epoch `general-open-research-memory-v1`. Every entry includes a direction, target-date metadata, archive hash, runner version, the source report hash, sanitized report narrative and its content hash when safe, hypothesis/specification hashes, a cycle identifier, and an entry content hash. Schema v2 upgrades the empty v1 store; the current main-branch memory contains no prior entries requiring migration.
 
 The system never imports or reads the user's pre-GENERAL Pydroid/manual formula work, its code, definitions, parameter choices, tests, scores, rankings, or reports. The new research runner does not read `general_memory.json`; that separate shared-agent memory is not a source for formula discovery. Existing Actions artifacts are not automatically imported.
 
@@ -31,12 +31,13 @@ No forward candidate list, report, or memory item is passed to reverse discovery
 Each direction may retain:
 - Validated structured hypothesis definitions and their direction-namespaced IDs.
 - A single matching validated execution specification, if the proposal parser and restricted DSL accepted one.
-- A hash of the full directional report, without retaining the raw report in this memory file.
+- The complete safe narrative portion of the directional report, with a source-report SHA-256 and a separate hash for the stored sanitized narrative. Structured proposal/specification/learning-note blocks are extracted into their validated fields; structured rule-change requests are omitted because they use a separate approval path.
+- Report storage fails closed for that narrative when it contains a six-number set, any already-consumed validation date, secret-like text, malformed structured-block boundaries, or exceeds the report-size limit. The corresponding structured fields may still be retained only when their own validators pass. An omission status is recorded without copying the sensitive text.
 - Bounded structured learning notes: observations, failed approaches, and useful next tests.
 - Safe aggregate evaluation summaries, when the append-only evaluation ledger confirms the claim reached `EVALUATED`.
 - Sanitized failure stage/type metadata when a request, parsing step, claim, or evaluation did not complete.
 
-The record may include target-date metadata, the archive hash, and the discovery-window date range/count. It does not copy archive rows, draw-number sets, prediction values, individual holdout dates, per-draw hit records, or full candidate rankings.
+The record may include target-date metadata, the archive hash, and the discovery-window date range/count. It does not copy archive rows, draw-number sets, prediction values, individual holdout dates, per-draw hit records, API credentials, or raw structured rule-change requests.
 
 ## Consumed validation feedback
 
@@ -67,6 +68,8 @@ The offline test suite covers:
 - Binding evaluation feedback to the correct frozen candidate/specification.
 - Consumed-holdout markers and retrospective-only reverse results.
 - Exclusion of per-draw data and holdout date lists from memory.
+- Sanitization and persistence of complete safe same-direction report narratives, including number-set, consumed-date, secret-like-text, malformed-block, and size-limit rejection.
+- Inclusion of only the matching direction's stored narrative in later model context.
 
 Offline tests do not make hosted NVIDIA requests and do not claim a formula has a predictive advantage.
 
