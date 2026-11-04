@@ -11,7 +11,6 @@ only safe usage metadata returned by each directional inference request, when pr
 """
 from __future__ import annotations
 
-import base64
 import http.client
 import json
 import os
@@ -19,7 +18,7 @@ import ssl
 import time
 import urllib.error
 import urllib.request
-from urllib.parse import unquote, urlsplit
+from urllib.parse import urlsplit
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
@@ -909,15 +908,12 @@ def _configured_https_proxy(target_host: str) -> tuple[str, int, dict[str, str]]
             "no provider request was sent."
         )
 
-    tunnel_headers: dict[str, str] = {}
     if proxy.username is not None or proxy.password is not None:
-        credentials = (
-            unquote(proxy.username or "") + ":" + unquote(proxy.password or "")
-        ).encode("utf-8")
-        tunnel_headers["Proxy-Authorization"] = (
-            "Basic " + base64.b64encode(credentials).decode("ascii")
+        raise RuntimeError(
+            "Credentials in an HTTP proxy URL are rejected because the proxy "
+            "connection is not encrypted; no provider request was sent."
         )
-    return proxy.hostname, proxy_port, tunnel_headers
+    return proxy.hostname, proxy_port, {}
 
 
 def _create_nvidia_connection(timeout_seconds: int):
