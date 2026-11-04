@@ -66,6 +66,13 @@ def _strict_json_loads(content: str) -> Any:
         raise AutomationStateError("state object is not valid strict JSON") from exc
 
 
+def git_blob_sha(content: str) -> str:
+    """Return Git's canonical SHA-1 for a UTF-8 blob payload."""
+    encoded = content.encode("utf-8")
+    header = f"blob {len(encoded)}\\0".encode("ascii")
+    return hashlib.sha1(header + encoded).hexdigest()
+
+
 def initial_manifest() -> dict[str, Any]:
     return {
         "schema_version": SCHEMA_VERSION,
@@ -99,6 +106,8 @@ def build_manifest_entry(
     validate_state_document(object_key, content)
     if not isinstance(blob_sha, str) or not SHA1_RE.fullmatch(blob_sha):
         raise AutomationStateError("blob_sha must be a lowercase 40-character Git SHA")
+    if blob_sha != git_blob_sha(content):
+        raise AutomationStateError("blob_sha does not match the supplied Git blob content")
     if isinstance(generation, bool) or not isinstance(generation, int) or generation < 1:
         raise AutomationStateError("generation must be a positive integer")
     stamp = _utc_timestamp(updated_at_utc, "updated_at_utc")
@@ -213,4 +222,6 @@ def verify_object_content(object_key: str, entry: dict[str, Any], content: str) 
         raise AutomationStateError("state object content digest mismatch")
     if not isinstance(entry.get("blob_sha"), str) or not SHA1_RE.fullmatch(entry["blob_sha"]):
         raise AutomationStateError("state object Git blob SHA is invalid")
+    if entry["blob_sha"] != git_blob_sha(content):
+        raise AutomationStateError("state object Git blob SHA mismatch")
     return True
