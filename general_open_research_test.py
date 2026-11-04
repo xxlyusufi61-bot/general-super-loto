@@ -126,6 +126,9 @@ class OpenResearchIsolationTests(unittest.TestCase):
             self.assertIn(label, system)
         for legacy_marker in ("v8.6", "v19", "v0.3.1", "t[i] = b[i] - a[i]", "historical formula semantics"):
             self.assertNotIn(legacy_marker, system)
+        self.assertIn("pre-general manual/pydroid formulas", system)
+        self.assertIn("same-direction general-internal memory", system)
+        self.assertNotIn("previous project-memory reports", system)
 
     def test_research_payload_uses_only_discovery_rows_for_long_history(self):
         rows = []
