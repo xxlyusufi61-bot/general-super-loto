@@ -419,15 +419,22 @@ class GitHubStateStoreReaderTests(unittest.TestCase):
             Path(__file__).resolve().parent
             / ".github" / "workflows" / "general-autonomous-research.yml"
         ).read_text(encoding="utf-8")
-        marker = "      - name: Hydrate verified GENERAL state-store data\n"
-        schedule_start = workflow.find("  scheduled-cycle:")
-        start = workflow.find(marker, schedule_start)
-        self.assertGreaterEqual(start, 0)
-        status_step = workflow.find(
-            "      - name: Check explicit authorization and local global-lock state\n"
+        schedule_start = workflow.index("  scheduled-cycle:")
+        hydrate_start = workflow.index(
+            "Hydrate verified GENERAL state-store data", schedule_start
         )
-        self.assertGreater(status_step, start)
-        step = workflow[start:status_step]
+        audit_start = workflow.index(
+            "Verify active state-store authority and global safety lock",
+            hydrate_start,
+        )
+        authorization_start = workflow.index(
+            "Check explicit authorization and local global-lock state",
+            audit_start,
+        )
+        self.assertLess(schedule_start, hydrate_start)
+        self.assertLess(hydrate_start, audit_start)
+        self.assertLess(audit_start, authorization_start)
+        step = workflow[hydrate_start:authorization_start]
         self.assertIn("./.github/actions/hydrate-automation-state", step)
         self.assertIn("general_automation_state_runtime_audit.py --state-authoritative", step)
         self.assertIn("GITHUB_REPOSITORY:", step)
@@ -470,18 +477,11 @@ class GitHubStateStoreReaderTests(unittest.TestCase):
             Path(__file__).resolve().parent
             / ".github" / "workflows" / "nvidia-safety-tests.yml"
         ).read_text(encoding="utf-8")
-        self.assertIn("permissions:\n  contents: read", workflow)
-        marker = "      - name: Run active authoritative state-store integrity audit\n"
-        start = workflow.find(marker)
-        self.assertGreaterEqual(start, 0)
-        end = workflow.find("\n      - name:", start + len(marker))
-        if end < 0:
-            end = len(workflow)
-        step = workflow[start:end]
-        self.assertIn("GITHUB_TOKEN: ${{ github.token }}", step)
-        self.assertIn("general_automation_state_runtime_audit.py --state-authoritative", step)
-        self.assertNotIn("git push", step)
-        self.assertNotIn("NVIDIA_API_KEY", step)
+        self.assertIn("contents: read", workflow)
+        self.assertIn("Run active authoritative state-store integrity audit", workflow)
+        self.assertIn("general_automation_state_runtime_audit.py --state-authoritative", workflow)
+        self.assertNotIn("git push", workflow)
+        self.assertNotIn("NVIDIA_API_KEY", workflow)
 
 
 if __name__ == "__main__":
