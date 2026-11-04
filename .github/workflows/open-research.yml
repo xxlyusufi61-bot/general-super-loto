@@ -160,6 +160,7 @@ jobs:
             --output open_research_evaluation_claim.json \
             --github-output "$GITHUB_OUTPUT"
       - name: Persist sealed claim and immutable archive snapshot before evaluation
+        id: persist-sealed-claim
         if: ${{ steps.sealed-claim.outputs.claim_created == 'true' }}
         run: |
           git config user.name "github-actions[bot]"
@@ -180,6 +181,7 @@ jobs:
             --specs open_research_execution_specs.json \
             --output open_research_evaluation_report.json
       - name: Persist evaluation completion without draw-level values
+        id: persist-sealed-evaluation
         if: ${{ success() && steps.sealed-claim.outputs.claim_created == 'true' }}
         run: |
           git add general_evaluation_ledger.json
@@ -211,18 +213,34 @@ jobs:
       - name: Append sanitized GENERAL research memory
         if: ${{ always() && (steps.nvidia-research.outcome == 'success' || steps.nvidia-research.outcome == 'failure') }}
         env:
+          NVIDIA_OUTCOME: ${{ steps.nvidia-research.outcome }}
           CLAIM_OUTCOME: ${{ steps.sealed-claim.outcome }}
-          CLAIM_PERSIST_OUTCOME: ${{ steps.sealed-claim.outcome == 'success' && steps.sealed-claim.outputs.claim_created == 'true' && steps.sealed-evaluation.outcome == 'failure' && 'evaluation_failure' || 'none' }}
+          CLAIM_PERSIST_OUTCOME: ${{ steps.persist-sealed-claim.outcome }}
           EVALUATION_OUTCOME: ${{ steps.sealed-evaluation.outcome }}
+          EVALUATION_PERSIST_OUTCOME: ${{ steps.persist-sealed-evaluation.outcome }}
         run: |
           failure_stage=""
-          if [ "$CLAIM_OUTCOME" = "failure" ]; then failure_stage="sealed_claim"; fi
-          if [ "$CLAIM_PERSIST_OUTCOME" = "evaluation_failure" ]; then failure_stage="sealed_evaluation"; fi
+          if [ "$NVIDIA_OUTCOME" = "failure" ]; then
+            echo "The research runner records the precise failed direction and stage."
+          elif [ "$CLAIM_OUTCOME" = "failure" ]; then
+            failure_stage="sealed_claim"
+          elif [ "$CLAIM_PERSIST_OUTCOME" = "failure" ]; then
+            failure_stage="sealed_claim_persistence"
+          elif [ "$EVALUATION_OUTCOME" = "failure" ]; then
+            failure_stage="sealed_evaluation"
+          elif [ "$EVALUATION_PERSIST_OUTCOME" = "failure" ]; then
+            failure_stage="sealed_evaluation_persistence"
+          fi
+          evaluation_persisted="true"
+          if [ "$EVALUATION_OUTCOME" = "success" ] && [ "$EVALUATION_PERSIST_OUTCOME" != "success" ]; then
+            evaluation_persisted="false"
+          fi
           if python3 general_research_memory.py record-cycle \
             --run-id "$GITHUB_RUN_ID" \
             --run-attempt "$GITHUB_RUN_ATTEMPT" \
             --failure-stage "$failure_stage" \
-            --error-type "WorkflowStepFailure"; then
+            --error-type "WorkflowStepFailure" \
+            --evaluation-persisted "$evaluation_persisted"; then
             :
           else
             echo "GENERAL research-memory append failed; the existing ledger and target isolation were not modified."
