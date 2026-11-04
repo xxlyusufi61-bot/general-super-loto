@@ -171,7 +171,7 @@ def _reject_consumed_validation_dates(
         return
     serialized = _canonical(value).decode("utf-8")
     if _report_dates_in_text(serialized).intersection(forbidden_dates):
-        raise ResearchMemoryError(label + " contains a consumed or reserved validation date; memory write refused.")
+        raise ResearchMemoryError(label + " contains a consumed validation date or a reserved validation date; memory write refused.")
 
 
 def _reserved_validation_dates(plan: dict[str, Any]) -> set[str]:
