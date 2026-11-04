@@ -9,7 +9,7 @@ import urllib.error
 from datetime import date, timedelta
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 import general_open_research as research
 from general_data_guard import DataGuardError
@@ -644,7 +644,7 @@ class NvidiaUsageObservationTests(unittest.TestCase):
             "proxy.example",
             8080,
             timeout=19,
-            context=unittest.mock.ANY,
+            context=ANY,
         )
         connection.set_tunnel.assert_called_once_with(
             "integrate.api.nvidia.com",
@@ -670,7 +670,7 @@ class NvidiaUsageObservationTests(unittest.TestCase):
             "integrate.api.nvidia.com",
             443,
             timeout=11,
-            context=unittest.mock.ANY,
+            context=ANY,
         )
         connection.set_tunnel.assert_not_called()
 
