@@ -18,9 +18,11 @@ from typing import Any
 
 from general_hypothesis_proposals import (
     PROPOSAL_KEYS,
+    _validate_proposal,
     parse_hypothesis_proposals,
 )
 from general_execution_spec_parser import parse_execution_spec_block
+from general_hypothesis_execution import validate_execution_spec
 
 VERSION = "0.1.0"
 SCHEMA_VERSION = 1
@@ -201,6 +203,12 @@ def _validate_entry(entry: Any, expected_id: int) -> dict[str, Any]:
         seen_proposals.add(proposal_id)
         if proposal.get("discovery_direction") != entry["direction"]:
             raise ResearchMemoryError("A directional memory entry contains another direction's proposal.")
+        try:
+            checked_proposal = _validate_proposal(proposal)
+        except (TypeError, ValueError):
+            raise ResearchMemoryError("Stored proposal failed the canonical proposal validator.") from None
+        if {key: checked_proposal[key] for key in PROPOSAL_KEYS} != proposal:
+            raise ResearchMemoryError("Stored proposal is not in canonical validated form.")
         _reject_number_values(proposal, "Stored proposal")
     if entry["execution_spec_status"] not in {
         "VALIDATED_SPECS", "VALID_EMPTY", "MISSING_BLOCK", "REJECTED", "NOT_RUN",
@@ -211,19 +219,85 @@ def _validate_entry(entry: Any, expected_id: int) -> dict[str, Any]:
     if entry["execution_spec_sha256"] is not None and not HEX64.fullmatch(str(entry["execution_spec_sha256"])):
         raise ResearchMemoryError("Stored execution-spec hash is invalid.")
     if entry["execution_spec"] is not None:
-        _reject_number_values(entry["execution_spec"], "Stored execution specification")
+        try:
+            checked_spec = validate_execution_spec(entry["execution_spec"])
+        except Exception:
+            raise ResearchMemoryError("Stored execution specification failed the canonical DSL validator.") from None
+        if checked_spec != entry["execution_spec"]:
+            raise ResearchMemoryError("Stored execution specification is not canonical.")
+        if entry["execution_spec_sha256"] != _sha(_canonical(entry["execution_spec"])):
+            raise ResearchMemoryError("Stored execution-spec hash does not match its definition.")
+    elif entry["execution_spec_sha256"] is not None:
+        raise ResearchMemoryError("An absent execution specification cannot have a specification hash.")
+    if (entry["execution_spec_status"] == "VALIDATED_SPECS") != (entry["execution_spec"] is not None):
+        raise ResearchMemoryError("Execution-spec status and stored specification disagree.")
+    if entry["proposal_status"] == "VALID_PROPOSALS" and not entry["proposals"]:
+        raise ResearchMemoryError("A valid proposal status must contain proposals.")
+    if entry["proposal_status"] == "VALID_EMPTY" and entry["proposals"]:
+        raise ResearchMemoryError("A valid-empty proposal status cannot contain proposals.")
+    if entry["proposal_status"] not in {"VALID_PROPOSALS", "VALID_EMPTY"} and entry["proposals"]:
+        raise ResearchMemoryError("Rejected or missing proposal status cannot contain proposals.")
     if not isinstance(entry["learning_notes"], dict) or set(entry["learning_notes"]) != LESSON_KEYS:
         raise ResearchMemoryError("Stored learning notes are invalid.")
+    for note_list in entry["learning_notes"].values():
+        if not isinstance(note_list, list) or len(note_list) > MAX_LESSON_ITEMS:
+            raise ResearchMemoryError("Stored learning-note lists are invalid.")
+        if any(not isinstance(note, str) or not 5 <= len(note.strip()) <= MAX_LESSON_CHARS for note in note_list):
+            raise ResearchMemoryError("Stored learning-note items are invalid.")
     _reject_number_values(entry["learning_notes"], "Stored learning notes")
     if entry["evaluation_feedback"] is not None:
-        if not isinstance(entry["evaluation_feedback"], dict):
-            raise ResearchMemoryError("Evaluation feedback must be an object or null.")
-        _reject_number_values(entry["evaluation_feedback"], "Evaluation feedback")
-        if entry["evaluation_feedback"].get("holdout_consumed") is not True:
+        feedback = entry["evaluation_feedback"]
+        feedback_keys = {
+            "status", "claim_id", "candidate_id", "spec_sha256", "holdout",
+            "cross_validation", "holdout_consumed", "retrospective_only",
+            "raw_holdout_dates_stored", "per_draw_results_stored",
+            "draw_number_values_stored", "interpretation",
+        }
+        if not isinstance(feedback, dict) or set(feedback) != feedback_keys:
+            raise ResearchMemoryError("Evaluation feedback does not match its safe summary schema.")
+        if feedback.get("status") != "EVALUATED_EXPLORATORY_FIXED_SPEC":
+            raise ResearchMemoryError("Evaluation feedback status is invalid.")
+        if (
+            not isinstance(feedback.get("claim_id"), str)
+            or not HEX64.fullmatch(feedback["claim_id"])
+            or not entry["proposals"]
+            or feedback.get("candidate_id") != entry["proposals"][0]["hypothesis_id"]
+            or feedback.get("spec_sha256") != entry["execution_spec_sha256"]
+            or feedback.get("spec_sha256") is None
+        ):
+            raise ResearchMemoryError("Evaluation feedback is not bound to this direction's frozen candidate.")
+        if not isinstance(feedback.get("interpretation"), str) or len(feedback["interpretation"]) > 300:
+            raise ResearchMemoryError("Evaluation feedback interpretation is invalid.")
+        for metric_group in ("holdout", "cross_validation"):
+            group = feedback.get(metric_group)
+            if not isinstance(group, dict) or set(group) - (METRIC_FIELDS | {"hit_distribution"}):
+                raise ResearchMemoryError("Evaluation feedback contains non-aggregate fields.")
+            for metric, metric_value in group.items():
+                if metric == "hit_distribution":
+                    if (
+                        not isinstance(metric_value, dict)
+                        or len(metric_value) > 8
+                        or any(
+                            not isinstance(key, str)
+                            or len(key) > 12
+                            or type(count) is not int
+                            or not 0 <= count <= 10000
+                            for key, count in metric_value.items()
+                        )
+                    ):
+                        raise ResearchMemoryError("Evaluation hit distribution is invalid.")
+                elif type(metric_value) not in {int, float} or not math.isfinite(float(metric_value)):
+                    raise ResearchMemoryError("Evaluation aggregate metric is invalid.")
+        if feedback.get("holdout_consumed") is not True:
             raise ResearchMemoryError("Evaluation feedback must mark the sealed holdout as consumed.")
         expected_retrospective = entry["direction"] == "reverse"
-        if entry["evaluation_feedback"].get("retrospective_only") is not expected_retrospective:
+        if feedback.get("retrospective_only") is not expected_retrospective:
             raise ResearchMemoryError("Evaluation feedback direction classification is invalid.")
+        if any(feedback.get(flag) is not False for flag in (
+            "raw_holdout_dates_stored", "per_draw_results_stored", "draw_number_values_stored"
+        )):
+            raise ResearchMemoryError("Evaluation feedback must not contain raw holdout details or values.")
+        _reject_number_values(feedback, "Evaluation feedback")
     if entry["failure"] is not None and not isinstance(entry["failure"], dict):
         raise ResearchMemoryError("Failure metadata must be an object or null.")
     window = entry["discovery_window"]
