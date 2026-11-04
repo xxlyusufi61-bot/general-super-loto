@@ -50,7 +50,7 @@ class AutomationStateContractTests(unittest.TestCase):
         content = '{"schema_version": 2, "entries": []}\n'
         entry = self.entry(content=content)
         self.assertEqual(entry["path"], "general_research_memory.json")
-        self.assertEqual(entry["blob_sha"], BLOB_SHA)
+        self.assertEqual(entry["blob_sha"], state.git_blob_sha(content))
         self.assertEqual(entry["byte_length"], len(content.encode("utf-8")))
         self.assertEqual(entry["generation"], 1)
         self.assertEqual(len(entry["content_sha256"]), 64)
@@ -155,7 +155,7 @@ class AutomationStateContractTests(unittest.TestCase):
 
     def test_timestamp_must_include_timezone(self):
         with self.assertRaises(state.AutomationStateError):
-            state.build_manifest_entry("research_memory", "{}", BLOB_SHA, 1, "2026-11-04T12:00:00")
+            state.build_manifest_entry("research_memory", "{}", state.git_blob_sha("{}"), 1, "2026-11-04T12:00:00")
 
 
 if __name__ == "__main__":
