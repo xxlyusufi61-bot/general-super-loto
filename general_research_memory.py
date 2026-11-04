@@ -677,8 +677,16 @@ def _write_memory(memory: dict[str, Any], path: str | Path) -> None:
         raise ResearchMemoryError("Memory update is not append-only; existing entries changed.")
     if len(memory["entries"]) < len(checked["entries"]):
         raise ResearchMemoryError("Memory entries cannot be deleted.")
+    previous_target = (
+        date.fromisoformat(checked["entries"][-1]["target_date"])
+        if checked["entries"] else None
+    )
     for index, entry in enumerate(memory["entries"], start=1):
         _validate_entry(entry, index)
+        current_target = date.fromisoformat(entry["target_date"])
+        if previous_target is not None and current_target < previous_target:
+            raise ResearchMemoryError("Research-memory append would move chronology backwards.")
+        previous_target = current_target
     target.parent.mkdir(parents=True, exist_ok=True)
     temp = target.with_name(target.name + ".tmp")
     temp.write_text(json.dumps(memory, ensure_ascii=False, indent=2, allow_nan=False) + "\n", encoding="utf-8")
