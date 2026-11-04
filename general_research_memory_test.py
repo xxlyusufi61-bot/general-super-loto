@@ -518,6 +518,10 @@ class ResearchMemoryPersistenceTests(unittest.TestCase):
                         "discovery_start_date": "2026-09-01",
                         "discovery_end_date": "2026-10-01",
                         "discovery_count": 20,
+                        "validation_start_date": "2026-10-22",
+                        "validation_end_date": "2026-10-23",
+                        "reverse_validation_start_date": "2026-10-12",
+                        "reverse_validation_end_date": "2026-10-13",
                     }
                 }
             })
@@ -658,6 +662,36 @@ class ResearchMemoryPersistenceTests(unittest.TestCase):
                 "STORED",
             )
             self.assertNotIn("2026-10-20", json.dumps(withheld, ensure_ascii=False))
+
+            # A validation-window date is reserved before it appears in the
+            # append-only ledger, so an echoed date from that window is still
+            # omitted from the directional narrative.
+            (root / "forward.md").write_text(
+                directional_report("forward") + "\\nReserved validation date: 2026-10-22.",
+                encoding="utf-8",
+            )
+            reserved_path = root / "reserved-report-memory.json"
+            reserved_result = memory.record_cycle(
+                memory_path=reserved_path,
+                archive_path=archive_path,
+                ledger_path=ledger_path,
+                run_status_path=root / "run-status.json",
+                forward_report_path=root / "forward.md",
+                reverse_report_path=root / "reverse.md",
+                sealed_plan_path=root / "sealed-plan.json",
+                claim_path=root / "claim.json",
+                evaluation_path=root / "evaluation.json",
+                run_id="123456792",
+                run_attempt="1",
+            )
+            reserved_memory = memory.load_memory(reserved_path)
+            self.assertEqual(reserved_result["entries_added"], 2)
+            self.assertEqual(
+                reserved_memory["entries"][0]["research_report_content_status"],
+                "OMITTED_SENSITIVE_CONTENT",
+            )
+            self.assertIsNone(reserved_memory["entries"][0]["research_report_content"])
+            self.assertNotIn("2026-10-22", json.dumps(reserved_memory, ensure_ascii=False))
             (root / "forward.md").write_text(directional_report("forward"), encoding="utf-8")
 
             # A local evaluation report is not trusted while the append-only
