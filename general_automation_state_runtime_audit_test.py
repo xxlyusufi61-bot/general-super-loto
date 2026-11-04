@@ -83,6 +83,31 @@ class RuntimeStateAuditTests(unittest.TestCase):
             domain_validator=self.validator,
         )
 
+    def test_state_authoritative_audit_does_not_depend_on_legacy_main_parity(self):
+        report = audit.build_runtime_audit_report(
+            self.snapshot, None, self.lock,
+            mode="state-authoritative",
+            domain_validator=self.validator,
+        )
+        self.assertEqual(
+            report["authoritative_source"], contract.STATE_BRANCH
+        )
+        self.assertEqual(
+            report["main_state_parity"],
+            "NOT_REQUIRED_STATE_STORE_AUTHORITATIVE",
+        )
+        self.assertFalse(report["legacy_main_copies_consumed"])
+        self.assertTrue(report["read_only"])
+        self.assertFalse(report["target_values_rendered"])
+
+    def test_rejects_unknown_runtime_audit_mode(self):
+        with self.assertRaises(audit.RuntimeStateAuditError):
+            audit.build_runtime_audit_report(
+                self.snapshot, None, self.lock,
+                mode="unknown",
+                domain_validator=self.validator,
+            )
+
     def test_accepts_active_migrated_state_with_matching_main_parity(self):
         report = self.build()
         self.assertEqual(report["mode"], "ACTIVE_STATE_RUNTIME_AUDIT")

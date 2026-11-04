@@ -31,6 +31,16 @@ jobs:
         uses: actions/setup-python@v7
         with:
           python-version: '3.12'
+      - name: Hydrate verified GENERAL state-store data
+        id: state_bootstrap
+        uses: ./.github/actions/hydrate-automation-state
+        with:
+          token: ${{ github.token }}
+      - name: Verify active state-store authority and global safety lock
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python3 general_automation_state_runtime_audit.py --state-authoritative
       - name: Compile guard and test
         run: python -m py_compile general_data_guard.py test_general_archive_target_isolation.py
       - name: Validate committed canonical archive and isolate latest target

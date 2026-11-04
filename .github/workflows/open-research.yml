@@ -116,6 +116,16 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Hydrate verified GENERAL state-store data
+        id: state_bootstrap
+        uses: ./.github/actions/hydrate-automation-state
+        with:
+          token: ${{ github.token }}
+      - name: Verify active state-store authority and global safety lock
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python3 general_automation_state_runtime_audit.py --state-authoritative
       - name: Check global NVIDIA safety lock
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -126,7 +136,8 @@ jobs:
         run: |
           python3 general_nvidia_guard.py check
           echo "GENERAL_NVIDIA_GUARD_PASSED=1" >> "$GITHUB_ENV"
-      - name: Refresh archive
+      - name: Refresh and validate archive
+        id: refresh-archive
         run: |
           if python3 general_archive_fetch.py > /tmp/archive-fetch.log 2>&1; then
             echo "Archive retrieval completed."
@@ -134,6 +145,14 @@ jobs:
             echo "Archive retrieval failed; research stopped."
             exit 1
           fi
+      - name: Publish refreshed archive to the state store
+        id: publish-archive
+        uses: ./.github/actions/publish-automation-state
+        with:
+          token: ${{ github.token }}
+          expected_generation: ${{ steps.state_bootstrap.outputs.generation }}
+          objects: archive
+          message: "Refresh validated Super Loto archive"
       - name: Preflight both sealed directional intervals before hosted inference
         run: |
           python3 general_sealed_evaluation.py preflight --archive super_loto_archive.json --ledger general_evaluation_ledger.json
@@ -161,15 +180,24 @@ jobs:
             --specs open_research_execution_specs.json \
             --output open_research_evaluation_claim.json \
             --github-output "$GITHUB_OUTPUT"
-      - name: Persist sealed claim and immutable archive snapshot before evaluation
-        id: persist-sealed-claim
+      - name: Persist immutable sealed archive snapshot on main
+        id: persist-sealed-snapshot
         if: ${{ steps.sealed-claim.outputs.claim_created == 'true' }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add general_evaluation_ledger.json general_evaluation_snapshots/
-          git commit -m "Reserve one-shot Super Loto validation interval"
+          git add general_evaluation_snapshots/
+          git commit -m "Store immutable Super Loto evaluation snapshot"
           git push origin HEAD:main
+      - name: Publish sealed claim to the state store
+        id: persist-sealed-claim
+        if: ${{ steps.sealed-claim.outputs.claim_created == 'true' }}
+        uses: ./.github/actions/publish-automation-state
+        with:
+          token: ${{ github.token }}
+          expected_generation: ${{ steps.publish-archive.outputs.generation }}
+          objects: evaluation_ledger
+          message: "Reserve one-shot Super Loto validation interval"
       - name: Run one-shot chronological evaluation
         id: sealed-evaluation
         if: ${{ steps.sealed-claim.outputs.claim_created == 'true' }}
@@ -182,13 +210,15 @@ jobs:
             --proposals open_research_proposals.json \
             --specs open_research_execution_specs.json \
             --output open_research_evaluation_report.json
-      - name: Persist evaluation completion without draw-level values
+      - name: Publish evaluation completion to the state store
         id: persist-sealed-evaluation
         if: ${{ success() && steps.sealed-claim.outputs.claim_created == 'true' }}
-        run: |
-          git add general_evaluation_ledger.json
-          git commit -m "Record sealed evaluation completion"
-          git push origin HEAD:main
+        uses: ./.github/actions/publish-automation-state
+        with:
+          token: ${{ github.token }}
+          expected_generation: ${{ steps.persist-sealed-claim.outputs.generation }}
+          objects: evaluation_ledger
+          message: "Record sealed evaluation completion"
       - name: Activate global lock after an incomplete NVIDIA research request
         if: ${{ failure() && steps.nvidia-research.outcome == 'failure' }}
         env:
@@ -240,28 +270,17 @@ jobs:
             echo "GENERAL research-memory append failed; the existing ledger and target isolation were not modified."
             exit 1
           fi
-          git add -- general_research_memory.json general_evaluation_ledger.json super_loto_archive.json
-          if [ -d general_evaluation_snapshots ]; then
-            git add -- general_evaluation_snapshots/
-          fi
-          if ! git diff --cached --quiet; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git commit -m "Record GENERAL direction-isolated research memory"
-            stashed_uncommitted="false"
-            if ! git diff --quiet; then
-              git stash push --keep-index -m "temporary archive refresh before memory push"
-              stashed_uncommitted="true"
-            fi
-            git fetch origin main
-            git rebase origin/main
-            git push origin HEAD:main
-            if [ "$stashed_uncommitted" = "true" ]; then
-              git stash drop stash@{0}
-            fi
-          else
-            echo "No eligible GENERAL research memory entry was produced."
-          fi
+          echo "Research-memory candidate prepared for the dedicated state-store commit."
+
+      - name: Publish sanitized GENERAL research memory
+        id: persist-research-memory
+        if: ${{ always() && (steps.nvidia-research.outcome == 'success' || steps.nvidia-research.outcome == 'failure') }}
+        uses: ./.github/actions/publish-automation-state
+        with:
+          token: ${{ github.token }}
+          expected_generation: ${{ steps.persist-sealed-evaluation.outputs.generation || steps.persist-sealed-claim.outputs.generation || steps.publish-archive.outputs.generation || steps.state_bootstrap.outputs.generation }}
+          objects: research_memory
+          message: "Record sanitized GENERAL directional research memory"
 
       - name: Upload direction-isolated hypothesis reports and safe metadata
         if: ${{ always() }}

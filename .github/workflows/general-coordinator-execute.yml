@@ -51,6 +51,17 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Hydrate verified GENERAL state-store data
+        id: state_bootstrap
+        uses: ./.github/actions/hydrate-automation-state
+        with:
+          token: ${{ github.token }}
+      - name: Verify active state-store authority and global safety lock
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python3 general_automation_state_runtime_audit.py --state-authoritative
+
       - name: Compile coordinator and run offline tests
         run: |
           python3 -m py_compile general_agent_report_guard.py general_core.py general_coordinator.py general_source_context.py general_memory_pr_guard.py general_coordinator_memory_publication.py
@@ -120,6 +131,16 @@ jobs:
             echo "ARCHIVE FETCH FAILED; parser output suppressed."
             exit 1
           fi
+
+      - name: Publish refreshed archive for approved data tasks
+        id: publish-archive
+        if: ${{ steps.consent.outputs.enabled == 'true' && steps.build-plan.outputs.task_type == 'data' }}
+        uses: ./.github/actions/publish-automation-state
+        with:
+          token: ${{ github.token }}
+          expected_generation: ${{ steps.state_bootstrap.outputs.generation }}
+          objects: archive
+          message: "Publish validated coordinator archive refresh"
 
       - name: Snapshot shared-memory baseline
         id: memory-baseline

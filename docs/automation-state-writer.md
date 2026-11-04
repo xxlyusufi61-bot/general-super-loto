@@ -49,3 +49,55 @@ This module is a writer primitive, not an operational cutover. Until separate
 workflow integration and parity verification are completed, `main` remains the
 runtime source of truth. The global NVIDIA lock stays locked and no NVIDIA
 requests are made by this module.
+
+
+## Workflow integration map
+
+The canonical runtime read path is now the composite hydrate action followed by
+the read-only active-store audit. All consuming workflows hydrate the exact
+four-object state snapshot before any application module reads an archive,
+evaluation ledger, autonomous scheduler state, or research memory:
+
+- autonomous research control, scheduled archive refresh, and scheduled cycle;
+- blank-slate open research;
+- GENERAL agent and both coordinator workflows;
+- walk-forward evaluation and its committed-archive baseline test;
+- canonical archive target-isolation audit and live cross-source audit;
+- the explicitly gated NVIDIA diagnostic workflow.
+
+Writers use the composite publish action with the generation captured during
+hydration. Each publication is one Git commit containing all changed objects
+and the manifest. Multiple objects in one publication share one generation.
+Every later publication uses the generation returned by the preceding
+publication. A stale writer is rejected rather than rebased or retried.
+
+## Deliberate storage boundaries
+
+The first cutover covers exactly four runtime objects. The following remain
+outside it:
+
+- `general_nvidia_lock.json` remains on `main`; its REST Contents API reader
+  and writer are intentionally not redirected to the state branch.
+- The shared 40-requests-per-minute ledger remains on
+  `general-nvidia-rate-limit-state`.
+- `general_evaluation_snapshots/` remains on `main` as immutable sealed
+  evaluation evidence. The research workflows commit only this snapshot
+  directory there; the evaluation ledger itself is persisted to the state
+  branch.
+- Legacy `general_memory.json`, the method registry, candidate/report files,
+  and temporary artifacts remain outside the first state-store contract.
+
+Consequently, direct main-branch data writes are not entirely eliminated:
+global-lock updates and immutable snapshot creation still have their existing
+main-branch write paths. Main branch protection must remain disabled until
+those two exception paths are separately reviewed and coordinated. This
+change does not enable branch protection.
+
+## Operational transition
+
+After this PR is merged, the updated workflows will begin hydrating and
+publishing state-store data when they are next invoked. The state branch is
+not changed by this PR, no live workflow is dispatched here, and no data is
+written to GitHub by CI. The NVIDIA lock remains locked and autonomous
+research remains paused. Existing main copies of the four migrated files are
+historical shadows and are not consumed by the updated workflows.

@@ -55,6 +55,11 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Hydrate verified GENERAL state-store data
+        id: state_bootstrap
+        uses: ./.github/actions/hydrate-automation-state
+        with:
+          token: ${{ github.token }}
       - name: Read automation status
         if: ${{ inputs.action == 'status' }}
         run: python3 general_autonomous_research.py status
@@ -74,14 +79,12 @@ jobs:
         run: python3 general_autonomous_research.py pause
       - name: Persist authorization or pause state
         if: ${{ inputs.action == 'activate' || inputs.action == 'pause' }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add general_autonomous_research_state.json
-          if ! git diff --cached --quiet; then
-            git commit -m "chore: update autonomous research authorization"
-            git push origin HEAD:main
-          fi
+        uses: ./.github/actions/publish-automation-state
+        with:
+          token: ${{ github.token }}
+          expected_generation: ${{ steps.state_bootstrap.outputs.generation }}
+          objects: autonomous_research_state
+          message: "Update autonomous research authorization"
       - name: Summarize control action
         if: always()
         run: |
@@ -103,6 +106,11 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Hydrate verified GENERAL state-store data
+        id: state_bootstrap
+        uses: ./.github/actions/hydrate-automation-state
+        with:
+          token: ${{ github.token }}
       - name: Refresh and validate the 6-of-60 canonical archive
         run: |
           if python3 general_archive_fetch.py > /tmp/general-archive-fetch.log 2>&1; then
@@ -111,15 +119,14 @@ jobs:
             echo "Archive refresh failed; no research cycle will start."
             exit 1
           fi
-      - name: Persist the refreshed canonical archive
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add super_loto_archive.json
-          if ! git diff --cached --quiet; then
-            git commit -m "data: refresh validated Super Loto archive"
-            git push origin HEAD:main
-          fi
+      - name: Persist the refreshed canonical archive in the state store
+        id: persist_archive
+        uses: ./.github/actions/publish-automation-state
+        with:
+          token: ${{ github.token }}
+          expected_generation: ${{ steps.state_bootstrap.outputs.generation }}
+          objects: archive
+          message: "Refresh validated Super Loto archive"
 
   scheduled-cycle:
     if: ${{ github.event_name == 'schedule' }}
@@ -137,27 +144,16 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Compare automation state in read-only shadow mode
-        id: state-shadow
+      - name: Hydrate verified GENERAL state-store data
+        id: state_bootstrap
+        uses: ./.github/actions/hydrate-automation-state
+        with:
+          token: ${{ github.token }}
+      - name: Verify active state-store authority and global safety lock
         env:
+          GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-        run: |
-          set +e
-          python3 general_automation_state_reader.py --shadow-compare > /tmp/general-state-shadow.json 2>&1
-          shadow_status=$?
-          set -e
-          if [ -s /tmp/general-state-shadow.json ]; then
-            cat /tmp/general-state-shadow.json >> "$GITHUB_STEP_SUMMARY"
-          fi
-          if [ "$shadow_status" -eq 0 ]; then
-            echo "Shadow comparison completed; main remains authoritative." >> "$GITHUB_STEP_SUMMARY"
-          elif [ "$shadow_status" -eq 2 ]; then
-            echo "::warning::State-store content differs from main. Shadow result only; continuing with main."
-            echo "WARNING: divergence detected; main remains authoritative and unchanged." >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "::warning::Shadow comparison failed; continuing with existing main data."
-            echo "WARNING: shadow reader failed; existing main data remains authoritative." >> "$GITHUB_STEP_SUMMARY"
-          fi
+        run: python3 general_automation_state_runtime_audit.py --state-authoritative
       - name: Check explicit authorization and local global-lock state
         id: status
         run: |
@@ -193,15 +189,15 @@ jobs:
             --run-id "$GITHUB_RUN_ID" \
             --github-output "$GITHUB_OUTPUT"
           cat "$GITHUB_OUTPUT"
-      - name: Persist the target-attempt reservation
+      - name: Persist the target-attempt reservation in the state store
         id: persist_attempt
         if: ${{ steps.attempt_reservation.outputs.attempt_id != '' }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add general_autonomous_research_state.json
-          git commit -m "chore: reserve autonomous research target"
-          git push origin HEAD:main
+        uses: ./.github/actions/publish-automation-state
+        with:
+          token: ${{ github.token }}
+          expected_generation: ${{ steps.state_bootstrap.outputs.generation }}
+          objects: autonomous_research_state
+          message: "Reserve autonomous research target"
       - name: Run independent forward and reverse NVIDIA discovery
         id: research
         if: ${{ steps.attempt_reservation.outputs.attempt_id != '' }}
@@ -242,13 +238,26 @@ jobs:
             --output open_research_evaluation_claim.json \
             --github-output "$GITHUB_OUTPUT"
           cat "$GITHUB_OUTPUT"
-      - name: Persist the sealed claim and immutable archive snapshot
-        id: persist_claim
+      - name: Persist immutable sealed archive snapshot on main
+        id: persist_claim_snapshot
         if: ${{ steps.sealed_claim.outputs.claim_created == 'true' }}
         run: |
-          git add general_evaluation_ledger.json general_evaluation_snapshots/
-          git commit -m "Reserve autonomous sealed evaluation holdouts"
-          git push origin HEAD:main
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add general_evaluation_snapshots/
+          if ! git diff --cached --quiet; then
+            git commit -m "Store immutable autonomous evaluation snapshot"
+            git push origin HEAD:main
+          fi
+      - name: Persist sealed claim in the state store
+        id: persist_claim
+        if: ${{ steps.sealed_claim.outputs.claim_created == 'true' }}
+        uses: ./.github/actions/publish-automation-state
+        with:
+          token: ${{ github.token }}
+          expected_generation: ${{ steps.persist_attempt.outputs.generation }}
+          objects: evaluation_ledger
+          message: "Reserve autonomous sealed evaluation holdouts"
       - name: Evaluate the frozen candidates chronologically
         id: evaluation
         if: ${{ steps.sealed_claim.outputs.claim_created == 'true' }}
@@ -261,13 +270,15 @@ jobs:
             --proposals open_research_proposals.json \
             --specs open_research_execution_specs.json \
             --output open_research_evaluation_report.json
-      - name: Persist evaluation completion
+      - name: Persist evaluation completion in the state store
         id: persist_eval
         if: ${{ steps.evaluation.outcome == 'success' }}
-        run: |
-          git add general_evaluation_ledger.json
-          git commit -m "Record autonomous sealed evaluation completion"
-          git push origin HEAD:main
+        uses: ./.github/actions/publish-automation-state
+        with:
+          token: ${{ github.token }}
+          expected_generation: ${{ steps.persist_claim.outputs.generation }}
+          objects: evaluation_ledger
+          message: "Record autonomous sealed evaluation completion"
       - name: Record successful evaluation outcome
         if: ${{ always() && steps.attempt_reservation.outputs.attempt_id != '' && steps.sealed_claim.outputs.claim_created == 'true' && steps.evaluation.outcome == 'success' && steps.persist_eval.outcome == 'success' }}
         env:
@@ -277,9 +288,6 @@ jobs:
             --attempt-id "$ATTEMPT_ID" \
             --outcome SUCCEEDED \
             --reason-code EVALUATION_COMPLETED
-          git add general_autonomous_research_state.json
-          git commit -m "Record autonomous research cycle success"
-          git push origin HEAD:main
       - name: Record no-candidate outcome without scoring the archive
         if: ${{ always() && steps.attempt_reservation.outputs.attempt_id != '' && steps.research.outcome == 'success' && steps.sealed_claim.outcome == 'success' && steps.sealed_claim.outputs.claim_created != 'true' }}
         env:
@@ -289,11 +297,8 @@ jobs:
             --attempt-id "$ATTEMPT_ID" \
             --outcome NO_ELIGIBLE_CANDIDATE \
             --reason-code NO_FROZEN_DIRECTIONAL_CANDIDATE
-          git add general_autonomous_research_state.json
-          git commit -m "Record autonomous cycle without eligible candidate"
-          git push origin HEAD:main
       - name: Record failed claimed cycle
-        if: ${{ always() && steps.attempt_reservation.outputs.attempt_id != '' && (steps.persist_attempt.outcome == 'failure' || steps.research.outcome == 'failure' || steps.sealed_claim.outcome == 'failure' || steps.persist_claim.outcome == 'failure' || steps.evaluation.outcome == 'failure' || steps.persist_eval.outcome == 'failure') }}
+        if: ${{ always() && steps.attempt_reservation.outputs.attempt_id != '' && (steps.persist_attempt.outcome == 'failure' || steps.persist_claim_snapshot.outcome == 'failure' || steps.research.outcome == 'failure' || steps.sealed_claim.outcome == 'failure' || steps.persist_claim.outcome == 'failure' || steps.evaluation.outcome == 'failure' || steps.persist_eval.outcome == 'failure') }}
         env:
           ATTEMPT_ID: ${{ steps.attempt_reservation.outputs.attempt_id }}
         run: |
@@ -301,9 +306,6 @@ jobs:
             --attempt-id "$ATTEMPT_ID" \
             --outcome FAILED \
             --reason-code WORKFLOW_FAILED
-          git add general_autonomous_research_state.json
-          git commit -m "Record failed autonomous research cycle"
-          git push origin HEAD:main
       - name: Append sanitized GENERAL research memory
         if: ${{ always() && steps.attempt_reservation.outputs.attempt_id != '' }}
         env:
@@ -332,28 +334,17 @@ jobs:
             echo "GENERAL research-memory append failed; the existing ledger and target isolation were not modified."
             exit 1
           fi
-          git add -- general_research_memory.json general_evaluation_ledger.json super_loto_archive.json general_autonomous_research_state.json
-          if [ -d general_evaluation_snapshots ]; then
-            git add -- general_evaluation_snapshots/
-          fi
-          if ! git diff --cached --quiet; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git commit -m "Record GENERAL direction-isolated research memory"
-            stashed_uncommitted="false"
-            if ! git diff --quiet; then
-              git stash push --keep-index -m "temporary archive refresh before memory push"
-              stashed_uncommitted="true"
-            fi
-            git fetch origin main
-            git rebase origin/main
-            git push origin HEAD:main
-            if [ "$stashed_uncommitted" = "true" ]; then
-              git stash drop stash@{0}
-            fi
-          else
-            echo "No eligible GENERAL research-memory entry was produced."
-          fi
+          echo "Research memory is staged for the dedicated state-store commit."
+
+      - name: Persist final scheduler state and sanitized research memory
+        id: persist_final_state
+        if: ${{ always() && steps.attempt_reservation.outputs.attempt_id != '' }}
+        uses: ./.github/actions/publish-automation-state
+        with:
+          token: ${{ github.token }}
+          expected_generation: ${{ steps.persist_eval.outputs.generation || steps.persist_claim.outputs.generation || steps.persist_attempt.outputs.generation || steps.state_bootstrap.outputs.generation }}
+          objects: autonomous_research_state research_memory
+          message: "Persist autonomous cycle outcome and sanitized research memory"
 
       - name: Send separate forward and reverse Telegram reports
         if: ${{ steps.evaluation.outcome == 'success' }}
@@ -364,7 +355,7 @@ jobs:
           python3 telegram_report.py \
             --title "Otonom araştırma turu" \
             --status success \
-            --branch main \
+            --branch general-automation-state \
             --run-url "https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
             --kind research \
             --report-log open_research_evaluation_report.json
