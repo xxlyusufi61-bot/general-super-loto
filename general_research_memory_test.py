@@ -90,6 +90,20 @@ class ResearchMemoryValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(memory.ResearchMemoryError, "six-number value set"):
             memory._validate_entry(entry, 1)
 
+    def test_six_number_sets_with_common_delimiters_are_rejected(self):
+        for value in (
+            "1; 5; 9; 12; 20; 45",
+            "1 5 9 12 20 45",
+            "1/5/9/12/20/45",
+        ):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(memory.ResearchMemoryError, "six-number value set"):
+                    memory._reject_number_values({"notes": [value]}, "test")
+        memory._reject_number_values(
+            {"notes": ["Six independent facts: 6 draws, 60 rows, and 5 folds."]},
+            "test",
+        )
+
     def test_consumed_feedback_must_not_be_relabelled_as_independent(self):
         entry = sample_entry()
         entry["evaluation_feedback"] = {
