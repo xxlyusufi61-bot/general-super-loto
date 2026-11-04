@@ -217,7 +217,6 @@ jobs:
           CLAIM_OUTCOME: ${{ steps.sealed-claim.outcome }}
           CLAIM_PERSIST_OUTCOME: ${{ steps.persist-sealed-claim.outcome }}
           EVALUATION_OUTCOME: ${{ steps.sealed-evaluation.outcome }}
-          EVALUATION_PERSIST_OUTCOME: ${{ steps.persist-sealed-evaluation.outcome }}
         run: |
           failure_stage=""
           if [ "$NVIDIA_OUTCOME" = "failure" ]; then
@@ -228,25 +227,21 @@ jobs:
             failure_stage="sealed_claim_persistence"
           elif [ "$EVALUATION_OUTCOME" = "failure" ]; then
             failure_stage="sealed_evaluation"
-          elif [ "$EVALUATION_PERSIST_OUTCOME" = "failure" ]; then
-            failure_stage="sealed_evaluation_persistence"
-          fi
-          evaluation_persisted="true"
-          if [ "$EVALUATION_OUTCOME" = "success" ] && [ "$EVALUATION_PERSIST_OUTCOME" != "success" ]; then
-            evaluation_persisted="false"
           fi
           if python3 general_research_memory.py record-cycle \
             --run-id "$GITHUB_RUN_ID" \
             --run-attempt "$GITHUB_RUN_ATTEMPT" \
             --failure-stage "$failure_stage" \
-            --error-type "WorkflowStepFailure" \
-            --evaluation-persisted "$evaluation_persisted"; then
+            --error-type "WorkflowStepFailure"; then
             :
           else
             echo "GENERAL research-memory append failed; the existing ledger and target isolation were not modified."
             exit 1
           fi
-          git add -- general_research_memory.json
+          git add -- general_research_memory.json general_evaluation_ledger.json
+          if [ -d general_evaluation_snapshots ]; then
+            git add -- general_evaluation_snapshots/
+          fi
           if ! git diff --cached --quiet; then
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
