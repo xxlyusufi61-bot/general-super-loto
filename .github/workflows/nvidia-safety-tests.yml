@@ -35,3 +35,22 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: python3 general_automation_state_reader.py
+
+      - name: Compare real main and state-store objects in read-only shadow mode
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set +e
+          python3 general_automation_state_reader.py --shadow-compare > /tmp/general-state-shadow-ci.json 2>&1
+          shadow_status=$?
+          set -e
+          if [ -s /tmp/general-state-shadow-ci.json ]; then
+            cat /tmp/general-state-shadow-ci.json
+            cat /tmp/general-state-shadow-ci.json >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ "$shadow_status" -eq 2 ]; then
+            echo "::warning::State-store divergence found; shadow mode does not change main or fail safety CI."
+          elif [ "$shadow_status" -ne 0 ]; then
+            echo "::warning::Live shadow comparison could not complete; main remains authoritative."
+          fi

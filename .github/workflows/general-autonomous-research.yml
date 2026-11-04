@@ -137,6 +137,27 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Compare automation state in read-only shadow mode
+        id: state-shadow
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set +e
+          python3 general_automation_state_reader.py --shadow-compare > /tmp/general-state-shadow.json 2>&1
+          shadow_status=$?
+          set -e
+          if [ -s /tmp/general-state-shadow.json ]; then
+            cat /tmp/general-state-shadow.json >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ "$shadow_status" -eq 0 ]; then
+            echo "Shadow comparison completed; main remains authoritative." >> "$GITHUB_STEP_SUMMARY"
+          elif [ "$shadow_status" -eq 2 ]; then
+            echo "::warning::State-store content differs from main. Shadow result only; continuing with main."
+            echo "WARNING: divergence detected; main remains authoritative and unchanged." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::Shadow comparison failed; continuing with existing main data."
+            echo "WARNING: shadow reader failed; existing main data remains authoritative." >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Check explicit authorization and local global-lock state
         id: status
         run: |
