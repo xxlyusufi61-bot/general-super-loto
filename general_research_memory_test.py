@@ -41,7 +41,7 @@ def sample_entry(direction="forward", entry_id=1, target="2026-10-20", status="H
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "target_date": target,
         "archive_sha256": "a" * 64,
-        "runner_version": "0.7.0",
+        "runner_version": "0.8.0",
         "status": status,
         "research_report_sha256": "b" * 64,
         "proposal_status": "VALID_PROPOSALS",
