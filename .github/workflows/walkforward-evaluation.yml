@@ -26,19 +26,16 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Refresh archive without printing draw details
-        run: |
-          if python3 general_archive_fetch.py > archive_fetch_output.log 2>&1; then
-            echo "ARCHIVE FETCH: completed; parser details suppressed."
-          else
-            safe_category="$(grep -oE 'ARCHIVE FETCH FAILED \[[A-Z_]+\]' archive_fetch_output.log | tail -n 1 || true)"
-            if [ -n "$safe_category" ]; then
-              echo "$safe_category; details suppressed."
-            else
-              echo "ARCHIVE FETCH FAILED [UNKNOWN]; details suppressed."
-            fi
-            exit 1
-          fi
+      - name: Hydrate verified GENERAL state-store data
+        id: state_bootstrap
+        uses: ./.github/actions/hydrate-automation-state
+        with:
+          token: ${{ github.token }}
+      - name: Verify active state-store authority and global safety lock
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python3 general_automation_state_runtime_audit.py --state-authoritative
 
       - name: Validate archive and target isolation
         run: |

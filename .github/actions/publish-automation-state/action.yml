@@ -1,0 +1,45 @@
+name: Publish GENERAL automation state
+description: Atomically publish selected runtime objects with a generation guard.
+inputs:
+  token:
+    description: GitHub token with contents write access.
+    required: true
+  expected_generation:
+    description: Manifest generation read at the beginning of the operation.
+    required: true
+  objects:
+    description: Space-separated allowlisted state object keys.
+    required: true
+  message:
+    description: Git commit message for the atomic state update.
+    required: true
+outputs:
+  generation:
+    description: New verified manifest generation.
+    value: ${{ steps.publish.outputs.state_generation }}
+  commit_sha:
+    description: New state-store commit SHA.
+    value: ${{ steps.publish.outputs.state_commit_sha }}
+runs:
+  using: composite
+  steps:
+    - id: publish
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.token }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        EXPECTED_GENERATION: ${{ inputs.expected_generation }}
+        STATE_OBJECTS: ${{ inputs.objects }}
+        COMMIT_MESSAGE: ${{ inputs.message }}
+      run: |
+        read -r -a objects <<< "$STATE_OBJECTS"
+        if [ "${#objects[@]}" -eq 0 ]; then
+          echo "No state object was supplied." >&2
+          exit 1
+        fi
+        python3 general_automation_state_writer.py publish \
+          --workspace "$GITHUB_WORKSPACE" \
+          --expected-generation "$EXPECTED_GENERATION" \
+          --objects "${objects[@]}" \
+          --message "$COMMIT_MESSAGE" \
+          --github-output "$GITHUB_OUTPUT"

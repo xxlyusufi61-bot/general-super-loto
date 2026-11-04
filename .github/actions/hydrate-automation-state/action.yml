@@ -1,0 +1,23 @@
+name: Hydrate GENERAL automation state
+description: Load and verify the four canonical runtime objects from the dedicated state branch.
+inputs:
+  token:
+    description: GitHub token with contents read access.
+    required: true
+outputs:
+  generation:
+    description: Verified state-store manifest generation.
+    value: ${{ steps.hydrate.outputs.state_generation }}
+  commit_sha:
+    description: Verified state-store commit.
+    value: ${{ steps.hydrate.outputs.state_commit_sha }}
+runs:
+  using: composite
+  steps:
+    - id: hydrate
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.token }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+      run: |
+        python3 general_automation_state_writer.py hydrate --workspace "$GITHUB_WORKSPACE" --github-output "$GITHUB_OUTPUT"

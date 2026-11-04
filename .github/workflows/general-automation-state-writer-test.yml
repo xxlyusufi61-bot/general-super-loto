@@ -1,0 +1,47 @@
+name: GENERAL Automation State Writer Tests
+
+'on':
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "general_automation_state.py"
+      - "general_automation_state_reader.py"
+      - "general_automation_state_sync.py"
+      - "general_automation_state_writer.py"
+      - "general_automation_state_writer_test.py"
+      - "general_automation_state_runtime_audit.py"
+      - "general_automation_state_runtime_audit_test.py"
+      - "general_automation_state_cutover_workflow_test.py"
+      - ".github/workflows/general-automation-state-writer-test.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "general_automation_state.py"
+      - "general_automation_state_reader.py"
+      - "general_automation_state_sync.py"
+      - "general_automation_state_writer.py"
+      - "general_automation_state_writer_test.py"
+      - ".github/workflows/general-automation-state-writer-test.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  state-writer-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile state-store modules
+        run: |
+          python3 -m py_compile general_automation_state.py general_automation_state_reader.py general_automation_state_sync.py general_automation_state_writer.py general_automation_state_runtime_audit.py
+      - name: Run isolated transactional writer tests
+        run: |
+          python3 -m unittest -v general_automation_state_writer_test general_automation_state_runtime_audit_test general_automation_state_cutover_workflow_test

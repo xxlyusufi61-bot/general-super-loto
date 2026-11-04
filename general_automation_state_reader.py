@@ -215,10 +215,12 @@ class GitHubStateStoreReader:
 
 
     def read_shadow_comparison(self) -> dict[str, Any]:
-        """Compare registered state blobs with main without making either authoritative.
+        """Return a read-only migration parity report between state-store and main.
 
-        The main branch remains the runtime source of truth. Missing registrations
-        are reported as NOT_REGISTERED; mismatches are reported, never repaired.
+        This comparison is retained for pre-cutover diagnostics only. After the
+        coordinated workflow cutover, the state branch is authoritative for the
+        four migrated runtime objects; this method never changes either source.
+        Missing registrations and divergences are reported, never repaired.
         """
         state_snapshot = self.read_snapshot()
         main_commit_sha, main_tree_sha = self._branch_head("main")

@@ -62,6 +62,17 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Hydrate verified GENERAL state-store data
+        id: state_bootstrap
+        uses: ./.github/actions/hydrate-automation-state
+        with:
+          token: ${{ github.token }}
+      - name: Verify active state-store authority and global safety lock
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python3 general_automation_state_runtime_audit.py --state-authoritative
+
       - name: Check global NVIDIA safety lock
         if: ${{ inputs.agent != 'archive' && inputs.agent != 'isolation-test' && inputs.confirm_live_calls == 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_2_NVIDIA_REQUESTS' && inputs.confirm_free_usage_verified == true }}
         env:
@@ -81,7 +92,8 @@ jobs:
             python3 general_memory.py init
           fi
 
-      - name: Download Super Loto archive (suppress parser details)
+      - name: Refresh Super Loto archive only for the archive maintenance agent
+        if: ${{ inputs.agent == 'archive' }}
         run: |
           if python3 general_archive_fetch.py > archive_fetch_output.log 2>&1; then
             echo "ARCHIVE FETCH: completed; detailed output suppressed."
@@ -120,6 +132,16 @@ jobs:
           print("Last date:", result["last_date"])
           print("Draw numbers exposed in summary: NO")
           PY
+
+      - name: Publish refreshed archive to the state store
+        id: publish-archive
+        if: ${{ inputs.agent == 'archive' }}
+        uses: ./.github/actions/publish-automation-state
+        with:
+          token: ${{ github.token }}
+          expected_generation: ${{ steps.state_bootstrap.outputs.generation }}
+          objects: archive
+          message: "Publish validated archive agent refresh"
 
       - name: Test latest-draw target isolation with Data Guard
         if: ${{ inputs.agent == 'isolation-test' }}

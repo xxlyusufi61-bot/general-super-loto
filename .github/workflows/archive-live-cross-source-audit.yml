@@ -54,6 +54,17 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Hydrate verified GENERAL state-store data
+        id: state_bootstrap
+        uses: ./.github/actions/hydrate-automation-state
+        with:
+          token: ${{ github.token }}
+      - name: Verify active state-store authority and global safety lock
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python3 general_automation_state_runtime_audit.py --state-authoritative
+
       - name: Run read-only live cross-source audit
         run: python -B general_archive_cross_source_audit.py
 
