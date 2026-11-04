@@ -69,7 +69,7 @@ def _strict_json_loads(content: str) -> Any:
 def git_blob_sha(content: str) -> str:
     """Return Git's canonical SHA-1 for a UTF-8 blob payload."""
     encoded = content.encode("utf-8")
-    header = f"blob {len(encoded)}\\0".encode("ascii")
+    header = f"blob {len(encoded)}\0".encode("ascii")
     return hashlib.sha1(header + encoded).hexdigest()
 
 
