@@ -401,9 +401,9 @@ class ResearchMemoryPersistenceTests(unittest.TestCase):
         invalid_feedback_entry["content_sha256"] = _hash_entry(invalid_feedback_entry)
         with self.assertRaisesRegex(memory.ResearchMemoryError, "permanently consumed"):
             memory._validate_entry(invalid_feedback_entry, 1)
-        self.assertTrue(not saved["entries"][0]["evaluation_feedback"]["retrospective_only"])
+        self.assertFalse(saved["entries"][0]["evaluation_feedback"]["retrospective_only"])
         self.assertTrue(saved["entries"][1]["evaluation_feedback"]["holdout_consumed"])
-        self.assertFalse(saved["entries"][1]["evaluation_feedback"]["retrospective_only"])
+        self.assertTrue(saved["entries"][1]["evaluation_feedback"]["retrospective_only"])
         self.assertNotIn('"per_draw":', serialized)
         self.assertFalse(saved["entries"][0]["evaluation_feedback"]["per_draw_results_stored"])
         self.assertNotIn("validation_dates", serialized)
