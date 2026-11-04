@@ -76,6 +76,20 @@ DRAW_SET_FLEX_TEXT = re.compile(
     r"""(?:(?:\s*[,;|/\-]\s*|\s+)["']?0?(?:[1-9]|[1-5][0-9]|60)["']?){5}(?![0-9]|\.[0-9])"""
 )
 
+CANDIDATE_VALUE_AFTER_CUE = re.compile(
+    r"(?ix)\b(?:candidate|candidates|prediction|predictions|predicted|winning|drawn|"
+    r"rank|ranked|ranking|top[- ]ranked|top|aday|tahmin|kazanan|sıralama)\b"
+    r"(?:(?:\s+|[:#=])(?:number|numbers|value|values|no\.?|is|are|was|were|of|at|"
+    r"include|includes|candidate|candidates|ranked|first|one|two)){0,3}"
+    r"[\s:#=]*0?(?:[1-9]|[1-5][0-9]|60)\b"
+)
+CANDIDATE_VALUE_BEFORE_CUE = re.compile(
+    r"(?ix)\b0?(?:[1-9]|[1-5][0-9]|60)\b"
+    r"\s+(?:(?:is|was|as|became|ranked|selected|predicted)\s+){0,2}"
+    r"(?:the\s+)?(?:top|highest|first|best|winning|candidate|prediction)\b"
+)
+
+
 ALLOWED_STATUSES = {
     "HYPOTHESES_CAPTURED",
     "NO_VALID_HYPOTHESIS",
@@ -135,6 +149,27 @@ def _contains_six_number_set(value: Any) -> bool:
 def _reject_number_values(value: Any, label: str) -> None:
     if _contains_six_number_set(value):
         raise ResearchMemoryError(label + " contains a six-number value set; memory write refused.")
+
+
+def _contains_candidate_value_reference(value: Any) -> bool:
+    """Detect explicit candidate values and partial rankings in structured prose."""
+    if isinstance(value, str):
+        return (
+            CANDIDATE_VALUE_AFTER_CUE.search(value) is not None
+            or CANDIDATE_VALUE_BEFORE_CUE.search(value) is not None
+        )
+    if isinstance(value, list):
+        return any(_contains_candidate_value_reference(item) for item in value)
+    if isinstance(value, dict):
+        return any(_contains_candidate_value_reference(item) for item in value.values())
+    return False
+
+
+def _reject_candidate_value_references(value: Any, label: str) -> None:
+    if _contains_candidate_value_reference(value):
+        raise ResearchMemoryError(
+            label + " contains a candidate/predicted number value or partial ranking; memory write refused."
+        )
 
 
 def _report_dates_in_text(value: str) -> set[str]:
@@ -345,6 +380,7 @@ def _validate_entry(entry: Any, expected_id: int) -> dict[str, Any]:
         if {key: checked_proposal[key] for key in PROPOSAL_KEYS} != proposal:
             raise ResearchMemoryError("Stored proposal is not in canonical validated form.")
         _reject_number_values(proposal, "Stored proposal")
+        _reject_candidate_value_references(proposal, "Stored proposal")
     if entry["execution_spec_status"] not in {
         "VALIDATED_SPECS", "VALID_EMPTY", "MISSING_BLOCK", "REJECTED", "NOT_RUN",
     }:
@@ -380,6 +416,7 @@ def _validate_entry(entry: Any, expected_id: int) -> dict[str, Any]:
         if any(not isinstance(note, str) or not 5 <= len(note.strip()) <= MAX_LESSON_CHARS for note in note_list):
             raise ResearchMemoryError("Stored learning-note items are invalid.")
     _reject_number_values(entry["learning_notes"], "Stored learning notes")
+    _reject_candidate_value_references(entry["learning_notes"], "Stored learning notes")
     if entry["evaluation_feedback"] is not None:
         feedback = entry["evaluation_feedback"]
         feedback_keys = {
@@ -561,6 +598,7 @@ def _parse_learning_notes(report: str) -> dict[str, list[str]]:
             checked.append(item.strip())
         result[key] = checked
     _reject_number_values(result, "Learning-notes block")
+    _reject_candidate_value_references(result, "Learning-notes block")
     return result
 
 
@@ -763,8 +801,10 @@ def _direction_artifacts(
         specs["rejection_reasons"] = ["Only a specification for this direction's first proposal can be retained."]
     notes = _parse_learning_notes(report)
     _reject_number_values(proposals["proposals"], "Directional proposals")
+    _reject_candidate_value_references(proposals["proposals"], "Directional proposals")
     _reject_number_values(specs["specifications"], "Directional specifications")
     _reject_number_values(notes, "Directional learning notes")
+    _reject_candidate_value_references(notes, "Directional learning notes")
     _reject_consumed_validation_dates(
         proposals["proposals"], forbidden_validation_dates, "Directional proposals"
     )
