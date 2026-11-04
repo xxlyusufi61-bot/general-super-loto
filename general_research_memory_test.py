@@ -264,7 +264,10 @@ class ResearchMemoryValidationTests(unittest.TestCase):
         unsafe_candidates = (
             {"hypothesis": "The winning number is seventeen."},
             {"hypothesis": "The top-ranked value is twenty-four."},
+            {"hypothesis": "17 is the highest-ranked candidate."},
             {"hypothesis": "Aday değer on yedi olarak seçildi."},
+            {"hypothesis": "Aday sayıları: on yedi."},
+            {"hypothesis": "Kazanan değerleri: yirmi dört."},
             {"hypothesis": "On yedi aday olarak belirlendi."},
             {"output_rule": "Predicted values: three, nine and fifteen."},
         )
