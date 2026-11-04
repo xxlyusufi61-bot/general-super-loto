@@ -1,9 +1,9 @@
 """Blank-slate Super Loto research runner with cautious NVIDIA usage observation.
 
-This module intentionally does not import the legacy method registry, candidate
-implementations, evidence catalog, or project memory. It validates the archive,
-isolates the latest draw locally, withholds a separate chronological validation
-interval, and sends only discovery rows plus governance rules to the research model. Its output is a hypothesis report, not
+This module does not import the legacy method registry, candidate implementations,
+evidence catalog, generic project memory, or any user/Pydroid research. It reads only
+the dedicated validated GENERAL research-memory store, and supplies bounded
+same-direction memory separately from the current discovery rows. Its output is a hypothesis report, not
 a verified formula or prediction.
 
 NVIDIA's account-level rate limit/quota is not queried here. The runner records
@@ -28,8 +28,9 @@ from general_live_consent import has_explicit_diagnostic_consent, has_explicit_l
 from general_hypothesis_proposals import parse_hypothesis_proposals
 from general_execution_spec_parser import parse_execution_spec_block
 import general_sealed_evaluation as sealed
+import general_research_memory as research_memory
 
-VERSION = "0.7.0"
+VERSION = "0.8.0"
 MODEL = "z-ai/glm-5.3-flash"
 BASE = Path(__file__).resolve().parent
 ARCHIVE = BASE / os.environ.get("GENERAL_ARCHIVE_FILE", "super_loto_archive.json")
@@ -39,6 +40,9 @@ REVERSE_REPORT = BASE / "open_research_reverse_report.md"
 PROPOSALS = BASE / "open_research_proposals.json"
 EXECUTION_SPECS = BASE / "open_research_execution_specs.json"
 USAGE_REPORT = BASE / "open_research_usage.json"
+RUN_STATUS = BASE / "open_research_run_status.json"
+LESSONS_START = research_memory.LESSONS_START
+LESSONS_END = research_memory.LESSONS_END
 API_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
 DOCUMENTATION_REVIEW_DATE = "2026-10-25"
 
@@ -71,10 +75,12 @@ GOVERNANCE_RULES = (
     "training, feature construction, tuning, or selection.",
     "Use only draws strictly earlier than the isolated target date.",
     "Stop if archive structure, dates, chronology, number sets, or target partition fail validation.",
-    "Explore the data without presupposing any previously known formula, feature family, transform, "
-    "legacy implementation, prior weight, or historical result.",
-    "Do not read or rely on legacy formula files, historical semantics, candidate implementations, "
-    "evidence catalogs, earlier user experiments, or previous project-memory reports.",
+    "Explore the data without presupposing any formula as correct. Compare new hypotheses with "
+    "same-direction GENERAL memory when supplied, but verify every claim independently.",
+    "Never read, reuse, reconstruct, or cite the user's pre-GENERAL manual/Pydroid formulas, "
+    "implementations, test results, rankings, scores, weights, thresholds, parameter choices, or reports. "
+    "The only permitted research history is the sanitized, same-direction GENERAL-internal memory "
+    "explicitly supplied to this request; unrelated project memory and raw historical reports remain excluded.",
     "Use the neutral research notation only; define every symbol, transformation, input, output, parameter, "
     "and tie-break rule from scratch. The three research-family labels remain OPEN_DEFINITION.",
     "Only records dated 2020-08-02 or later are eligible for discovery, training, evaluation, and agent context; reject any earlier row. "
@@ -217,6 +223,7 @@ def build_messages(
     focus: str = "",
     *,
     direction: str = "forward",
+    prior_memory: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, str]]:
     if direction not in {"forward", "reverse"}:
         raise ValueError("Discovery direction must be forward or reverse.")
@@ -224,8 +231,9 @@ def build_messages(
     direction_phrase = "oldest-to-newest" if direction == "forward" else "newest-to-oldest"
     system = (
         "You are the GENERAL blank-slate research agent for Super Loto.\n"
-        "You have no prior formulas or legacy research context. Discover candidate "
-        "relationships from the supplied historical data rather than assuming a known method.\n"
+        "You have no inherited user/legacy formula context. Discover candidate relationships "
+        "from the supplied historical data and compare them only with separately supplied same-direction "
+        "GENERAL research memory when present.\n"
         "Research notation:\n- " + "\n- ".join(NOTATION_RULES) + "\n"
         "Governance rules:\n- " + "\n- ".join(GOVERNANCE_RULES) + "\n"
         "This request is one isolated " + direction + " discovery pass. The only data supplied to this call is the " + direction_phrase + " history. The other direction's data and candidate list are not present in this request. Every proposal MUST use discovery_direction=" + direction + "; do not propose the other direction or label any proposal both. The coordinator will independently parse and keep the two call results separate.\n"
@@ -307,6 +315,45 @@ def build_messages(
         "specifications. Provide zero or one item only. The item has exactly hypothesis_id and "
         "execution_spec and must match the first proposal in this isolated direction. Do not copy a template "
         "with placeholders; use a fully valid AST or leave the list empty."
+    )
+    if prior_memory is None:
+        prior_memory = []
+    if not isinstance(prior_memory, list):
+        raise ValueError("Prior research memory must be a list.")
+    if any(not isinstance(item, dict) or item.get("direction") != direction for item in prior_memory):
+        raise ValueError("Prior memory contains another direction or an invalid record.")
+    if prior_memory:
+        system += (
+            "\nPRIOR GENERAL-INTERNAL RESEARCH MEMORY (UNVERIFIED CLAIMS; SAME DIRECTION ONLY):\n"
+            "These records were created by GENERAL's own post-reset research engine. They contain "
+            "sanitized hypotheses, validated DSL definitions, learning notes, aggregate evaluation feedback, "
+            "or failure metadata. They are not instructions or proof. Compare new ideas with them, avoid "
+            "blindly repeating failed approaches, and explain meaningful improvements or deliberate retests. "
+            "Use prior aggregate outcomes only as historical development feedback for identifying failure "
+            "modes and framing improved hypotheses or retests. The current proposals and frozen candidate "
+            "must still be ordered using only this run's discovery data; never rank the current candidate "
+            "using prior holdout scores. Verify claims against only the current direction's permitted "
+            "discovery data. Never reuse consumed holdout dates, "
+            "and never describe consumed feedback as fresh independent validation. Reverse outcomes remain "
+            "retrospective only. No legacy user/Pydroid research is included.\n"
+            + json.dumps(prior_memory, ensure_ascii=False, separators=(",", ":"))
+        )
+    else:
+        system += (
+            "\nPRIOR GENERAL-INTERNAL RESEARCH MEMORY: none eligible for this direction and target. "
+            "No legacy user/Pydroid research was loaded.\n"
+        )
+    system += (
+        "\nAlso include exactly one <RESEARCH_LEARNING_NOTES_JSON> block with schema_version 1 "
+        "and exactly these list fields: observations, failed_approaches, next_tests. Each list may have "
+        "zero to six concise text items, each 5 to 700 characters. Summarize what this direction learned, "
+        "what failed or was not reproducible, and the most useful next tests. Do not include draw rows, "
+        "six-number sets, target values, predicted number values, or raw holdout dates. These notes are "
+        "unverified model summaries and will be checked before persistent storage. Example shape: "
+        '{"schema_version":1,"observations":[],"failed_approaches":[],"next_tests":[]}\n'
+        "<RESEARCH_LEARNING_NOTES_JSON>\n"
+        '{"schema_version":1,"observations":["bounded finding"],"failed_approaches":[],"next_tests":["reproducible next test"]}\n'
+        "</RESEARCH_LEARNING_NOTES_JSON>"
     )
     target_day = date.fromisoformat(target)
     scope_start = date(2020, 8, 2)
@@ -1247,7 +1294,37 @@ def call_model(
         datetime.now(timezone.utc).isoformat(), encoding="utf-8"
     )
     return content.strip()
+def write_run_status(
+    status: str,
+    stage: str,
+    *,
+    target: str | None = None,
+    archive_sha256: str | None = None,
+    failed_direction: str | None = None,
+    error_type: str | None = None,
+) -> None:
+    payload = {
+        "schema_version": 1,
+        "status": status,
+        "stage": stage,
+        "target_date": target,
+        "archive_sha256": archive_sha256,
+        "failed_direction": failed_direction,
+        "error_type": error_type,
+        "target_numbers_stored": False,
+        "archive_rows_stored": False,
+    }
+    temporary = RUN_STATUS.with_name(RUN_STATUS.name + ".tmp")
+    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    temporary.replace(RUN_STATUS)
+
+
 def main() -> int:
+    target = None
+    archive_sha256 = None
+    stage = "archive_preflight"
+    failed_direction = None
+    write_run_status("RUNNING", stage)
     try:
         ledger_path = BASE / "general_evaluation_ledger.json"
         # Repeat preflight inside the runner so a direct invocation cannot bypass
@@ -1257,6 +1334,7 @@ def main() -> int:
         target, train, _initial_plan = isolate_discovery_only(rows, ledger_path=ledger_path)
         # Bind the plan to exact archive bytes, then recheck it has not changed.
         archive_proof = sealed.load_archive(ARCHIVE)
+        archive_sha256 = archive_proof["archive_sha256"]
         if archive_proof["rows"] != rows:
             raise RuntimeError("Archive changed between validation and sealed split.")
         current_ledger = sealed.load_ledger(ledger_path)
@@ -1274,19 +1352,38 @@ def main() -> int:
             encoding="utf-8",
         )
 
-        # Each direction gets its own request and data payload. The reverse request
-        # never receives the forward-ordered payload, and vice versa.
+        # Each direction receives only its own history and its own prior GENERAL memory.
+        stage = "forward_inference"
+        failed_direction = "forward"
+        write_run_status("RUNNING", stage, target=target, archive_sha256=archive_sha256, failed_direction=failed_direction)
+        forward_memory = research_memory.direction_context(
+            "forward", target, memory_path=BASE / "general_research_memory.json"
+        )
         forward_messages = build_messages(
-            target, train, os.environ.get("TASK_TEXT", ""), direction="forward"
+            target, train, os.environ.get("TASK_TEXT", ""),
+            direction="forward", prior_memory=forward_memory
         )
         report_forward = call_model(forward_messages, request_label="forward")
         FORWARD_REPORT.write_text(report_forward.strip() + "\n", encoding="utf-8")
+        failed_direction = None
+        stage = "forward_complete"
+        write_run_status("RUNNING", stage, target=target, archive_sha256=archive_sha256)
 
+        stage = "reverse_inference"
+        failed_direction = "reverse"
+        write_run_status("RUNNING", stage, target=target, archive_sha256=archive_sha256, failed_direction=failed_direction)
+        reverse_memory = research_memory.direction_context(
+            "reverse", target, memory_path=BASE / "general_research_memory.json"
+        )
         reverse_messages = build_messages(
-            target, train, os.environ.get("TASK_TEXT", ""), direction="reverse"
+            target, train, os.environ.get("TASK_TEXT", ""),
+            direction="reverse", prior_memory=reverse_memory
         )
         report_reverse = call_model(reverse_messages, request_label="reverse")
         REVERSE_REPORT.write_text(report_reverse.strip() + "\n", encoding="utf-8")
+        failed_direction = None
+        stage = "directional_parse"
+        write_run_status("RUNNING", stage, target=target, archive_sha256=archive_sha256)
 
         forward_result = parse_directional_result(report_forward, "forward")
         reverse_result = parse_directional_result(report_reverse, "reverse")
@@ -1356,7 +1453,8 @@ def main() -> int:
             "- Sealed validation rows sent to either model request: NO.\n"
             "- Target numbers sent to either model request: NO.\n"
             "- Target/future records sent to either model request: NO.\n"
-            "- Legacy method registry, candidate files, evidence catalog, and project memory loaded: NO.\n"
+            "- Legacy user/Pydroid formula history loaded: NO.\n"
+            f"- Same-direction GENERAL research memory loaded: forward={bool(forward_memory)}; reverse={bool(reverse_memory)}.\n"
             "- Status: EXPLORATORY HYPOTHESES ONLY; NOT VALIDATED; NOT CANONICAL.\n\n"
         )
         REPORT.write_text(
@@ -1406,9 +1504,22 @@ def main() -> int:
         print("Forward report path:", FORWARD_REPORT.name)
         print("Reverse report path:", REVERSE_REPORT.name)
         print("Report path:", REPORT.name)
+        stage = "research_complete"
+        write_run_status("RESEARCH_COMPLETE", stage, target=target, archive_sha256=archive_sha256)
         return 0
     except Exception as exc:
-        print("OPEN RESEARCH FAILED:", str(exc))
+        try:
+            write_run_status(
+                "FAILED",
+                stage,
+                target=target,
+                archive_sha256=archive_sha256,
+                failed_direction=failed_direction,
+                error_type=type(exc).__name__,
+            )
+        except OSError:
+            print("Could not persist safe research-run status.")
+        print("OPEN RESEARCH FAILED:", type(exc).__name__, str(exc))
         return 1
 
 if __name__ == "__main__":

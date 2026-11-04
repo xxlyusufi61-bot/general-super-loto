@@ -25,7 +25,12 @@ name: GENERAL Blank-Slate Research
       - "general_hypothesis_proposals.py"
       - "general_hypothesis_proposals_test.py"
       - "docs/safe-hypothesis-execution.md"
+      - "general_research_memory.py"
+      - "general_research_memory_test.py"
+      - "general_research_memory.json"
+      - "docs/general-research-memory.md"
       - ".github/workflows/open-research.yml"
+      - ".github/workflows/general-autonomous-research.yml"
   pull_request:
     branches:
       - main
@@ -49,7 +54,12 @@ name: GENERAL Blank-Slate Research
       - "general_hypothesis_proposals.py"
       - "general_hypothesis_proposals_test.py"
       - "docs/safe-hypothesis-execution.md"
+      - "general_research_memory.py"
+      - "general_research_memory_test.py"
+      - "general_research_memory.json"
+      - "docs/general-research-memory.md"
       - ".github/workflows/open-research.yml"
+      - ".github/workflows/general-autonomous-research.yml"
   workflow_dispatch:
     inputs:
       task:
@@ -88,8 +98,8 @@ jobs:
           python-version: "3.12"
       - name: Compile and test blank-slate runner
         run: |
-          python3 -m py_compile general_open_research.py general_open_research_test.py general_hypothesis_proposals.py general_hypothesis_proposals_test.py general_hypothesis_execution.py general_hypothesis_execution_test.py general_bidirectional_evaluation.py general_bidirectional_evaluation_test.py general_execution_spec_parser.py general_execution_spec_parser_test.py general_sealed_evaluation.py general_sealed_evaluation_test.py general_source_context.py general_source_context_test.py
-          python3 -m unittest -v general_hypothesis_proposals_test general_open_research_test general_hypothesis_execution_test general_bidirectional_evaluation_test general_execution_spec_parser_test general_sealed_evaluation_test general_source_context_test
+          python3 -m py_compile general_open_research.py general_open_research_test.py general_hypothesis_proposals.py general_hypothesis_proposals_test.py general_hypothesis_execution.py general_hypothesis_execution_test.py general_bidirectional_evaluation.py general_bidirectional_evaluation_test.py general_execution_spec_parser.py general_execution_spec_parser_test.py general_sealed_evaluation.py general_sealed_evaluation_test.py general_source_context.py general_source_context_test.py general_research_memory.py general_research_memory_test.py
+          python3 -m unittest -v general_hypothesis_proposals_test general_open_research_test general_hypothesis_execution_test general_bidirectional_evaluation_test general_execution_spec_parser_test general_sealed_evaluation_test general_source_context_test general_research_memory_test
 
   research:
     if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.confirm_live_calls == 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_2_NVIDIA_REQUESTS' && inputs.confirm_free_usage_verified == true }}
@@ -152,6 +162,7 @@ jobs:
             --output open_research_evaluation_claim.json \
             --github-output "$GITHUB_OUTPUT"
       - name: Persist sealed claim and immutable archive snapshot before evaluation
+        id: persist-sealed-claim
         if: ${{ steps.sealed-claim.outputs.claim_created == 'true' }}
         run: |
           git config user.name "github-actions[bot]"
@@ -172,6 +183,7 @@ jobs:
             --specs open_research_execution_specs.json \
             --output open_research_evaluation_report.json
       - name: Persist evaluation completion without draw-level values
+        id: persist-sealed-evaluation
         if: ${{ success() && steps.sealed-claim.outputs.claim_created == 'true' }}
         run: |
           git add general_evaluation_ledger.json
@@ -199,6 +211,58 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python3 general_rule_change.py submit-report --report open_research_report.md
+
+      - name: Append sanitized GENERAL research memory
+        if: ${{ always() && (steps.nvidia-research.outcome == 'success' || steps.nvidia-research.outcome == 'failure') }}
+        env:
+          NVIDIA_OUTCOME: ${{ steps.nvidia-research.outcome }}
+          CLAIM_OUTCOME: ${{ steps.sealed-claim.outcome }}
+          CLAIM_PERSIST_OUTCOME: ${{ steps.persist-sealed-claim.outcome }}
+          EVALUATION_OUTCOME: ${{ steps.sealed-evaluation.outcome }}
+        run: |
+          failure_stage=""
+          if [ "$NVIDIA_OUTCOME" = "failure" ]; then
+            echo "The research runner records the precise failed direction and stage."
+          elif [ "$CLAIM_OUTCOME" = "failure" ]; then
+            failure_stage="sealed_claim"
+          elif [ "$CLAIM_PERSIST_OUTCOME" = "failure" ]; then
+            failure_stage="sealed_claim_persistence"
+          elif [ "$EVALUATION_OUTCOME" = "failure" ]; then
+            failure_stage="sealed_evaluation"
+          fi
+          if python3 general_research_memory.py record-cycle \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --failure-stage "$failure_stage" \
+            --error-type "WorkflowStepFailure"; then
+            :
+          else
+            echo "GENERAL research-memory append failed; the existing ledger and target isolation were not modified."
+            exit 1
+          fi
+          git add -- general_research_memory.json general_evaluation_ledger.json super_loto_archive.json
+          if [ -d general_evaluation_snapshots ]; then
+            git add -- general_evaluation_snapshots/
+          fi
+          if ! git diff --cached --quiet; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -m "Record GENERAL direction-isolated research memory"
+            stashed_uncommitted="false"
+            if ! git diff --quiet; then
+              git stash push --keep-index -m "temporary archive refresh before memory push"
+              stashed_uncommitted="true"
+            fi
+            git fetch origin main
+            git rebase origin/main
+            git push origin HEAD:main
+            if [ "$stashed_uncommitted" = "true" ]; then
+              git stash drop stash@{0}
+            fi
+          else
+            echo "No eligible GENERAL research memory entry was produced."
+          fi
+
       - name: Upload direction-isolated hypothesis reports and safe metadata
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
@@ -216,6 +280,7 @@ jobs:
             open_research_sealed_plan.json
             open_research_evaluation_claim.json
             open_research_evaluation_report.json
+            open_research_run_status.json
             general_evaluation_ledger.json
           if-no-files-found: ignore
           retention-days: 14

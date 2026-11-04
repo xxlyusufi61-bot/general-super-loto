@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "project": "GENERAL Super Loto",
+  "research_epoch": "general-open-research-memory-v1",
+  "purpose": "Append-only GENERAL-origin directional research memory. No legacy user/Pydroid experiments, raw archive rows, consumed holdout rows, target values, or predicted number values are permitted.",
+  "entries": []
+}
