@@ -135,6 +135,36 @@ class DirectionalMemoryContextTests(unittest.TestCase):
         self.assertEqual(reverse[0]["direction"], "reverse")
         self.assertNotIn("2026-11-05", json.dumps(forward))
 
+    def test_large_memory_entry_is_compacted_without_discarding_all_feedback(self):
+        entry = sample_entry("forward", 1, "2026-11-04")
+        for index in range(2, 6):
+            proposal = copy.deepcopy(entry["proposals"][0])
+            proposal["hypothesis_id"] = f"HYP-{index:03d}"
+            for key in (
+                "proposed_family", "hypothesis", "exact_definition", "inputs",
+                "output_rule", "parameter_policy", "selection_policy",
+                "falsification_criterion",
+            ):
+                proposal[key] = (key + " ") * 200
+            entry["proposals"].append(proposal)
+        entry["learning_notes"] = {
+            "observations": ["An observation with enough detail. " * 15],
+            "failed_approaches": ["A failed approach with enough detail. " * 15],
+            "next_tests": ["A next test with enough detail. " * 15],
+        }
+        entry["content_sha256"] = _hash_entry(entry)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "memory.json"
+            value = memory.empty_memory()
+            value["entries"] = [entry]
+            write_json(path, value)
+            context = memory.direction_context("forward", "2026-11-04", memory_path=path)
+        self.assertEqual(len(context), 1)
+        self.assertEqual(context[0]["proposals_in_memory"], 5)
+        self.assertEqual(len(context[0]["hypotheses"]), 2)
+        self.assertLessEqual(len(context[0]["hypotheses"][0]["exact_definition"]), 850)
+        self.assertLessEqual(len(memory._canonical(context)), memory.MAX_CONTEXT_CHARS)
+
     def test_direction_context_refuses_invalid_direction(self):
         with self.assertRaisesRegex(memory.ResearchMemoryError, "Direction"):
             memory.direction_context("both", "2026-11-04")
