@@ -638,7 +638,7 @@ def _build_entry(
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "target_date": target_date,
         "archive_sha256": archive_sha256,
-        "runner_version": "0.7.0",
+        "runner_version": "0.8.0",
         "status": status,
         "research_report_sha256": _sha(report.encode("utf-8")) if report is not None else None,
         "proposal_status": proposal_doc.get("status", "NOT_RUN"),
