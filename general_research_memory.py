@@ -53,7 +53,9 @@ MAX_CONTEXT_CHARS = 18000
 MAX_REPORT_CHARS = 9000
 MAX_ENTRIES = 10000
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
-REPORT_DATE_PATTERN = re.compile(r"(?<![0-9])\d{4}-\d{2}-\d{2}(?![0-9])")
+REPORT_DATE_PATTERN = re.compile(
+    r"(?<![0-9])(?:\d{4}[-/]\d{2}[-/]\d{2}|\d{1,2}[./]\d{1,2}[./]\d{4})(?![0-9])"
+)
 REPORT_SECRET_PATTERN = re.compile(
     r"(?i)(?:\bnvapi-[A-Za-z0-9_-]{12,}\b|"
     r"\bgh[pousr]_[A-Za-z0-9]{20,}\b|"
@@ -69,6 +71,11 @@ DRAW_SET_QUOTED_TEXT = re.compile(
     r"""(?<![0-9.])["']?(?:[1-9]|[1-5][0-9]|60)["']?"""
     r"""(?:(?:\s*[,;|/]\s*|\s+)["']?(?:[1-9]|[1-5][0-9]|60)["']?){5}(?![0-9]|\.[0-9])"""
 )
+DRAW_SET_FLEX_TEXT = re.compile(
+    r"""(?<![0-9.])["']?0?(?:[1-9]|[1-5][0-9]|60)["']?"""
+    r"""(?:(?:\s*[,;|/\-]\s*|\s+)["']?0?(?:[1-9]|[1-5][0-9]|60)["']?){5}(?![0-9]|\.[0-9])"""
+)
+
 ALLOWED_STATUSES = {
     "HYPOTHESES_CAPTURED",
     "NO_VALID_HYPOTHESIS",
@@ -110,6 +117,7 @@ def _contains_six_number_set(value: Any) -> bool:
         return (
             DRAW_SET_TEXT.search(value) is not None
             or DRAW_SET_QUOTED_TEXT.search(value) is not None
+            or DRAW_SET_FLEX_TEXT.search(value) is not None
         )
     if isinstance(value, list):
         if (
@@ -129,6 +137,31 @@ def _reject_number_values(value: Any, label: str) -> None:
         raise ResearchMemoryError(label + " contains a six-number value set; memory write refused.")
 
 
+def _report_dates_in_text(value: str) -> set[str]:
+    """Normalize common date spellings so consumed holdouts cannot hide in prose."""
+    normalized: set[str] = set()
+    for token in REPORT_DATE_PATTERN.findall(value):
+        try:
+            if len(token) == 10 and token[4] in "-/":
+                year, month, day = (int(part) for part in token.split(token[4]))
+                normalized.add(date(year, month, day).isoformat())
+            elif "." in token:
+                day, month, year = (int(part) for part in token.split("."))
+                normalized.add(date(year, month, day).isoformat())
+            else:
+                first, second, year = (int(part) for part in token.split("/"))
+                # Slash dates are ambiguous across locales. Test both readings
+                # and reject if either maps to a consumed validation date.
+                for day, month in ((first, second), (second, first)):
+                    try:
+                        normalized.add(date(year, month, day).isoformat())
+                    except ValueError:
+                        continue
+        except (TypeError, ValueError):
+            continue
+    return normalized
+
+
 def _reject_consumed_validation_dates(
     value: Any,
     forbidden_dates: set[str] | None,
@@ -137,7 +170,7 @@ def _reject_consumed_validation_dates(
     if not forbidden_dates:
         return
     serialized = _canonical(value).decode("utf-8")
-    if set(REPORT_DATE_PATTERN.findall(serialized)).intersection(forbidden_dates):
+    if _report_dates_in_text(serialized).intersection(forbidden_dates):
         raise ResearchMemoryError(label + " contains a consumed validation date; memory write refused.")
 
 
@@ -547,7 +580,7 @@ def _sanitize_research_report(
     if _contains_six_number_set(normalized):
         return None, "OMITTED_SENSITIVE_CONTENT"
     forbidden = forbidden_validation_dates or set()
-    report_dates = set(REPORT_DATE_PATTERN.findall(normalized))
+    report_dates = _report_dates_in_text(normalized)
     if report_dates.intersection(forbidden):
         return None, "OMITTED_SENSITIVE_CONTENT"
     if REPORT_SECRET_PATTERN.search(normalized):
