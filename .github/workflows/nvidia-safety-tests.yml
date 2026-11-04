@@ -69,7 +69,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_SHA: ${{ github.event.pull_request.base.sha }}
-        run: python3 general_automation_state_sync.py --expected-main-commit "$GITHUB_SHA" --source-root preflight-main
+        run: python3 general_automation_state_sync.py --expected-main-commit "$GITHUB_SHA" --source-root preflight-main --shadow-comparison-file /tmp/general-state-shadow-ci.json
 
       - name: Run read-only state-sync preflight on the pinned main snapshot
         if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
@@ -77,4 +77,4 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_SHA: ${{ github.sha }}
-        run: python3 general_automation_state_sync.py --expected-main-commit "$GITHUB_SHA"
+        run: python3 general_automation_state_sync.py --expected-main-commit "$GITHUB_SHA" --shadow-comparison-file /tmp/general-state-shadow-ci.json
