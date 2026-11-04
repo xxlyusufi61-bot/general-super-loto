@@ -436,6 +436,54 @@ class GitHubStateStoreReaderTests(unittest.TestCase):
         self.assertNotIn("NVIDIA_API_KEY", step)
 
 
+    def test_shadow_read_rejects_a_non_text_main_tree_path(self):
+        client = FakeShadowReader(self.make_bootstrap_reader(), self.main_documents())
+        client.main_tree["tree"].append({
+            "path": [], "type": "blob", "mode": "100644", "sha": "a" * 40,
+        })
+        with self.assertRaises(reader.StateStoreReadError):
+            client.read_shadow_comparison()
+
+    def test_shadow_cli_returns_distinct_non_blocking_divergence_status(self):
+        with patch.object(
+            reader.GitHubStateStoreReader,
+            "read_shadow_comparison",
+            return_value={"diverged": True},
+        ), patch("builtins.print"):
+            self.assertEqual(
+                reader.main(["--repository", REPOSITORY, "--shadow-compare"]),
+                2,
+            )
+
+        with patch.object(
+            reader.GitHubStateStoreReader,
+            "read_shadow_comparison",
+            return_value={"diverged": False},
+        ), patch("builtins.print"):
+            self.assertEqual(
+                reader.main(["--repository", REPOSITORY, "--shadow-compare"]),
+                0,
+            )
+
+    def test_safety_ci_runs_real_shadow_compare_with_read_only_permissions(self):
+        workflow = (
+            Path(__file__).resolve().parent
+            / ".github" / "workflows" / "nvidia-safety-tests.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("permissions:\n  contents: read", workflow)
+        marker = "      - name: Compare real main and state-store objects in read-only shadow mode\n"
+        start = workflow.find(marker)
+        self.assertGreaterEqual(start, 0)
+        end = workflow.find("\n      - name:", start + len(marker))
+        if end < 0:
+            end = len(workflow)
+        step = workflow[start:end]
+        self.assertIn("GITHUB_TOKEN: ${{ github.token }}", step)
+        self.assertIn("general_automation_state_reader.py --shadow-compare", step)
+        self.assertIn("shadow_status", step)
+        self.assertNotIn("git push", step)
+        self.assertNotIn("NVIDIA_API_KEY", step)
+
 
 if __name__ == "__main__":
     unittest.main()
