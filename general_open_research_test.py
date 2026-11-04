@@ -626,11 +626,11 @@ class NvidiaUsageObservationTests(unittest.TestCase):
                 )
             mocked_connection_factory.assert_not_called()
 
-    def test_https_connection_uses_standard_http_connect_proxy_without_logging_credentials(self):
+    def test_https_connection_uses_standard_http_connect_proxy(self):
         with patch.object(
             research.urllib.request,
             "getproxies",
-            return_value={"https": "http://proxy-user:proxy-pass@proxy.example:8080"},
+            return_value={"https": "http://proxy.example:8080"},
         ), patch.object(
             research.urllib.request, "proxy_bypass", return_value=False
         ), patch(
@@ -649,8 +649,22 @@ class NvidiaUsageObservationTests(unittest.TestCase):
         connection.set_tunnel.assert_called_once_with(
             "integrate.api.nvidia.com",
             443,
-            headers={"Proxy-Authorization": "Basic cHJveHktdXNlcjpwcm94eS1wYXNz"},
+            headers={},
         )
+
+    def test_http_proxy_credentials_are_rejected_before_connection(self):
+        with patch.object(
+            research.urllib.request,
+            "getproxies",
+            return_value={"https": "http://proxy-user:proxy-pass@proxy.example:8080"},
+        ), patch.object(
+            research.urllib.request, "proxy_bypass", return_value=False
+        ), patch(
+            "general_open_research.http.client.HTTPSConnection"
+        ) as https_connection:
+            with self.assertRaisesRegex(RuntimeError, "connection is not encrypted"):
+                research._create_nvidia_connection(19)
+        https_connection.assert_not_called()
 
     def test_https_connection_honors_no_proxy_bypass(self):
         with patch.object(
