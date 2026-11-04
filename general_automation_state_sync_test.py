@@ -47,7 +47,7 @@ class StateSyncPreflightTests(unittest.TestCase):
             locked_by="unit-test",
         )
         years = range(2020, 2027)
-        dates = [f"{year}-01-02" for year in years]
+        dates = ["2020-08-02" if year == 2020 else f"{year}-01-02" for year in years]
         archive = {
             "source": "synthetic fixture",
             "cross_check_source": "synthetic independent source",
