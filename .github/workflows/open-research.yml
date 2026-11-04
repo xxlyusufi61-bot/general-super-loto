@@ -246,7 +246,17 @@ jobs:
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git commit -m "Record GENERAL direction-isolated research memory"
+            stashed_uncommitted="false"
+            if ! git diff --quiet; then
+              git stash push --keep-index -m "temporary archive refresh before memory push"
+              stashed_uncommitted="true"
+            fi
+            git fetch origin main
+            git rebase origin/main
             git push origin HEAD:main
+            if [ "$stashed_uncommitted" = "true" ]; then
+              git stash drop stash@{0}
+            fi
           else
             echo "No eligible GENERAL research memory entry was produced."
           fi
