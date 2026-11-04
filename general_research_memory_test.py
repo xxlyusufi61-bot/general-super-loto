@@ -3,7 +3,7 @@ import hashlib
 import json
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import general_research_memory as memory
@@ -140,6 +140,26 @@ class ResearchMemoryValidationTests(unittest.TestCase):
                 "Synthetic proposal",
             )
 
+
+    def test_written_month_dates_are_rejected_when_they_match_reserved_holdouts(self):
+        for report in (
+            "The sealed date is October 21, 2026.",
+            "Mühürlü tarih 21 Ekim 2026 olarak not edildi.",
+        ):
+            with self.subTest(report=report):
+                self.assertIsNone(
+                    memory._sanitize_research_report(
+                        report,
+                        forbidden_validation_dates={"2026-10-21"},
+                    )[0]
+                )
+                with self.assertRaisesRegex(memory.ResearchMemoryError, "reserved validation date"):
+                    memory._reject_consumed_validation_dates(
+                        {"hypothesis": report},
+                        {"2026-10-21"},
+                        "Synthetic proposal",
+                    )
+
     def test_reserved_validation_windows_expand_forward_and_reverse_ranges(self):
         plan = {
             "regimes": {
@@ -226,6 +246,37 @@ class ResearchMemoryValidationTests(unittest.TestCase):
 
         memory._reject_candidate_value_references(
             {"exact_definition": "Use MOD5 and fixed 5-fold validation in R60."},
+            "Synthetic proposal",
+        )
+
+
+    def test_written_number_sets_and_candidate_values_are_rejected(self):
+        unsafe_sets = (
+            "Candidate values: three, nine, fifteen, twenty-four, thirty-six and fifty.",
+            "Aday sayıları: üç, dokuz, on beş, yirmi dört, otuz altı ve elli.",
+            "The winning numbers were 3, 9, 15, 24, 36 and 50.",
+        )
+        for value in unsafe_sets:
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(memory.ResearchMemoryError, "six-number value set"):
+                    memory._reject_number_values({"notes": [value]}, "test")
+
+        unsafe_candidates = (
+            {"hypothesis": "The winning number is seventeen."},
+            {"hypothesis": "The top-ranked value is twenty-four."},
+            {"hypothesis": "Aday değer on yedi olarak seçildi."},
+            {"hypothesis": "On yedi aday olarak belirlendi."},
+            {"output_rule": "Predicted values: three, nine and fifteen."},
+        )
+        for value in unsafe_candidates:
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(
+                    memory.ResearchMemoryError, "candidate/predicted number value"
+                ):
+                    memory._reject_candidate_value_references(value, "Synthetic proposal")
+
+        memory._reject_candidate_value_references(
+            {"exact_definition": "Use MOD5 with fixed 5-fold validation in R60."},
             "Synthetic proposal",
         )
 
@@ -447,6 +498,96 @@ def write_json(path, value):
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+
+def make_archive_and_plan(root, used_validation_dates=None):
+    from general_sealed_evaluation import load_archive, public_plan, split_archive
+
+    start = date(2026, 9, 1)
+    rows = []
+    for index in range(60):
+        draw_day = (start + timedelta(days=index)).isoformat()
+        base = (index * 7) % 60 + 1
+        numbers = sorted({((base + offset * 11 - 1) % 60) + 1 for offset in range(6)})
+        rows.append({"date": draw_day, "numbers": numbers})
+    target_base = (60 * 7) % 60 + 1
+    rows.append({
+        "date": (start + timedelta(days=60)).isoformat(),
+        "numbers": sorted({((target_base + offset * 11 - 1) % 60) + 1 for offset in range(6)}),
+    })
+    archive_path = Path(root) / "archive.json"
+    write_json(archive_path, {"draws": rows})
+    archive = load_archive(archive_path)
+    partition = split_archive(
+        rows,
+        archive_sha256=archive["archive_sha256"],
+        used_validation_dates=set(used_validation_dates or set()),
+    )
+    return archive, partition, public_plan(partition)
+
+
+class SealedPlanBindingTests(unittest.TestCase):
+    def test_plan_must_match_exact_archive_target_and_derived_partition(self):
+        with tempfile.TemporaryDirectory() as directory:
+            archive, partition, plan = make_archive_and_plan(directory)
+            ledger = {"entries": []}
+            memory._validate_sealed_plan_binding(plan, archive, ledger, None)
+
+            changed_target = copy.deepcopy(plan)
+            changed_target["target_date"] = "2026-10-30"
+            with self.assertRaisesRegex(memory.ResearchMemoryError, "archive/target isolation"):
+                memory._validate_sealed_plan_binding(changed_target, archive, ledger, None)
+
+            changed_hash = copy.deepcopy(plan)
+            changed_hash["archive_sha256"] = "f" * 64
+            with self.assertRaisesRegex(memory.ResearchMemoryError, "archive/target isolation"):
+                memory._validate_sealed_plan_binding(changed_hash, archive, ledger, None)
+
+            changed_window = copy.deepcopy(plan)
+            changed_window["regimes"]["R60"]["validation_end_date"] = (
+                changed_window["regimes"]["R60"]["validation_start_date"]
+            )
+            with self.assertRaisesRegex(memory.ResearchMemoryError, "archive-derived chronological partition"):
+                memory._validate_sealed_plan_binding(changed_window, archive, ledger, None)
+
+    def test_claimed_plan_uses_immutable_prior_consumption_snapshot(self):
+        from general_sealed_evaluation import public_plan, split_archive
+
+        with tempfile.TemporaryDirectory() as directory:
+            archive, _unused_partition, _unused_plan = make_archive_and_plan(directory)
+            rows = archive["rows"]
+            prior_date = rows[0]["date"]
+            prior_dates = {prior_date}
+            partition = split_archive(
+                rows,
+                archive_sha256=archive["archive_sha256"],
+                used_validation_dates=prior_dates,
+            )
+            plan = public_plan(partition)
+            current = partition["regimes"]["R60"]
+            claim_id = "c" * 64
+            ledger = {
+                "entries": [{
+                    "claim_id": claim_id,
+                    "target_date": archive["last_date"],
+                    "archive_sha256": archive["archive_sha256"],
+                    "previously_consumed_validation_dates": [prior_date],
+                    "validation_dates": [row["date"] for row in current["validation_rows"]],
+                    "reverse_validation_dates": [row["date"] for row in current["reverse_validation_rows"]],
+                }]
+            }
+            claim = {
+                "claim_created": True,
+                "claim_id": claim_id,
+                "target_date": archive["last_date"],
+                "archive_sha256": archive["archive_sha256"],
+            }
+            memory._validate_sealed_plan_binding(plan, archive, ledger, claim)
+
+            ledger["entries"][0]["previously_consumed_validation_dates"] = []
+            with self.assertRaisesRegex(memory.ResearchMemoryError, "archive-derived chronological partition"):
+                memory._validate_sealed_plan_binding(plan, archive, ledger, claim)
+
+
 class ResearchMemoryPersistenceTests(unittest.TestCase):
     def test_append_only_writer_refuses_to_modify_existing_entries(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -470,21 +611,16 @@ class ResearchMemoryPersistenceTests(unittest.TestCase):
                 memory._write_memory(backdated, path)
 
     def test_record_cycle_persists_only_directional_hypotheses_and_evaluation_feedback(self):
-        from general_sealed_evaluation import load_archive
-
-        rows = [
-            {"date": "2026-11-01", "numbers": [1, 7, 13, 22, 34, 48]},
-            {"date": "2026-11-02", "numbers": [2, 8, 14, 23, 35, 49]},
-            {"date": "2026-11-03", "numbers": [3, 9, 15, 24, 36, 50]},
-        ]
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            archive_path = root / "archive.json"
-            archive_bytes = json.dumps({"draws": rows}, ensure_ascii=False, indent=2).encode("utf-8")
-            archive_path.write_bytes(archive_bytes)
-            archive = load_archive(archive_path)
+            archive, partition, sealed_plan = make_archive_and_plan(root)
             target = archive["last_date"]
             archive_hash = archive["archive_sha256"]
+            r60 = partition["regimes"]["R60"]
+            forward_validation_dates = [row["date"] for row in r60["validation_rows"]]
+            reverse_validation_dates = [row["date"] for row in r60["reverse_validation_rows"]]
+            consumed_date = forward_validation_dates[0]
+            reserved_date = forward_validation_dates[1]
             ledger_path = root / "ledger.json"
             claim_id = "d" * 64
             write_json(ledger_path, {
@@ -495,8 +631,9 @@ class ResearchMemoryPersistenceTests(unittest.TestCase):
                     "state": "EVALUATED",
                     "target_date": target,
                     "archive_sha256": archive_hash,
-                    "validation_dates": ["2026-10-20", "2026-10-21"],
-                    "reverse_validation_dates": ["2026-10-10", "2026-10-11"],
+                    "previously_consumed_validation_dates": [],
+                    "validation_dates": forward_validation_dates,
+                    "reverse_validation_dates": reverse_validation_dates,
                 }],
             })
             write_json(root / "run-status.json", {
@@ -512,19 +649,7 @@ class ResearchMemoryPersistenceTests(unittest.TestCase):
             })
             (root / "forward.md").write_text(directional_report("forward"), encoding="utf-8")
             (root / "reverse.md").write_text(directional_report("reverse"), encoding="utf-8")
-            write_json(root / "sealed-plan.json", {
-                "regimes": {
-                    "R60": {
-                        "discovery_start_date": "2026-09-01",
-                        "discovery_end_date": "2026-10-01",
-                        "discovery_count": 20,
-                        "validation_start_date": "2026-10-22",
-                        "validation_end_date": "2026-10-23",
-                        "reverse_validation_start_date": "2026-10-12",
-                        "reverse_validation_end_date": "2026-10-13",
-                    }
-                }
-            })
+            write_json(root / "sealed-plan.json", sealed_plan)
             write_json(root / "claim.json", {"claim_created": True, "claim_id": claim_id})
 
             spec = json.loads(
@@ -557,7 +682,7 @@ class ResearchMemoryPersistenceTests(unittest.TestCase):
                     "uniform_random_expected_hits_out_of_6": 0.6,
                     "validation_draw_count": 10,
                     "hit_distribution": {"0_hits": 1, "1_hit": 3, "2_hits": 4, "3_or_more_hits": 2},
-                    "per_draw": [{"test_date": "2026-10-20", "hit_count": 1}],
+                    "per_draw": [{"test_date": consumed_date, "hit_count": 1}],
                 },
                 "time_ordered_cross_validation": {
                     "folds": 5,
@@ -633,7 +758,7 @@ class ResearchMemoryPersistenceTests(unittest.TestCase):
             # The memory writer cross-checks report prose against every sealed
             # validation date already consumed in the authoritative ledger.
             (root / "forward.md").write_text(
-                directional_report("forward") + "\\nConsumed validation date: 2026-10-20.",
+                directional_report("forward") + "\\nConsumed validation date: " + consumed_date + ".",
                 encoding="utf-8",
             )
             withheld_path = root / "withheld-report-memory.json"
@@ -661,13 +786,13 @@ class ResearchMemoryPersistenceTests(unittest.TestCase):
                 withheld["entries"][1]["research_report_content_status"],
                 "STORED",
             )
-            self.assertNotIn("2026-10-20", json.dumps(withheld, ensure_ascii=False))
+            self.assertNotIn(consumed_date, json.dumps(withheld, ensure_ascii=False))
 
             # A validation-window date is reserved before it appears in the
             # append-only ledger, so an echoed date from that window is still
             # omitted from the directional narrative.
             (root / "forward.md").write_text(
-                directional_report("forward") + "\\nReserved validation date: 2026-10-22.",
+                directional_report("forward") + "\\nReserved validation date: " + reserved_date + ".",
                 encoding="utf-8",
             )
             reserved_path = root / "reserved-report-memory.json"
@@ -691,7 +816,7 @@ class ResearchMemoryPersistenceTests(unittest.TestCase):
                 "OMITTED_SENSITIVE_CONTENT",
             )
             self.assertIsNone(reserved_memory["entries"][0]["research_report_content"])
-            self.assertNotIn("2026-10-22", json.dumps(reserved_memory, ensure_ascii=False))
+            self.assertNotIn(reserved_date, json.dumps(reserved_memory, ensure_ascii=False))
             (root / "forward.md").write_text(directional_report("forward"), encoding="utf-8")
 
             # A local evaluation report is not trusted while the append-only
