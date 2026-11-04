@@ -50,7 +50,7 @@ MAX_ENTRIES = 10000
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 DRAW_SET_TEXT = re.compile(
     r"(?<![0-9.])(?:[1-9]|[1-5][0-9]|60)"
-    r"(?:\\s*,\\s*(?:[1-9]|[1-5][0-9]|60)){5}(?![0-9.])"
+    r"(?:\s*,\s*(?:[1-9]|[1-5][0-9]|60)){5}(?![0-9.])"
 )
 ALLOWED_STATUSES = {
     "HYPOTHESES_CAPTURED",
