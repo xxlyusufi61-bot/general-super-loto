@@ -122,6 +122,18 @@ def _reject_number_values(value: Any, label: str) -> None:
         raise ResearchMemoryError(label + " contains a six-number value set; memory write refused.")
 
 
+def _reject_consumed_validation_dates(
+    value: Any,
+    forbidden_dates: set[str] | None,
+    label: str,
+) -> None:
+    if not forbidden_dates:
+        return
+    serialized = _canonical(value).decode("utf-8")
+    if set(REPORT_DATE_PATTERN.findall(serialized)).intersection(forbidden_dates):
+        raise ResearchMemoryError(label + " contains a consumed validation date; memory write refused.")
+
+
 def empty_memory() -> dict[str, Any]:
     return {
         "schema_version": SCHEMA_VERSION,
@@ -400,6 +412,8 @@ def _validate_entry(entry: Any, expected_id: int) -> dict[str, Any]:
         ):
             raise ResearchMemoryError("Discovery-window chronology or scope is invalid.")
     _reject_number_values(window, "Discovery-window metadata")
+    if REPORT_SECRET_PATTERN.search(_canonical(entry).decode("utf-8")):
+        raise ResearchMemoryError("Research-memory entry contains a secret-like value.")
     if entry["content_sha256"] != _entry_hash(entry):
         raise ResearchMemoryError("Research-memory entry hash mismatch.")
     return entry
@@ -666,6 +680,15 @@ def _direction_artifacts(
     _reject_number_values(proposals["proposals"], "Directional proposals")
     _reject_number_values(specs["specifications"], "Directional specifications")
     _reject_number_values(notes, "Directional learning notes")
+    _reject_consumed_validation_dates(
+        proposals["proposals"], forbidden_validation_dates, "Directional proposals"
+    )
+    _reject_consumed_validation_dates(
+        specs["specifications"], forbidden_validation_dates, "Directional specifications"
+    )
+    _reject_consumed_validation_dates(
+        notes, forbidden_validation_dates, "Directional learning notes"
+    )
     safe_report, safe_report_status = _sanitize_research_report(
         report,
         forbidden_validation_dates=forbidden_validation_dates,
