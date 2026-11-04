@@ -140,6 +140,99 @@ class ResearchMemoryValidationTests(unittest.TestCase):
                 "Synthetic proposal",
             )
 
+    def test_reserved_validation_windows_expand_forward_and_reverse_ranges(self):
+        plan = {
+            "regimes": {
+                "R60": {
+                    "validation_start_date": "2026-10-20",
+                    "validation_end_date": "2026-10-22",
+                    "reverse_validation_start_date": "2026-10-25",
+                    "reverse_validation_end_date": "2026-10-26",
+                }
+            }
+        }
+        reserved = memory._reserved_validation_dates(plan)
+        self.assertEqual(
+            reserved,
+            {
+                "2026-10-20", "2026-10-21", "2026-10-22",
+                "2026-10-25", "2026-10-26",
+            },
+        )
+        sanitized, status = memory._sanitize_research_report(
+            "The sealed validation interval includes 2026-10-21.",
+            forbidden_validation_dates=reserved,
+        )
+        self.assertIsNone(sanitized)
+        self.assertEqual(status, "OMITTED_SENSITIVE_CONTENT")
+
+    def test_invalid_or_oversized_reserved_validation_windows_fail_closed(self):
+        invalid_plans = (
+            {
+                "regimes": {"R60": {
+                    "validation_start_date": "2026-10-20",
+                    "validation_end_date": None,
+                }}
+            },
+            {
+                "regimes": {"R60": {
+                    "validation_start_date": "not-a-date",
+                    "validation_end_date": "2026-10-22",
+                }}
+            },
+            {
+                "regimes": {"R60": {
+                    "validation_start_date": "2026-10-23",
+                    "validation_end_date": "2026-10-22",
+                }}
+            },
+            {
+                "regimes": {"R60": {
+                    "validation_start_date": "2020-01-01",
+                    "validation_end_date": "2030-02-01",
+                }}
+            },
+        )
+        for plan in invalid_plans:
+            with self.subTest(plan=plan):
+                with self.assertRaises(memory.ResearchMemoryError):
+                    memory._reserved_validation_dates(plan)
+
+    def test_numeric_freeform_narrative_is_omitted_even_without_a_six_number_set(self):
+        sanitized, status = memory._sanitize_research_report(
+            "The exploratory approach was reviewed in 4 separate folds."
+        )
+        self.assertIsNone(sanitized)
+        self.assertEqual(status, "OMITTED_NUMERIC_CONTENT")
+
+    def test_structured_candidate_values_and_partial_rankings_are_rejected(self):
+        unsafe_values = (
+            {"hypothesis": "The candidate is 17."},
+            {"output_rule": "Top-ranked values: 17, 22 and 31."},
+            {"known_risks": ["Predicted number: 22."]},
+            {"hypothesis": "17 is the highest-ranked candidate."},
+        )
+        for value in unsafe_values:
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(
+                    memory.ResearchMemoryError, "candidate/predicted number value"
+                ):
+                    memory._reject_candidate_value_references(value, "Synthetic proposal")
+
+        memory._reject_candidate_value_references(
+            {"exact_definition": "Use MOD5 and fixed 5-fold validation in R60."},
+            "Synthetic proposal",
+        )
+
+    def test_stored_proposal_cannot_bypass_candidate_value_guard(self):
+        entry = sample_entry()
+        entry["proposals"][0]["hypothesis"] = "The candidate is 17."
+        entry["content_sha256"] = _hash_entry(entry)
+        with self.assertRaisesRegex(
+            memory.ResearchMemoryError, "candidate/predicted number value"
+        ):
+            memory._validate_entry(entry, 1)
+
     def test_legacy_source_or_epoch_is_rejected(self):
         entry = sample_entry()
         entry["source"] = "GENERAL/legacy"
@@ -275,6 +368,14 @@ class DirectionalMemoryContextTests(unittest.TestCase):
         bad = report.replace("A fixed tie-break improves reproducibility.", "Prediction: 3, 9, 15, 24, 36, 50")
         with self.assertRaisesRegex(memory.ResearchMemoryError, "six-number value set"):
             memory._parse_learning_notes(bad)
+        partial = report.replace(
+            "A fixed tie-break improves reproducibility.",
+            "The candidate is 17 and remains unverified.",
+        )
+        with self.assertRaisesRegex(
+            memory.ResearchMemoryError, "candidate/predicted number value"
+        ):
+            memory._parse_learning_notes(partial)
 
 
 def directional_report(direction):
