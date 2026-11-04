@@ -111,6 +111,8 @@ class ResearchMemoryValidationTests(unittest.TestCase):
     def test_report_sanitizer_omits_consumed_dates_number_sets_and_secrets(self):
         cases = (
             ("The consumed validation date was 2026-10-20.", {"2026-10-20"}),
+            ("The consumed validation date was 04.11.2026.", {"2026-11-04"}),
+            ("The consumed validation date was 11/04/2026.", {"2026-11-04"}),
             ("A list appeared: 1, 7, 13, 22, 34, 48.", set()),
             ("An echoed credential was nvapi-abcdefghijklmnopqrstuvwxyz123456.", set()),
         )
@@ -165,6 +167,8 @@ class ResearchMemoryValidationTests(unittest.TestCase):
             "1 5 9 12 20 45",
             "1/5/9/12/20/45",
             '"1", "5", "9", "12", "20", "45"',
+            "01, 07, 13, 22, 34, 48.",
+            "1-7-13-22-34-48",
         ):
             with self.subTest(value=value):
                 with self.assertRaisesRegex(memory.ResearchMemoryError, "six-number value set"):
