@@ -643,7 +643,7 @@ class NvidiaUsageObservationTests(unittest.TestCase):
         client.chat.completions.create.assert_called_once()
         self.assertEqual(len(saved), 1)
         self.assertEqual(saved[0]["http_status"], 429)
-        self.assertEqual(saved[0]["failure_stage"], "provider_call")
+        self.assertEqual(saved[0]["failure_stage"], "provider_http_error")
         self.assertEqual(
             saved[0]["rate_limit_headers_returned"]["retry-after"], "60"
         )
