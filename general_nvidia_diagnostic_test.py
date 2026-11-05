@@ -272,6 +272,19 @@ class SingleRequestDiagnosticTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "reasoning_content is not accepted"):
             research._validate_json_chat_completion(reasoning_only)
 
+        truncated = {
+            "choices": [{
+                "message": {"content": "partial answer"},
+                "finish_reason": "length",
+            }],
+            "usage": {"total_tokens": 99},
+        }
+        with self.assertRaises(research.IncompleteModelResponseError) as caught:
+            research._validate_json_chat_completion(truncated)
+        self.assertEqual(caught.exception.usage, {"total_tokens": 99})
+        self.assertIsNone(caught.exception.stream_event_count)
+        self.assertIsNone(caught.exception.stream_completed)
+
     def test_call_model_uses_json_nonstream_transport_and_hard_stops_after_one_request(self):
         env = self._environment() | {
             "GENERAL_ALLOW_NVIDIA_CALL": "true",
@@ -354,7 +367,9 @@ class SingleRequestDiagnosticTests(unittest.TestCase):
                 side_effect=lambda observation, **kwargs: saved.append(observation),
             ), patch(
                 "general_open_research.urllib.request.urlopen",
-                side_effect=TimeoutError("synthetic JSON diagnostic open timeout"),
+                side_effect=research.urllib.error.URLError(
+                    TimeoutError("synthetic JSON diagnostic open timeout")
+                ),
             ) as urlopen, patch(
                 "general_open_research._create_nvidia_connection"
             ) as connection_factory:
@@ -379,6 +394,7 @@ class SingleRequestDiagnosticTests(unittest.TestCase):
             self.assertEqual(observation["automatic_retries"], 0)
             self.assertEqual(observation["failure_stage"], "open_response")
             self.assertEqual(observation["network_error_type"], "TimeoutError")
+            self.assertIsNotNone(observation["transport_open_seconds"])
         finally:
             Path("/tmp/general_nvidia_api_attempted").unlink(missing_ok=True)
             Path("/tmp/general_nvidia_api_succeeded").unlink(missing_ok=True)
