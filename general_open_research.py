@@ -11,14 +11,9 @@ only safe usage metadata returned by each directional inference request, when pr
 """
 from __future__ import annotations
 
-import http.client
 import json
 import os
-import ssl
 import time
-import urllib.error
-import urllib.request
-from urllib.parse import urlsplit
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
@@ -44,7 +39,9 @@ USAGE_REPORT = BASE / "open_research_usage.json"
 RUN_STATUS = BASE / "open_research_run_status.json"
 LESSONS_START = research_memory.LESSONS_START
 LESSONS_END = research_memory.LESSONS_END
-API_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
+API_BASE_URL = "https://integrate.api.nvidia.com/v1"
+API_URL = API_BASE_URL + "/chat/completions"
+OPENAI_SDK_VERSION = "3.45.0"
 DOCUMENTATION_REVIEW_DATE = "2026-10-25"
 
 MAX_NVIDIA_REQUESTS_PER_RUN = 2
@@ -450,6 +447,11 @@ def build_usage_observation(
         "observed_at_utc": datetime.now(timezone.utc).isoformat(),
         "model": MODEL,
         "endpoint": API_URL,
+        "transport": "openai-python-sdk",
+        "client_library": "openai",
+        "client_library_version": OPENAI_SDK_VERSION,
+        "stream_requested": False,
+        "sdk_max_retries": 0,
         "http_status": status_code,
         "inference_requests_made_by_this_run": 1,
         "automatic_retries": 0,
@@ -740,150 +742,23 @@ def combine_directional_results(
     return proposal_document, execution_document
 
 
-def _iter_sse_data(response, *, before_read=None):
-    """Yield data payloads, optionally refreshing a bounded socket read timeout."""
-    data_lines: list[str] = []
-    while True:
-        if before_read is not None:
-            before_read()
-        raw_line = response.readline()
-        if raw_line in (b"", ""):
-            if data_lines:
-                yield "\n".join(data_lines)
-            return
-        if isinstance(raw_line, bytes):
-            try:
-                line = raw_line.decode("utf-8")
-            except UnicodeDecodeError:
-                raise RuntimeError("Research model stream contained invalid UTF-8.") from None
-        elif isinstance(raw_line, str):
-            line = raw_line
-        else:
-            raise RuntimeError("Research model stream returned an invalid line type.")
-
-        line = line.rstrip("\r\n")
-        if not line:
-            if data_lines:
-                yield "\n".join(data_lines)
-                data_lines = []
-            continue
-        if line.startswith(":"):
-            # SSE comments/keep-alives do not carry model output.
-            continue
-        field, separator, value = line.partition(":")
-        if separator and field == "data":
-            if value.startswith(" "):
-                value = value[1:]
-            data_lines.append(value)
-
-
 class IncompleteModelResponseError(RuntimeError):
-    """A complete provider response whose model answer was cut off by its token limit."""
+    """A completed provider response whose answer was cut off by its token limit."""
 
     def __init__(
         self,
         message: str,
         *,
         usage: dict[str, Any] | None,
-        stream_event_count: int | None,
-        stream_completed: bool | None,
-        stream_finish_reason: str | None,
+        stream_event_count: int | None = None,
+        stream_completed: bool | None = None,
+        stream_finish_reason: str | None = None,
     ) -> None:
         super().__init__(message)
-        # Keep only provider token-usage metadata; never retain partial answer text.
         self.usage = dict(usage) if isinstance(usage, dict) else None
         self.stream_event_count = stream_event_count
         self.stream_completed = stream_completed
         self.stream_finish_reason = stream_finish_reason
-
-
-def _parse_streamed_chat_completion(
-    response,
-    *,
-    before_read=None,
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Parse NVIDIA's data-only SSE stream; reasoning is never treated as final content."""
-    content_parts: list[str] = []
-    usage: dict[str, Any] | None = None
-    finish_reason: str | None = None
-    event_count = 0
-    saw_done = False
-
-    for event_data in _iter_sse_data(response, before_read=before_read):
-        if event_data.strip() == "[DONE]":
-            saw_done = True
-            break
-        if not event_data.strip():
-            continue
-        try:
-            chunk = json.loads(event_data)
-        except json.JSONDecodeError:
-            raise RuntimeError("Research model stream contained invalid JSON.") from None
-        if not isinstance(chunk, dict):
-            raise RuntimeError("Research model stream contained a non-object event.")
-        if chunk.get("error") is not None:
-            raise RuntimeError("Research model stream returned a provider error event.")
-
-        event_count += 1
-        returned_usage = chunk.get("usage")
-        if isinstance(returned_usage, dict):
-            usage = returned_usage
-
-        choices = chunk.get("choices")
-        if choices is None:
-            if isinstance(returned_usage, dict):
-                continue
-            raise RuntimeError("Research model stream event did not contain choices.")
-        if not isinstance(choices, list):
-            raise RuntimeError("Research model stream returned invalid choices.")
-        for choice in choices:
-            if not isinstance(choice, dict):
-                raise RuntimeError("Research model stream returned an invalid choice.")
-            delta = choice.get("delta", {})
-            if not isinstance(delta, dict):
-                raise RuntimeError("Research model stream returned an invalid delta.")
-            delta_content = delta.get("content")
-            if isinstance(delta_content, str):
-                content_parts.append(delta_content)
-            elif delta_content is not None:
-                raise RuntimeError("Research model stream returned unsupported content.")
-            # reasoning_content is deliberately ignored. Only delta.content is final text.
-            if choice.get("finish_reason") is not None:
-                finish_reason = str(choice["finish_reason"])
-
-    if not saw_done:
-        raise RuntimeError("Research model stream ended before the [DONE] marker.")
-    content = "".join(content_parts)
-    if not content.strip():
-        raise RuntimeError(
-            "Research model stream completed without final answer content; "
-            "reasoning-only output is not accepted."
-        )
-    if finish_reason == "length":
-        raise IncompleteModelResponseError(
-            "Research model stream reached max_tokens before completion; "
-            "the partial response was rejected.",
-            usage=usage,
-            stream_event_count=event_count,
-            stream_completed=saw_done,
-            stream_finish_reason=finish_reason,
-        )
-    result = {
-        "choices": [
-            {
-                "message": {"content": content},
-                "finish_reason": finish_reason,
-            }
-        ],
-        "usage": usage,
-    }
-    metadata = {
-        "stream_event_count": event_count,
-        "stream_completed": True,
-        "finish_reason": finish_reason,
-    }
-    return result, metadata
-
 
 
 def _validate_json_chat_completion(
@@ -927,106 +802,39 @@ def _validate_json_chat_completion(
     return payload, {"finish_reason": "stop"}
 
 
-def _configured_https_proxy(target_host: str) -> tuple[str, int, dict[str, str]] | None:
-    """Resolve standard HTTPS proxy settings without exposing credentials.
+def _create_nvidia_client(api_key: str, timeout_seconds: int):
+    """Create the official OpenAI Python client for NVIDIA's compatible endpoint.
 
-    The phase-aware transport supports HTTP CONNECT proxies. NO_PROXY bypasses
-    are honored using urllib's platform-aware matcher. Unsupported proxy forms
-    fail closed instead of silently connecting by a different route.
+    SDK-level retries are explicitly disabled. This is important because even a
+    timeout can occur after NVIDIA has received the request.
     """
-    proxies = urllib.request.getproxies()
-    proxy_url = proxies.get("https") or proxies.get("all")
-    if not proxy_url or urllib.request.proxy_bypass(target_host):
-        return None
-    if not isinstance(proxy_url, str):
-        raise RuntimeError("Configured HTTPS proxy is invalid; no provider request was sent.")
-    normalized_proxy_url = (
-        proxy_url if "://" in proxy_url else "http://" + proxy_url
-    )
     try:
-        proxy = urlsplit(normalized_proxy_url)
-        proxy_port = proxy.port if proxy.port is not None else 80
-    except ValueError:
+        from openai import OpenAI
+    except ImportError:
         raise RuntimeError(
-            "Configured HTTPS proxy is malformed; no provider request was sent."
+            "The pinned OpenAI Python SDK is missing; NVIDIA inference was not started."
         ) from None
-    if not 1 <= proxy_port <= 65535:
-        raise RuntimeError(
-            "Configured HTTPS proxy port is outside the valid TCP range; "
-            "no provider request was sent."
-        )
-    if (
-        proxy.scheme.lower() != "http"
-        or not proxy.hostname
-        or proxy.path not in ("", "/")
-        or proxy.query
-        or proxy.fragment
-    ):
-        raise RuntimeError(
-            "Configured HTTPS proxy must be an HTTP CONNECT endpoint; "
-            "no provider request was sent."
-        )
 
-    if proxy.username is not None or proxy.password is not None:
-        raise RuntimeError(
-            "Credentials in an HTTP proxy URL are rejected because the proxy "
-            "connection is not encrypted; no provider request was sent."
-        )
-    return proxy.hostname, proxy_port, {}
-
-
-def _create_nvidia_connection(timeout_seconds: int):
-    """Create an HTTPS connection, honoring standard HTTP CONNECT proxy settings."""
-    endpoint = urlsplit(API_URL)
-    if endpoint.scheme != "https" or not endpoint.hostname:
-        raise RuntimeError("NVIDIA API endpoint must be an absolute HTTPS URL.")
-    context = ssl.create_default_context()
-    proxy = _configured_https_proxy(endpoint.hostname)
-    if proxy is None:
-        return http.client.HTTPSConnection(
-            endpoint.hostname,
-            endpoint.port or 443,
-            timeout=timeout_seconds,
-            context=context,
-        )
-
-    proxy_host, proxy_port, tunnel_headers = proxy
-    connection = http.client.HTTPSConnection(
-        proxy_host,
-        proxy_port,
+    return OpenAI(
+        base_url=API_BASE_URL,
+        api_key=api_key,
         timeout=timeout_seconds,
-        context=context,
+        max_retries=0,
     )
-    connection.set_tunnel(
-        endpoint.hostname,
-        endpoint.port or 443,
-        headers=tunnel_headers,
-    )
-    return connection
 
 
-def _set_nvidia_socket_timeout(
-    connection: http.client.HTTPConnection | None,
-    response_socket: Any | None,
-    configured_seconds: int,
-    request_deadline: float,
-) -> None:
-    """Refresh timeout on the socket that still owns the HTTP response stream.
-
-    HTTPConnection.getresponse() may detach and close its own socket reference
-    when the server sends Connection: close. HTTPResponse keeps the socket's
-    makefile open while the response body is being read, so retain the original
-    socket object and use it after that handoff.
-    """
-    active_socket = connection.sock if connection is not None else None
-    if active_socket is None:
-        active_socket = response_socket
-    if active_socket is None:
-        raise OSError("HTTPS response socket is unavailable.")
-    remaining = request_deadline - time.monotonic()
-    if remaining <= 0:
-        raise TimeoutError("Overall NVIDIA request deadline exceeded.")
-    active_socket.settimeout(min(configured_seconds, remaining))
+def _chat_completion_payload(completion: Any) -> dict[str, Any]:
+    """Convert the SDK's typed ChatCompletion into the strict JSON validator shape."""
+    if isinstance(completion, dict):
+        payload = completion
+    else:
+        model_dump = getattr(completion, "model_dump", None)
+        if not callable(model_dump):
+            raise RuntimeError("OpenAI SDK returned an unsupported ChatCompletion object.")
+        payload = model_dump(exclude_none=False)
+    if not isinstance(payload, dict):
+        raise RuntimeError("OpenAI SDK returned an invalid ChatCompletion payload.")
+    return payload
 
 
 def call_model(
@@ -1068,8 +876,6 @@ def call_model(
         raise RuntimeError(
             "NVIDIA inference was not explicitly approved; no provider request was sent."
         )
-    # Preserve the existing per-request gate and ensure the diagnostic mode has
-    # its own one-call ceiling. No network error is ever retried automatically.
     if os.environ.get("GENERAL_NVIDIA_FREE_USAGE_VERIFIED", "").strip().lower() != "true":
         raise RuntimeError(
             "Free-use status was not independently verified; NVIDIA inference blocked. "
@@ -1111,35 +917,23 @@ def call_model(
         if diagnostic_mode
         else DEFAULT_REQUEST_TIMEOUT_SECONDS
     )
-    response_mode = "json" if diagnostic_mode else "sse"
-    body = json.dumps({
-        "model": MODEL,
-        "messages": messages,
-        "max_tokens": request_max_tokens,
-        "temperature": 0.2,
-        "reasoning_effort": "low",
-        "chat_template_kwargs": {"clear_thinking": True},
-        "stream": not diagnostic_mode,
-    }).encode("utf-8")
-    system_prompt_bytes = sum(
-        len(str(item.get("content", "")).encode("utf-8"))
-        for item in messages
-        if item.get("role") == "system"
-    )
-    user_prompt_bytes = sum(
-        len(str(item.get("content", "")).encode("utf-8"))
-        for item in messages
-        if item.get("role") == "user"
-    )
-    endpoint = urlsplit(API_URL)
-    request_path = endpoint.path or "/"
-    if endpoint.query:
-        request_path += "?" + endpoint.query
 
-    reserve_nvidia_request(
-        "open-research-" + request_key,
-        diagnostic_exception=diagnostic_mode,
-    )
+    # Constructing the SDK client performs no inference request. Do this before
+    # reserving quota or writing the attempted marker, so a missing dependency
+    # cannot be mistaken for an ambiguous network delivery.
+    client = _create_nvidia_client(key, request_timeout_seconds)
+    try:
+        reserve_nvidia_request(
+            "open-research-" + request_key,
+            diagnostic_exception=diagnostic_mode,
+        )
+    except Exception:
+        try:
+            client.close()
+        except Exception:
+            pass
+        raise
+
     attempt_marker = Path("/tmp/general_nvidia_api_attempted")
     success_marker = Path("/tmp/general_nvidia_api_succeeded")
     for marker in (attempt_marker, success_marker):
@@ -1153,344 +947,134 @@ def call_model(
         datetime.now(timezone.utc).isoformat(), encoding="utf-8"
     )
 
-    connect_timeout_seconds = (
-        None if diagnostic_mode
-        else min(DEFAULT_CONNECT_TIMEOUT_SECONDS, request_timeout_seconds)
+    system_prompt_bytes = sum(
+        len(str(item.get("content", "")).encode("utf-8"))
+        for item in messages
+        if item.get("role") == "system"
     )
-    request_send_timeout_seconds = (
-        None if diagnostic_mode
-        else min(DEFAULT_REQUEST_SEND_TIMEOUT_SECONDS, request_timeout_seconds)
+    user_prompt_bytes = sum(
+        len(str(item.get("content", "")).encode("utf-8"))
+        for item in messages
+        if item.get("role") == "user"
     )
-    response_header_timeout_seconds = None if diagnostic_mode else request_timeout_seconds
-    stream_idle_timeout_seconds = None if diagnostic_mode else request_timeout_seconds
     request_started = time.monotonic()
-    request_deadline = request_started + request_timeout_seconds
-    stage = "open_response" if diagnostic_mode else "tcp_tls_establishment"
-    request_delivery_state = "not_sent"
-    phase_started = request_started
-    phase_durations: dict[str, float] = {}
-    connection = None
-    response = None
-    response_socket = None
-    stream_metadata = None
-    json_metadata = None
-
-    phase_metric = {
-        "tcp_tls_establishment": "tcp_tls_establishment_seconds",
-        "send_request": "request_send_seconds",
-        "wait_for_headers": "response_header_wait_seconds",
-        "read_stream": "stream_read_seconds",
-        "open_response": "transport_open_seconds",
-        "read_json": "response_body_read_seconds",
-    }
-
-    def set_socket_timeout(configured_seconds: int) -> None:
-        _set_nvidia_socket_timeout(
-            connection,
-            response_socket,
-            configured_seconds,
-            request_deadline,
-        )
-
-    def refresh_stream_timeout() -> None:
-        set_socket_timeout(stream_idle_timeout_seconds)
-
-    def save_network_failure(exc: BaseException) -> None:
-        elapsed = time.monotonic() - phase_started
-        metric_name = phase_metric.get(stage)
-        if metric_name:
-            phase_durations[metric_name] = round(elapsed, 3)
-        response_status = getattr(response, "status", None) if response is not None else None
-        response_headers = getattr(response, "headers", None) if response is not None else None
-        save_usage_observation(
-            build_usage_observation(
-                response_status,
-                response_headers,
-                None,
-                response_mode=response_mode,
-                max_tokens_requested=request_max_tokens,
-                request_timeout_seconds=request_timeout_seconds,
-                connect_timeout_seconds=connect_timeout_seconds,
-                request_send_timeout_seconds=request_send_timeout_seconds,
-                response_header_timeout_seconds=response_header_timeout_seconds,
-                stream_idle_timeout_seconds=stream_idle_timeout_seconds,
-                request_body_bytes=len(body),
-                system_prompt_bytes=system_prompt_bytes,
-                user_prompt_bytes=user_prompt_bytes,
-                request_delivery_state=request_delivery_state,
-                tcp_tls_establishment_seconds=phase_durations.get("tcp_tls_establishment_seconds"),
-                request_send_seconds=phase_durations.get("request_send_seconds"),
-                response_header_wait_seconds=phase_durations.get("response_header_wait_seconds"),
-                stream_read_seconds=phase_durations.get("stream_read_seconds"),
-                transport_open_seconds=phase_durations.get("transport_open_seconds"),
-                response_body_read_seconds=phase_durations.get("response_body_read_seconds"),
-                request_duration_seconds=time.monotonic() - request_started,
-                failure_stage=stage,
-                error_type=type(exc).__name__,
-            ),
-            request_label=request_label,
-        )
+    completion = None
+    result = None
+    response_received = False
+    status_code = None
+    response_headers: Mapping[str, Any] | None = None
+    failure: Exception | None = None
 
     try:
-        if diagnostic_mode:
-            stage = "open_response"
-            phase_started = time.monotonic()
-            request_delivery_state = "unknown_send_in_progress"
-            diagnostic_request = urllib.request.Request(
-                API_URL,
-                data=body,
-                headers={
-                    "Authorization": "Bearer " + key,
-                    "Content-Type": "application/json",
-                    "Accept": "application/json",
-                },
-                method="POST",
-            )
-            with urllib.request.urlopen(
-                diagnostic_request,
-                timeout=request_timeout_seconds,
-            ) as response:
-                status = getattr(response, "status", 200)
-                headers = response.headers
-                request_delivery_state = "response_received"
-                phase_durations["transport_open_seconds"] = round(
-                    time.monotonic() - phase_started, 3
-                )
+        completion = client.chat.completions.create(
+            model=MODEL,
+            messages=messages,
+            max_tokens=request_max_tokens,
+            temperature=0.2,
+            extra_body={
+                "reasoning_effort": "low",
+                "chat_template_kwargs": {"clear_thinking": True},
+            },
+            stream=False,
+        )
+        response_received = True
+        status_code = 200
+        request_id = getattr(completion, "_request_id", None)
+        if isinstance(request_id, str) and request_id.strip():
+            response_headers = {"x-request-id": request_id}
+        result, _json_metadata = _validate_json_chat_completion(
+            _chat_completion_payload(completion)
+        )
+    except Exception as exc:
+        failure = exc
+        error_response = getattr(exc, "response", None)
+        error_status = getattr(exc, "status_code", None)
+        if error_status is None and error_response is not None:
+            error_status = getattr(error_response, "status_code", None)
+        if isinstance(error_status, int):
+            status_code = error_status
+            response_received = True
+        if error_response is not None:
+            response_headers = getattr(error_response, "headers", None)
 
-                stage = "read_json"
-                phase_started = time.monotonic()
-                response_body = response.read()
-                phase_durations["response_body_read_seconds"] = round(
-                    time.monotonic() - phase_started, 3
-                )
-                try:
-                    json_payload = json.loads(response_body.decode("utf-8"))
-                except (UnicodeDecodeError, json.JSONDecodeError):
-                    raise RuntimeError(
-                        "Research model returned invalid JSON in non-streaming diagnostic mode."
-                    ) from None
-                result, json_metadata = _validate_json_chat_completion(json_payload)
-        else:
-            connection = _create_nvidia_connection(connect_timeout_seconds)
-            connection.connect()
-            response_socket = connection.sock
-            if response_socket is None:
-                raise OSError("HTTPS connection socket is unavailable after connect.")
-            phase_durations["tcp_tls_establishment_seconds"] = round(
-                time.monotonic() - phase_started, 3
-            )
+    duration = time.monotonic() - request_started
+    try:
+        client.close()
+    except Exception:
+        pass
 
-            stage = "send_request"
-            phase_started = time.monotonic()
-            set_socket_timeout(request_send_timeout_seconds)
-            connection.putrequest("POST", request_path)
-            connection.putheader("Authorization", "Bearer " + key)
-            connection.putheader("Content-Type", "application/json")
-            connection.putheader("Accept", "text/event-stream")
-            connection.putheader("Content-Length", str(len(body)))
-            connection.putheader("Connection", "close")
-            request_delivery_state = "unknown_send_in_progress"
-            connection.endheaders(body)
-            request_delivery_state = "sent_to_socket_provider_receipt_unconfirmed"
-            phase_durations["request_send_seconds"] = round(
-                time.monotonic() - phase_started, 3
-            )
-
-            stage = "wait_for_headers"
-            phase_started = time.monotonic()
-            set_socket_timeout(response_header_timeout_seconds)
-            response = connection.getresponse()
-            phase_durations["response_header_wait_seconds"] = round(
-                time.monotonic() - phase_started, 3
-            )
-            status = getattr(response, "status", 200)
-            headers = response.headers
-            request_delivery_state = "response_received"
-
-            if status >= 400:
-                raise urllib.error.HTTPError(
-                    API_URL,
-                    status,
-                    "NVIDIA API returned an HTTP error",
-                    headers,
-                    None,
-                )
-
-            stage = "read_stream"
-            phase_started = time.monotonic()
-            result, stream_metadata = _parse_streamed_chat_completion(
-                response,
-                before_read=refresh_stream_timeout,
-            )
-            phase_durations["stream_read_seconds"] = round(
-                time.monotonic() - phase_started, 3
-            )
-    except urllib.error.HTTPError as exc:
-        request_delivery_state = "response_received"
+    if failure is not None:
+        incomplete_model_response = isinstance(failure, IncompleteModelResponseError)
+        failure_payload: dict[str, Any] | None = None
+        if incomplete_model_response and failure.usage is not None:
+            failure_payload = {"usage": failure.usage}
+        elif result is not None:
+            failure_payload = result
+        failure_stage = (
+            "model_finish" if incomplete_model_response
+            else "response_validation" if response_received
+            else "provider_call"
+        )
         save_usage_observation(
             build_usage_observation(
-                exc.code,
-                exc.headers,
-                None,
-                response_mode=response_mode,
+                status_code,
+                response_headers,
+                failure_payload,
+                response_mode="json",
+                request_duration_seconds=duration,
+                stream_event_count=None,
+                stream_completed=None,
+                stream_finish_reason=(
+                    "length" if incomplete_model_response else None
+                ),
+                response_complete=False if response_received else None,
                 max_tokens_requested=request_max_tokens,
                 request_timeout_seconds=request_timeout_seconds,
-                connect_timeout_seconds=connect_timeout_seconds,
-                request_send_timeout_seconds=request_send_timeout_seconds,
-                response_header_timeout_seconds=response_header_timeout_seconds,
-                stream_idle_timeout_seconds=stream_idle_timeout_seconds,
-                request_body_bytes=len(body),
+                request_delivery_state=(
+                    "response_received"
+                    if response_received
+                    else "unknown_after_sdk_request_started"
+                ),
                 system_prompt_bytes=system_prompt_bytes,
                 user_prompt_bytes=user_prompt_bytes,
-                request_delivery_state=request_delivery_state,
-                tcp_tls_establishment_seconds=phase_durations.get("tcp_tls_establishment_seconds"),
-                request_send_seconds=phase_durations.get("request_send_seconds"),
-                response_header_wait_seconds=phase_durations.get("response_header_wait_seconds"),
-                stream_read_seconds=phase_durations.get("stream_read_seconds"),
-                transport_open_seconds=phase_durations.get("transport_open_seconds"),
-                response_body_read_seconds=phase_durations.get("response_body_read_seconds"),
-                request_duration_seconds=time.monotonic() - request_started,
-                failure_stage="http_response",
-                error_type="HTTPError",
+                failure_stage=failure_stage,
+                error_type=type(failure).__name__,
             ),
             request_label=request_label,
         )
-        if exc.code == 429:
+        if status_code == 429:
             raise RuntimeError(
-                "NVIDIA returned HTTP 429 (rate limit). No automatic retry was attempted; "
-                "inspect " + request_usage_name + "."
+                "NVIDIA returned HTTP 429 (rate limit). OpenAI SDK retries are disabled; "
+                "no automatic retry was attempted. Inspect " + request_usage_name + "."
             ) from None
-        if exc.code == 402:
+        if status_code == 402:
             raise RuntimeError(
                 "NVIDIA returned HTTP 402 (provider reported insufficient credits/access). "
-                "No automatic retry was attempted; inspect account access and usage metadata."
+                "OpenAI SDK retries are disabled; no automatic retry was attempted."
             ) from None
         raise RuntimeError(
-            "Research model HTTP error " + str(exc.code) +
-            "; no automatic retry was attempted; inspect " + request_usage_name + "."
-        ) from None
-    except (TimeoutError, OSError, http.client.HTTPException) as exc:
-        failure = (
-            exc.reason
-            if isinstance(exc, urllib.error.URLError) and isinstance(exc.reason, BaseException)
-            else exc
-        )
-        save_network_failure(failure)
-        raise RuntimeError(
-            "Research model network/timeout error during " + stage +
+            "Research model OpenAI-SDK request failed during " + failure_stage +
             " (" + type(failure).__name__ + "). Request delivery state: " +
-            request_delivery_state + ". No automatic retry was attempted; inspect " +
+            ("response_received" if response_received else "unknown_after_sdk_request_started") +
+            ". SDK retries are disabled and no automatic retry was attempted; inspect " +
             request_usage_name + "."
         ) from None
-    except RuntimeError as exc:
-        incomplete_model_response = isinstance(exc, IncompleteModelResponseError)
-        error_usage = (
-            {"usage": exc.usage}
-            if incomplete_model_response and exc.usage is not None
-            else None
-        )
-        elapsed = time.monotonic() - phase_started
-        metric_name = phase_metric.get(stage)
-        if metric_name:
-            phase_durations[metric_name] = round(elapsed, 3)
-        save_usage_observation(
-            build_usage_observation(
-                getattr(response, "status", None) if response is not None else None,
-                getattr(response, "headers", None) if response is not None else None,
-                error_usage,
-                response_mode=response_mode,
-                max_tokens_requested=request_max_tokens,
-                request_timeout_seconds=request_timeout_seconds,
-                connect_timeout_seconds=connect_timeout_seconds,
-                request_send_timeout_seconds=request_send_timeout_seconds,
-                response_header_timeout_seconds=response_header_timeout_seconds,
-                stream_idle_timeout_seconds=stream_idle_timeout_seconds,
-                request_body_bytes=len(body),
-                system_prompt_bytes=system_prompt_bytes,
-                user_prompt_bytes=user_prompt_bytes,
-                request_delivery_state=request_delivery_state,
-                tcp_tls_establishment_seconds=phase_durations.get("tcp_tls_establishment_seconds"),
-                request_send_seconds=phase_durations.get("request_send_seconds"),
-                response_header_wait_seconds=phase_durations.get("response_header_wait_seconds"),
-                stream_read_seconds=phase_durations.get("stream_read_seconds"),
-                transport_open_seconds=phase_durations.get("transport_open_seconds"),
-                response_body_read_seconds=phase_durations.get("response_body_read_seconds"),
-                request_duration_seconds=time.monotonic() - request_started,
-                stream_event_count=(
-                    exc.stream_event_count if incomplete_model_response else None
-                ),
-                stream_completed=(
-                    exc.stream_completed if incomplete_model_response else None
-                ),
-                stream_finish_reason=(
-                    exc.stream_finish_reason if incomplete_model_response else None
-                ),
-                response_complete=(
-                    False if incomplete_model_response or response_mode == "json" else None
-                ),
-                failure_stage=(
-                    "model_finish" if incomplete_model_response
-                    else "json_protocol" if response_mode == "json"
-                    else "sse_protocol"
-                ),
-                error_type=(
-                    "IncompleteModelResponse" if incomplete_model_response
-                    else "JSONProtocolError" if response_mode == "json"
-                    else "StreamProtocolError"
-                ),
-            ),
-            request_label=request_label,
-        )
-        raise RuntimeError(
-            str(exc) + " No automatic retry was attempted; inspect " + request_usage_name + "."
-        ) from None
-    finally:
-        if response is not None:
-            try:
-                response.close()
-            except Exception:
-                pass
-        if connection is not None:
-            connection.close()
 
+    if not isinstance(result, dict):
+        raise RuntimeError("Research model SDK returned no validated ChatCompletion.")
     save_usage_observation(
         build_usage_observation(
-            status,
-            headers,
+            status_code,
+            response_headers,
             result,
-            response_mode=response_mode,
-            request_duration_seconds=time.monotonic() - request_started,
-            stream_event_count=(
-                stream_metadata["stream_event_count"] if stream_metadata is not None else None
-            ),
-            stream_completed=(
-                stream_metadata["stream_completed"] if stream_metadata is not None else None
-            ),
-            stream_finish_reason=(
-                stream_metadata["finish_reason"] if stream_metadata is not None else None
-            ),
+            response_mode="json",
+            request_duration_seconds=duration,
             response_complete=True,
             max_tokens_requested=request_max_tokens,
             request_timeout_seconds=request_timeout_seconds,
-            connect_timeout_seconds=connect_timeout_seconds,
-            request_send_timeout_seconds=request_send_timeout_seconds,
-            response_header_timeout_seconds=response_header_timeout_seconds,
-            stream_idle_timeout_seconds=stream_idle_timeout_seconds,
-            request_body_bytes=len(body),
+            request_delivery_state="response_received",
             system_prompt_bytes=system_prompt_bytes,
             user_prompt_bytes=user_prompt_bytes,
-            request_delivery_state=request_delivery_state,
-            tcp_tls_establishment_seconds=phase_durations.get("tcp_tls_establishment_seconds"),
-            request_send_seconds=phase_durations.get("request_send_seconds"),
-            response_header_wait_seconds=phase_durations.get("response_header_wait_seconds"),
-            stream_read_seconds=phase_durations.get("stream_read_seconds"),
-            transport_open_seconds=phase_durations.get("transport_open_seconds"),
-            response_body_read_seconds=phase_durations.get("response_body_read_seconds"),
-            model_finish_reason=(
-                json_metadata.get("finish_reason") if json_metadata is not None
-                else stream_metadata.get("finish_reason") if stream_metadata is not None
-                else None
-            ),
         ),
         request_label=request_label,
     )
@@ -1499,6 +1083,8 @@ def call_model(
         datetime.now(timezone.utc).isoformat(), encoding="utf-8"
     )
     return content.strip()
+
+
 def write_run_status(
     status: str,
     stage: str,
