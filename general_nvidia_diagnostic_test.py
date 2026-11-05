@@ -285,119 +285,129 @@ class SingleRequestDiagnosticTests(unittest.TestCase):
         self.assertIsNone(caught.exception.stream_event_count)
         self.assertIsNone(caught.exception.stream_completed)
 
-    def test_call_model_uses_json_nonstream_transport_and_hard_stops_after_one_request(self):
+    def test_call_model_uses_openai_sdk_json_nonstreaming_and_hard_stops_after_one_request(self):
         env = self._environment() | {
             "GENERAL_ALLOW_NVIDIA_CALL": "true",
             "GENERAL_NVIDIA_FREE_USAGE_VERIFIED": "true",
             "NVIDIA_API_KEY": "test-secret",
         }
+        completion = MagicMock()
+        completion.model_dump.return_value = {
+            "choices": [{
+                "message": {
+                    "content": "synthetic final response",
+                    "reasoning_content": "this must never be treated as final content",
+                },
+                "finish_reason": "stop",
+            }],
+            "usage": {"total_tokens": 2},
+        }
+        completion._request_id = "diagnostic-synthetic-request"
+        client = MagicMock()
+        client.chat.completions.create.return_value = completion
         saved_observations = []
-        response = self.successful_json_response()
-        try:
-            with patch.dict(os.environ, env, clear=True), patch.object(
-                research, "reserve_nvidia_request"
-            ) as reserve, patch.object(
-                research,
-                "save_usage_observation",
-                side_effect=lambda observation, **kwargs: saved_observations.append(observation),
-            ), patch(
-                "general_open_research.urllib.request.urlopen",
-                return_value=response,
-            ) as urlopen, patch(
-                "general_open_research._create_nvidia_connection"
-            ) as connection_factory:
-                answer = research.call_model(
-                    [{"role": "user", "content": "synthetic diagnostic"}],
+        with patch.dict(os.environ, env, clear=True), patch.object(
+            research, "reserve_nvidia_request"
+        ) as reserve, patch.object(
+            research,
+            "save_usage_observation",
+            side_effect=lambda observation, **kwargs: saved_observations.append(observation),
+        ), patch(
+            "general_open_research._create_nvidia_client", return_value=client
+        ) as client_factory:
+            answer = research.call_model(
+                [{"role": "user", "content": "synthetic diagnostic"}],
+                request_label="forward",
+            )
+            self.assertEqual(answer, "synthetic final response")
+            client_factory.assert_called_once_with(
+                "test-secret",
+                research.DIAGNOSTIC_REQUEST_TIMEOUT_SECONDS,
+            )
+            client.chat.completions.create.assert_called_once()
+            sent = client.chat.completions.create.call_args.kwargs
+            self.assertEqual(sent["max_tokens"], research.DIAGNOSTIC_MAX_COMPLETION_TOKENS)
+            self.assertIs(sent["stream"], False)
+            self.assertEqual(sent["reasoning_effort"] if "reasoning_effort" in sent else sent["extra_body"]["reasoning_effort"], "low")
+            client.close.assert_called_once()
+            self.assertEqual(len(saved_observations), 1)
+            observation = saved_observations[0]
+            self.assertEqual(observation["response_mode"], "json")
+            self.assertEqual(observation["transport"], "openai-python-sdk")
+            self.assertFalse(observation["stream_requested"])
+            self.assertEqual(observation["sdk_max_retries"], 0)
+            self.assertTrue(observation["response_complete"])
+            self.assertIsNone(observation["stream_completed"])
+            self.assertEqual(observation["model_finish_reason"], "stop")
+            self.assertEqual(
+                observation["token_usage_returned_by_provider"]["total_tokens"], 2
+            )
+            self.assertEqual(
+                observation["rate_limit_headers_returned"]["x-request-id"],
+                "diagnostic-synthetic-request",
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "Single-request diagnostic cap reached"):
+                research.call_model(
+                    [{"role": "user", "content": "second request must be blocked"}],
                     request_label="forward",
                 )
-                self.assertEqual(answer, "synthetic final response")
-                sent_request = urlopen.call_args.args[0]
-                sent_body = json.loads(sent_request.data.decode("utf-8"))
-                self.assertEqual(sent_body["max_tokens"], 8192)
-                self.assertEqual(sent_body["reasoning_effort"], "low")
-                self.assertFalse(sent_body["stream"])
-                self.assertEqual(sent_request.get_header("Accept"), "application/json")
-                self.assertEqual(
-                    urlopen.call_args.kwargs["timeout"],
-                    research.DIAGNOSTIC_REQUEST_TIMEOUT_SECONDS,
-                )
-                self.assertEqual(urlopen.call_count, 1)
-                connection_factory.assert_not_called()
-                self.assertEqual(len(saved_observations), 1)
-                observation = saved_observations[0]
-                self.assertEqual(observation["response_mode"], "json")
-                self.assertTrue(observation["response_complete"])
-                self.assertIsNone(observation["stream_completed"])
-                self.assertEqual(observation["model_finish_reason"], "stop")
-                self.assertEqual(
-                    observation["token_usage_returned_by_provider"]["total_tokens"], 2
-                )
-                self.assertIsNotNone(observation["transport_open_seconds"])
-                self.assertIsNotNone(observation["response_body_read_seconds"])
+            self.assertEqual(client.chat.completions.create.call_count, 1)
+            reserve.assert_called_once_with(
+                "open-research-forward",
+                diagnostic_exception=True,
+            )
+            self.assertEqual(research._NVIDIA_REQUESTS_ATTEMPTED, 1)
 
-                with self.assertRaisesRegex(RuntimeError, "Single-request diagnostic cap reached"):
-                    research.call_model(
-                        [{"role": "user", "content": "second request must be blocked"}],
-                        request_label="forward",
-                    )
-                self.assertEqual(urlopen.call_count, 1)
-                reserve.assert_called_once_with(
-                    "open-research-forward",
-                    diagnostic_exception=True,
-                )
-                self.assertEqual(research._NVIDIA_REQUESTS_ATTEMPTED, 1)
-        finally:
-            Path("/tmp/general_nvidia_api_attempted").unlink(missing_ok=True)
-            Path("/tmp/general_nvidia_api_succeeded").unlink(missing_ok=True)
-
-    def test_diagnostic_json_transport_timeout_is_recorded_without_retry(self):
+    def test_diagnostic_sdk_timeout_is_recorded_without_retry(self):
         env = self._environment() | {
             "GENERAL_ALLOW_NVIDIA_CALL": "true",
             "GENERAL_NVIDIA_FREE_USAGE_VERIFIED": "true",
             "NVIDIA_API_KEY": "test-secret",
-            "GENERAL_DIAGNOSTIC_MODE": "true",
         }
+        client = MagicMock()
+        client.chat.completions.create.side_effect = TimeoutError(
+            "synthetic SDK diagnostic timeout"
+        )
         saved = []
-        try:
-            with patch.dict(os.environ, env, clear=True), patch.object(
-                research, "reserve_nvidia_request"
-            ), patch.object(
-                research,
-                "save_usage_observation",
-                side_effect=lambda observation, **kwargs: saved.append(observation),
-            ), patch(
-                "general_open_research.urllib.request.urlopen",
-                side_effect=research.urllib.error.URLError(
-                    TimeoutError("synthetic JSON diagnostic open timeout")
-                ),
-            ) as urlopen, patch(
-                "general_open_research._create_nvidia_connection"
-            ) as connection_factory:
-                with self.assertRaisesRegex(RuntimeError, "during open_response"):
-                    research.call_model(
-                        [{"role": "user", "content": "diagnostic timeout test"}],
-                        request_label="forward",
-                    )
-                self.assertEqual(urlopen.call_count, 1)
-                connection_factory.assert_not_called()
-
-            self.assertEqual(len(saved), 1)
-            observation = saved[0]
-            self.assertEqual(observation["response_mode"], "json")
-            self.assertEqual(observation["request_timeout_seconds"], research.DIAGNOSTIC_REQUEST_TIMEOUT_SECONDS)
-            self.assertIsNone(observation["connect_timeout_seconds"])
-            self.assertIsNone(observation["response_header_timeout_seconds"])
-            self.assertEqual(
-                observation["request_delivery_state"],
-                "unknown_send_in_progress",
+        with patch.dict(os.environ, env, clear=True), patch.object(
+            research, "reserve_nvidia_request"
+        ), patch.object(
+            research,
+            "save_usage_observation",
+            side_effect=lambda observation, **kwargs: saved.append(observation),
+        ), patch(
+            "general_open_research._create_nvidia_client", return_value=client
+        ) as client_factory:
+            with self.assertRaisesRegex(RuntimeError, "No automatic retry was attempted"):
+                research.call_model(
+                    [{"role": "user", "content": "diagnostic timeout test"}],
+                    request_label="forward",
+                )
+            client_factory.assert_called_once_with(
+                "test-secret",
+                research.DIAGNOSTIC_REQUEST_TIMEOUT_SECONDS,
             )
-            self.assertEqual(observation["automatic_retries"], 0)
-            self.assertEqual(observation["failure_stage"], "open_response")
-            self.assertEqual(observation["network_error_type"], "TimeoutError")
-            self.assertIsNotNone(observation["transport_open_seconds"])
-        finally:
-            Path("/tmp/general_nvidia_api_attempted").unlink(missing_ok=True)
-            Path("/tmp/general_nvidia_api_succeeded").unlink(missing_ok=True)
+            client.chat.completions.create.assert_called_once()
+            client.close.assert_called_once()
+
+        self.assertEqual(len(saved), 1)
+        observation = saved[0]
+        self.assertEqual(observation["response_mode"], "json")
+        self.assertEqual(
+            observation["request_timeout_seconds"],
+            research.DIAGNOSTIC_REQUEST_TIMEOUT_SECONDS,
+        )
+        self.assertIsNone(observation["connect_timeout_seconds"])
+        self.assertIsNone(observation["response_header_timeout_seconds"])
+        self.assertEqual(
+            observation["request_delivery_state"],
+            "unknown_after_sdk_request_started",
+        )
+        self.assertEqual(observation["automatic_retries"], 0)
+        self.assertEqual(observation["sdk_max_retries"], 0)
+        self.assertEqual(observation["failure_stage"], "provider_call")
+        self.assertEqual(observation["network_error_type"], "TimeoutError")
 
     def test_reverse_label_is_rejected_in_diagnostic_mode_before_network(self):
         env = self._environment() | {
@@ -406,14 +416,14 @@ class SingleRequestDiagnosticTests(unittest.TestCase):
             "NVIDIA_API_KEY": "test-secret",
         }
         with patch.dict(os.environ, env, clear=True), patch(
-            "general_open_research._create_nvidia_connection"
-        ) as connection_factory:
+            "general_open_research._create_nvidia_client"
+        ) as client_factory:
             with self.assertRaisesRegex(RuntimeError, "only one forward request"):
                 research.call_model(
                     [{"role": "user", "content": "reverse"}],
                     request_label="reverse",
                 )
-            connection_factory.assert_not_called()
+            client_factory.assert_not_called()
 
 
 
