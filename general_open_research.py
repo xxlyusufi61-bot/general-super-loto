@@ -1370,10 +1370,15 @@ def call_model(
             "; no automatic retry was attempted; inspect " + request_usage_name + "."
         ) from None
     except (TimeoutError, OSError, http.client.HTTPException) as exc:
-        save_network_failure(exc)
+        failure = (
+            exc.reason
+            if isinstance(exc, urllib.error.URLError) and isinstance(exc.reason, BaseException)
+            else exc
+        )
+        save_network_failure(failure)
         raise RuntimeError(
             "Research model network/timeout error during " + stage +
-            " (" + type(exc).__name__ + "). Request delivery state: " +
+            " (" + type(failure).__name__ + "). Request delivery state: " +
             request_delivery_state + ". No automatic retry was attempted; inspect " +
             request_usage_name + "."
         ) from None
@@ -1420,7 +1425,9 @@ def call_model(
                 stream_finish_reason=(
                     exc.stream_finish_reason if incomplete_model_response else None
                 ),
-                response_complete=False if incomplete_model_response else None,
+                response_complete=(
+                    False if incomplete_model_response or response_mode == "json" else None
+                ),
                 failure_stage=(
                     "model_finish" if incomplete_model_response
                     else "json_protocol" if response_mode == "json"
