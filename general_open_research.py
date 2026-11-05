@@ -437,6 +437,9 @@ def build_usage_observation(
     request_send_seconds: float | None = None,
     response_header_wait_seconds: float | None = None,
     stream_read_seconds: float | None = None,
+    transport_open_seconds: float | None = None,
+    response_body_read_seconds: float | None = None,
+    model_finish_reason: str | None = None,
 ) -> dict[str, Any]:
     """Build a cautious report without treating token usage as remaining quota or cost."""
     usage = payload.get("usage") if isinstance(payload, Mapping) else None
@@ -474,6 +477,17 @@ def build_usage_observation(
         "request_send_seconds": request_send_seconds,
         "response_header_wait_seconds": response_header_wait_seconds,
         "stream_read_seconds": stream_read_seconds,
+        "transport_open_seconds": (
+            round(transport_open_seconds, 3)
+            if isinstance(transport_open_seconds, (int, float))
+            else None
+        ),
+        "response_body_read_seconds": (
+            round(response_body_read_seconds, 3)
+            if isinstance(response_body_read_seconds, (int, float))
+            else None
+        ),
+        "model_finish_reason": model_finish_reason,
         "failure_stage": failure_stage,
         "network_error_type": error_type,
         "rate_limit_headers_returned": filter_usage_headers(headers),
@@ -764,15 +778,15 @@ def _iter_sse_data(response, *, before_read=None):
 
 
 class IncompleteModelResponseError(RuntimeError):
-    """A complete SSE stream whose model answer was cut off by its token limit."""
+    """A complete provider response whose model answer was cut off by its token limit."""
 
     def __init__(
         self,
         message: str,
         *,
         usage: dict[str, Any] | None,
-        stream_event_count: int,
-        stream_completed: bool,
+        stream_event_count: int | None,
+        stream_completed: bool | None,
         stream_finish_reason: str | None,
     ) -> None:
         super().__init__(message)
@@ -869,6 +883,48 @@ def _parse_streamed_chat_completion(
         "finish_reason": finish_reason,
     }
     return result, metadata
+
+
+
+def _validate_json_chat_completion(
+    payload: Any,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Validate one non-streaming Chat Completions response; only message.content is final text."""
+    if not isinstance(payload, dict):
+        raise RuntimeError("Research model JSON response was not an object.")
+    choices = payload.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise RuntimeError("Research model JSON response did not contain choices.")
+    choice = choices[0]
+    if not isinstance(choice, dict):
+        raise RuntimeError("Research model JSON response contained an invalid choice.")
+    message = choice.get("message")
+    if not isinstance(message, dict):
+        raise RuntimeError("Research model JSON response did not contain a valid message.")
+    usage = payload.get("usage")
+    if not isinstance(usage, dict):
+        usage = None
+    finish_reason = choice.get("finish_reason")
+    if finish_reason == "length":
+        raise IncompleteModelResponseError(
+            "Research model JSON response reached max_tokens before completion; "
+            "the partial response was rejected.",
+            usage=usage,
+            stream_event_count=None,
+            stream_completed=None,
+            stream_finish_reason="length",
+        )
+    if finish_reason != "stop":
+        raise RuntimeError(
+            "Research model JSON response did not confirm completion with finish_reason=stop."
+        )
+    content = message.get("content")
+    if not isinstance(content, str) or not content.strip():
+        raise RuntimeError(
+            "Research model JSON response completed without final message.content; "
+            "reasoning_content is not accepted as a substitute."
+        )
+    return payload, {"finish_reason": "stop"}
 
 
 def _configured_https_proxy(target_host: str) -> tuple[str, int, dict[str, str]] | None:
@@ -1055,6 +1111,7 @@ def call_model(
         if diagnostic_mode
         else DEFAULT_REQUEST_TIMEOUT_SECONDS
     )
+    response_mode = "json" if diagnostic_mode else "sse"
     body = json.dumps({
         "model": MODEL,
         "messages": messages,
@@ -1062,7 +1119,7 @@ def call_model(
         "temperature": 0.2,
         "reasoning_effort": "low",
         "chat_template_kwargs": {"clear_thinking": True},
-        "stream": True,
+        "stream": not diagnostic_mode,
     }).encode("utf-8")
     system_prompt_bytes = sum(
         len(str(item.get("content", "")).encode("utf-8"))
@@ -1096,25 +1153,35 @@ def call_model(
         datetime.now(timezone.utc).isoformat(), encoding="utf-8"
     )
 
-    connect_timeout_seconds = min(DEFAULT_CONNECT_TIMEOUT_SECONDS, request_timeout_seconds)
-    request_send_timeout_seconds = min(DEFAULT_REQUEST_SEND_TIMEOUT_SECONDS, request_timeout_seconds)
-    response_header_timeout_seconds = request_timeout_seconds
-    stream_idle_timeout_seconds = request_timeout_seconds
+    connect_timeout_seconds = (
+        None if diagnostic_mode
+        else min(DEFAULT_CONNECT_TIMEOUT_SECONDS, request_timeout_seconds)
+    )
+    request_send_timeout_seconds = (
+        None if diagnostic_mode
+        else min(DEFAULT_REQUEST_SEND_TIMEOUT_SECONDS, request_timeout_seconds)
+    )
+    response_header_timeout_seconds = None if diagnostic_mode else request_timeout_seconds
+    stream_idle_timeout_seconds = None if diagnostic_mode else request_timeout_seconds
     request_started = time.monotonic()
     request_deadline = request_started + request_timeout_seconds
-    stage = "tcp_tls_establishment"
+    stage = "open_response" if diagnostic_mode else "tcp_tls_establishment"
     request_delivery_state = "not_sent"
     phase_started = request_started
     phase_durations: dict[str, float] = {}
     connection = None
     response = None
     response_socket = None
+    stream_metadata = None
+    json_metadata = None
 
     phase_metric = {
         "tcp_tls_establishment": "tcp_tls_establishment_seconds",
         "send_request": "request_send_seconds",
         "wait_for_headers": "response_header_wait_seconds",
         "read_stream": "stream_read_seconds",
+        "open_response": "transport_open_seconds",
+        "read_json": "response_body_read_seconds",
     }
 
     def set_socket_timeout(configured_seconds: int) -> None:
@@ -1140,7 +1207,7 @@ def call_model(
                 response_status,
                 response_headers,
                 None,
-                response_mode="sse",
+                response_mode=response_mode,
                 max_tokens_requested=request_max_tokens,
                 request_timeout_seconds=request_timeout_seconds,
                 connect_timeout_seconds=connect_timeout_seconds,
@@ -1155,6 +1222,8 @@ def call_model(
                 request_send_seconds=phase_durations.get("request_send_seconds"),
                 response_header_wait_seconds=phase_durations.get("response_header_wait_seconds"),
                 stream_read_seconds=phase_durations.get("stream_read_seconds"),
+                transport_open_seconds=phase_durations.get("transport_open_seconds"),
+                response_body_read_seconds=phase_durations.get("response_body_read_seconds"),
                 request_duration_seconds=time.monotonic() - request_started,
                 failure_stage=stage,
                 error_type=type(exc).__name__,
@@ -1163,67 +1232,107 @@ def call_model(
         )
 
     try:
-        connection = _create_nvidia_connection(connect_timeout_seconds)
-        connection.connect()
-        response_socket = connection.sock
-        if response_socket is None:
-            raise OSError("HTTPS connection socket is unavailable after connect.")
-        phase_durations["tcp_tls_establishment_seconds"] = round(
-            time.monotonic() - phase_started, 3
-        )
-
-        stage = "send_request"
-        phase_started = time.monotonic()
-        set_socket_timeout(request_send_timeout_seconds)
-        connection.putrequest("POST", request_path)
-        connection.putheader("Authorization", "Bearer " + key)
-        connection.putheader("Content-Type", "application/json")
-        connection.putheader("Accept", "text/event-stream")
-        connection.putheader("Content-Length", str(len(body)))
-        connection.putheader("Connection", "close")
-        request_delivery_state = "unknown_send_in_progress"
-        connection.endheaders(body)
-        request_delivery_state = "sent_to_socket_provider_receipt_unconfirmed"
-        phase_durations["request_send_seconds"] = round(
-            time.monotonic() - phase_started, 3
-        )
-
-        stage = "wait_for_headers"
-        phase_started = time.monotonic()
-        set_socket_timeout(response_header_timeout_seconds)
-        response = connection.getresponse()
-        phase_durations["response_header_wait_seconds"] = round(
-            time.monotonic() - phase_started, 3
-        )
-        status = getattr(response, "status", 200)
-        headers = response.headers
-        request_delivery_state = "response_received"
-
-        if status >= 400:
-            raise urllib.error.HTTPError(
+        if diagnostic_mode:
+            stage = "open_response"
+            phase_started = time.monotonic()
+            request_delivery_state = "unknown_send_in_progress"
+            diagnostic_request = urllib.request.Request(
                 API_URL,
-                status,
-                "NVIDIA API returned an HTTP error",
-                headers,
-                None,
+                data=body,
+                headers={
+                    "Authorization": "Bearer " + key,
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                },
+                method="POST",
+            )
+            with urllib.request.urlopen(
+                diagnostic_request,
+                timeout=request_timeout_seconds,
+            ) as response:
+                status = getattr(response, "status", 200)
+                headers = response.headers
+                request_delivery_state = "response_received"
+                phase_durations["transport_open_seconds"] = round(
+                    time.monotonic() - phase_started, 3
+                )
+
+                stage = "read_json"
+                phase_started = time.monotonic()
+                response_body = response.read()
+                phase_durations["response_body_read_seconds"] = round(
+                    time.monotonic() - phase_started, 3
+                )
+                try:
+                    json_payload = json.loads(response_body.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    raise RuntimeError(
+                        "Research model returned invalid JSON in non-streaming diagnostic mode."
+                    ) from None
+                result, json_metadata = _validate_json_chat_completion(json_payload)
+        else:
+            connection = _create_nvidia_connection(connect_timeout_seconds)
+            connection.connect()
+            response_socket = connection.sock
+            if response_socket is None:
+                raise OSError("HTTPS connection socket is unavailable after connect.")
+            phase_durations["tcp_tls_establishment_seconds"] = round(
+                time.monotonic() - phase_started, 3
             )
 
-        stage = "read_stream"
-        phase_started = time.monotonic()
-        result, stream_metadata = _parse_streamed_chat_completion(
-            response,
-            before_read=refresh_stream_timeout,
-        )
-        phase_durations["stream_read_seconds"] = round(
-            time.monotonic() - phase_started, 3
-        )
+            stage = "send_request"
+            phase_started = time.monotonic()
+            set_socket_timeout(request_send_timeout_seconds)
+            connection.putrequest("POST", request_path)
+            connection.putheader("Authorization", "Bearer " + key)
+            connection.putheader("Content-Type", "application/json")
+            connection.putheader("Accept", "text/event-stream")
+            connection.putheader("Content-Length", str(len(body)))
+            connection.putheader("Connection", "close")
+            request_delivery_state = "unknown_send_in_progress"
+            connection.endheaders(body)
+            request_delivery_state = "sent_to_socket_provider_receipt_unconfirmed"
+            phase_durations["request_send_seconds"] = round(
+                time.monotonic() - phase_started, 3
+            )
+
+            stage = "wait_for_headers"
+            phase_started = time.monotonic()
+            set_socket_timeout(response_header_timeout_seconds)
+            response = connection.getresponse()
+            phase_durations["response_header_wait_seconds"] = round(
+                time.monotonic() - phase_started, 3
+            )
+            status = getattr(response, "status", 200)
+            headers = response.headers
+            request_delivery_state = "response_received"
+
+            if status >= 400:
+                raise urllib.error.HTTPError(
+                    API_URL,
+                    status,
+                    "NVIDIA API returned an HTTP error",
+                    headers,
+                    None,
+                )
+
+            stage = "read_stream"
+            phase_started = time.monotonic()
+            result, stream_metadata = _parse_streamed_chat_completion(
+                response,
+                before_read=refresh_stream_timeout,
+            )
+            phase_durations["stream_read_seconds"] = round(
+                time.monotonic() - phase_started, 3
+            )
     except urllib.error.HTTPError as exc:
+        request_delivery_state = "response_received"
         save_usage_observation(
             build_usage_observation(
                 exc.code,
                 exc.headers,
                 None,
-                response_mode="sse",
+                response_mode=response_mode,
                 max_tokens_requested=request_max_tokens,
                 request_timeout_seconds=request_timeout_seconds,
                 connect_timeout_seconds=connect_timeout_seconds,
@@ -1238,6 +1347,8 @@ def call_model(
                 request_send_seconds=phase_durations.get("request_send_seconds"),
                 response_header_wait_seconds=phase_durations.get("response_header_wait_seconds"),
                 stream_read_seconds=phase_durations.get("stream_read_seconds"),
+                transport_open_seconds=phase_durations.get("transport_open_seconds"),
+                response_body_read_seconds=phase_durations.get("response_body_read_seconds"),
                 request_duration_seconds=time.monotonic() - request_started,
                 failure_stage="http_response",
                 error_type="HTTPError",
@@ -1282,7 +1393,7 @@ def call_model(
                 getattr(response, "status", None) if response is not None else None,
                 getattr(response, "headers", None) if response is not None else None,
                 error_usage,
-                response_mode="sse",
+                response_mode=response_mode,
                 max_tokens_requested=request_max_tokens,
                 request_timeout_seconds=request_timeout_seconds,
                 connect_timeout_seconds=connect_timeout_seconds,
@@ -1297,6 +1408,8 @@ def call_model(
                 request_send_seconds=phase_durations.get("request_send_seconds"),
                 response_header_wait_seconds=phase_durations.get("response_header_wait_seconds"),
                 stream_read_seconds=phase_durations.get("stream_read_seconds"),
+                transport_open_seconds=phase_durations.get("transport_open_seconds"),
+                response_body_read_seconds=phase_durations.get("response_body_read_seconds"),
                 request_duration_seconds=time.monotonic() - request_started,
                 stream_event_count=(
                     exc.stream_event_count if incomplete_model_response else None
@@ -1309,10 +1422,13 @@ def call_model(
                 ),
                 response_complete=False if incomplete_model_response else None,
                 failure_stage=(
-                    "model_finish" if incomplete_model_response else "sse_protocol"
+                    "model_finish" if incomplete_model_response
+                    else "json_protocol" if response_mode == "json"
+                    else "sse_protocol"
                 ),
                 error_type=(
                     "IncompleteModelResponse" if incomplete_model_response
+                    else "JSONProtocolError" if response_mode == "json"
                     else "StreamProtocolError"
                 ),
             ),
@@ -1335,11 +1451,17 @@ def call_model(
             status,
             headers,
             result,
-            response_mode="sse",
+            response_mode=response_mode,
             request_duration_seconds=time.monotonic() - request_started,
-            stream_event_count=stream_metadata["stream_event_count"],
-            stream_completed=stream_metadata["stream_completed"],
-            stream_finish_reason=stream_metadata["finish_reason"],
+            stream_event_count=(
+                stream_metadata["stream_event_count"] if stream_metadata is not None else None
+            ),
+            stream_completed=(
+                stream_metadata["stream_completed"] if stream_metadata is not None else None
+            ),
+            stream_finish_reason=(
+                stream_metadata["finish_reason"] if stream_metadata is not None else None
+            ),
             response_complete=True,
             max_tokens_requested=request_max_tokens,
             request_timeout_seconds=request_timeout_seconds,
@@ -1355,6 +1477,13 @@ def call_model(
             request_send_seconds=phase_durations.get("request_send_seconds"),
             response_header_wait_seconds=phase_durations.get("response_header_wait_seconds"),
             stream_read_seconds=phase_durations.get("stream_read_seconds"),
+            transport_open_seconds=phase_durations.get("transport_open_seconds"),
+            response_body_read_seconds=phase_durations.get("response_body_read_seconds"),
+            model_finish_reason=(
+                json_metadata.get("finish_reason") if json_metadata is not None
+                else stream_metadata.get("finish_reason") if stream_metadata is not None
+                else None
+            ),
         ),
         request_label=request_label,
     )
