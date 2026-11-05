@@ -9,6 +9,7 @@ name: GENERAL NVIDIA One-Request Diagnostic
       - "general_nvidia_diagnostic.py"
       - "general_nvidia_diagnostic_test.py"
       - "general_open_research.py"
+      - "requirements.txt"
       - "general_live_consent.py"
       - "general_nvidia_guard.py"
       - "general_data_guard.py"
@@ -22,6 +23,7 @@ name: GENERAL NVIDIA One-Request Diagnostic
       - "general_nvidia_diagnostic.py"
       - "general_nvidia_diagnostic_test.py"
       - "general_open_research.py"
+      - "requirements.txt"
       - "general_live_consent.py"
       - "general_nvidia_guard.py"
       - "general_data_guard.py"
@@ -55,6 +57,8 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Install pinned NVIDIA OpenAI SDK
+        run: python -m pip install --disable-pip-version-check --no-input -r requirements.txt
       - name: Compile diagnostic and research modules
         run: |
           python3 -m py_compile general_nvidia_diagnostic.py general_nvidia_diagnostic_test.py general_open_research.py general_open_research_test.py general_live_consent.py general_nvidia_guard.py general_data_guard.py general_sealed_evaluation.py general_hypothesis_proposals.py general_hypothesis_execution.py general_bidirectional_evaluation.py general_execution_spec_parser.py general_source_context.py
@@ -81,6 +85,8 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Install pinned NVIDIA OpenAI SDK
+        run: python -m pip install --disable-pip-version-check --no-input -r requirements.txt
       - name: Hydrate verified GENERAL state-store data
         id: state_bootstrap
         uses: ./.github/actions/hydrate-automation-state

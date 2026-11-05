@@ -1,0 +1,2 @@
+# Pinned provider-compatible Python SDK used by GENERAL's NVIDIA inference runner.
+openai==3.45.0
