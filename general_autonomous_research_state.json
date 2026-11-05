@@ -20,5 +20,12 @@
       "github_run_id": "42037000055"
     }
   ],
-  "events": []
+  "events": [
+    {
+      "attempt_id": "243c2d35eeff5184a2d72edfc01fd9643c3632f2a7d790ee750bad6d78b41510",
+      "outcome": "FAILED",
+      "recorded_at_utc": "2026-11-05T13:39:50.070213+00:00",
+      "reason_code": "WORKFLOW_FAILED"
+    }
+  ]
 }

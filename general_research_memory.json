@@ -3,5 +3,46 @@
   "project": "GENERAL Super Loto",
   "research_epoch": "general-open-research-memory-v2",
   "purpose": "Append-only GENERAL-origin directional research memory. It may retain validated hypotheses, safe execution specifications, sanitized same-direction report narratives, and safe aggregate feedback. No legacy user/Pydroid experiments, raw archive rows, consumed holdout rows/dates, target values, or predicted number values are permitted.",
-  "entries": []
+  "entries": [
+    {
+      "entry_id": 1,
+      "cycle_id": "5a9054914e492ad7a34b13f156c77f37597a94345f425c12e2351dd7fb85462c",
+      "source": "GENERAL/open-research",
+      "research_epoch": "general-open-research-memory-v2",
+      "direction": "forward",
+      "created_at_utc": "2026-11-05T13:39:50.181746+00:00",
+      "target_date": "2026-11-03",
+      "archive_sha256": "0d05e8970365d1b6c556a59387527057746fd62b5586ed2a5ec0768070a8d2ef",
+      "runner_version": "0.9.0",
+      "status": "REQUEST_FAILED",
+      "research_report_sha256": null,
+      "research_report_content": null,
+      "research_report_content_sha256": null,
+      "research_report_content_status": "NOT_AVAILABLE",
+      "proposal_status": "NOT_RUN",
+      "proposals": [],
+      "execution_spec_status": "NOT_RUN",
+      "execution_spec": null,
+      "execution_spec_sha256": null,
+      "learning_notes": {
+        "failed_approaches": [],
+        "next_tests": [],
+        "observations": []
+      },
+      "evaluation_feedback": null,
+      "failure": {
+        "stage": "forward_inference",
+        "error_type": "RuntimeError",
+        "failure_metadata_only": true
+      },
+      "discovery_window": {
+        "start_date": "2020-10-11",
+        "end_date": "2026-08-23",
+        "draw_count": 919,
+        "holdout_dates_copied": false,
+        "archive_rows_copied": false
+      },
+      "content_sha256": "dc5516c372b05566e8b0c2d6bb1cab550b9aebd51b55b9a91a221b4165b1eb09"
+    }
+  ]
 }
