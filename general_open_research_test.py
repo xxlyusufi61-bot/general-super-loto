@@ -4,6 +4,7 @@ import sys
 import tempfile
 import types
 import unittest
+from datetime import date, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -12,13 +13,6 @@ import general_open_research as research
 from general_data_guard import DataGuardError
 import general_sealed_evaluation as sealed
 from general_live_consent import CONFIRMATION_PHRASE
-
-import general_open_research as research
-from general_data_guard import DataGuardError
-import general_sealed_evaluation as sealed
-from general_live_consent import CONFIRMATION_PHRASE
-
-
 
 
 def make_directional_report(direction):
