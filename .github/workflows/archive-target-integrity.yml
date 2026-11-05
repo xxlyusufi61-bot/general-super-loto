@@ -40,7 +40,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-        run: python3 general_automation_state_runtime_audit.py --state-authoritative
+        run: python3 general_automation_state_integrity_audit.py
       - name: Compile guard and test
         run: python -m py_compile general_data_guard.py test_general_archive_target_isolation.py
       - name: Validate committed canonical archive and isolate latest target

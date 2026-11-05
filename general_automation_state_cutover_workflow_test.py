@@ -50,7 +50,36 @@ class AutomationStateCutoverWorkflowTests(unittest.TestCase):
             with self.subTest(workflow=name):
                 workflow = read(WORKFLOWS / name)
                 self.assertIn("./.github/actions/hydrate-automation-state", workflow)
-                self.assertIn("general_automation_state_runtime_audit.py --state-authoritative", workflow)
+                self.assertIn("general_automation_state_integrity_audit.py", workflow)
+
+    def test_live_nvidia_workflows_keep_dedicated_lock_checks(self):
+        lock_guards = {
+            "general-autonomous-research.yml": "python3 general_nvidia_guard.py check",
+            "open-research.yml": "python3 general_nvidia_guard.py check",
+            "general-agent.yml": "python3 general_nvidia_guard.py check",
+            "general-coordinator-execute.yml": "python3 general_nvidia_guard.py check",
+            "nvidia-diagnostic.yml": "python3 general_nvidia_guard.py diagnostic-check",
+        }
+        for name, guard in lock_guards.items():
+            with self.subTest(workflow=name):
+                workflow = read(WORKFLOWS / name)
+                self.assertIn("general_automation_state_integrity_audit.py", workflow)
+                self.assertIn(guard, workflow)
+
+    def test_integrity_ci_runs_the_new_policy_neutral_audit_and_tests(self):
+        for name in (
+            "nvidia-safety-tests.yml",
+            "general-automation-state-writer-test.yml",
+        ):
+            with self.subTest(workflow=name):
+                workflow = read(WORKFLOWS / name)
+                self.assertIn("general_automation_state_integrity_audit.py", workflow)
+                self.assertIn("general_automation_state_integrity_audit_test.py", workflow)
+
+    def test_migration_preflight_keeps_its_locked_and_paused_requirements(self):
+        migration_audit = read(ROOT / "general_automation_state_runtime_audit.py")
+        self.assertIn('if lock.get("locked") is not True:', migration_audit)
+        self.assertIn('authorization.get("enabled") is not False', migration_audit)
 
     def test_research_workflows_publish_runtime_objects_to_the_state_store(self):
         for name in ("general-autonomous-research.yml", "open-research.yml"):

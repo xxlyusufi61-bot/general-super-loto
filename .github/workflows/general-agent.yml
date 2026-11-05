@@ -71,7 +71,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-        run: python3 general_automation_state_runtime_audit.py --state-authoritative
+        run: python3 general_automation_state_integrity_audit.py
 
       - name: Check global NVIDIA safety lock
         if: ${{ inputs.agent != 'archive' && inputs.agent != 'isolation-test' && inputs.confirm_live_calls == 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_2_NVIDIA_REQUESTS' && inputs.confirm_free_usage_verified == true }}

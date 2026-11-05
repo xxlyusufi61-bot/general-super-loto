@@ -44,7 +44,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-        run: python3 general_automation_state_runtime_audit.py --state-authoritative
+        run: python3 general_automation_state_integrity_audit.py
 
       - name: Compile planner and tests
         run: python3 -m py_compile general_coordinator.py general_coordinator_test.py
