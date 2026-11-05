@@ -742,6 +742,10 @@ def combine_directional_results(
     return proposal_document, execution_document
 
 
+class InvalidModelResponseError(RuntimeError):
+    """The SDK returned a response that failed GENERAL's strict content checks."""
+
+
 class IncompleteModelResponseError(RuntimeError):
     """A completed provider response whose answer was cut off by its token limit."""
 
@@ -766,16 +770,16 @@ def _validate_json_chat_completion(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Validate one non-streaming Chat Completions response; only message.content is final text."""
     if not isinstance(payload, dict):
-        raise RuntimeError("Research model JSON response was not an object.")
+        raise InvalidModelResponseError("Research model JSON response was not an object.")
     choices = payload.get("choices")
     if not isinstance(choices, list) or not choices:
-        raise RuntimeError("Research model JSON response did not contain choices.")
+        raise InvalidModelResponseError("Research model JSON response did not contain choices.")
     choice = choices[0]
     if not isinstance(choice, dict):
-        raise RuntimeError("Research model JSON response contained an invalid choice.")
+        raise InvalidModelResponseError("Research model JSON response contained an invalid choice.")
     message = choice.get("message")
     if not isinstance(message, dict):
-        raise RuntimeError("Research model JSON response did not contain a valid message.")
+        raise InvalidModelResponseError("Research model JSON response did not contain a valid message.")
     usage = payload.get("usage")
     if not isinstance(usage, dict):
         usage = None
@@ -790,12 +794,12 @@ def _validate_json_chat_completion(
             stream_finish_reason="length",
         )
     if finish_reason != "stop":
-        raise RuntimeError(
+        raise InvalidModelResponseError(
             "Research model JSON response did not confirm completion with finish_reason=stop."
         )
     content = message.get("content")
     if not isinstance(content, str) or not content.strip():
-        raise RuntimeError(
+        raise InvalidModelResponseError(
             "Research model JSON response completed without final message.content; "
             "reasoning_content is not accepted as a substitute."
         )
@@ -1047,19 +1051,25 @@ def call_model(
         )
         if status_code == 429:
             raise RuntimeError(
-                "NVIDIA returned HTTP 429 (rate limit). OpenAI SDK retries are disabled; "
-                "no automatic retry was attempted. Inspect " + request_usage_name + "."
+                "NVIDIA returned HTTP 429 (rate limit). OpenAI SDK retries are disabled. "
+                "No automatic retry was attempted. Inspect " + request_usage_name + "."
             ) from None
         if status_code == 402:
             raise RuntimeError(
                 "NVIDIA returned HTTP 402 (provider reported insufficient credits/access). "
-                "OpenAI SDK retries are disabled; no automatic retry was attempted."
+                "OpenAI SDK retries are disabled. No automatic retry was attempted."
             ) from None
+        if isinstance(failure, (IncompleteModelResponseError, InvalidModelResponseError)):
+            failure_summary = str(failure)
+        else:
+            failure_summary = (
+                "Research model OpenAI-SDK request failed during " + failure_stage +
+                " (" + type(failure).__name__ + "). Request delivery state: " +
+                ("response_received" if response_received else "unknown_after_sdk_request_started")
+            )
         raise RuntimeError(
-            "Research model OpenAI-SDK request failed during " + failure_stage +
-            " (" + type(failure).__name__ + "). Request delivery state: " +
-            ("response_received" if response_received else "unknown_after_sdk_request_started") +
-            ". SDK retries are disabled and no automatic retry was attempted; inspect " +
+            failure_summary +
+            ". OpenAI SDK retries are disabled. No automatic retry was attempted; inspect " +
             request_usage_name + "."
         ) from None
 
