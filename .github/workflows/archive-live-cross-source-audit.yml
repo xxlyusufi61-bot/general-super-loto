@@ -63,7 +63,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-        run: python3 general_automation_state_runtime_audit.py --state-authoritative
+        run: python3 general_automation_state_integrity_audit.py
 
       - name: Run read-only live cross-source audit
         run: python -B general_archive_cross_source_audit.py

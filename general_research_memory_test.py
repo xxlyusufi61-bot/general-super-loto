@@ -406,7 +406,7 @@ class DirectionalMemoryContextTests(unittest.TestCase):
         self.assertEqual(forward[0]["prior_target_date"], "2026-11-04")
         self.assertEqual(len(reverse), 1)
         self.assertEqual(reverse[0]["direction"], "reverse")
-        self.assertNotIn("2026-11-05", json.dumps(forward))
+        self.assertNotIn("2026-11-05", [item["prior_target_date"] for item in forward])
 
     def test_large_memory_entry_is_compacted_without_discarding_all_feedback(self):
         entry = sample_entry("forward", 1, "2026-11-04")

@@ -436,7 +436,7 @@ class GitHubStateStoreReaderTests(unittest.TestCase):
         self.assertLess(audit_start, authorization_start)
         step = workflow[hydrate_start:authorization_start]
         self.assertIn("./.github/actions/hydrate-automation-state", step)
-        self.assertIn("general_automation_state_runtime_audit.py --state-authoritative", step)
+        self.assertIn("general_automation_state_integrity_audit.py", step)
         self.assertIn("GITHUB_REPOSITORY:", step)
         self.assertIn("GITHUB_TOKEN:", step)
         self.assertNotIn("NVIDIA_API_KEY", step)
@@ -479,7 +479,7 @@ class GitHubStateStoreReaderTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn("contents: read", workflow)
         self.assertIn("Run active authoritative state-store integrity audit", workflow)
-        self.assertIn("general_automation_state_runtime_audit.py --state-authoritative", workflow)
+        self.assertIn("general_automation_state_integrity_audit.py", workflow)
         self.assertNotIn("git push", workflow)
         self.assertNotIn("NVIDIA_API_KEY", workflow)
 

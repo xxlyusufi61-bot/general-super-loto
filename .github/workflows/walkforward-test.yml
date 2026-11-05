@@ -40,7 +40,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-        run: python3 general_automation_state_runtime_audit.py --state-authoritative
+        run: python3 general_automation_state_integrity_audit.py
       - name: Compile modules
         run: python -m py_compile general_walkforward.py general_walkforward_test.py general_data_guard.py
       - name: Run synthetic unit tests (no real archive or target draw)
