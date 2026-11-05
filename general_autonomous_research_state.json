@@ -10,6 +10,15 @@
     "max_requests_per_target": 2,
     "last_paused_at_utc": null
   },
-  "attempts": [],
+  "attempts": [
+    {
+      "attempt_id": "243c2d35eeff5184a2d72edfc01fd9643c3632f2a7d790ee750bad6d78b41510",
+      "target_date": "2026-11-03",
+      "archive_sha256": "0d05e8970365d1b6c556a59387527057746fd62b5586ed2a5ec0768070a8d2ef",
+      "archive_record_count": 980,
+      "claimed_at_utc": "2026-11-05T13:35:40.664358+00:00",
+      "github_run_id": "42037000055"
+    }
+  ],
   "events": []
 }
