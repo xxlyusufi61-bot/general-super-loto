@@ -960,6 +960,7 @@ def call_model(
     request_started = time.monotonic()
     completion = None
     result = None
+    json_metadata = None
     response_received = False
     status_code = None
     response_headers: Mapping[str, Any] | None = None
@@ -982,7 +983,7 @@ def call_model(
         request_id = getattr(completion, "_request_id", None)
         if isinstance(request_id, str) and request_id.strip():
             response_headers = {"x-request-id": request_id}
-        result, _json_metadata = _validate_json_chat_completion(
+        result, json_metadata = _validate_json_chat_completion(
             _chat_completion_payload(completion)
         )
     except Exception as exc:
@@ -1012,6 +1013,7 @@ def call_model(
             failure_payload = result
         failure_stage = (
             "model_finish" if incomplete_model_response
+            else "provider_http_error" if status_code is not None and status_code >= 400
             else "response_validation" if response_received
             else "provider_call"
         )
@@ -1024,7 +1026,8 @@ def call_model(
                 request_duration_seconds=duration,
                 stream_event_count=None,
                 stream_completed=None,
-                stream_finish_reason=(
+                stream_finish_reason=None,
+                model_finish_reason=(
                     "length" if incomplete_model_response else None
                 ),
                 response_complete=False if response_received else None,
@@ -1075,6 +1078,9 @@ def call_model(
             request_delivery_state="response_received",
             system_prompt_bytes=system_prompt_bytes,
             user_prompt_bytes=user_prompt_bytes,
+            model_finish_reason=(
+                json_metadata.get("finish_reason") if isinstance(json_metadata, dict) else None
+            ),
         ),
         request_label=request_label,
     )
