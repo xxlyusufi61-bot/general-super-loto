@@ -200,6 +200,8 @@ class SingleRequestDiagnosticTests(unittest.TestCase):
         self.assertNotIn(self.target, sent_dates)
 
         self.assertEqual(result["status"], "RESPONSE_RECEIVED")
+        self.assertEqual(result["response_mode"], "json")
+        self.assertFalse(result["response_streaming"])
         self.assertEqual(result["provider_requests_attempted"], 1)
         self.assertEqual(result["automatic_retries"], 0)
         self.assertEqual(result["max_tokens_requested"], 8192)
@@ -225,39 +227,59 @@ class SingleRequestDiagnosticTests(unittest.TestCase):
         )
 
     @staticmethod
-    def successful_response():
+    def successful_json_response():
         response = MagicMock()
         response.status = 200
         response.headers = {"x-request-id": "synthetic-diagnostic-request"}
         response.__enter__.return_value = response
         response.__exit__.return_value = False
-        response.readline.side_effect = [
-            b'data: {"choices":[{"delta":{"content":"synthetic response"},"finish_reason":"stop"}]}\n',
-            b"\n",
-            b'data: {"choices":[],"usage":{"total_tokens":2}}\n',
-            b"\n",
-            b"data: [DONE]\n",
-            b"\n",
-            b"",
-        ]
+        response.read.return_value = json.dumps({
+            "choices": [{
+                "message": {
+                    "content": "synthetic final response",
+                    "reasoning_content": "this must never be treated as final content",
+                },
+                "finish_reason": "stop",
+            }],
+            "usage": {"total_tokens": 2},
+        }).encode("utf-8")
         return response
 
-    @classmethod
-    def fake_connection(cls, response=None):
-        connection = MagicMock()
-        connection.sock = MagicMock()
-        if response is not None:
-            connection.getresponse.return_value = response
-        return connection
+    def test_json_parser_accepts_only_completed_message_content(self):
+        payload = {
+            "choices": [{
+                "message": {
+                    "content": "final answer",
+                    "reasoning_content": "hidden reasoning",
+                },
+                "finish_reason": "stop",
+            }],
+            "usage": {"total_tokens": 3},
+        }
+        parsed, metadata = research._validate_json_chat_completion(payload)
+        self.assertEqual(parsed["choices"][0]["message"]["content"], "final answer")
+        self.assertEqual(metadata["finish_reason"], "stop")
 
-    def test_call_model_hard_stops_after_one_diagnostic_request(self):
+        reasoning_only = {
+            "choices": [{
+                "message": {
+                    "content": "",
+                    "reasoning_content": "not a final answer",
+                },
+                "finish_reason": "stop",
+            }],
+        }
+        with self.assertRaisesRegex(RuntimeError, "reasoning_content is not accepted"):
+            research._validate_json_chat_completion(reasoning_only)
+
+    def test_call_model_uses_json_nonstream_transport_and_hard_stops_after_one_request(self):
         env = self._environment() | {
             "GENERAL_ALLOW_NVIDIA_CALL": "true",
             "GENERAL_NVIDIA_FREE_USAGE_VERIFIED": "true",
             "NVIDIA_API_KEY": "test-secret",
         }
         saved_observations = []
-        connection = self.fake_connection(self.successful_response())
+        response = self.successful_json_response()
         try:
             with patch.dict(os.environ, env, clear=True), patch.object(
                 research, "reserve_nvidia_request"
@@ -266,42 +288,46 @@ class SingleRequestDiagnosticTests(unittest.TestCase):
                 "save_usage_observation",
                 side_effect=lambda observation, **kwargs: saved_observations.append(observation),
             ), patch(
-                "general_open_research._create_nvidia_connection",
-                return_value=connection,
+                "general_open_research.urllib.request.urlopen",
+                return_value=response,
+            ) as urlopen, patch(
+                "general_open_research._create_nvidia_connection"
             ) as connection_factory:
                 answer = research.call_model(
                     [{"role": "user", "content": "synthetic diagnostic"}],
                     request_label="forward",
                 )
-                self.assertEqual(answer, "synthetic response")
-                sent_body = json.loads(connection.endheaders.call_args.args[0].decode("utf-8"))
+                self.assertEqual(answer, "synthetic final response")
+                sent_request = urlopen.call_args.args[0]
+                sent_body = json.loads(sent_request.data.decode("utf-8"))
                 self.assertEqual(sent_body["max_tokens"], 8192)
                 self.assertEqual(sent_body["reasoning_effort"], "low")
-                self.assertTrue(sent_body["stream"])
+                self.assertFalse(sent_body["stream"])
+                self.assertEqual(sent_request.get_header("Accept"), "application/json")
+                self.assertEqual(
+                    urlopen.call_args.kwargs["timeout"],
+                    research.DIAGNOSTIC_REQUEST_TIMEOUT_SECONDS,
+                )
+                self.assertEqual(urlopen.call_count, 1)
+                connection_factory.assert_not_called()
                 self.assertEqual(len(saved_observations), 1)
-                self.assertTrue(saved_observations[0]["response_complete"])
-                self.assertEqual(saved_observations[0]["max_tokens_requested"], 8192)
-                self.assertTrue(saved_observations[0]["stream_completed"])
-                self.assertEqual(saved_observations[0]["stream_finish_reason"], "stop")
-                self.assertEqual(saved_observations[0]["token_usage_returned_by_provider"]["total_tokens"], 2)
+                observation = saved_observations[0]
+                self.assertEqual(observation["response_mode"], "json")
+                self.assertTrue(observation["response_complete"])
+                self.assertIsNone(observation["stream_completed"])
+                self.assertEqual(observation["model_finish_reason"], "stop")
+                self.assertEqual(
+                    observation["token_usage_returned_by_provider"]["total_tokens"], 2
+                )
+                self.assertIsNotNone(observation["transport_open_seconds"])
+                self.assertIsNotNone(observation["response_body_read_seconds"])
+
                 with self.assertRaisesRegex(RuntimeError, "Single-request diagnostic cap reached"):
                     research.call_model(
                         [{"role": "user", "content": "second request must be blocked"}],
                         request_label="forward",
                     )
-                self.assertEqual(connection_factory.call_count, 1)
-                self.assertEqual(
-                    connection_factory.call_args.args[0],
-                    research.DEFAULT_CONNECT_TIMEOUT_SECONDS,
-                )
-                self.assertEqual(
-                    saved_observations[0]["request_timeout_seconds"],
-                    research.DIAGNOSTIC_REQUEST_TIMEOUT_SECONDS,
-                )
-                self.assertEqual(
-                    saved_observations[0]["response_header_timeout_seconds"],
-                    research.DIAGNOSTIC_REQUEST_TIMEOUT_SECONDS,
-                )
+                self.assertEqual(urlopen.call_count, 1)
                 reserve.assert_called_once_with(
                     "open-research-forward",
                     diagnostic_exception=True,
@@ -311,8 +337,7 @@ class SingleRequestDiagnosticTests(unittest.TestCase):
             Path("/tmp/general_nvidia_api_attempted").unlink(missing_ok=True)
             Path("/tmp/general_nvidia_api_succeeded").unlink(missing_ok=True)
 
-
-    def test_diagnostic_connection_timeout_uses_extended_wait_without_retry(self):
+    def test_diagnostic_json_transport_timeout_is_recorded_without_retry(self):
         env = self._environment() | {
             "GENERAL_ALLOW_NVIDIA_CALL": "true",
             "GENERAL_NVIDIA_FREE_USAGE_VERIFIED": "true",
@@ -320,8 +345,6 @@ class SingleRequestDiagnosticTests(unittest.TestCase):
             "GENERAL_DIAGNOSTIC_MODE": "true",
         }
         saved = []
-        connection = self.fake_connection()
-        connection.getresponse.side_effect = TimeoutError("synthetic diagnostic header timeout")
         try:
             with patch.dict(os.environ, env, clear=True), patch.object(
                 research, "reserve_nvidia_request"
@@ -330,42 +353,35 @@ class SingleRequestDiagnosticTests(unittest.TestCase):
                 "save_usage_observation",
                 side_effect=lambda observation, **kwargs: saved.append(observation),
             ), patch(
-                "general_open_research._create_nvidia_connection",
-                return_value=connection,
+                "general_open_research.urllib.request.urlopen",
+                side_effect=TimeoutError("synthetic JSON diagnostic open timeout"),
+            ) as urlopen, patch(
+                "general_open_research._create_nvidia_connection"
             ) as connection_factory:
-                with self.assertRaisesRegex(
-                    RuntimeError, "during wait_for_headers"
-                ):
+                with self.assertRaisesRegex(RuntimeError, "during open_response"):
                     research.call_model(
                         [{"role": "user", "content": "diagnostic timeout test"}],
                         request_label="forward",
                     )
-                self.assertEqual(connection_factory.call_count, 1)
-                self.assertEqual(
-                    connection_factory.call_args.args[0],
-                    research.DEFAULT_CONNECT_TIMEOUT_SECONDS,
-                )
-                connection.endheaders.assert_called_once()
+                self.assertEqual(urlopen.call_count, 1)
+                connection_factory.assert_not_called()
+
             self.assertEqual(len(saved), 1)
+            observation = saved[0]
+            self.assertEqual(observation["response_mode"], "json")
+            self.assertEqual(observation["request_timeout_seconds"], research.DIAGNOSTIC_REQUEST_TIMEOUT_SECONDS)
+            self.assertIsNone(observation["connect_timeout_seconds"])
+            self.assertIsNone(observation["response_header_timeout_seconds"])
             self.assertEqual(
-                saved[0]["request_timeout_seconds"],
-                research.DIAGNOSTIC_REQUEST_TIMEOUT_SECONDS,
+                observation["request_delivery_state"],
+                "unknown_send_in_progress",
             )
-            self.assertEqual(
-                saved[0]["response_header_timeout_seconds"],
-                research.DIAGNOSTIC_REQUEST_TIMEOUT_SECONDS,
-            )
-            self.assertEqual(
-                saved[0]["request_delivery_state"],
-                "sent_to_socket_provider_receipt_unconfirmed",
-            )
-            self.assertEqual(saved[0]["automatic_retries"], 0)
-            self.assertEqual(saved[0]["failure_stage"], "wait_for_headers")
-            self.assertEqual(saved[0]["network_error_type"], "TimeoutError")
+            self.assertEqual(observation["automatic_retries"], 0)
+            self.assertEqual(observation["failure_stage"], "open_response")
+            self.assertEqual(observation["network_error_type"], "TimeoutError")
         finally:
             Path("/tmp/general_nvidia_api_attempted").unlink(missing_ok=True)
             Path("/tmp/general_nvidia_api_succeeded").unlink(missing_ok=True)
-
 
     def test_reverse_label_is_rejected_in_diagnostic_mode_before_network(self):
         env = self._environment() | {
