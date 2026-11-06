@@ -539,6 +539,7 @@ class NvidiaUsageObservationTests(unittest.TestCase):
                 research.call_model([{"role": "user", "content": "third"}])
 
         self.assertEqual(client_factory.call_count, 2)
+        self.assertEqual([call.args[1] for call in client_factory.call_args_list], [600, 600])
         self.assertEqual(reserve.call_count, 2)
         for client in (forward_client, reverse_client):
             client.chat.completions.create.assert_called_once()
