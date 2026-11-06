@@ -370,7 +370,7 @@ jobs:
           python3 telegram_report.py \
             --title "Otonom araştırma: yürütülebilir aday bulunamadı" \
             --status success \
-            --branch general-automation-state \\
+            --branch general-automation-state \
             --run-url "https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
       - name: Notify Telegram after a failed claimed cycle
         if: ${{ always() && steps.attempt_reservation.outputs.attempt_id != '' && (steps.persist_attempt.outcome == 'failure' || steps.research.outcome == 'failure' || steps.sealed_claim.outcome == 'failure' || steps.persist_claim.outcome == 'failure' || steps.evaluation.outcome == 'failure' || steps.persist_eval.outcome == 'failure') }}
@@ -381,7 +381,7 @@ jobs:
           python3 telegram_report.py \
             --title "Otonom araştırma döngüsü" \
             --status failure \
-            --branch general-automation-state \\
+            --branch general-automation-state \
             --run-url "https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
       - name: Upload number-safe autonomous cycle artifacts
         if: ${{ always() && steps.attempt_reservation.outputs.attempt_id != '' }}
