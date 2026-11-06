@@ -34,6 +34,12 @@
       "outcome": "FAILED",
       "recorded_at_utc": "2026-11-05T13:39:50.070213+00:00",
       "reason_code": "WORKFLOW_FAILED"
+    },
+    {
+      "attempt_id": "fd4772f28c908791254cdcad6e2c5c1ffa32d392937943fa84a05c644bc8b4f9",
+      "outcome": "FAILED",
+      "recorded_at_utc": "2026-11-06T01:37:11.337681+00:00",
+      "reason_code": "WORKFLOW_FAILED"
     }
   ]
 }
