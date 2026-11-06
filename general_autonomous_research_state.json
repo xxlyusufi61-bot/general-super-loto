@@ -18,6 +18,14 @@
       "archive_record_count": 980,
       "claimed_at_utc": "2026-11-05T13:35:40.664358+00:00",
       "github_run_id": "42037000055"
+    },
+    {
+      "attempt_id": "fd4772f28c908791254cdcad6e2c5c1ffa32d392937943fa84a05c644bc8b4f9",
+      "target_date": "2026-11-05",
+      "archive_sha256": "5319d759df2ab34bf15e8eed66fc85826b9628f7297daa39b6fd34803a40d452",
+      "archive_record_count": 981,
+      "claimed_at_utc": "2026-11-06T01:33:01.662567+00:00",
+      "github_run_id": "42144488585"
     }
   ],
   "events": [
