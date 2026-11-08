@@ -63,8 +63,7 @@ requests.
 ## Workflow integration map
 
 The canonical runtime read path is the composite hydrate
-action followed by the read-only active-store audit. After merge, every
-consuming workflow will hydrate the exact four-object state snapshot before
+action followed by the read-only active-store audit. Every consuming workflow hydrates the exact four-object state snapshot before
 any application module reads an archive, evaluation ledger, autonomous
 scheduler state, or research memory:
 
