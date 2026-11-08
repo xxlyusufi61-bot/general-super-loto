@@ -314,16 +314,14 @@ def rank_candidates_for_pair(
         checked_canonical = _validate_rows(
             canonical_history, field="canonical_history", maximum=MAX_INPUT_HISTORY_DRAWS
         )
-        if any(row["date"] == target.isoformat() for row in checked_canonical):
-            _fail("canonical context must not contain the scored target row.")
         if spec["direction"] == "forward":
-            expected_pair = [
-                row for row in checked_canonical if date.fromisoformat(row["date"]) < target
-            ][-2:]
+            if any(date.fromisoformat(row["date"]) >= target for row in checked_canonical):
+                _fail("forward canonical context must contain only rows strictly before hidden target C.")
+            expected_pair = checked_canonical[-2:]
         else:
-            expected_pair = [
-                row for row in checked_canonical if date.fromisoformat(row["date"]) > target
-            ][:2]
+            if any(date.fromisoformat(row["date"]) <= target for row in checked_canonical):
+                _fail("reverse canonical context must contain only rows strictly after hidden target A.")
+            expected_pair = checked_canonical[:2]
         if len(expected_pair) != 2 or expected_pair != checked_pair:
             _fail("state pair is not the two immediately adjacent canonical archive rows.")
         if not isinstance(excluded_dates, (set, list, tuple)):
