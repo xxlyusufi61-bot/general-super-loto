@@ -4,8 +4,8 @@
   "max_requests": 40,
   "requests": [
     {
-      "reserved_at_utc": "2026-11-08T19:07:06.218842+00:00",
-      "source": "open-research-forward"
+      "reserved_at_utc": "2026-11-08T19:10:31.078691+00:00",
+      "source": "open-research-reverse"
     }
   ],
   "diagnostic_run_ids": [
@@ -14,5 +14,5 @@
     "41755229554",
     "42095794989"
   ],
-  "updated_at_utc": "2026-11-08T19:06:36.218842+00:00"
+  "updated_at_utc": "2026-11-08T19:10:01.078691+00:00"
 }
