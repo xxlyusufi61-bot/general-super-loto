@@ -7,6 +7,7 @@ from general_sealed_evaluation import (
     SealedEvaluationError,
     _select_one_frozen_candidate,
     _evaluate_full_reverse_history,
+    _validate_dsl_v2_directional_context,
 )
 
 
@@ -64,6 +65,49 @@ class SealedEvaluationDSLv2Tests(unittest.TestCase):
         write_json(proposals_path, proposals)
         write_json(specs_path, specs)
         return proposals_path, specs_path
+
+    def test_claim_guard_rejects_consumed_adjacent_context_in_both_directions(self):
+        canonical = []
+        start = "2020-08-02"
+        for index in range(5):
+            day = (date.fromisoformat(start) + timedelta(days=index)).isoformat()
+            base = index * 7 % 60 + 1
+            numbers = sorted({((base + offset * 11 - 1) % 60) + 1 for offset in range(6)})
+            canonical.append({"date": day, "numbers": numbers})
+
+        forward_candidate = {
+            "execution_spec_dsl_version": 2,
+            "reverse_execution_spec_dsl_version": 1,
+        }
+        forward_split = {"regimes": {"R60": {
+            "discovery_rows": canonical[:3],
+            "validation_rows": [canonical[4]],
+            "reverse_validation_rows": [],
+        }}}
+        with self.assertRaisesRegex(SealedEvaluationError, "Forward DSL v2 target"):
+            _validate_dsl_v2_directional_context(
+                forward_candidate,
+                forward_split,
+                canonical,
+                {canonical[3]["date"]},
+            )
+
+        reverse_candidate = {
+            "execution_spec_dsl_version": 1,
+            "reverse_execution_spec_dsl_version": 2,
+        }
+        reverse_split = {"regimes": {"R60": {
+            "discovery_rows": canonical[2:],
+            "validation_rows": [],
+            "reverse_validation_rows": [canonical[0]],
+        }}}
+        with self.assertRaisesRegex(SealedEvaluationError, "Reverse DSL v2 target"):
+            _validate_dsl_v2_directional_context(
+                reverse_candidate,
+                reverse_split,
+                canonical,
+                {canonical[1]["date"]},
+            )
 
     def test_full_reverse_diagnostic_skips_consumed_neighbours_instead_of_bridging(self):
         from datetime import date, timedelta
