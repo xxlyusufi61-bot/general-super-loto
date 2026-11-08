@@ -107,6 +107,7 @@ class SingleRequestTokenTestTests(unittest.TestCase):
             memory = root / "memory.json"
             registry = root / "registry.json"
             result_path = root / "result.json"
+            usage_base_path = root / "usage.json"
             usage_path = root / "usage_forward.json"
             archive.write_text("archive input", encoding="utf-8")
             ledger.write_text('{"entries":[]}', encoding="utf-8")
@@ -156,7 +157,7 @@ class SingleRequestTokenTestTests(unittest.TestCase):
             ) as build_messages, patch.object(
                 token_test.research, "call_model", side_effect=fake_call_model
             ) as call_model, patch.object(
-                token_test.research, "USAGE_REPORT", usage_path
+                token_test.research, "USAGE_REPORT", usage_base_path
             ):
                 result = token_test.run_token_test(
                     archive_path=archive,
