@@ -268,6 +268,53 @@ def split_archive(
     }
 
 
+def _validate_dsl_v2_directional_context(
+    candidate: dict[str, Any],
+    split: dict[str, Any],
+    canonical_pre_target_rows: list[dict[str, Any]],
+    used_dates: set[str],
+) -> None:
+    """Reject a v2 claim before ledger mutation if its state neighbours are not canonical."""
+    r60 = split["regimes"]["R60"]
+    discovery = r60["discovery_rows"]
+    forward_validation = r60["validation_rows"]
+    reverse_validation = r60["reverse_validation_rows"]
+    available_by_date = {
+        row["date"]: row
+        for row in discovery + forward_validation + reverse_validation
+    }
+
+    if candidate.get("execution_spec_dsl_version") == 2:
+        for index, target in enumerate(forward_validation):
+            expected_previous = [
+                row for row in canonical_pre_target_rows if row["date"] < target["date"]
+            ][-2:]
+            allowed_training = discovery + forward_validation[:index]
+            training_by_date = {row["date"]: row for row in allowed_training}
+            if (
+                len(expected_previous) != 2
+                or any(row["date"] in used_dates for row in expected_previous)
+                or any(training_by_date.get(row["date"]) != row for row in expected_previous)
+            ):
+                raise SealedEvaluationError(
+                    "Forward DSL v2 target lacks its exact two immediately preceding unconsumed canonical states."
+                )
+
+    if candidate.get("reverse_execution_spec_dsl_version") == 2:
+        for target in reverse_validation:
+            expected_later = [
+                row for row in canonical_pre_target_rows if row["date"] > target["date"]
+            ][:2]
+            if (
+                len(expected_later) != 2
+                or any(row["date"] in used_dates for row in expected_later)
+                or any(available_by_date.get(row["date"]) != row for row in expected_later)
+            ):
+                raise SealedEvaluationError(
+                    "Reverse DSL v2 target lacks its exact two immediately following unconsumed canonical states."
+                )
+
+
 def _ledger_empty() -> dict[str, Any]:
     return {
         "schema_version": LEDGER_SCHEMA_VERSION,
@@ -570,6 +617,10 @@ def create_claim(
         archive_sha256=archive["archive_sha256"],
         used_validation_dates=used_dates,
     )
+    canonical_pre_target_rows = [
+        row for row in archive["rows"] if row["date"] < split["target_date"]
+    ]
+    _validate_dsl_v2_directional_context(candidate, split, canonical_pre_target_rows, used_dates)
     r60 = split["regimes"]["R60"]
     validation = r60["validation_rows"]
     reverse_validation = r60["reverse_validation_rows"]
