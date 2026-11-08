@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 import general_data_guard as guard
+import general_autonomous_research as autonomous
 import general_open_research as research
 import general_sealed_evaluation as sealed
 
@@ -27,6 +28,8 @@ EXPECTED_ARCHIVE_SHA256 = "5319d759df2ab34bf15e8eed66fc85826b9628f7297daa39b6fd3
 EXPECTED_ARCHIVE_BYTES = 140693
 EXPECTED_ARCHIVE_RECORDS = 981
 EXPECTED_FIRST_DATE = "2020-08-02"
+PREVIOUS_FAILED_ATTEMPT_ID = "fd4772f28c908791254cdcad6e2c5c1ffa32d392937943fa84a05c644bc8b4f9"
+PREVIOUS_FAILED_RUN_ID = "42144488585"
 RECOVERY_WORKFLOW_PATH = ".github/workflows/general-recovery-20261105.yml"
 ALLOWED_ACTOR_LOGIN = "xxlyusufi61-bot"
 ALLOWED_ACTOR_ID = 345811504
@@ -87,16 +90,59 @@ def _summary_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _verify_previous_failed_attempt(state_path: str | Path) -> dict[str, Any]:
+    try:
+        raw_state = json.loads(Path(state_path).read_text(encoding="utf-8"))
+        state = autonomous.validate_state(raw_state)
+    except Exception:
+        raise RecoveryError("The authoritative scheduler attempt state is unreadable or invalid.") from None
+
+    matching_attempts = [
+        item for item in state["attempts"]
+        if item["attempt_id"] == PREVIOUS_FAILED_ATTEMPT_ID
+    ]
+    if len(matching_attempts) != 1:
+        raise RecoveryError("The original 2026-11-05 failed attempt is missing or duplicated.")
+    attempt = matching_attempts[0]
+    if (
+        attempt["target_date"] != RECOVERY_TARGET_DATE
+        or attempt["archive_sha256"] != EXPECTED_ARCHIVE_SHA256
+        or attempt["archive_record_count"] != EXPECTED_ARCHIVE_RECORDS
+        or attempt["github_run_id"] != PREVIOUS_FAILED_RUN_ID
+    ):
+        raise RecoveryError("The original failed attempt no longer matches its fixed audit identity.")
+    if not state["attempts"] or state["attempts"][-1]["target_date"] != RECOVERY_TARGET_DATE:
+        raise RecoveryError("The ordinary scheduler has already advanced beyond the recovery target.")
+
+    matching_events = [
+        item for item in state["events"]
+        if item["attempt_id"] == PREVIOUS_FAILED_ATTEMPT_ID
+    ]
+    if (
+        len(matching_events) != 1
+        or matching_events[0]["outcome"] != "FAILED"
+        or matching_events[0]["reason_code"] != "WORKFLOW_FAILED"
+    ):
+        raise RecoveryError("The original 2026-11-05 attempt is not recorded as the expected failed cycle.")
+    return {
+        "attempt_id": PREVIOUS_FAILED_ATTEMPT_ID,
+        "run_id": PREVIOUS_FAILED_RUN_ID,
+        "outcome": "FAILED",
+    }
+
+
 def prepare_recovery_archive(
     *,
     source_archive_path: str | Path,
     current_archive_path: str | Path,
     ledger_path: str | Path,
+    autonomous_state_path: str | Path,
     output_path: str | Path,
     source_commit: str,
     metadata_path: str | Path | None = None,
 ) -> dict[str, Any]:
-    """Verify and copy only the exact historical snapshot, then run sealed preflight."""
+    """Verify original failed attempt and copy only its historical snapshot."""
+    previous_attempt = _verify_previous_failed_attempt(autonomous_state_path)
     if source_commit != RECOVERY_SOURCE_COMMIT:
         raise RecoveryError("Historical archive source commit does not match the fixed recovery pin.")
 
@@ -193,6 +239,9 @@ def prepare_recovery_archive(
         "target_in_validation": False,
         "forward_reverse_holdouts_disjoint": True,
         "previously_consumed_holdout_dates_reused": False,
+        "previous_attempt_id": previous_attempt["attempt_id"],
+        "previous_run_id": previous_attempt["run_id"],
+        "previous_attempt_outcome": previous_attempt["outcome"],
         "previous_provider_request_count": PREVIOUS_PROVIDER_REQUESTS,
         "maximum_new_provider_requests": MAX_RECOVERY_PROVIDER_REQUESTS,
         "maximum_total_target_provider_requests": MAX_TOTAL_PROVIDER_REQUESTS,
@@ -327,6 +376,7 @@ def main(argv: list[str] | None = None) -> int:
     prepare.add_argument("--archive", required=True, type=Path)
     prepare.add_argument("--current-archive", required=True, type=Path)
     prepare.add_argument("--ledger", required=True, type=Path)
+    prepare.add_argument("--autonomous-state", required=True, type=Path)
     prepare.add_argument("--source-commit", required=True)
     prepare.add_argument("--output", required=True, type=Path)
     prepare.add_argument("--metadata", required=True, type=Path)
@@ -350,6 +400,7 @@ def main(argv: list[str] | None = None) -> int:
                 source_archive_path=args.archive,
                 current_archive_path=args.current_archive,
                 ledger_path=args.ledger,
+                autonomous_state_path=args.autonomous_state,
                 output_path=args.output,
                 source_commit=args.source_commit,
                 metadata_path=args.metadata,
