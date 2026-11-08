@@ -32,6 +32,11 @@ DIAGNOSTIC_APPROVAL_PHRASE = "I_APPROVE_ONE_DIAGNOSTIC_REQUEST"
 DIAGNOSTIC_REQUEST_SOURCE = "open-research-forward"
 DIAGNOSTIC_AUTHORIZED_ACTOR_LOGIN = "xxlyusufi61-bot"
 DIAGNOSTIC_AUTHORIZED_ACTOR_ID = 345811504
+SINGLE_REQUEST_WORKFLOW_PATH = ".github/workflows/general-single-request-normal-token-test.yml"
+SINGLE_REQUEST_APPROVAL_PHRASE = "I_APPROVE_ONE_NORMAL_RESEARCH_REQUEST_8192_TOKENS"
+SINGLE_REQUEST_SOURCE = "open-research-single-forward"
+SINGLE_REQUEST_AUTHORIZED_ACTOR_LOGIN = DIAGNOSTIC_AUTHORIZED_ACTOR_LOGIN
+SINGLE_REQUEST_AUTHORIZED_ACTOR_ID = DIAGNOSTIC_AUTHORIZED_ACTOR_ID
 GIT_COMMAND_TIMEOUT_SECONDS = 30
 _RATE_LIMIT_WORKTREE = None
 
@@ -409,6 +414,95 @@ def read_current_diagnostic_workflow_run():
     return validate_diagnostic_workflow_run(run)
 
 
+def validate_single_request_workflow_run(run, env=None):
+    """Validate the only first-attempt manual workflow allowed one normal-mode request."""
+    env = os.environ if env is None else env
+    if not isinstance(run, dict):
+        raise RuntimeError("GitHub workflow-run metadata is not an object; single request blocked.")
+
+    repository = env.get("GITHUB_REPOSITORY", "")
+    run_id = env.get("GITHUB_RUN_ID", "")
+    if repository != DIAGNOSTIC_REPOSITORY:
+        raise RuntimeError("Single-request validation is restricted to the canonical repository.")
+    if env.get("GITHUB_EVENT_NAME") != "workflow_dispatch":
+        raise RuntimeError("Single-request validation requires workflow_dispatch.")
+    if env.get("GITHUB_REF") != "refs/heads/main":
+        raise RuntimeError("Single-request validation requires the main branch.")
+    if env.get("GITHUB_WORKFLOW_REF") != (
+        DIAGNOSTIC_REPOSITORY + "/" + SINGLE_REQUEST_WORKFLOW_PATH + "@refs/heads/main"
+    ):
+        raise RuntimeError("Single-request validation requires the exact workflow reference.")
+    if (
+        not isinstance(run_id, str)
+        or not run_id.isascii()
+        or not run_id.isdigit()
+        or len(run_id) > 32
+        or str(int(run_id)) != run_id
+        or int(run_id) < 1
+    ):
+        raise RuntimeError("Single-request GitHub workflow run ID is missing or invalid.")
+    if env.get("GITHUB_RUN_ATTEMPT") != "1":
+        raise RuntimeError("Single-request workflow reruns are not permitted.")
+    if env.get("GENERAL_CONFIRM_LIVE_CALLS") != SINGLE_REQUEST_APPROVAL_PHRASE:
+        raise RuntimeError("The exact one-request normal-mode approval is required.")
+
+    expected_sha = env.get("GITHUB_SHA", "")
+    if (
+        not isinstance(expected_sha, str)
+        or len(expected_sha) != 40
+        or any(character not in "0123456789abcdefABCDEF" for character in expected_sha)
+    ):
+        raise RuntimeError("Single-request workflow commit identity is missing or invalid.")
+    if type(run.get("id")) is not int or run.get("id") != int(run_id):
+        raise RuntimeError("GitHub single-request run identity does not match the current runner.")
+    workflow_id = run.get("workflow_id")
+    if type(workflow_id) is not int or workflow_id < 1:
+        raise RuntimeError("GitHub single-request workflow ID is invalid.")
+    if run.get("path") != SINGLE_REQUEST_WORKFLOW_PATH:
+        raise RuntimeError("The run does not belong to the approved single-request workflow.")
+    if run.get("event") != "workflow_dispatch":
+        raise RuntimeError("GitHub did not record the single-request run as workflow_dispatch.")
+    actor = run.get("actor")
+    if (
+        not isinstance(actor, dict)
+        or type(actor.get("id")) is not int
+        or actor.get("id") != SINGLE_REQUEST_AUTHORIZED_ACTOR_ID
+        or actor.get("login") != SINGLE_REQUEST_AUTHORIZED_ACTOR_LOGIN
+    ):
+        raise RuntimeError("Only the explicitly authorized GitHub account may dispatch this workflow.")
+    if run.get("head_branch") != "main":
+        raise RuntimeError("GitHub did not record main as the single-request workflow branch.")
+    if run.get("head_sha") != expected_sha:
+        raise RuntimeError("Single-request workflow commit does not match the current runner commit.")
+    if type(run.get("run_attempt")) is not int or run.get("run_attempt") != 1:
+        raise RuntimeError("Only the first attempt of a single-request workflow run is permitted.")
+    if run.get("status") != "in_progress" or run.get("conclusion") is not None:
+        raise RuntimeError("The single-request workflow run is not currently active.")
+    repository_metadata = run.get("repository")
+    head_repository = run.get("head_repository")
+    if not isinstance(repository_metadata, dict) or repository_metadata.get("full_name") != DIAGNOSTIC_REPOSITORY:
+        raise RuntimeError("GitHub single-request metadata belongs to a different repository.")
+    if not isinstance(head_repository, dict) or head_repository.get("full_name") != DIAGNOSTIC_REPOSITORY:
+        raise RuntimeError("GitHub single-request head repository is not the canonical repository.")
+    return run_id
+
+
+def read_current_single_request_workflow_run():
+    """Read the live Actions run from GitHub; runner environment variables alone are insufficient."""
+    repository = _required_env("GITHUB_REPOSITORY")
+    run_id = _required_env("GITHUB_RUN_ID")
+    api_base = os.environ.get("GITHUB_API_URL", "https://api.github.com").rstrip("/")
+    url = (
+        api_base
+        + "/repos/"
+        + urllib.parse.quote(repository, safe="/")
+        + "/actions/runs/"
+        + urllib.parse.quote(run_id, safe="")
+    )
+    run = _api_request("GET", url)
+    return validate_single_request_workflow_run(run)
+
+
 def _lock_url():
     repo = _required_env("GITHUB_REPOSITORY")
     api_base = os.environ.get("GITHUB_API_URL", "https://api.github.com").rstrip("/")
@@ -530,15 +624,19 @@ def write_remote_rate_limit(state, sha):
     return new_head
 
 
-def reserve_nvidia_request(source, *, diagnostic_exception=False):
-    """Persist one shared request slot; a locked exception is limited to a verified diagnostic run."""
+def reserve_nvidia_request(source, *, diagnostic_exception=False, single_request_exception=False):
+    """Persist one shared request slot with narrowly verified one-request modes."""
     source = " ".join(str(source).split())[:80]
     if not source:
         raise RuntimeError("NVIDIA request source is required; no provider request was sent.")
-    if type(diagnostic_exception) is not bool:
-        raise RuntimeError("Diagnostic exception flag must be an explicit boolean.")
+    if type(diagnostic_exception) is not bool or type(single_request_exception) is not bool:
+        raise RuntimeError("NVIDIA exception flags must be explicit booleans.")
+    if diagnostic_exception and single_request_exception:
+        raise RuntimeError("Diagnostic and normal single-request exceptions cannot be combined.")
     if diagnostic_exception and source != DIAGNOSTIC_REQUEST_SOURCE:
         raise RuntimeError("The diagnostic exception cannot authorize a non-diagnostic request source.")
+    if single_request_exception and source != SINGLE_REQUEST_SOURCE:
+        raise RuntimeError("The normal single-request exception cannot authorize another request source.")
 
     while True:
         # The GitHub API identity is rechecked at the reservation boundary. A
@@ -548,6 +646,8 @@ def reserve_nvidia_request(source, *, diagnostic_exception=False):
             if diagnostic_exception
             else None
         )
+        if single_request_exception:
+            read_current_single_request_workflow_run()
         # Every provider reservation reads the remote lock again. Normal GENERAL
         # and agent requests remain blocked whenever the shared lock is active.
         lock_state, _ = read_remote_lock()
@@ -619,6 +719,56 @@ def send_telegram(message):
         return False
     print("TELEGRAM_NOTIFICATION: delivered")
     return True
+
+
+def command_single_request_check():
+    """Require the exact one-request workflow and an active lock before archive preflight."""
+    try:
+        run_id = read_current_single_request_workflow_run()
+        state, _ = read_remote_lock()
+        if not state["locked"]:
+            raise RuntimeError(
+                "The normal-mode token test requires the global NVIDIA lock to be active before its one-shot unlock."
+            )
+    except Exception as error:
+        print("GENERAL SINGLE-REQUEST TOKEN TEST: BLOCKED")
+        print("Reason:", str(error))
+        return 1
+    print("GENERAL SINGLE-REQUEST TOKEN TEST: AUTHORIZED")
+    print("Workflow run:", run_id)
+    print("Global NVIDIA lock: active; no provider request was sent.")
+    return 0
+
+
+def command_single_request_unlock():
+    """Temporarily clear the lock only for the authorized one-request test workflow."""
+    try:
+        run_id = read_current_single_request_workflow_run()
+        previous, sha = read_remote_lock()
+        if not previous["locked"]:
+            raise RuntimeError(
+                "The global NVIDIA lock was already clear; this one-shot unlock refuses to change that state."
+            )
+        state = make_unlocked_state(previous)
+        commit_sha = write_remote_lock(
+            state, sha, "chore: temporarily unlock for one-request normal token validation"
+        )
+    except Exception as error:
+        print("GENERAL SINGLE-REQUEST TOKEN TEST: TEMPORARY UNLOCK FAILED")
+        print("Reason:", str(error))
+        return 1
+    message = (
+        "🔓 GENERAL — TEMPORARY NVIDIA UNLOCK FOR ONE REQUEST\n"
+        "The approved normal-mode 8192-token validation workflow has temporarily cleared the lock.\n"
+        "This workflow must restore the fail-closed lock after its single forward request.\n"
+        "Workflow run: " + run_id + "\n"
+        "Unlock commit: " + commit_sha
+    )
+    print("GENERAL NVIDIA LOCK: TEMPORARILY CLEARED FOR ONE REQUEST")
+    print("Workflow run:", run_id)
+    print("Commit:", commit_sha)
+    send_telegram(message)
+    return 0
 
 
 def command_diagnostic_check():
@@ -742,6 +892,8 @@ def main():
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("check", help="Fail closed unless the default-branch lock is verified clear")
     subparsers.add_parser("diagnostic-check", help="Verify the exact one-request diagnostic while the global lock stays active")
+    subparsers.add_parser("single-request-check", help="Verify the exact normal-mode one-request workflow while the lock stays active")
+    subparsers.add_parser("single-request-unlock", help="Temporarily unlock only for the exact normal-mode one-request workflow")
     reserve_parser = subparsers.add_parser("reserve", help="Atomically reserve one shared NVIDIA request slot")
     reserve_parser.add_argument("--source", required=True)
     lock_parser = subparsers.add_parser("lock", help="Persist a global lock and notify Telegram")
@@ -753,6 +905,10 @@ def main():
         return command_check()
     if args.command == "diagnostic-check":
         return command_diagnostic_check()
+    if args.command == "single-request-check":
+        return command_single_request_check()
+    if args.command == "single-request-unlock":
+        return command_single_request_unlock()
     if args.command == "reserve":
         reserve_nvidia_request(args.source)
         return 0
