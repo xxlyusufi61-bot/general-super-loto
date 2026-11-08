@@ -74,7 +74,7 @@ class SafeHypothesisExecutionV2Tests(unittest.TestCase):
                 [draw(0), draw(1)],
                 target_date="2024-01-03",
                 number_pool_size=60,
-                execution_spec=score(bool_score({"op": "contains_candidate", "state": state("A")}), "reverse"),
+                execution_spec=score(bool_score({"op": "contains_candidate", "state": state("C")}), "reverse"),
             )
         with self.assertRaisesRegex(ValueError, "strictly earlier"):
             engine.rank_candidates_for_pair(
@@ -233,9 +233,20 @@ class SafeHypothesisExecutionV2Tests(unittest.TestCase):
             deep = {"op": "abs", "arg": deep}
         with self.assertRaisesRegex(ValueError, "depth exceeds"):
             engine.validate_execution_spec(score(deep))
-        large = {"op": "var", "name": "candidate"}
-        for _ in range(engine.MAX_AST_NODES):
-            large = {"op": "add", "left": large, "right": {"op": "const", "value": 1}}
+        level = [{"op": "const", "value": 1} for _ in range(33)]
+        while len(level) > 1:
+            next_level = []
+            for index in range(0, len(level), 2):
+                if index + 1 < len(level):
+                    next_level.append({
+                        "op": "add",
+                        "left": level[index],
+                        "right": level[index + 1],
+                    })
+                else:
+                    next_level.append(level[index])
+            level = next_level
+        large = level[0]
         with self.assertRaisesRegex(ValueError, "too many nodes"):
             engine.validate_execution_spec(score(large))
 
