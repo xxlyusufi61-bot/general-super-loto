@@ -228,6 +228,7 @@ jobs:
             failure_stage="sealed_evaluation"
           fi
           python3 general_research_memory.py record-cycle \
+            --archive general_recovery_archive.json \
             --run-id "$GITHUB_RUN_ID" \
             --run-attempt "$GITHUB_RUN_ATTEMPT" \
             --failure-stage "$failure_stage" \
