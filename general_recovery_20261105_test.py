@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import general_recovery_20261105 as recovery
+import general_autonomous_research as autonomous
 import general_open_research as research
 import general_sealed_evaluation as sealed
 
@@ -68,10 +69,46 @@ class RecoveryArchiveTests(unittest.TestCase):
         self.output = self.root / "recovery.json"
         self.metadata = self.root / "metadata.json"
         self.lock, self.ledger = active_lock_and_ledger(self.root)
+        self.autonomous_state = self.root / "autonomous-state.json"
+        self._write_scheduler_state()
         self.source.write_bytes(self.source_raw)
         self.current.write_bytes(self.current_raw)
 
+    def _write_scheduler_state(self, archive_sha=None, record_count=None, later_target=False, include_event=True):
+        state = autonomous.initial_state()
+        attempt = {
+            "attempt_id": recovery.PREVIOUS_FAILED_ATTEMPT_ID,
+            "target_date": recovery.RECOVERY_TARGET_DATE,
+            "archive_sha256": archive_sha or recovery.EXPECTED_ARCHIVE_SHA256,
+            "archive_record_count": record_count if record_count is not None else recovery.EXPECTED_ARCHIVE_RECORDS,
+            "claimed_at_utc": "2026-11-06T01:33:01.662567+00:00",
+            "github_run_id": recovery.PREVIOUS_FAILED_RUN_ID,
+        }
+        state["attempts"].append(attempt)
+        if include_event:
+            state["events"].append({
+                "attempt_id": recovery.PREVIOUS_FAILED_ATTEMPT_ID,
+                "outcome": "FAILED",
+                "recorded_at_utc": "2026-11-06T01:37:11.337681+00:00",
+                "reason_code": "WORKFLOW_FAILED",
+            })
+        if later_target:
+            state["attempts"].append({
+                "attempt_id": "f" * 64,
+                "target_date": "2026-11-08",
+                "archive_sha256": "e" * 64,
+                "archive_record_count": recovery.EXPECTED_ARCHIVE_RECORDS + 1,
+                "claimed_at_utc": "2026-11-08T01:00:00+00:00",
+                "github_run_id": "42424242425",
+            })
+        autonomous.validate_state(state)
+        self.autonomous_state.write_text(json.dumps(state), encoding="utf-8")
+
     def _run_prepare(self):
+        self._write_scheduler_state(
+            archive_sha=hashlib.sha256(self.source_raw).hexdigest(),
+            record_count=len(self.rows),
+        )
         with (
             patch.object(recovery, "RECOVERY_SOURCE_COMMIT", "d" * 40),
             patch.object(recovery, "EXPECTED_ARCHIVE_SHA256", hashlib.sha256(self.source_raw).hexdigest()),
@@ -83,6 +120,7 @@ class RecoveryArchiveTests(unittest.TestCase):
                 source_archive_path=self.source,
                 current_archive_path=self.current,
                 ledger_path=self.ledger,
+                autonomous_state_path=self.autonomous_state,
                 output_path=self.output,
                 source_commit="d" * 40,
                 metadata_path=self.metadata,
@@ -129,6 +167,10 @@ class RecoveryArchiveTests(unittest.TestCase):
         changed = [dict(row) for row in self.current_rows]
         changed[20] = {"date": changed[20]["date"], "numbers": [1, 2, 3, 4, 5, 6]}
         self.current.write_bytes(archive_bytes(changed))
+        self._write_scheduler_state(
+            archive_sha=hashlib.sha256(self.source_raw).hexdigest(),
+            record_count=len(self.rows),
+        )
         with patch.object(recovery, "RECOVERY_SOURCE_COMMIT", "d" * 40):
             with patch.object(recovery, "EXPECTED_ARCHIVE_SHA256", hashlib.sha256(self.source_raw).hexdigest()):
                 with patch.object(recovery, "EXPECTED_ARCHIVE_BYTES", len(self.source_raw)):
@@ -148,6 +190,10 @@ class RecoveryArchiveTests(unittest.TestCase):
         wrong_rows[-1] = {"date": "2026-11-04", "numbers": wrong_rows[-1]["numbers"]}
         raw = archive_bytes(wrong_rows)
         self.source.write_bytes(raw)
+        self._write_scheduler_state(
+            archive_sha=hashlib.sha256(raw).hexdigest(),
+            record_count=len(wrong_rows),
+        )
         with (
             patch.object(recovery, "RECOVERY_SOURCE_COMMIT", "d" * 40),
             patch.object(recovery, "EXPECTED_ARCHIVE_SHA256", hashlib.sha256(raw).hexdigest()),
@@ -163,6 +209,29 @@ class RecoveryArchiveTests(unittest.TestCase):
                     output_path=self.output,
                     source_commit="d" * 40,
                 )
+
+    def test_rejects_missing_original_failure_event_and_later_scheduler_target(self):
+        self._write_scheduler_state(include_event=False)
+        with self.assertRaisesRegex(recovery.RecoveryError, "expected failed cycle"):
+            recovery.prepare_recovery_archive(
+                source_archive_path=self.source,
+                current_archive_path=self.current,
+                ledger_path=self.ledger,
+                autonomous_state_path=self.autonomous_state,
+                output_path=self.output,
+                source_commit=recovery.RECOVERY_SOURCE_COMMIT,
+            )
+
+        self._write_scheduler_state(later_target=True)
+        with self.assertRaisesRegex(recovery.RecoveryError, "advanced beyond"):
+            recovery.prepare_recovery_archive(
+                source_archive_path=self.source,
+                current_archive_path=self.current,
+                ledger_path=self.ledger,
+                autonomous_state_path=self.autonomous_state,
+                output_path=self.output,
+                source_commit=recovery.RECOVERY_SOURCE_COMMIT,
+            )
 
     def test_model_discovery_messages_exclude_fixed_target_and_later_draws(self):
         self.output.write_bytes(self.source_raw)
