@@ -602,6 +602,8 @@ def create_claim(
         "spec_sha256": candidate["spec_sha256"],
         "reverse_hypothesis_id": candidate["reverse_hypothesis_id"],
         "reverse_spec_sha256": candidate["reverse_spec_sha256"],
+        "execution_spec_dsl_version": candidate["execution_spec_dsl_version"],
+        "reverse_execution_spec_dsl_version": candidate["reverse_execution_spec_dsl_version"],
         "engine_version": ENGINE_VERSION,
     }
     claim_id = _sha256_bytes(_canonical_json(claim_material))
@@ -630,8 +632,10 @@ def create_claim(
         "archive_snapshot_path": str(snapshot_path).replace("\\", "/"),
         "hypothesis_id": candidate["hypothesis_id"],
         "spec_sha256": candidate["spec_sha256"],
+        "execution_spec_dsl_version": candidate["execution_spec_dsl_version"],
         "reverse_hypothesis_id": candidate["reverse_hypothesis_id"],
         "reverse_spec_sha256": candidate["reverse_spec_sha256"],
+        "reverse_execution_spec_dsl_version": candidate["reverse_execution_spec_dsl_version"],
         "regime": "R60",
         "number_pool_size": 60,
         "discovery_count": split["discovery_count"],
@@ -661,6 +665,8 @@ def create_claim(
         "archive_sha256": archive["archive_sha256"],
         "hypothesis_id": candidate["hypothesis_id"],
         "spec_sha256": candidate["spec_sha256"],
+        "execution_spec_dsl_version": candidate["execution_spec_dsl_version"],
+        "reverse_execution_spec_dsl_version": candidate["reverse_execution_spec_dsl_version"],
         "validation_start_date": validation[0]["date"],
         "validation_end_date": validation[-1]["date"],
         "validation_draw_count": len(validation),
@@ -1061,6 +1067,10 @@ def evaluate_claim(
         raise SealedEvaluationError("Frozen reverse hypothesis changed after the one-shot claim.")
     if candidate["reverse_spec_sha256"] != entry.get("reverse_spec_sha256"):
         raise SealedEvaluationError("Frozen reverse execution specification changed after the claim.")
+    if entry.get("execution_spec_dsl_version", 1) != candidate["execution_spec_dsl_version"]:
+        raise SealedEvaluationError("Forward execution DSL version changed after the one-shot claim.")
+    if entry.get("reverse_execution_spec_dsl_version", 1) != candidate["reverse_execution_spec_dsl_version"]:
+        raise SealedEvaluationError("Reverse execution DSL version changed after the one-shot claim.")
     discovery = r60["discovery_rows"]
     validation = r60["validation_rows"]
     reverse_validation = r60["reverse_validation_rows"]
@@ -1171,6 +1181,10 @@ def evaluate_claim(
         "status": "EVALUATED_EXPLORATORY_FIXED_SPEC",
         "orchestrator_version": VERSION,
         "engine_version": ENGINE_VERSION,
+        "execution_dsl_versions": {
+            "forward": candidate["execution_spec_dsl_version"],
+            "reverse": candidate["reverse_execution_spec_dsl_version"],
+        },
         "claim_id": claim_id,
         "hypothesis_id": candidate["hypothesis_id"],
         "spec_sha256": candidate["spec_sha256"],
@@ -1199,8 +1213,10 @@ def evaluate_claim(
             "rule": "Freeze the first eligible forward/both proposal and the first eligible reverse/both proposal independently; one exact matching DSL spec for each direction.",
             "forward_hypothesis_id": candidate["hypothesis_id"],
             "forward_spec_sha256": candidate["spec_sha256"],
+            "forward_execution_spec_dsl_version": candidate["execution_spec_dsl_version"],
             "reverse_hypothesis_id": candidate["reverse_hypothesis_id"],
             "reverse_spec_sha256": candidate["reverse_spec_sha256"],
+            "reverse_execution_spec_dsl_version": candidate["reverse_execution_spec_dsl_version"],
             "evaluated_directional_specification_count": 2 if candidate["hypothesis_id"] != candidate["reverse_hypothesis_id"] else 1,
             "selection_used_validation_scores": False,
             "automatic_candidate_selection": False,
