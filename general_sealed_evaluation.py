@@ -1040,44 +1040,71 @@ def _evaluate_reverse_validation_with_frozen_spec(
     hypothesis_id: str,
     spec_sha256: str,
     execution_spec: dict[str, Any],
+    canonical_history: list[dict[str, Any]] | None = None,
+    excluded_dates: set[str] | list[str] | tuple[str, ...] = (),
     min_train_draws: int = DEFAULT_MIN_TRAIN_DRAWS,
 ) -> dict[str, Any]:
-    """Score the oldest sealed interval against strictly later historical rows only."""
+    """Score reverse holdout targets using exact canonical B/C neighbours for DSL v2."""
     if len(reverse_validation) < MIN_VALIDATION_DRAWS:
         raise SealedEvaluationError("Reverse holdout is too short.")
     target_day = date.fromisoformat(isolated_target_date)
+    canonical = sorted(
+        canonical_history if canonical_history is not None else full_pre_target_history,
+        key=lambda row: row["date"],
+    )
     history_by_date = {row["date"]: row for row in full_pre_target_history}
+    canonical_by_date = {row["date"]: row for row in canonical}
+    blocked = set(excluded_dates)
     if len(history_by_date) != len(full_pre_target_history):
         raise SealedEvaluationError("Reverse evaluation history has duplicate dates.")
-    if any(
-        date.fromisoformat(row["date"]) >= target_day
-        for row in full_pre_target_history + reverse_validation
-    ):
-        raise SealedEvaluationError("Reverse evaluation includes the current target or a later draw.")
+    if any(date.fromisoformat(row["date"]) >= target_day for row in canonical):
+        raise SealedEvaluationError("Reverse canonical history includes the current target or a later draw.")
+    if not blocked.issubset(canonical_by_date):
+        raise SealedEvaluationError("Previously consumed reverse context dates are absent from canonical history.")
+    if set(history_by_date).intersection(blocked):
+        raise SealedEvaluationError("Previously consumed rows entered reverse evaluation history.")
+
     details = []
+    skipped_consumed_context = skipped_missing_context = skipped_insufficient_history = 0
     for target in sorted(reverse_validation, key=lambda row: row["date"], reverse=True):
         target_date = target["date"]
-        later_history = [
-            row for day, row in sorted(history_by_date.items())
-            if day > target_date
-        ][:MAX_HISTORY_DRAWS]
+        later_available = [row for row in full_pre_target_history if row["date"] > target_date]
+        if len(later_available) < min_train_draws:
+            skipped_insufficient_history += 1
+            continue
+
         if execution_spec_version(execution_spec) == 2:
-            if len(later_history) < min_train_draws:
-                raise SealedEvaluationError("Reverse DSL v2 target has insufficient later training rows.")
+            later_canonical = [row for row in canonical if row["date"] > target_date]
+            if len(later_canonical) < 2:
+                skipped_missing_context += 1
+                continue
+            pair = later_canonical[:2]
+            if any(row["date"] in blocked for row in pair):
+                skipped_consumed_context += 1
+                continue
+            if any(history_by_date.get(row["date"]) != row for row in pair):
+                skipped_consumed_context += 1
+                continue
+            if later_available[:2] != pair:
+                skipped_missing_context += 1
+                continue
             ranking = execution_v2.rank_candidates_for_pair(
-                later_history[:2],
+                pair,
                 target_date=target_date,
                 number_pool_size=60,
                 execution_spec=execution_spec,
+                canonical_history=later_canonical,
+                excluded_dates=blocked,
             )
         else:
             ranking = rank_candidates_retrospective(
-                later_history,
+                later_available,
                 target_date=target_date,
                 number_pool_size=60,
                 execution_spec=execution_spec,
                 min_train_draws=min_train_draws,
             )
+
         target_numbers = set(target["numbers"])
         matched_positions = [
             position
@@ -1089,40 +1116,52 @@ def _evaluate_reverse_validation_with_frozen_spec(
             "direction": "reverse_retrospective",
             "hypothesis_id": hypothesis_id,
             "spec_sha256": spec_sha256,
-            "later_training_draw_count": len(later_history),
+            "later_training_draw_count": len(later_available),
             "hit_column_positions_1_to_6": matched_positions,
             "hit_count": len(matched_positions),
             "target_numbers_reported": False,
             "predicted_number_values_reported": False,
         })
+
     hit_distribution = {
         str(hits): sum(row["hit_count"] == hits for row in details)
         for hits in range(7)
     }
+    evaluated_count = len(details)
+    mean_hits = (
+        round(sum(row["hit_count"] for row in details) / evaluated_count, 6)
+        if evaluated_count else None
+    )
     return {
-        "status": "EVALUATED_RETROSPECTIVE_ONLY",
+        "status": "EVALUATED_RETROSPECTIVE_ONLY" if evaluated_count else "SKIPPED_NO_ELIGIBLE_REVERSE_TARGETS",
         "direction": "reverse_retrospective",
         "predictive_evidence": False,
         "evaluation_order": "newest_to_oldest",
         "hypothesis_id": hypothesis_id,
         "spec_sha256": spec_sha256,
-        "test_draw_count": len(details),
-        "first_test_date": details[0]["test_date"],
-        "last_test_date": details[-1]["test_date"],
-        "mean_hits_out_of_6": round(
-            sum(row["hit_count"] for row in details) / len(details), 6
-        ),
+        "test_draw_count": evaluated_count,
+        "eligible_draw_count": evaluated_count,
+        "skipped_draw_count": len(reverse_validation) - evaluated_count,
+        "skipped_consumed_context_draw_count": skipped_consumed_context,
+        "skipped_missing_context_draw_count": skipped_missing_context,
+        "skipped_insufficient_later_history_draw_count": skipped_insufficient_history,
+        "first_test_date": details[0]["test_date"] if details else None,
+        "last_test_date": details[-1]["test_date"] if details else None,
+        "mean_hits_out_of_6": mean_hits,
         "uniform_random_expected_hits_out_of_6": 0.6,
         "hit_distribution": hit_distribution,
         "per_draw": details,
         "target_number_sets_reported": False,
         "predicted_number_values_reported": False,
+        "previously_consumed_rows_used_as_context": False,
+        "canonical_adjacency_enforced": execution_spec_version(execution_spec) == 2,
         "interpretation": (
-            "This direction-specific fixed-specification test uses only draws later than each test date. "
-            "Because it uses later historical information, it is retrospective stress testing only and "
-            "must never be interpreted as evidence of forward prediction."
+            "DSL v2 reverse targets use only the two immediately following canonical archive rows as B/C. "
+            "Targets whose adjacent context includes a previously consumed holdout are skipped, never bridged. "
+            "Reverse results remain retrospective-only."
         ),
     }
+
 
 
 def _evaluate_forward_validation_with_details(
@@ -1132,6 +1171,8 @@ def _evaluate_forward_validation_with_details(
     hypothesis_id: str,
     spec_sha256: str,
     execution_spec: dict[str, Any],
+    canonical_history: list[dict[str, Any]] | None = None,
+    excluded_dates: set[str] | list[str] | tuple[str, ...] = (),
 ) -> list[dict[str, Any]]:
     """Return per-draw column hits while reusing only history before each forward target."""
     details = []
@@ -1140,11 +1181,18 @@ def _evaluate_forward_validation_with_details(
         if len(training) < DEFAULT_MIN_TRAIN_DRAWS:
             raise SealedEvaluationError("Forward per-draw report fell below the training minimum.")
         if execution_spec_version(execution_spec) == 2:
+            canonical_before = None
+            if canonical_history is not None:
+                canonical_before = [
+                    row for row in canonical_history if row["date"] < target["date"]
+                ]
             ranking = execution_v2.rank_candidates_for_pair(
                 training[-2:],
                 target_date=target["date"],
                 number_pool_size=60,
                 execution_spec=execution_spec,
+                canonical_history=canonical_before,
+                excluded_dates=excluded_dates,
             )
         else:
             ranking = rank_candidates(
