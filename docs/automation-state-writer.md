@@ -56,8 +56,8 @@ comparison snapshots only and are not runtime inputs.
 This PR aligns reader and runtime-audit reporting with that active authority
 model. It does not perform the initial migration or publish runtime-state
 changes. Writer regression tests use fake transport; state-branch integrity
-verification is read-only. This PR does not dispatch workflows or make NVIDIA
-requests.
+verification is read-only. This PR's CI runs automated checks only; it does
+not launch an operational research cycle or make NVIDIA requests.
 
 
 ## Workflow integration map
