@@ -48,6 +48,12 @@
       "outcome": "FAILED",
       "recorded_at_utc": "2026-11-06T01:37:11.337681+00:00",
       "reason_code": "WORKFLOW_FAILED"
+    },
+    {
+      "attempt_id": "3e3d07fcb9527c2c7fd8c93a60d42ad783f44cc1f89a5c1af90785337d07a3b2",
+      "outcome": "NO_ELIGIBLE_CANDIDATE",
+      "recorded_at_utc": "2026-11-08T19:12:56.538516+00:00",
+      "reason_code": "NO_FROZEN_DIRECTIONAL_CANDIDATE"
     }
   ]
 }
