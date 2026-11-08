@@ -78,6 +78,67 @@ class SealedEvaluationDSLv2Tests(unittest.TestCase):
         self.assertTrue(candidate["spec_sha256"])
         self.assertTrue(candidate["reverse_spec_sha256"])
 
+    def test_full_sealed_v2_walk_forward_and_reverse_evaluation_keep_target_hidden(self):
+        from datetime import date, timedelta
+
+        rows = []
+        start = date(2020, 8, 2)
+        for index in range(80):
+            day = (start + timedelta(days=2 * index)).isoformat()
+            base = (index * 7) % 60 + 1
+            numbers = sorted({((base + offset * 11 - 1) % 60) + 1 for offset in range(6)})
+            rows.append({"date": day, "numbers": numbers})
+        rows.append({
+            "date": "2021-01-10",
+            "numbers": sorted({((5 + offset * 11 - 1) % 60) + 1 for offset in range(6)}),
+        })
+        rows.sort(key=lambda row: row["date"])
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            archive = root / "archive.json"
+            ledger = root / "ledger.json"
+            output = root / "report.json"
+            write_json(archive, {"draws": rows})
+            proposals, specs = self._write_documents(root)
+            claim = __import__("general_sealed_evaluation").create_claim(
+                archive,
+                ledger,
+                proposals,
+                specs,
+                snapshot_directory=root / "snapshots",
+            )
+            self.assertTrue(claim["claim_created"])
+            self.assertEqual(claim["execution_spec_dsl_version"], 2)
+            self.assertEqual(claim["reverse_execution_spec_dsl_version"], 2)
+
+            import general_sealed_evaluation as sealed
+            result = sealed.evaluate_claim(
+                claim["claim_id"], ledger, proposals, specs, output_path=output
+            )
+            self.assertEqual(result["status"], "EVALUATED_EXPLORATORY_FIXED_SPEC")
+            report = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(report["execution_dsl_versions"], {"forward": 2, "reverse": 2})
+            self.assertFalse(report["current_isolated_target_included"])
+            self.assertFalse(report["current_target_numbers_exposed"])
+            self.assertFalse(report["target_or_future_rows_used"])
+            self.assertEqual(report["forward_walk_forward"]["execution_dsl_version"], 2)
+            self.assertEqual(report["time_ordered_cross_validation"]["execution_dsl_version"], 2)
+            reverse_holdout = report["reverse_discovered_candidate_holdout"]
+            self.assertFalse(reverse_holdout["predictive_evidence"])
+            self.assertEqual(reverse_holdout["test_draw_count"], 20)
+            reverse_full = report["reverse_retrospective_full_history_diagnostic"]
+            self.assertFalse(reverse_full["predictive_evidence"])
+            self.assertEqual(reverse_full["hypothesis_id"], "HYP-002")
+            self.assertEqual(reverse_full["diagnostic_spec_direction"], "reverse")
+            self.assertEqual(reverse_full["evaluated_draw_count"], 40)
+            self.assertTrue(all(
+                row["spec_sha256"] == report["candidate_selection"]["reverse_spec_sha256"]
+                for row in reverse_full["per_draw"]
+            ))
+            self.assertNotIn("reverse_retrospective_stress_test_of_forward_candidate", report)
+            self.assertNotIn('"numbers":', json.dumps(report))
+
     def test_sealed_freeze_rejects_forward_proposal_with_reverse_spec(self):
         with tempfile.TemporaryDirectory() as temp:
             proposals, specs = self._write_documents(Path(temp), forward_direction="reverse")
