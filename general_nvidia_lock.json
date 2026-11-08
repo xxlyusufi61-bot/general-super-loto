@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
-  "locked": false,
-  "reason": "",
-  "locked_at": null,
-  "locked_by": null,
-  "last_lock_reason": "Autonomous NVIDIA request failed or its response could not be validated; no automatic retry is allowed.",
+  "locked": true,
+  "reason": "One-time 2026-11-05 recovery request failed or its response could not be validated; no automatic retry is allowed.",
+  "locked_at": "2026-11-08T01:21:09.001784+00:00",
+  "locked_by": "xxlyusufi61-bot | https://github.com/xxlyusufi61-bot/general-super-loto/actions/runs/42433603601",
+  "last_lock_reason": "One-time 2026-11-05 recovery request failed or its response could not be validated; no automatic retry is allowed.",
   "last_unlocked_at": "2026-11-06T08:06:01.345347+00:00",
-  "updated_at": "2026-11-06T08:06:01.345347+00:00"
+  "updated_at": "2026-11-08T01:21:09.001784+00:00"
 }
