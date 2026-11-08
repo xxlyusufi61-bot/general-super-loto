@@ -6,6 +6,7 @@ from pathlib import Path
 from general_sealed_evaluation import (
     SealedEvaluationError,
     _select_one_frozen_candidate,
+    _evaluate_full_reverse_history,
 )
 
 
@@ -63,6 +64,33 @@ class SealedEvaluationDSLv2Tests(unittest.TestCase):
         write_json(proposals_path, proposals)
         write_json(specs_path, specs)
         return proposals_path, specs_path
+
+    def test_full_reverse_diagnostic_skips_consumed_neighbours_instead_of_bridging(self):
+        from datetime import date, timedelta
+
+        canonical = []
+        start = date(2020, 8, 2)
+        for index in range(6):
+            day = (start + timedelta(days=index)).isoformat()
+            base = index * 7 % 60 + 1
+            numbers = sorted({((base + offset * 11 - 1) % 60) + 1 for offset in range(6)})
+            canonical.append({"date": day, "numbers": numbers})
+        available = [canonical[0], canonical[2], canonical[3], canonical[4], canonical[5]]
+        report = _evaluate_full_reverse_history(
+            available,
+            cutoff_date="2020-08-09",
+            number_pool_size=60,
+            execution_spec=directional_spec("reverse", "C"),
+            min_train_draws=2,
+            canonical_history=canonical,
+            excluded_dates={canonical[1]["date"]},
+        )
+        self.assertEqual(report["status"], "EVALUATED_RETROSPECTIVE_ONLY")
+        self.assertTrue(report["canonical_adjacency_enforced"])
+        self.assertFalse(report["previously_consumed_rows_used_as_context"])
+        self.assertEqual(report["skipped_consumed_context_draw_count"], 1)
+        self.assertEqual(report["evaluated_draw_count"], 2)
+        self.assertTrue(all(row["test_date"] != canonical[0]["date"] for row in report["per_draw"]))
 
     def test_sealed_freeze_requires_matching_directional_v2_specs(self):
         with tempfile.TemporaryDirectory() as temp:
