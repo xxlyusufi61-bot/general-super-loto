@@ -24,19 +24,15 @@ The root `score_expression` must return a number. Supported types are Number, Bo
 - `state_ref`: reads one permitted slot.
 - `set_union`, `set_intersection`, `set_difference`, `set_symmetric_difference`: bounded set operations over DrawState values.
 - `contains_candidate`, `cardinality`: query a DrawState using the current candidate or return its size.
-- Numeric and boolean operations: `const`, `var(candidate)`, `abs`, `bool_to_number`, arithmetic, comparisons, `and`, `or`, and `not`.
+- Numeric and boolean operations: `const`, `var(candidate)`, `abs`, `bool_to_number`, arithmetic except modulo, comparisons, `and`, `or`, and `not`.
 
 All operators require exact key sets and statically compatible operand types. Candidate ranking is deterministic: descending score, then ascending number for ties.
 
-## Explicit MOD5 views
+## MOD5 remains undefined
 
-`mod5_project` requires an explicit representation. The integer remainder convention is 0 through 4.
+DSL v2 provides no built-in MOD5 projection, residue representation, scalar modulo operator, residue ordering, or aggregation. It does not select a remainder convention, position convention, or residue encoding on behalf of a hypothesis.
 
-- `residue_set`: unique residues, sorted ascending.
-- `residue_counts`: a fixed five-element vector; index 0 through 4 stores the multiplicity of that residue.
-- `sorted_residues`: a fixed six-element sequence obtained by mapping the source draw's ascending numbers to residues. The mapped residues preserve source-number order and are not re-sorted.
-
-`residue_contains` can inspect any ResidueView. `residue_frequency` is accepted only for `residue_counts`. `residue_at` is accepted only for `sorted_residues`, with index 0 through 5. No representation is inferred or silently selected.
+A MOD5-related proposal must state its exact mathematical definition independently. If that definition cannot be represented faithfully by the existing DSL nodes without adding a default or approximating its meaning, it remains proposal-only and its execution specification must be omitted. Do not work around this restriction by encoding an unstated convention in constants or expression structure.
 
 ## T and project notation
 
