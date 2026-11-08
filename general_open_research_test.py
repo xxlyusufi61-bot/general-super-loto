@@ -12,7 +12,10 @@ from unittest.mock import MagicMock, patch
 import general_open_research as research
 from general_data_guard import DataGuardError
 import general_sealed_evaluation as sealed
-from general_live_consent import CONFIRMATION_PHRASE
+from general_live_consent import (
+    CONFIRMATION_PHRASE,
+    SINGLE_REQUEST_CONFIRMATION_PHRASE,
+)
 
 
 def make_directional_report(direction):
@@ -508,6 +511,67 @@ class NvidiaUsageObservationTests(unittest.TestCase):
             ):
                 research.call_model([{"role": "user", "content": "test"}])
             client_factory.assert_not_called()
+
+    def test_normal_mode_single_request_uses_default_8192_budget_and_blocks_a_second_call(self):
+        env = self.live_env() | {
+            "GENERAL_SINGLE_REQUEST_MODE": "true",
+            "GENERAL_CONFIRM_LIVE_CALLS": SINGLE_REQUEST_CONFIRMATION_PHRASE,
+        }
+        client = self.client_with_response(self.sdk_response("single request response"))
+        with patch.dict(os.environ, env, clear=True), patch.object(
+            research, "reserve_nvidia_request"
+        ) as reserve, patch(
+            "general_open_research._create_nvidia_client", return_value=client
+        ) as client_factory:
+            with self.assertRaisesRegex(RuntimeError, "only one forward request"):
+                research.call_model(
+                    [{"role": "user", "content": "reverse must be blocked"}],
+                    request_label="reverse",
+                )
+            client_factory.assert_not_called()
+
+            answer = research.call_model(
+                [{"role": "user", "content": "normal-mode token test"}],
+                request_label="forward",
+            )
+            self.assertEqual(answer, "single request response")
+            with self.assertRaisesRegex(RuntimeError, "one-request cap reached"):
+                research.call_model(
+                    [{"role": "user", "content": "second request must be blocked"}],
+                    request_label="forward",
+                )
+
+        self.assertEqual(client_factory.call_count, 1)
+        client.chat.completions.create.assert_called_once()
+        sent = client.chat.completions.create.call_args.kwargs
+        self.assertEqual(sent["max_tokens"], research.DEFAULT_MAX_COMPLETION_TOKENS)
+        self.assertEqual(sent["max_tokens"], 8192)
+        self.assertIs(sent["stream"], False)
+        self.assertEqual(client_factory.call_args.args[1], research.DEFAULT_REQUEST_TIMEOUT_SECONDS)
+        client.close.assert_called_once()
+        reserve.assert_called_once_with(
+            "open-research-single-forward",
+            single_request_exception=True,
+        )
+        self.assertEqual(research._NVIDIA_REQUESTS_ATTEMPTED, 1)
+        self.assertEqual(research._NVIDIA_REQUEST_LABELS_ATTEMPTED, {"forward"})
+
+    def test_single_request_mode_rejects_diagnostic_mode_combination_before_network(self):
+        env = self.live_env() | {
+            "GENERAL_SINGLE_REQUEST_MODE": "true",
+            "GENERAL_DIAGNOSTIC_MODE": "true",
+            "GENERAL_CONFIRM_LIVE_CALLS": SINGLE_REQUEST_CONFIRMATION_PHRASE,
+        }
+        with patch.dict(os.environ, env, clear=True), patch(
+            "general_open_research._create_nvidia_client"
+        ) as client_factory:
+            with self.assertRaisesRegex(RuntimeError, "cannot be combined"):
+                research.call_model(
+                    [{"role": "user", "content": "must not be sent"}],
+                    request_label="forward",
+                )
+            client_factory.assert_not_called()
+        self.assertEqual(research._NVIDIA_REQUESTS_ATTEMPTED, 0)
 
     def test_two_directional_sdk_requests_are_nonstreaming_and_ordered(self):
         env = self.live_env()
