@@ -1315,6 +1315,12 @@ def evaluate_claim(
         archive_sha256=archive["archive_sha256"],
         used_validation_dates=set(recorded_prior_dates),
     )
+    replay_canonical_pre_target = [
+        row for row in archive["rows"] if row["date"] < split["target_date"]
+    ]
+    _validate_dsl_v2_directional_context(
+        candidate, split, replay_canonical_pre_target, set(recorded_prior_dates)
+    )
     if split["target_date"] != entry["target_date"]:
         raise SealedEvaluationError("Snapshot target cutoff does not match the ledger.")
     r60 = split["regimes"]["R60"]
@@ -1335,6 +1341,9 @@ def evaluate_claim(
     discovery = r60["discovery_rows"]
     validation = r60["validation_rows"]
     reverse_validation = r60["reverse_validation_rows"]
+    canonical_pre_target_history = [
+        row for row in archive["rows"] if row["date"] < split["target_date"]
+    ]
     spec = candidate["execution_spec"]
     reverse_spec = candidate["reverse_execution_spec"]
     if (
@@ -1352,6 +1361,8 @@ def evaluate_claim(
             number_pool_size=60,
             execution_spec=spec,
             min_train_draws=DEFAULT_MIN_TRAIN_DRAWS,
+            canonical_history=canonical_pre_target_history,
+            excluded_dates=set(recorded_prior_dates),
         )
     else:
         forward = evaluate_holdout(
@@ -1368,6 +1379,8 @@ def evaluate_claim(
         hypothesis_id=candidate["hypothesis_id"],
         spec_sha256=candidate["spec_sha256"],
         execution_spec=spec,
+        canonical_history=canonical_pre_target_history,
+        excluded_dates=set(recorded_prior_dates),
     )
     detail_mean = round(
         sum(item["hit_count"] for item in forward_details) / len(forward_details), 6
@@ -1388,6 +1401,8 @@ def evaluate_claim(
             execution_spec=spec,
             folds=folds,
             min_train_draws=DEFAULT_MIN_TRAIN_DRAWS,
+            canonical_history=canonical_pre_target_history,
+            excluded_dates=set(recorded_prior_dates),
         )
     else:
         cv = evaluate_time_ordered_cv(
@@ -1410,9 +1425,24 @@ def evaluate_claim(
         hypothesis_id=candidate["reverse_hypothesis_id"],
         spec_sha256=candidate["reverse_spec_sha256"],
         execution_spec=reverse_spec,
+        canonical_history=canonical_pre_target_history,
+        excluded_dates=set(recorded_prior_dates),
         min_train_draws=DEFAULT_MIN_TRAIN_DRAWS,
     )
-    reverse_cv = _summarize_blocked_reverse_cv(reverse_candidate_holdout)
+    if len(reverse_candidate_holdout["per_draw"]) >= MIN_VALIDATION_DRAWS:
+        reverse_cv = _summarize_blocked_reverse_cv(reverse_candidate_holdout)
+    else:
+        reverse_cv = {
+            "status": "SKIPPED_INSUFFICIENT_ADJACENT_CONTEXT",
+            "direction": "reverse_retrospective",
+            "predictive_evidence": False,
+            "folds": 0,
+            "validation_draw_count": len(reverse_candidate_holdout["per_draw"]),
+            "mean_hits_out_of_6": None,
+            "independent_confirmation": False,
+            "automatic_candidate_selection": False,
+            "reason": "Fewer than two reverse holdout targets retained their exact, unconsumed canonical B/C neighbours.",
+        }
     reverse_diagnostic_spec = spec if execution_spec_version(spec) == 1 else reverse_spec
     reverse_diagnostic_id = candidate["hypothesis_id"] if execution_spec_version(spec) == 1 else candidate["reverse_hypothesis_id"]
     reverse_diagnostic_sha = candidate["spec_sha256"] if execution_spec_version(spec) == 1 else candidate["reverse_spec_sha256"]
@@ -1422,6 +1452,8 @@ def evaluate_claim(
         number_pool_size=60,
         execution_spec=reverse_diagnostic_spec,
         min_train_draws=DEFAULT_MIN_TRAIN_DRAWS,
+        canonical_history=canonical_pre_target_history,
+        excluded_dates=set(recorded_prior_dates),
     )
     reverse["hypothesis_id"] = reverse_diagnostic_id
     reverse["spec_sha256"] = reverse_diagnostic_sha
@@ -1496,6 +1528,7 @@ def evaluate_claim(
             "Its per-draw report records the target date, selected safe-catalog ID, hit count, and matched top-six column positions 1-6, but no target or predicted number values.",
             "The full-history adaptive diagnostic uses repeated overlapping selection windows; results are exploratory and are not independent confirmations.",
             "The reverse-discovered candidate report includes per-date hit count and matched top-six column positions, but excludes actual target numbers and predicted number values.",
+            "The DSL v2 full-history reverse diagnostic skips targets whose exact next two canonical states include previously consumed holdout dates; it never bridges the chronology gap.",
             "No number-level target outcomes or complete candidate rankings are included in this report.",
         ],
         "method_registry_modified": False,
