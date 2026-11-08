@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
-  "locked": true,
-  "reason": "The one-request normal-mode 8192-token validation workflow ended; restore the fail-closed global lock.",
-  "locked_at": "2026-11-08T02:17:30.990097+00:00",
-  "locked_by": "xxlyusufi61-bot | https://github.com/xxlyusufi61-bot/general-super-loto/actions/runs/42437765438",
+  "locked": false,
+  "reason": "",
+  "locked_at": null,
+  "locked_by": null,
   "last_lock_reason": "The one-request normal-mode 8192-token validation workflow ended; restore the fail-closed global lock.",
-  "last_unlocked_at": "2026-11-08T02:16:31.411406+00:00",
-  "updated_at": "2026-11-08T02:17:30.990097+00:00"
+  "last_unlocked_at": "2026-11-08T17:50:56.630764+00:00",
+  "updated_at": "2026-11-08T17:50:56.630764+00:00"
 }
