@@ -252,7 +252,7 @@ class OpenResearchIsolationTests(unittest.TestCase):
             self.assertIn("set_intersection", system)
             self.assertIn("set_difference", system)
             self.assertIn("set_symmetric_difference", system)
-            self.assertIn("no built-in mod5 projection", system)
+            self.assertIn("no modulo operator or built-in mod5 projection is provided", system)
             self.assertIn("no built-in residue convention", system)
             self.assertIn("proposal may remain text-only", system)
             self.assertNotIn("mod5_project", system)
