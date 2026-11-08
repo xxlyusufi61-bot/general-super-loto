@@ -17,9 +17,11 @@ archive is fixed at 981 rows, from 2020-08-02 through 2026-11-05, with SHA-256:
 
 `5319d759df2ab34bf15e8eed66fc85826b9628f7297daa39b6fd34803a40d452`
 
-Before research, the helper checks the exact source commit, byte length,
-content hash, archive row count, target date, Data Guard validation, and equality
-of the historical prefix against the current canonical archive. Later rows in
+Before research, the helper verifies the original failed scheduler attempt
+(run `42144488585` and its fixed attempt ID), confirms that the ordinary scheduler
+has not advanced beyond 2026-11-05, and checks the exact source commit, byte
+length, content hash, archive row count, target date, Data Guard validation, and
+equality of the historical prefix against the current canonical archive. Later rows in
 the current archive are allowed, but they are never passed to the recovery
 research runner. If the historical prefix has changed, the workflow stops.
 
