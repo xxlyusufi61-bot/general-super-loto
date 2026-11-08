@@ -18,7 +18,14 @@ from pathlib import Path
 from typing import Any
 
 import general_data_guard as guard
+import general_hypothesis_execution_v2 as execution_v2
 from general_bidirectional_evaluation import evaluate_bidirectional_full_history
+from general_execution_spec_dispatch import (
+    execution_spec_direction,
+    execution_spec_version,
+    run_synthetic_contract_tests as run_any_synthetic_contract_tests,
+    validate_execution_spec as validate_any_execution_spec,
+)
 from general_hypothesis_execution import (
     VERSION as ENGINE_VERSION,
     MAX_HISTORY_DRAWS,
@@ -490,21 +497,25 @@ def _select_one_frozen_candidate(
     if set(specs_by_id) != required_ids:
         return None
 
-    def freeze(item: dict[str, Any]) -> dict[str, Any]:
+    def freeze(item: dict[str, Any], expected_direction: str) -> dict[str, Any]:
         if item.get("dsl_validated") is not True or item.get("synthetic_tests_passed") is not True:
             raise SealedEvaluationError("A directional specification did not pass DSL/synthetic validation.")
-        spec = validate_execution_spec(item.get("execution_spec"))
-        synthetic = run_synthetic_contract_tests(spec)
+        spec = validate_any_execution_spec(item.get("execution_spec"))
+        spec_direction = execution_spec_direction(spec)
+        if spec_direction is not None and spec_direction != expected_direction:
+            raise SealedEvaluationError("DSL v2 direction does not match its isolated discovery direction.")
+        synthetic = run_any_synthetic_contract_tests(spec)
         if synthetic.get("status") != "PASS" or synthetic.get("real_archive_used") is not False:
             raise SealedEvaluationError("A directional specification failed its synthetic-only contract test.")
         return {
             "execution_spec": spec,
+            "dsl_version": execution_spec_version(spec),
             "spec_sha256": _sha256_bytes(_canonical_json(spec)),
             "synthetic_test_summary": synthetic,
         }
 
-    forward = freeze(specs_by_id[forward_id])
-    reverse = freeze(specs_by_id[reverse_id])
+    forward = freeze(specs_by_id[forward_id], "forward")
+    reverse = freeze(specs_by_id[reverse_id], "reverse")
     return {
         "hypothesis_id": forward_id,
         "discovery_direction": forward_proposal["discovery_direction"],
@@ -513,6 +524,8 @@ def _select_one_frozen_candidate(
         "reverse_discovery_direction": reverse_proposal["discovery_direction"],
         "reverse_execution_spec": reverse["execution_spec"],
         "reverse_spec_sha256": reverse["spec_sha256"],
+        "execution_spec_dsl_version": forward["dsl_version"],
+        "reverse_execution_spec_dsl_version": reverse["dsl_version"],
         "reverse_synthetic_test_summary": reverse["synthetic_test_summary"],
     }
 
@@ -694,15 +707,26 @@ def _evaluate_full_reverse_history(
 
     while offset < eligible_count:
         batch_size = min(MAX_VALIDATION_DRAWS, eligible_count - offset)
-        batch = evaluate_reverse_retrospective_stress(
-            pre_target_history,
-            cutoff_date=cutoff_date,
-            number_pool_size=number_pool_size,
-            execution_spec=execution_spec,
-            test_draw_count=batch_size,
-            min_train_draws=min_train_draws,
-            skip_recent_test_draws=offset,
-        )
+        if execution_spec_version(execution_spec) == 2:
+            batch = execution_v2.evaluate_reverse_retrospective_stress(
+                pre_target_history,
+                cutoff_date=cutoff_date,
+                number_pool_size=number_pool_size,
+                execution_spec=execution_spec,
+                test_draw_count=batch_size,
+                min_train_draws=min_train_draws,
+                skip_recent_test_draws=offset,
+            )
+        else:
+            batch = evaluate_reverse_retrospective_stress(
+                pre_target_history,
+                cutoff_date=cutoff_date,
+                number_pool_size=number_pool_size,
+                execution_spec=execution_spec,
+                test_draw_count=batch_size,
+                min_train_draws=min_train_draws,
+                skip_recent_test_draws=offset,
+            )
         if batch.get("status") != "EVALUATED_RETROSPECTIVE_ONLY":
             raise SealedEvaluationError("Reverse-time batch did not return its expected diagnostic status.")
         if batch.get("evaluated_draw_count") != batch_size:
@@ -818,13 +842,23 @@ def _evaluate_reverse_validation_with_frozen_spec(
             row for day, row in sorted(history_by_date.items())
             if day > target_date
         ][:MAX_HISTORY_DRAWS]
-        ranking = rank_candidates_retrospective(
-            later_history,
-            target_date=target_date,
-            number_pool_size=60,
-            execution_spec=execution_spec,
-            min_train_draws=min_train_draws,
-        )
+        if execution_spec_version(execution_spec) == 2:
+            if len(later_history) < min_train_draws:
+                raise SealedEvaluationError("Reverse DSL v2 target has insufficient later training rows.")
+            ranking = execution_v2.rank_candidates_for_pair(
+                later_history[:2],
+                target_date=target_date,
+                number_pool_size=60,
+                execution_spec=execution_spec,
+            )
+        else:
+            ranking = rank_candidates_retrospective(
+                later_history,
+                target_date=target_date,
+                number_pool_size=60,
+                execution_spec=execution_spec,
+                min_train_draws=min_train_draws,
+            )
         target_numbers = set(target["numbers"])
         matched_positions = [
             position
@@ -886,12 +920,20 @@ def _evaluate_forward_validation_with_details(
         training = (discovery + validation[:index])[-MAX_HISTORY_DRAWS:]
         if len(training) < DEFAULT_MIN_TRAIN_DRAWS:
             raise SealedEvaluationError("Forward per-draw report fell below the training minimum.")
-        ranking = rank_candidates(
-            training,
-            cutoff_date=target["date"],
-            number_pool_size=60,
-            execution_spec=execution_spec,
-        )
+        if execution_spec_version(execution_spec) == 2:
+            ranking = execution_v2.rank_candidates_for_pair(
+                training[-2:],
+                target_date=target["date"],
+                number_pool_size=60,
+                execution_spec=execution_spec,
+            )
+        else:
+            ranking = rank_candidates(
+                training,
+                cutoff_date=target["date"],
+                number_pool_size=60,
+                execution_spec=execution_spec,
+            )
         actual = set(target["numbers"])
         matched_positions = [
             position
@@ -1031,14 +1073,24 @@ def evaluate_claim(
     ):
         raise SealedEvaluationError("Claim no longer satisfies both directional evaluation minimums.")
 
-    forward = evaluate_holdout(
-        discovery,
-        validation,
-        cutoff_date=split["target_date"],
-        number_pool_size=60,
-        execution_spec=spec,
-        min_train_draws=DEFAULT_MIN_TRAIN_DRAWS,
-    )
+    if execution_spec_version(spec) == 2:
+        forward = execution_v2.evaluate_holdout(
+            discovery,
+            validation,
+            cutoff_date=split["target_date"],
+            number_pool_size=60,
+            execution_spec=spec,
+            min_train_draws=DEFAULT_MIN_TRAIN_DRAWS,
+        )
+    else:
+        forward = evaluate_holdout(
+            discovery,
+            validation,
+            cutoff_date=split["target_date"],
+            number_pool_size=60,
+            execution_spec=spec,
+            min_train_draws=DEFAULT_MIN_TRAIN_DRAWS,
+        )
     forward_details = _evaluate_forward_validation_with_details(
         discovery,
         validation,
@@ -1056,15 +1108,26 @@ def evaluate_claim(
     forward["per_draw_target_numbers_reported"] = False
     forward["predicted_number_values_reported"] = False
     folds = min(5, len(validation))
-    cv = evaluate_time_ordered_cv(
-        discovery,
-        validation,
-        cutoff_date=split["target_date"],
-        number_pool_size=60,
-        execution_spec=spec,
-        folds=folds,
-        min_train_draws=DEFAULT_MIN_TRAIN_DRAWS,
-    )
+    if execution_spec_version(spec) == 2:
+        cv = execution_v2.evaluate_time_ordered_cv(
+            discovery,
+            validation,
+            cutoff_date=split["target_date"],
+            number_pool_size=60,
+            execution_spec=spec,
+            folds=folds,
+            min_train_draws=DEFAULT_MIN_TRAIN_DRAWS,
+        )
+    else:
+        cv = evaluate_time_ordered_cv(
+            discovery,
+            validation,
+            cutoff_date=split["target_date"],
+            number_pool_size=60,
+            execution_spec=spec,
+            folds=folds,
+            min_train_draws=DEFAULT_MIN_TRAIN_DRAWS,
+        )
     full_r60_history = sorted(
         discovery + validation + reverse_validation,
         key=lambda row: row["date"],
@@ -1079,15 +1142,19 @@ def evaluate_claim(
         min_train_draws=DEFAULT_MIN_TRAIN_DRAWS,
     )
     reverse_cv = _summarize_blocked_reverse_cv(reverse_candidate_holdout)
+    reverse_diagnostic_spec = spec if execution_spec_version(spec) == 1 else reverse_spec
+    reverse_diagnostic_id = candidate["hypothesis_id"] if execution_spec_version(spec) == 1 else candidate["reverse_hypothesis_id"]
+    reverse_diagnostic_sha = candidate["spec_sha256"] if execution_spec_version(spec) == 1 else candidate["reverse_spec_sha256"]
     reverse = _evaluate_full_reverse_history(
         full_r60_history,
         cutoff_date=split["target_date"],
         number_pool_size=60,
-        execution_spec=spec,
+        execution_spec=reverse_diagnostic_spec,
         min_train_draws=DEFAULT_MIN_TRAIN_DRAWS,
     )
-    reverse["hypothesis_id"] = candidate["hypothesis_id"]
-    reverse["spec_sha256"] = candidate["spec_sha256"]
+    reverse["hypothesis_id"] = reverse_diagnostic_id
+    reverse["spec_sha256"] = reverse_diagnostic_sha
+    reverse["diagnostic_spec_direction"] = execution_spec_direction(reverse_diagnostic_spec) or "legacy_direction_agnostic"
     for reverse_row in reverse.get("per_draw", []):
         reverse_row["hypothesis_id"] = candidate["hypothesis_id"]
         reverse_row["spec_sha256"] = candidate["spec_sha256"]
@@ -1120,7 +1187,7 @@ def evaluate_claim(
         "validation_draw_count": len(validation),
         "forward_walk_forward": forward,
         "time_ordered_cross_validation": cv,
-        "reverse_retrospective_stress_test_of_forward_candidate": reverse,
+        "reverse_retrospective_full_history_diagnostic": reverse,
         "reverse_discovered_candidate_holdout": reverse_candidate_holdout,
         "reverse_time_ordered_cross_validation": reverse_cv,
         "bidirectional_full_history_adaptive_diagnostic": bidirectional,
@@ -1138,7 +1205,7 @@ def evaluate_claim(
         "interpretation_limits": [
             "This is one exploratory fixed-specification evaluation, not proof of a predictive mechanism.",
             "The blocked CV folds reuse the same sealed validation interval and are correlated summaries, not independent confirmation.",
-            "The forward candidate's full-history reverse result uses later historical draws and is retrospective stress testing only, not predictive evidence.",
+            "The full-history reverse diagnostic uses later historical rows and is retrospective only. For direction-sealed DSL v2 it uses the reverse-discovered B/C specification; a forward v2 specification is never reinterpreted against reverse slots.",
             "The separately reverse-discovered candidate is evaluated only on the disjoint oldest R60 holdout, using strictly later history; this is retrospective only and not predictive evidence.",
             "The reverse blocked-CV folds reuse that same sealed reverse interval and are correlated descriptive summaries, not independent confirmation.",
             "The uniform-random expected overlap is 36/60 = 0.6 hits per six-number set; report uncertainty and do not infer an advantage from mean hits alone.",
