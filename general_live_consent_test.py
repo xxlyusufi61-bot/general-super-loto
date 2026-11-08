@@ -61,6 +61,23 @@ class LiveNvidiaConsentTests(unittest.TestCase):
                 self.assertIn(CONFIRMATION_PHRASE, workflow_text)
                 self.assertNotIn(COORDINATOR_CONFIRMATION_PHRASE, workflow_text)
 
+    def test_single_request_workflow_is_manual_one_shot_and_relocks(self):
+        root = Path(__file__).resolve().parent
+        workflow_path = root / ".github/workflows/general-single-request-normal-token-test.yml"
+        self.assertTrue(workflow_path.is_file())
+        workflow = workflow_path.read_text(encoding="utf-8")
+        self.assertIn("workflow_dispatch:", workflow)
+        self.assertIn(SINGLE_REQUEST_CONFIRMATION_PHRASE, workflow)
+        self.assertIn("github.run_attempt == 1", workflow)
+        self.assertIn("inputs.confirm_free_usage_verified == true", workflow)
+        self.assertIn("group: general-nvidia-api", workflow)
+        self.assertIn("single-request-check", workflow)
+        self.assertIn("single-request-unlock", workflow)
+        self.assertIn("steps.temporary-unlock.outputs.unlock_started == 'true'", workflow)
+        self.assertIn("general_nvidia_guard.py lock", workflow)
+        self.assertIn("general_single_request_token_test.py", workflow)
+        self.assertNotIn("schedule:", workflow)
+
     def test_coordinator_uses_its_separate_three_agent_approval(self):
         root = Path(__file__).resolve().parent
         workflow = (root / COORDINATOR_WORKFLOW_PATH).read_text(encoding="utf-8")
