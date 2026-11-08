@@ -81,6 +81,12 @@ class AutomationStateCutoverWorkflowTests(unittest.TestCase):
         self.assertIn('if lock.get("locked") is not True:', migration_audit)
         self.assertIn('authorization.get("enabled") is not False', migration_audit)
 
+    def test_legacy_runtime_audit_is_state_authoritative_by_default(self):
+        migration_audit = read(ROOT / "general_automation_state_runtime_audit.py")
+        self.assertIn('parser.set_defaults(audit_mode="state-authoritative")', migration_audit)
+        self.assertIn('"--pre-cutover-diagnostic"', migration_audit)
+        self.assertIn('"authoritative_source": contract.STATE_BRANCH', migration_audit)
+
     def test_research_workflows_publish_runtime_objects_to_the_state_store(self):
         for name in ("general-autonomous-research.yml", "open-research.yml"):
             with self.subTest(workflow=name):

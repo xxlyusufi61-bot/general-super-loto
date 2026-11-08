@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Read-only integrity audit for GENERAL's migrated automation state.
 
-This supersedes the bootstrap-only migration preflight in routine CI after the
-four runtime objects have been migrated. It does not modify GitHub or call NVIDIA.
+This is a read-only audit for the active state store. State-authoritative mode
+is the safe default. The legacy main-parity check is available only as an
+explicit diagnostic mode. This module does not write GitHub state or call NVIDIA.
 """
 from __future__ import annotations
 
@@ -38,7 +39,7 @@ def build_runtime_audit_report(
     shadow: dict[str, Any],
     lock_state: dict[str, Any],
     *,
-    mode: str = "pre-cutover",
+    mode: str = "state-authoritative",
     domain_validator: Callable[[dict[str, dict[str, Any]]], None] | None = None,
 ) -> dict[str, Any]:
     """Validate the active migration without rendering source records."""
@@ -58,14 +59,19 @@ def build_runtime_audit_report(
     validator = domain_validator or state_writer.validate_domain_documents
     validator(documents)
 
-    if mode not in {"pre-cutover", "state-authoritative"}:
+    if mode not in {"pre-cutover", "pre-cutover-diagnostic", "state-authoritative"}:
         raise RuntimeStateAuditError("unsupported runtime audit mode")
 
-    if mode == "pre-cutover":
+    legacy_diagnostic = mode in {"pre-cutover", "pre-cutover-diagnostic"}
+    if legacy_diagnostic:
         if not isinstance(shadow, dict) or shadow.get("mode") != "SHADOW_COMPARE":
             raise RuntimeStateAuditError("read-only shadow comparison is missing")
-        if shadow.get("authoritative_source") != "main" or shadow.get("read_only") is not True:
-            raise RuntimeStateAuditError("shadow comparison changed or misidentified the authoritative source")
+        if (
+            shadow.get("authoritative_source") != contract.STATE_BRANCH
+            or shadow.get("comparison_source") != "main_legacy_snapshot"
+            or shadow.get("read_only") is not True
+        ):
+            raise RuntimeStateAuditError("legacy comparison misidentified the authoritative or comparison source")
         if shadow.get("state_store_commit_sha") != snapshot.get("commit_sha"):
             raise RuntimeStateAuditError("shadow comparison is not bound to the verified state snapshot")
         comparisons = shadow.get("comparisons")
@@ -73,7 +79,7 @@ def build_runtime_audit_report(
             raise RuntimeStateAuditError("shadow comparison object map is invalid")
         for key in EXPECTED_OBJECTS:
             if comparisons.get(key) != "MATCH":
-                raise RuntimeStateAuditError("migrated state object does not match the main source before cutover")
+                raise RuntimeStateAuditError("migrated state object does not match the legacy main snapshot")
         if comparisons.get("nvidia_lock") != "NOT_REGISTERED":
             raise RuntimeStateAuditError("NVIDIA global lock must remain outside the first state-store migration")
         if shadow.get("diverged") is not False or shadow.get("diverged_count") != 0:
@@ -82,7 +88,7 @@ def build_runtime_audit_report(
             raise RuntimeStateAuditError("main/state shadow comparison matched-object count is incorrect")
         if shadow.get("not_registered_count") != 1:
             raise RuntimeStateAuditError("main/state shadow comparison lock exclusion count is incorrect")
-        parity = "PASS"
+        parity = "PASS_LEGACY_DIAGNOSTIC_ONLY"
         matched_count = shadow["matched_count"]
     else:
         # After the coordinated source cutover, main's four old copies are
@@ -104,7 +110,8 @@ def build_runtime_audit_report(
 
     return {
         "mode": "ACTIVE_STATE_RUNTIME_AUDIT",
-        "authoritative_source": contract.STATE_BRANCH if mode == "state-authoritative" else "main",
+        "audit_mode": "LEGACY_MAIN_PARITY_DIAGNOSTIC_ONLY" if legacy_diagnostic else "STATE_AUTHORITATIVE",
+        "authoritative_source": contract.STATE_BRANCH,
         "state_store_branch": contract.STATE_BRANCH,
         "state_store_commit_sha": snapshot["commit_sha"],
         "state_store_status": manifest["status"],
@@ -114,7 +121,9 @@ def build_runtime_audit_report(
         "matched_count": matched_count,
         "nvidia_lock": "LOCKED_ON_MAIN_NOT_REGISTERED",
         "autonomous_research": "PAUSED",
-        "legacy_main_copies_consumed": False if mode == "state-authoritative" else None,
+        "legacy_main_copies_consumed": False,
+        "legacy_main_comparison_performed": legacy_diagnostic,
+        "legacy_main_copies_authoritative": False,
         "target_values_rendered": False,
         "draw_rows_rendered": False,
         "github_writes": 0,
@@ -128,22 +137,32 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repository", default=os.environ.get("GITHUB_REPOSITORY"))
     parser.add_argument("--token", default=os.environ.get("GITHUB_TOKEN"))
     parser.add_argument("--nvidia-lock-file", type=Path, default=Path("general_nvidia_lock.json"))
-    parser.add_argument("--state-authoritative", action="store_true",
-                        help="Audit the state branch as authoritative; do not compare legacy main copies.")
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument(
+        "--state-authoritative", dest="audit_mode", action="store_const",
+        const="state-authoritative",
+        help="Audit the state branch as authoritative (the default).",
+    )
+    mode_group.add_argument(
+        "--pre-cutover-diagnostic", "--pre-cutover", dest="audit_mode",
+        action="store_const", const="pre-cutover-diagnostic",
+        help="Explicitly compare legacy main copies for historical parity diagnostics only.",
+    )
+    parser.set_defaults(audit_mode="state-authoritative")
     args = parser.parse_args(argv)
     if not args.repository:
         parser.error("--repository or GITHUB_REPOSITORY is required")
     try:
         reader = GitHubStateStoreReader(args.repository, args.token)
         snapshot = reader.read_snapshot()
-        shadow = None if args.state_authoritative else reader.read_shadow_comparison()
+        shadow = None if args.audit_mode == "state-authoritative" else reader.read_shadow_comparison()
         try:
             lock_state = json.loads(args.nvidia_lock_file.read_text(encoding="utf-8"))
         except (OSError, UnicodeError, json.JSONDecodeError):
             raise RuntimeStateAuditError("main-branch NVIDIA lock file is missing or invalid") from None
         report = build_runtime_audit_report(
             snapshot, shadow, lock_state,
-            mode="state-authoritative" if args.state_authoritative else "pre-cutover",
+            mode=args.audit_mode,
         )
     except (RuntimeStateAuditError, StateStoreReadError, contract.AutomationStateError, state_writer.StateStoreWriteError) as exc:
         print("STATE RUNTIME AUDIT FAILED:", type(exc).__name__, str(exc), file=sys.stderr)

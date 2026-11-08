@@ -215,12 +215,12 @@ class GitHubStateStoreReader:
 
 
     def read_shadow_comparison(self) -> dict[str, Any]:
-        """Return a read-only migration parity report between state-store and main.
+        """Return a read-only legacy parity diagnostic against the state branch.
 
-        This comparison is retained for pre-cutover diagnostics only. After the
-        coordinated workflow cutover, the state branch is authoritative for the
-        four migrated runtime objects; this method never changes either source.
-        Missing registrations and divergences are reported, never repaired.
+        The state branch remains authoritative. Copies on main are legacy
+        comparison snapshots only; this diagnostic never promotes them to an
+        operational source or repairs either branch. Missing registrations and
+        divergences are reported without changing either source.
         """
         state_snapshot = self.read_snapshot()
         main_commit_sha, main_tree_sha = self._branch_head("main")
@@ -298,7 +298,8 @@ class GitHubStateStoreReader:
             "not_registered_count": not_registered_count,
             "diverged_count": diverged_count,
             "diverged": diverged_count > 0,
-            "authoritative_source": "main",
+            "authoritative_source": contract.STATE_BRANCH,
+            "comparison_source": "main_legacy_snapshot",
             "read_only": True,
         }
 
