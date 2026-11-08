@@ -89,6 +89,7 @@ jobs:
             --archive /tmp/general-recovery-pinned-archive.json \
             --current-archive super_loto_archive.json \
             --ledger general_evaluation_ledger.json \
+            --autonomous-state general_autonomous_research_state.json \
             --source-commit "$RECOVERY_SOURCE_COMMIT" \
             --output general_recovery_archive.json \
             --metadata general_recovery_metadata.json \
