@@ -19,7 +19,7 @@ Each input DrawState is the set of six distinct integers in the active 1..60 poo
 
 ## Typed AST
 
-The root `score_expression` must return a number. Supported types are Number, Boolean, DrawState, and ResidueView.
+The root `score_expression` must return a number. Supported types are Number, Boolean, and DrawState.
 
 - `state_ref`: reads one permitted slot.
 - `set_union`, `set_intersection`, `set_difference`, `set_symmetric_difference`: bounded set operations over DrawState values.
