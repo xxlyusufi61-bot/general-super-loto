@@ -264,7 +264,7 @@ class OpenResearchIsolationTests(unittest.TestCase):
             self.assertIn("complete claim requires one valid spec from each independent direction", system)
             self.assertIn("not approved or canonical", system)
             self.assertIn("fixed synthetic 6-of-60 active-scope fixtures", system)
-            self.assertIn("not claim that it was real-archive backtested", system)
+            self.assertIn("do not claim it was real-archive backtested", system)
             self.assertNotIn("eval(", system)
             self.assertNotIn("exec(", system)
             self.assertNotIn("v19", system)
