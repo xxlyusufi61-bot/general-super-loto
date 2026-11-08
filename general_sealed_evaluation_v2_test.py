@@ -46,7 +46,9 @@ class SealedEvaluationDSLv2Tests(unittest.TestCase):
             "specifications": [
                 {
                     "hypothesis_id": "HYP-001",
-                    "execution_spec": directional_spec(forward_direction, "A"),
+                    "execution_spec": directional_spec(
+                        forward_direction, "A" if forward_direction == "forward" else "C"
+                    ),
                     "dsl_validated": True,
                     "synthetic_tests_passed": True,
                 },
