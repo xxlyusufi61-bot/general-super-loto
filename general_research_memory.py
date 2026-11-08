@@ -1266,12 +1266,17 @@ def _write_memory(memory: dict[str, Any], path: str | Path) -> None:
         raise ResearchMemoryError("Memory update is not append-only; existing entries changed.")
     if len(memory["entries"]) < len(checked["entries"]):
         raise ResearchMemoryError("Memory entries cannot be deleted.")
+    # The persisted prefix was already validated by load_memory above and is
+    # immutable. Start chronology checks at the first genuinely new entry;
+    # rechecking entry 1 against the final persisted target would reject every
+    # valid append once the store contains multiple target dates.
+    existing_count = len(checked["entries"])
     previous_target = (
         date.fromisoformat(checked["entries"][-1]["target_date"])
-        if checked["entries"] else None
+        if existing_count else None
     )
-    for index, entry in enumerate(memory["entries"], start=1):
-        _validate_entry(entry, index)
+    for offset, entry in enumerate(memory["entries"][existing_count:], start=existing_count + 1):
+        _validate_entry(entry, offset)
         current_target = date.fromisoformat(entry["target_date"])
         if previous_target is not None and current_target < previous_target:
             raise ResearchMemoryError("Research-memory append would move chronology backwards.")

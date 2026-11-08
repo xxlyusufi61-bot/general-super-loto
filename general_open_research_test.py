@@ -541,12 +541,14 @@ class NvidiaUsageObservationTests(unittest.TestCase):
         self.assertEqual(client_factory.call_count, 2)
         self.assertEqual([call.args[1] for call in client_factory.call_args_list], [600, 600])
         self.assertEqual(reserve.call_count, 2)
+        self.assertEqual(research.DEFAULT_MAX_COMPLETION_TOKENS, 8192)
+        self.assertEqual(research.DIAGNOSTIC_MAX_COMPLETION_TOKENS, 8192)
         for client in (forward_client, reverse_client):
             client.chat.completions.create.assert_called_once()
             call = client.chat.completions.create.call_args.kwargs
             self.assertIs(call["stream"], False)
             self.assertEqual(call["model"], research.MODEL)
-            self.assertEqual(call["max_tokens"], research.DEFAULT_MAX_COMPLETION_TOKENS)
+            self.assertEqual(call["max_tokens"], 8192)
             self.assertEqual(call["temperature"], 0.2)
             self.assertEqual(
                 call["extra_body"],
@@ -684,7 +686,7 @@ class NvidiaUsageObservationTests(unittest.TestCase):
             self.sdk_response(
                 partial,
                 finish_reason="length",
-                usage={"prompt_tokens": 333, "completion_tokens": 1800, "total_tokens": 2133},
+                usage={"prompt_tokens": 333, "completion_tokens": 8192, "total_tokens": 8525},
             )
         )
         saved = []
@@ -705,7 +707,8 @@ class NvidiaUsageObservationTests(unittest.TestCase):
         self.assertEqual(len(saved), 1)
         self.assertEqual(saved[0]["failure_stage"], "model_finish")
         self.assertEqual(saved[0]["network_error_type"], "IncompleteModelResponseError")
-        self.assertEqual(saved[0]["token_usage_returned_by_provider"]["total_tokens"], 2133)
+        self.assertEqual(saved[0]["token_usage_returned_by_provider"]["total_tokens"], 8525)
+        self.assertEqual(saved[0]["max_tokens_requested"], 8192)
         self.assertFalse(saved[0]["response_complete"])
         self.assertEqual(saved[0]["automatic_retries"], 0)
         self.assertNotIn(partial, json.dumps(saved[0]))

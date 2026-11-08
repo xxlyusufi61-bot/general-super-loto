@@ -615,24 +615,40 @@ class SealedPlanBindingTests(unittest.TestCase):
 
 
 class ResearchMemoryPersistenceTests(unittest.TestCase):
-    def test_append_only_writer_refuses_to_modify_existing_entries(self):
+    def test_append_only_writer_validates_only_new_entries_and_preserves_chronology(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "memory.json"
-            first = sample_entry("forward", 1)
+            first = sample_entry("forward", 1, "2026-11-03")
+            second = sample_entry("forward", 2, "2026-11-05")
             payload = memory.empty_memory()
-            payload["entries"] = [first]
+            payload["entries"] = [first, second]
             write_json(path, payload)
+
+            # Regression for the production state: two existing dates, then a
+            # new recovery event for the same latest target date.
             appended = copy.deepcopy(payload)
-            appended["entries"].append(sample_entry("reverse", 2))
+            appended["entries"].append(sample_entry("forward", 3, "2026-11-05"))
             memory._write_memory(appended, path)
-            tampered = copy.deepcopy(appended)
+            saved = memory.load_memory(path)
+            self.assertEqual(
+                [item["target_date"] for item in saved["entries"]],
+                ["2026-11-03", "2026-11-05", "2026-11-05"],
+            )
+            self.assertEqual(saved["entries"][:2], payload["entries"])
+
+            # Existing history remains immutable even when a caller recomputes
+            # a modified entry hash.
+            tampered = copy.deepcopy(saved)
             tampered["entries"][0]["learning_notes"]["observations"] = ["Old record changed."]
             tampered["entries"][0]["content_sha256"] = _hash_entry(tampered["entries"][0])
-            tampered["entries"].append(sample_entry("forward", 3, "2026-10-22"))
+            tampered["entries"].append(sample_entry("forward", 4, "2026-11-06"))
             with self.assertRaisesRegex(memory.ResearchMemoryError, "not append-only"):
                 memory._write_memory(tampered, path)
-            backdated = copy.deepcopy(appended)
-            backdated["entries"].append(sample_entry("forward", 3, "2026-10-19"))
+
+            # The suffix check must still reject a target date that moves
+            # backwards relative to the final persisted target.
+            backdated = copy.deepcopy(saved)
+            backdated["entries"].append(sample_entry("reverse", 4, "2026-11-04"))
             with self.assertRaisesRegex(memory.ResearchMemoryError, "chronology backwards"):
                 memory._write_memory(backdated, path)
 
