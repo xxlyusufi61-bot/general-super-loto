@@ -661,7 +661,9 @@ def run_synthetic_contract_tests(execution_spec: dict[str, Any]) -> dict[str, An
     )
     if first != second or len(first) != 60:
         _fail("synthetic execution was incomplete or non-deterministic.")
-    if [row["number"] for row in first] != sorted(range(1, 61), key=lambda number: (-first[number - 1]["score"], number)):
+    scores = {row["number"]: row["score"] for row in first}
+    expected_order = sorted(range(1, 61), key=lambda number: (-scores[number], number))
+    if [row["number"] for row in first] != expected_order:
         _fail("synthetic ranking did not preserve deterministic score ordering.")
     if json.dumps(rows, sort_keys=True) != before:
         _fail("synthetic execution mutated its input fixture.")
