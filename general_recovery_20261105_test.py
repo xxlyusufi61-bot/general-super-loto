@@ -180,6 +180,8 @@ class RecoveryArchiveTests(unittest.TestCase):
         ]
         self.assertNotIn(recovery.RECOVERY_TARGET_DATE, dates)
         self.assertTrue(all(day < recovery.RECOVERY_TARGET_DATE for day in dates))
+        self.assertNotIn(json.dumps(self.rows[-1]["numbers"]), messages[1]["content"])
+        self.assertNotIn(json.dumps(self.current_rows[-1]["numbers"]), messages[1]["content"])
         self.assertFalse(payload["target_numbers_included"])
         self.assertFalse(payload["post_target_records_included"])
         self.assertFalse(plan["target_numbers_exposed"])
