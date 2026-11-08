@@ -1097,8 +1097,10 @@ def _evaluate_reverse_validation_with_frozen_spec(
                 excluded_dates=blocked,
             )
         else:
+            # Preserve the legacy DSL v1 evaluator's original bounded history window.
+            # v2 uses only the exact adjacent B/C pair above.
             ranking = rank_candidates_retrospective(
-                later_available,
+                later_available[:MAX_HISTORY_DRAWS],
                 target_date=target_date,
                 number_pool_size=60,
                 execution_spec=execution_spec,
