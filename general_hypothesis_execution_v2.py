@@ -11,7 +11,6 @@ import hashlib
 import json
 import math
 import statistics
-from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Any
 
@@ -26,8 +25,7 @@ MAX_ABS_SCORE = 1_000_000_000
 MAX_INPUT_HISTORY_DRAWS = 10_000
 MAX_VALIDATION_DRAWS = 30
 DEFAULT_MIN_TRAIN_DRAWS = 40
-RESIDUE_REPRESENTATIONS = {"residue_set", "residue_counts", "sorted_residues"}
-NUMERIC_BINARY_OPS = {"add", "sub", "mul", "div", "mod", "min", "max"}
+NUMERIC_BINARY_OPS = {"add", "sub", "mul", "div", "min", "max"}
 COMPARISON_OPS = {"eq", "ne", "lt", "lte", "gt", "gte"}
 BOOLEAN_BINARY_OPS = {"and", "or"}
 SET_BINARY_OPS = {
@@ -42,12 +40,6 @@ REVERSE_SLOTS = {"B", "C"}
 
 class DSLV2Error(ValueError):
     """Raised when a DSL v2 specification or context is unsafe or invalid."""
-
-
-@dataclass(frozen=True)
-class _ResidueView:
-    representation: str
-    values: tuple[int, ...]
 
 
 def _fail(message: str) -> None:
@@ -124,41 +116,6 @@ def _validate_node(
         if child != "draw_state":
             _fail(op + " requires a DrawState operand.")
         return "boolean" if op == "contains_candidate" else "number"
-
-    if op == "mod5_project":
-        if set(node) != {"op", "state", "representation"}:
-            _fail("mod5_project node keys are invalid.")
-        child = _validate_node(node["state"], direction=direction, depth=depth + 1, state=state)
-        if child != "draw_state":
-            _fail("mod5_project requires a DrawState operand.")
-        if node.get("representation") not in RESIDUE_REPRESENTATIONS:
-            _fail("MOD5 representation must be explicitly selected from the allowlist.")
-        return "residue_view:" + node["representation"]
-
-    if op in {"residue_contains", "residue_frequency"}:
-        if set(node) != {"op", "view", "residue"}:
-            _fail(op + " node keys are invalid.")
-        view_type = _validate_node(node["view"], direction=direction, depth=depth + 1, state=state)
-        residue = node.get("residue")
-        if type(residue) is not int or not 0 <= residue <= 4:
-            _fail("residue must be an integer from 0 through 4.")
-        if not view_type.startswith("residue_view:"):
-            _fail(op + " requires a ResidueView operand.")
-        representation = view_type.split(":", 1)[1]
-        if op == "residue_frequency" and representation != "residue_counts":
-            _fail("residue_frequency requires the residue_counts representation.")
-        return "boolean" if op == "residue_contains" else "number"
-
-    if op == "residue_at":
-        if set(node) != {"op", "view", "index"}:
-            _fail("residue_at node keys are invalid.")
-        view_type = _validate_node(node["view"], direction=direction, depth=depth + 1, state=state)
-        index = node.get("index")
-        if type(index) is not int or not 0 <= index <= 5:
-            _fail("residue_at index must be an integer from 0 through 5.")
-        if view_type != "residue_view:sorted_residues":
-            _fail("residue_at requires the sorted_residues representation.")
-        return "number"
 
     if op in {"abs", "not", "bool_to_number"}:
         if set(node) != {"op", "arg"}:
@@ -251,7 +208,7 @@ def _eval_node(
     *,
     candidate: int,
     slots: dict[str, frozenset[int]],
-) -> bool | float | int | frozenset[int] | _ResidueView:
+) -> bool | float | int | frozenset[int]:
     op = node["op"]
     if op == "const":
         return node["value"]
@@ -275,31 +232,6 @@ def _eval_node(
     if op == "cardinality":
         state = _eval_node(node["state"], candidate=candidate, slots=slots)
         return len(state)
-    if op == "mod5_project":
-        state = _eval_node(node["state"], candidate=candidate, slots=slots)
-        ordered = tuple(number % 5 for number in sorted(state))
-        representation = node["representation"]
-        if representation == "residue_set":
-            values = tuple(sorted(set(ordered)))
-        elif representation == "residue_counts":
-            values = tuple(ordered.count(residue) for residue in range(5))
-        else:
-            # The six residues preserve ascending source-number order; they are
-            # not re-sorted after projection.
-            values = ordered
-        return _ResidueView(representation, values)
-    if op == "residue_contains":
-        view = _eval_node(node["view"], candidate=candidate, slots=slots)
-        residue = node["residue"]
-        if view.representation == "residue_counts":
-            return view.values[residue] > 0
-        return residue in view.values
-    if op == "residue_frequency":
-        view = _eval_node(node["view"], candidate=candidate, slots=slots)
-        return view.values[node["residue"]]
-    if op == "residue_at":
-        view = _eval_node(node["view"], candidate=candidate, slots=slots)
-        return view.values[node["index"]]
     if op == "abs":
         return _checked_number(abs(_eval_node(node["arg"], candidate=candidate, slots=slots)))
     if op == "not":
@@ -323,10 +255,6 @@ def _eval_node(
         if right == 0:
             _fail("division by zero.")
         result = left / right
-    elif op == "mod":
-        if right <= 0 or not float(right).is_integer():
-            _fail("modulo divisor must be a positive integer.")
-        result = left % right
     elif op == "min":
         result = min(left, right)
     elif op == "max":
@@ -354,12 +282,15 @@ def rank_candidates_for_pair(
     target_date: str,
     number_pool_size: int,
     execution_spec: dict[str, Any],
+    canonical_history: list[dict[str, Any]] | None = None,
+    excluded_dates: set[str] | list[str] | tuple[str, ...] = (),
 ) -> list[dict[str, Any]]:
     """Rank the 6-of-60 pool using only the two permitted adjacent state rows.
 
-    The caller must bind the pair from adjacent rows of the canonical archive.
-    Forward maps the pair to A/B; reverse maps it to B/C. The target row is not
-    accepted by this function, so target values cannot enter the expression.
+    Forward maps the two immediately preceding canonical rows to A/B; reverse
+    maps the first two later canonical rows to B/C. When canonical_history is
+    supplied, adjacency and previously-consumed-date exclusions are enforced.
+    The target row is never accepted, so target values cannot enter the expression.
     """
     if type(number_pool_size) is not int or number_pool_size not in ALLOWED_POOL_SIZES:
         _fail("only the 6-of-60 number pool is supported.")
@@ -375,13 +306,37 @@ def rank_candidates_for_pair(
     if spec["direction"] == "forward":
         if second >= target:
             _fail("forward state pair must be strictly earlier than hidden target C.")
+    else:
+        if target >= first:
+            _fail("reverse state pair B/C must be strictly later than hidden target A.")
+
+    if canonical_history is not None:
+        checked_canonical = _validate_rows(
+            canonical_history, field="canonical_history", maximum=MAX_INPUT_HISTORY_DRAWS
+        )
+        if any(row["date"] == target.isoformat() for row in checked_canonical):
+            _fail("canonical context must not contain the scored target row.")
+        if spec["direction"] == "forward":
+            expected_pair = [
+                row for row in checked_canonical if date.fromisoformat(row["date"]) < target
+            ][-2:]
+        else:
+            expected_pair = [
+                row for row in checked_canonical if date.fromisoformat(row["date"]) > target
+            ][:2]
+        if len(expected_pair) != 2 or expected_pair != checked_pair:
+            _fail("state pair is not the two immediately adjacent canonical archive rows.")
+        if not isinstance(excluded_dates, (set, list, tuple)):
+            _fail("excluded_dates must be a set, list, or tuple.")
+        if any(row["date"] in excluded_dates for row in checked_pair):
+            _fail("state pair contains a previously consumed holdout row.")
+
+    if spec["direction"] == "forward":
         slots = {
             "A": frozenset(checked_pair[0]["numbers"]),
             "B": frozenset(checked_pair[1]["numbers"]),
         }
     else:
-        if target >= first:
-            _fail("reverse state pair B/C must be strictly later than hidden target A.")
         slots = {
             "B": frozenset(checked_pair[0]["numbers"]),
             "C": frozenset(checked_pair[1]["numbers"]),
@@ -408,6 +363,8 @@ def evaluate_holdout(
     number_pool_size: int,
     execution_spec: dict[str, Any],
     min_train_draws: int = DEFAULT_MIN_TRAIN_DRAWS,
+    canonical_history: list[dict[str, Any]] | None = None,
+    excluded_dates: set[str] | list[str] | tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """Forward walk-forward scoring; each target C is hidden from its A/B inputs."""
     if type(number_pool_size) is not int or number_pool_size not in ALLOWED_POOL_SIZES:
@@ -435,11 +392,18 @@ def evaluate_holdout(
         if len(training) < min_train_draws or len(training) < 2:
             _fail("a validation fold does not have enough earlier training draws.")
         pair = training[-2:]
+        canonical_before = None
+        if canonical_history is not None:
+            canonical_before = [
+                row for row in canonical_history if row["date"] < target["date"]
+            ]
         ranked = rank_candidates_for_pair(
             pair,
             target_date=target["date"],
             number_pool_size=number_pool_size,
             execution_spec=spec,
+            canonical_history=canonical_before,
+            excluded_dates=excluded_dates,
         )
         selected = {item["number"] for item in ranked[:6]}
         scores.append(len(selected.intersection(target["numbers"])))
@@ -483,6 +447,8 @@ def evaluate_time_ordered_cv(
     execution_spec: dict[str, Any],
     folds: int = 5,
     min_train_draws: int = DEFAULT_MIN_TRAIN_DRAWS,
+    canonical_history: list[dict[str, Any]] | None = None,
+    excluded_dates: set[str] | list[str] | tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """Evaluate fixed v2 expression on contiguous time-ordered folds without shuffling."""
     if type(folds) is not int or folds < 2:
@@ -504,6 +470,8 @@ def evaluate_time_ordered_cv(
             number_pool_size=number_pool_size,
             execution_spec=execution_spec,
             min_train_draws=min_train_draws,
+            canonical_history=canonical_history,
+            excluded_dates=excluded_dates,
         )
         reports.append({
             "fold": fold_index + 1,
@@ -564,6 +532,79 @@ def rank_candidates_retrospective(
     )
 
 
+def _reverse_eligible_targets(
+    available_history: list[dict[str, Any]],
+    canonical_history: list[dict[str, Any]],
+    excluded_dates: set[str],
+    *,
+    min_train_draws: int,
+) -> tuple[list[tuple[dict[str, Any], list[dict[str, Any]], int]], dict[str, int]]:
+    """Bind reverse targets to their true next two canonical rows without bridging gaps."""
+    available = _validate_rows(
+        available_history, field="available_reverse_history", maximum=MAX_INPUT_HISTORY_DRAWS
+    )
+    canonical = _validate_rows(
+        canonical_history, field="canonical_reverse_history", maximum=MAX_INPUT_HISTORY_DRAWS
+    )
+    canonical_by_date = {row["date"]: row for row in canonical}
+    available_by_date = {row["date"]: row for row in available}
+    if any(canonical_by_date.get(row["date"]) != row for row in available):
+        _fail("available reverse history is not an exact subset of the canonical archive.")
+    if any(day not in canonical_by_date for day in excluded_dates):
+        _fail("excluded holdout dates are not present in the canonical archive.")
+    if set(available_by_date).intersection(excluded_dates):
+        _fail("available reverse history contains a previously consumed holdout date.")
+
+    eligible: list[tuple[dict[str, Any], list[dict[str, Any]], int]] = []
+    skipped = {
+        "insufficient_later_history": 0,
+        "consumed_adjacent_context": 0,
+        "missing_adjacent_context": 0,
+    }
+    for target in reversed(available):
+        later_available = [row for row in available if row["date"] > target["date"]]
+        if len(later_available) < min_train_draws:
+            skipped["insufficient_later_history"] += 1
+            continue
+        later_canonical = [row for row in canonical if row["date"] > target["date"]]
+        if len(later_canonical) < 2:
+            skipped["missing_adjacent_context"] += 1
+            continue
+        pair = later_canonical[:2]
+        if any(row["date"] in excluded_dates for row in pair):
+            skipped["consumed_adjacent_context"] += 1
+            continue
+        if any(available_by_date.get(row["date"]) != row for row in pair):
+            skipped["consumed_adjacent_context"] += 1
+            continue
+        if later_available[:2] != pair:
+            skipped["missing_adjacent_context"] += 1
+            continue
+        eligible.append((target, pair, len(later_available)))
+    return eligible, skipped
+
+
+def reverse_eligible_target_count(
+    available_history: list[dict[str, Any]],
+    *,
+    canonical_history: list[dict[str, Any]] | None = None,
+    excluded_dates: set[str] | list[str] | tuple[str, ...] = (),
+    min_train_draws: int = DEFAULT_MIN_TRAIN_DRAWS,
+) -> int:
+    """Count reverse targets with sufficient later history and two valid adjacent B/C rows."""
+    if type(min_train_draws) is not int or not 2 <= min_train_draws <= MAX_INPUT_HISTORY_DRAWS:
+        _fail("minimum later-history draws are outside the supported range.")
+    if not isinstance(excluded_dates, (set, list, tuple)) or any(
+        not isinstance(day, str) for day in excluded_dates
+    ):
+        _fail("excluded_dates must contain date strings.")
+    canonical = available_history if canonical_history is None else canonical_history
+    eligible, _ = _reverse_eligible_targets(
+        available_history, canonical, set(excluded_dates), min_train_draws=min_train_draws
+    )
+    return len(eligible)
+
+
 def evaluate_reverse_retrospective_stress(
     history: list[dict[str, Any]],
     *,
@@ -573,8 +614,10 @@ def evaluate_reverse_retrospective_stress(
     test_draw_count: int = 30,
     min_train_draws: int = DEFAULT_MIN_TRAIN_DRAWS,
     skip_recent_test_draws: int = 0,
+    canonical_history: list[dict[str, Any]] | None = None,
+    excluded_dates: set[str] | list[str] | tuple[str, ...] = (),
 ) -> dict[str, Any]:
-    """Run newest-to-oldest reverse stress tests; later draws are never predictive evidence."""
+    """Run newest-to-oldest reverse tests using true later archive neighbours only."""
     if type(number_pool_size) is not int or number_pool_size not in ALLOWED_POOL_SIZES:
         _fail("only the 6-of-60 number pool is supported.")
     if type(min_train_draws) is not int or not 2 <= min_train_draws <= MAX_INPUT_HISTORY_DRAWS:
@@ -583,41 +626,49 @@ def evaluate_reverse_retrospective_stress(
         _fail("reverse test draw count is outside the supported range.")
     if type(skip_recent_test_draws) is not int or skip_recent_test_draws < 0:
         _fail("reverse skip count must be a non-negative integer.")
+    if not isinstance(excluded_dates, (set, list, tuple)) or any(
+        not isinstance(day, str) for day in excluded_dates
+    ):
+        _fail("excluded_dates must contain date strings.")
     cutoff = _canonical_date(cutoff_date, "cutoff_date")
     checked = _validate_rows(history, field="history", maximum=MAX_INPUT_HISTORY_DRAWS)
-    if date.fromisoformat(checked[-1]["date"]) >= cutoff:
-        _fail("reverse stress history contains the isolated target or a later date.")
+    canonical = checked if canonical_history is None else _validate_rows(
+        canonical_history, field="canonical_history", maximum=MAX_INPUT_HISTORY_DRAWS
+    )
+    if date.fromisoformat(canonical[-1]["date"]) >= cutoff:
+        _fail("reverse stress canonical history contains the isolated target or a later date.")
     spec = validate_execution_spec(execution_spec)
     if spec["direction"] != "reverse":
         _fail("reverse stress requires a reverse-direction specification.")
-    eligible_count = len(checked) - min_train_draws
-    start_index = eligible_count - 1 - skip_recent_test_draws
-    if start_index < 0:
+    eligible, skipped = _reverse_eligible_targets(
+        checked, canonical, set(excluded_dates), min_train_draws=min_train_draws
+    )
+    eligible_count = len(eligible)
+    if skip_recent_test_draws >= eligible_count:
         _fail("reverse stress skip count exceeds the eligible historical range.")
-    indices = list(range(start_index, max(-1, start_index - test_draw_count), -1))
-    if not indices:
+    selected = eligible[skip_recent_test_draws:skip_recent_test_draws + test_draw_count]
+    if not selected:
         _fail("no eligible reverse stress targets remain.")
     details = []
-    for index in indices:
-        later = checked[index + 1:]
-        if len(later) < min_train_draws:
-            _fail("reverse stress target has insufficient later training history.")
-        ranking = rank_candidates_retrospective(
-            later,
-            target_date=checked[index]["date"],
+    for target, pair, later_count in selected:
+        later_canonical = [row for row in canonical if row["date"] > target["date"]]
+        ranking = rank_candidates_for_pair(
+            pair,
+            target_date=target["date"],
             number_pool_size=number_pool_size,
             execution_spec=spec,
-            min_train_draws=min_train_draws,
+            canonical_history=later_canonical,
+            excluded_dates=excluded_dates,
         )
-        actual = set(checked[index]["numbers"])
+        actual = set(target["numbers"])
         positions = [
             position for position, item in enumerate(ranking[:6], start=1)
             if item["number"] in actual
         ]
         details.append({
-            "test_date": checked[index]["date"],
+            "test_date": target["date"],
             "direction": "reverse_retrospective",
-            "later_training_draw_count": len(later),
+            "later_training_draw_count": later_count,
             "hit_column_positions_1_to_6": positions,
             "hit_count": len(positions),
             "target_numbers_reported": False,
@@ -632,6 +683,12 @@ def evaluate_reverse_retrospective_stress(
         "evaluation_order": "newest_to_oldest",
         "test_draw_count": len(details),
         "evaluated_draw_count": len(details),
+        "eligible_draw_count": eligible_count,
+        "ineligible_target_count": len(checked) - eligible_count,
+        "skipped_context_draw_count": skipped["consumed_adjacent_context"] + skipped["missing_adjacent_context"],
+        "skipped_consumed_context_draw_count": skipped["consumed_adjacent_context"],
+        "skipped_missing_context_draw_count": skipped["missing_adjacent_context"],
+        "skipped_insufficient_later_history_draw_count": skipped["insufficient_later_history"],
         "first_test_date": details[0]["test_date"],
         "last_test_date": details[-1]["test_date"],
         "mean_hits_out_of_6": round(sum(row["hit_count"] for row in details) / len(details), 6),
@@ -642,7 +699,10 @@ def evaluate_reverse_retrospective_stress(
         "predicted_number_values_reported": False,
         "current_isolated_target_included": False,
         "current_target_numbers_exposed": False,
+        "previously_consumed_rows_used_as_context": False,
+        "canonical_adjacency_enforced": True,
     }
+
 
 
 def run_synthetic_contract_tests(execution_spec: dict[str, Any]) -> dict[str, Any]:
@@ -661,11 +721,19 @@ def run_synthetic_contract_tests(execution_spec: dict[str, Any]) -> dict[str, An
         pair, target_date = rows[:2], rows[2]["date"]
     else:
         pair, target_date = rows[1:3], rows[0]["date"]
+    target_day = date.fromisoformat(target_date)
+    canonical_context = [
+        row for row in rows
+        if (date.fromisoformat(row["date"]) < target_day if spec["direction"] == "forward"
+            else date.fromisoformat(row["date"]) > target_day)
+    ]
     first = rank_candidates_for_pair(
-        pair, target_date=target_date, number_pool_size=60, execution_spec=spec
+        pair, target_date=target_date, number_pool_size=60,
+        execution_spec=spec, canonical_history=canonical_context,
     )
     second = rank_candidates_for_pair(
-        pair, target_date=target_date, number_pool_size=60, execution_spec=spec
+        pair, target_date=target_date, number_pool_size=60,
+        execution_spec=spec, canonical_history=canonical_context,
     )
     if first != second or len(first) != 60:
         _fail("synthetic execution was incomplete or non-deterministic.")
