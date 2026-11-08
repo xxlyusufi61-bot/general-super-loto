@@ -766,7 +766,7 @@ class GlobalNvidiaLockTests(unittest.TestCase):
         ), patch.object(
             nvidia_guard, "read_remote_lock", return_value=(locked, "lock-sha")
         ), patch.object(nvidia_guard, "read_remote_rate_limit") as read_rate:
-            with self.assertRaisesRegex(RuntimeError, "global safety lock is active"):
+            with self.assertRaisesRegex(RuntimeError, "(?i)global nvidia safety lock is active"):
                 nvidia_guard.reserve_nvidia_request(
                     SINGLE_REQUEST_SOURCE,
                     single_request_exception=True,
