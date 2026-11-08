@@ -616,7 +616,7 @@ class GlobalNvidiaLockTests(unittest.TestCase):
         env = env or self._single_request_environment()
         return {
             "id": int(env["GITHUB_RUN_ID"]),
-            "workflow_id": 509999999,
+            "workflow_id": nvidia_guard.SINGLE_REQUEST_WORKFLOW_ID,
             "path": SINGLE_REQUEST_WORKFLOW_PATH,
             "event": "workflow_dispatch",
             "head_branch": "main",
@@ -642,6 +642,7 @@ class GlobalNvidiaLockTests(unittest.TestCase):
         invalid_runs = [
             ("wrong run ID", {"id": int(env["GITHUB_RUN_ID"]) + 1}),
             ("wrong workflow path", {"path": ".github/workflows/open-research.yml"}),
+            ("wrong workflow ID", {"workflow_id": nvidia_guard.SINGLE_REQUEST_WORKFLOW_ID + 1}),
             ("wrong event", {"event": "push"}),
             ("wrong branch", {"head_branch": "feature/test"}),
             ("wrong commit", {"head_sha": "b" * 40}),
