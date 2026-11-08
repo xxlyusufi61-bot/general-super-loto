@@ -22,6 +22,11 @@ from general_nvidia_guard import (
     DIAGNOSTIC_REQUEST_SOURCE,
     DIAGNOSTIC_AUTHORIZED_ACTOR_LOGIN,
     DIAGNOSTIC_AUTHORIZED_ACTOR_ID,
+    SINGLE_REQUEST_WORKFLOW_PATH,
+    SINGLE_REQUEST_APPROVAL_PHRASE,
+    SINGLE_REQUEST_SOURCE,
+    SINGLE_REQUEST_AUTHORIZED_ACTOR_LOGIN,
+    SINGLE_REQUEST_AUTHORIZED_ACTOR_ID,
     initial_lock_state,
     initial_rate_limit_state,
     make_locked_state,
@@ -592,6 +597,181 @@ class GlobalNvidiaLockTests(unittest.TestCase):
         self.assertEqual(observed_state, locked_state)
         self.assertEqual(observed_sha, "expected-blob-sha")
         self.assertIn(["rev-parse", expected_ref], commands)
+
+    def _single_request_environment(self, run_id="987654321"):
+        return {
+            "GITHUB_REPOSITORY": DIAGNOSTIC_REPOSITORY,
+            "GITHUB_RUN_ID": run_id,
+            "GITHUB_RUN_ATTEMPT": "1",
+            "GITHUB_EVENT_NAME": "workflow_dispatch",
+            "GITHUB_REF": "refs/heads/main",
+            "GITHUB_WORKFLOW_REF": (
+                DIAGNOSTIC_REPOSITORY + "/" + SINGLE_REQUEST_WORKFLOW_PATH + "@refs/heads/main"
+            ),
+            "GITHUB_SHA": "a" * 40,
+            "GENERAL_CONFIRM_LIVE_CALLS": SINGLE_REQUEST_APPROVAL_PHRASE,
+        }
+
+    def _single_request_run(self, env=None):
+        env = env or self._single_request_environment()
+        return {
+            "id": int(env["GITHUB_RUN_ID"]),
+            "workflow_id": 509999999,
+            "path": SINGLE_REQUEST_WORKFLOW_PATH,
+            "event": "workflow_dispatch",
+            "head_branch": "main",
+            "head_sha": env["GITHUB_SHA"],
+            "run_attempt": 1,
+            "status": "in_progress",
+            "conclusion": None,
+            "actor": {
+                "login": SINGLE_REQUEST_AUTHORIZED_ACTOR_LOGIN,
+                "id": SINGLE_REQUEST_AUTHORIZED_ACTOR_ID,
+            },
+            "repository": {"full_name": DIAGNOSTIC_REPOSITORY},
+            "head_repository": {"full_name": DIAGNOSTIC_REPOSITORY},
+        }
+
+    def test_single_request_workflow_identity_requires_all_exact_boundaries(self):
+        env = self._single_request_environment()
+        valid = self._single_request_run(env)
+        self.assertEqual(
+            nvidia_guard.validate_single_request_workflow_run(valid, env),
+            env["GITHUB_RUN_ID"],
+        )
+        invalid_runs = [
+            ("wrong run ID", {"id": int(env["GITHUB_RUN_ID"]) + 1}),
+            ("wrong workflow path", {"path": ".github/workflows/open-research.yml"}),
+            ("wrong event", {"event": "push"}),
+            ("wrong branch", {"head_branch": "feature/test"}),
+            ("wrong commit", {"head_sha": "b" * 40}),
+            ("rerun", {"run_attempt": 2}),
+            ("completed run", {"status": "completed"}),
+            ("completed conclusion", {"conclusion": "success"}),
+            ("unauthorized actor ID", {"actor": {"login": SINGLE_REQUEST_AUTHORIZED_ACTOR_LOGIN, "id": 123}}),
+            ("lookalike actor login", {"actor": {"login": "another-account", "id": SINGLE_REQUEST_AUTHORIZED_ACTOR_ID}}),
+            ("wrong repository", {"repository": {"full_name": "someone/else"}}),
+            ("wrong head repository", {"head_repository": {"full_name": "someone/else"}}),
+        ]
+        for label, change in invalid_runs:
+            candidate = dict(valid)
+            candidate.update(change)
+            with self.subTest(label=label):
+                with self.assertRaises(RuntimeError):
+                    nvidia_guard.validate_single_request_workflow_run(candidate, env)
+
+        invalid_envs = [
+            ("wrong repository", {"GITHUB_REPOSITORY": "someone/else"}),
+            ("wrong event", {"GITHUB_EVENT_NAME": "push"}),
+            ("wrong ref", {"GITHUB_REF": "refs/heads/feature"}),
+            ("wrong workflow ref", {"GITHUB_WORKFLOW_REF": "someone/else/workflow.yml@refs/heads/main"}),
+            ("rerun attempt", {"GITHUB_RUN_ATTEMPT": "2"}),
+            ("wrong phrase", {"GENERAL_CONFIRM_LIVE_CALLS": "YES"}),
+            ("missing run ID", {"GITHUB_RUN_ID": ""}),
+            ("noncanonical run ID", {"GITHUB_RUN_ID": "0987654321"}),
+        ]
+        for label, change in invalid_envs:
+            with self.subTest(label=label):
+                with self.assertRaises(RuntimeError):
+                    nvidia_guard.validate_single_request_workflow_run(valid, env | change)
+
+    def test_current_single_request_run_is_verified_through_github_api(self):
+        env = self._single_request_environment()
+        expected_run = self._single_request_run(env)
+        with patch.dict(os.environ, env | {
+            "GITHUB_TOKEN": "offline-test-token",
+            "GITHUB_API_URL": "https://api.github.com",
+        }, clear=True), patch.object(
+            nvidia_guard, "_api_request", return_value=expected_run
+        ) as mocked_api:
+            run_id = nvidia_guard.read_current_single_request_workflow_run()
+        self.assertEqual(run_id, env["GITHUB_RUN_ID"])
+        mocked_api.assert_called_once_with(
+            "GET",
+            "https://api.github.com/repos/"
+            + DIAGNOSTIC_REPOSITORY
+            + "/actions/runs/"
+            + env["GITHUB_RUN_ID"],
+        )
+
+    def test_single_request_check_requires_lock_active_and_does_not_unlock(self):
+        env = self._single_request_environment()
+        locked = make_locked_state(initial_lock_state(), "test lock")
+        with patch.dict(os.environ, env, clear=True), patch.object(
+            nvidia_guard, "read_current_single_request_workflow_run", return_value=env["GITHUB_RUN_ID"]
+        ), patch.object(nvidia_guard, "read_remote_lock", return_value=(locked, "lock-sha")):
+            self.assertEqual(nvidia_guard.command_single_request_check(), 0)
+
+        unlocked = make_unlocked_state(locked)
+        with patch.dict(os.environ, env, clear=True), patch.object(
+            nvidia_guard, "read_current_single_request_workflow_run", return_value=env["GITHUB_RUN_ID"]
+        ), patch.object(nvidia_guard, "read_remote_lock", return_value=(unlocked, "lock-sha")):
+            self.assertEqual(nvidia_guard.command_single_request_check(), 1)
+
+    def test_single_request_unlock_is_bound_to_authorized_run_and_active_lock(self):
+        env = self._single_request_environment()
+        locked = make_locked_state(initial_lock_state(), "test lock")
+        with patch.dict(os.environ, env, clear=True), patch.object(
+            nvidia_guard, "read_current_single_request_workflow_run", return_value=env["GITHUB_RUN_ID"]
+        ), patch.object(
+            nvidia_guard, "read_remote_lock", return_value=(locked, "lock-sha")
+        ), patch.object(
+            nvidia_guard, "write_remote_lock", return_value="unlock-commit"
+        ) as write_lock, patch.object(
+            nvidia_guard, "send_telegram", return_value=True
+        ):
+            self.assertEqual(nvidia_guard.command_single_request_unlock(), 0)
+        written_state = write_lock.call_args.args[0]
+        self.assertFalse(written_state["locked"])
+        write_lock.assert_called_once()
+
+        unlocked = make_unlocked_state(locked)
+        with patch.dict(os.environ, env, clear=True), patch.object(
+            nvidia_guard, "read_current_single_request_workflow_run", return_value=env["GITHUB_RUN_ID"]
+        ), patch.object(
+            nvidia_guard, "read_remote_lock", return_value=(unlocked, "lock-sha")
+        ), patch.object(nvidia_guard, "write_remote_lock") as write_lock:
+            self.assertEqual(nvidia_guard.command_single_request_unlock(), 1)
+            write_lock.assert_not_called()
+
+    def test_single_request_reservation_rechecks_run_lock_and_shared_rate_limit(self):
+        env = self._single_request_environment()
+        unlocked = make_unlocked_state(make_locked_state(initial_lock_state(), "test lock"))
+        with patch.dict(os.environ, env, clear=True), patch.object(
+            nvidia_guard, "read_current_single_request_workflow_run", return_value=env["GITHUB_RUN_ID"]
+        ) as verify_run, patch.object(
+            nvidia_guard, "read_remote_lock", return_value=(unlocked, "lock-sha")
+        ) as read_lock, patch.object(
+            nvidia_guard, "read_remote_rate_limit", return_value=(initial_rate_limit_state(), "rate-sha")
+        ), patch.object(
+            nvidia_guard, "write_remote_rate_limit", return_value="rate-commit"
+        ) as write_rate:
+            reserved = nvidia_guard.reserve_nvidia_request(
+                SINGLE_REQUEST_SOURCE,
+                single_request_exception=True,
+            )
+        verify_run.assert_called_once()
+        read_lock.assert_called_once()
+        write_rate.assert_called_once()
+        self.assertEqual(reserved["source"], SINGLE_REQUEST_SOURCE)
+
+    def test_single_request_reservation_rejects_wrong_source_or_active_lock(self):
+        env = self._single_request_environment()
+        with self.assertRaisesRegex(RuntimeError, "cannot authorize another request source"):
+            nvidia_guard.reserve_nvidia_request("open-research-forward", single_request_exception=True)
+
+        locked = make_locked_state(initial_lock_state(), "test lock")
+        with patch.dict(os.environ, env, clear=True), patch.object(
+            nvidia_guard, "read_current_single_request_workflow_run"
+        ), patch.object(
+            nvidia_guard, "read_remote_lock", return_value=(locked, "lock-sha")
+        ), patch.object(nvidia_guard, "read_remote_rate_limit") as read_rate:
+            with self.assertRaisesRegex(RuntimeError, "global safety lock is active"):
+                nvidia_guard.reserve_nvidia_request(
+                    SINGLE_REQUEST_SOURCE,
+                    single_request_exception=True,
+                )
+            read_rate.assert_not_called()
 
     def test_general_core_python_syntax(self):
         source = Path("general_core.py").read_text(encoding="utf-8")
