@@ -43,18 +43,26 @@ write `nvidia_lock`, change the NVIDIA rate-limit branch, or update `main`.
 It prints only object keys, generation, and commit identifiers; it does not emit
 draw rows or number sets.
 
-## Pre-merge deployment status
+## Current deployment status
 
-The state branch has been populated and integrity-verified, but the currently
-deployed workflows still use `main` until this PR is merged. This PR contains
-the writer primitive, the coordinated workflow reader/writer integration, and
-the cutover audit. No live workflow is dispatched by these changes and no
-NVIDIA request is made by the writer or its tests.
+The coordinated runtime cutover is already active. Consuming workflows
+hydrate the four registered runtime objects from
+`general-automation-state` before application modules read them, and
+approved updates are published through the transactional writer using the
+manifest generation captured during hydration. The state branch is
+authoritative; copies of those four objects on `main` are historical
+comparison snapshots only and are not runtime inputs.
+
+This PR aligns reader and runtime-audit reporting with that active authority
+model. It does not perform the initial migration or publish runtime-state
+changes. Writer regression tests use fake transport; state-branch integrity
+verification is read-only. This PR does not dispatch workflows or make NVIDIA
+requests.
 
 
 ## Workflow integration map
 
-The canonical runtime read path defined by this PR is the composite hydrate
+The canonical runtime read path is the composite hydrate
 action followed by the read-only active-store audit. After merge, every
 consuming workflow will hydrate the exact four-object state snapshot before
 any application module reads an archive, evaluation ledger, autonomous
@@ -95,12 +103,15 @@ main-branch write paths. Main branch protection must remain disabled until
 those two exception paths are separately reviewed and coordinated. This
 change does not enable branch protection.
 
-## Operational transition
+## Runtime operation
 
-After merge, the updated workflows will begin hydrating and publishing
-state-store data when they are next invoked. The state branch is not changed
-by this PR: CI exercises the writer only with fake transport, while the real
-state-branch checks are GET-only. No workflow is manually dispatched. The
-NVIDIA lock remains locked and autonomous research remains paused. Existing
-main copies of the four migrated files become historical shadows and are not
-consumed by the updated workflows.
+Each consuming workflow hydrates one verified state-branch snapshot before
+reading runtime data. Writers publish only explicitly allowlisted objects and
+must use the generation returned by hydration; stale generations and branch
+races fail closed. The four runtime objects are not written to `main`.
+The global NVIDIA lock remains on `main`, the shared 40-requests-per-minute
+ledger remains on `general-nvidia-rate-limit-state`, and immutable sealed
+evaluation snapshots remain on `main`.
+
+Documentation changes and offline regression tests do not publish runtime
+state or contact NVIDIA.
