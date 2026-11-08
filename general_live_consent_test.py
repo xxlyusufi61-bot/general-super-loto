@@ -4,8 +4,10 @@ from pathlib import Path
 from general_live_consent import (
     CONFIRMATION_PHRASE,
     COORDINATOR_CONFIRMATION_PHRASE,
+    SINGLE_REQUEST_CONFIRMATION_PHRASE,
     has_explicit_live_consent,
     has_explicit_coordinator_live_consent,
+    has_explicit_single_request_consent,
 )
 
 
@@ -15,6 +17,7 @@ EXPECTED_CONFIRMATION_PHRASE = (
 EXPECTED_COORDINATOR_PHRASE = (
     "I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_3_NVIDIA_REQUESTS"
 )
+EXPECTED_SINGLE_REQUEST_PHRASE = "I_APPROVE_ONE_NORMAL_RESEARCH_REQUEST_8192_TOKENS"
 LIVE_WORKFLOW_PATHS = (
     ".github/workflows/general-agent.yml",
     ".github/workflows/open-research.yml",
@@ -40,6 +43,13 @@ class LiveNvidiaConsentTests(unittest.TestCase):
         self.assertFalse(has_explicit_coordinator_live_consent(CONFIRMATION_PHRASE))
         self.assertTrue(has_explicit_coordinator_live_consent(COORDINATOR_CONFIRMATION_PHRASE))
         self.assertFalse(has_explicit_coordinator_live_consent(COORDINATOR_CONFIRMATION_PHRASE + " extra"))
+
+    def test_single_request_consent_is_distinct_and_exact(self):
+        self.assertEqual(SINGLE_REQUEST_CONFIRMATION_PHRASE, EXPECTED_SINGLE_REQUEST_PHRASE)
+        self.assertTrue(has_explicit_single_request_consent(SINGLE_REQUEST_CONFIRMATION_PHRASE))
+        self.assertFalse(has_explicit_single_request_consent(SINGLE_REQUEST_CONFIRMATION_PHRASE + " extra"))
+        self.assertFalse(has_explicit_single_request_consent(" " + SINGLE_REQUEST_CONFIRMATION_PHRASE))
+        self.assertFalse(has_explicit_live_consent(SINGLE_REQUEST_CONFIRMATION_PHRASE))
 
     def test_standard_live_workflows_use_the_two_request_phrase(self):
         root = Path(__file__).resolve().parent
