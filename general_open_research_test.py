@@ -259,7 +259,7 @@ class OpenResearchIsolationTests(unittest.TestCase):
             self.assertIn("64 nodes and depth 12", system)
             self.assertIn("a typed expression tree", system)
             self.assertIn("t is not a dsl operator", system)
-            self.assertIn("if a hypothesis cannot be represented", system)
+            self.assertIn("if an exact hypothesis cannot be represented faithfully", system)
             self.assertIn("zero or one item only", system)
             self.assertIn("complete claim requires one valid spec from each independent direction", system)
             self.assertIn("not approved or canonical", system)
