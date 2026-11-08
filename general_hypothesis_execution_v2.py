@@ -237,7 +237,11 @@ def _validate_rows(rows: Any, *, field: str, maximum: int) -> list[dict[str, Any
 def _checked_number(value: Any) -> float | int:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         _fail("an expression produced a non-numeric result.")
-    if not math.isfinite(value) or abs(value) > MAX_ABS_SCORE:
+    try:
+        finite = math.isfinite(value)
+    except OverflowError:
+        finite = False
+    if not finite or abs(value) > MAX_ABS_SCORE:
         _fail("an expression produced a non-finite or out-of-range score.")
     return value
 
@@ -571,6 +575,10 @@ def evaluate_reverse_retrospective_stress(
     skip_recent_test_draws: int = 0,
 ) -> dict[str, Any]:
     """Run newest-to-oldest reverse stress tests; later draws are never predictive evidence."""
+    if type(number_pool_size) is not int or number_pool_size not in ALLOWED_POOL_SIZES:
+        _fail("only the 6-of-60 number pool is supported.")
+    if type(min_train_draws) is not int or not 2 <= min_train_draws <= MAX_INPUT_HISTORY_DRAWS:
+        _fail("minimum later-history draws are outside the supported range.")
     if type(test_draw_count) is not int or not 1 <= test_draw_count <= MAX_VALIDATION_DRAWS:
         _fail("reverse test draw count is outside the supported range.")
     if type(skip_recent_test_draws) is not int or skip_recent_test_draws < 0:
