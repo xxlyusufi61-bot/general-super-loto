@@ -320,6 +320,32 @@ class SafeHypothesisExecutionV2Tests(unittest.TestCase):
                 min_train_draws=40, skip_recent_test_draws=5,
             )
 
+    def test_canonical_context_must_stay_strictly_on_the_permitted_side_of_target(self):
+        pair = [draw(0), draw(1)]
+        spec = score(bool_score({"op": "contains_candidate", "state": state("A")}))
+        with self.assertRaisesRegex(ValueError, "strictly before hidden target C"):
+            engine.rank_candidates_for_pair(
+                pair,
+                target_date="2024-01-03",
+                number_pool_size=60,
+                execution_spec=spec,
+                canonical_history=[draw(0), draw(1), draw(2)],
+            )
+
+        reverse_pair = [draw(2), draw(3)]
+        reverse_spec = score(
+            bool_score({"op": "contains_candidate", "state": state("B")}),
+            "reverse",
+        )
+        with self.assertRaisesRegex(ValueError, "strictly after hidden target A"):
+            engine.rank_candidates_for_pair(
+                reverse_pair,
+                target_date="2024-01-02",
+                number_pool_size=60,
+                execution_spec=reverse_spec,
+                canonical_history=[draw(0), draw(2), draw(3)],
+            )
+
     def test_reverse_stress_does_not_bridge_a_consumed_canonical_neighbour(self):
         canonical = rows(5)
         available = [canonical[0], canonical[2], canonical[3], canonical[4]]
