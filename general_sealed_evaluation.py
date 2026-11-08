@@ -742,6 +742,156 @@ def _find_claim(ledger: dict[str, Any], claim_id: str) -> dict[str, Any]:
     return found[0]
 
 
+def _evaluate_full_reverse_history_v2(
+    available_history: list[dict[str, Any]],
+    canonical_history: list[dict[str, Any]],
+    excluded_dates: set[str],
+    *,
+    cutoff_date: str,
+    number_pool_size: int,
+    execution_spec: dict[str, Any],
+    min_train_draws: int = DEFAULT_MIN_TRAIN_DRAWS,
+) -> dict[str, Any]:
+    """Batch reverse diagnostics without bridging previously consumed archive rows."""
+    eligible_count = execution_v2.reverse_eligible_target_count(
+        available_history,
+        canonical_history=canonical_history,
+        excluded_dates=excluded_dates,
+        min_train_draws=min_train_draws,
+    )
+    if eligible_count < 1:
+        return {
+            "engine_version": execution_v2.VERSION,
+            "execution_dsl_version": 2,
+            "status": "SKIPPED_NO_ELIGIBLE_REVERSE_TARGETS",
+            "protocol": "reverse retrospective test; exact canonical B/C adjacency required; consumed context excluded",
+            "predictive_evidence": False,
+            "number_pool_size": number_pool_size,
+            "evaluated_draw_count": 0,
+            "eligible_draw_count": 0,
+            "ineligible_target_count": len(available_history),
+            "mean_hits_out_of_6": None,
+            "standard_error_of_mean_hits": None,
+            "uniform_random_expected_hits_out_of_6": 36 / number_pool_size,
+            "hit_distribution": {str(hits): 0 for hits in range(7)},
+            "per_draw": [],
+            "first_test_date": None,
+            "last_test_date": None,
+            "skipped_context_draw_count": 0,
+            "previously_consumed_rows_used_as_context": False,
+            "canonical_adjacency_enforced": True,
+        }
+
+    hit_distribution = {str(hits): 0 for hits in range(7)}
+    per_draw: list[dict[str, Any]] = []
+    offset = 0
+    skipped_context = skipped_consumed = skipped_missing = skipped_insufficient = 0
+    first_test_date = last_test_date = previous_batch_last_date = None
+
+    while offset < eligible_count:
+        batch_size = min(MAX_VALIDATION_DRAWS, eligible_count - offset)
+        batch = execution_v2.evaluate_reverse_retrospective_stress(
+            available_history,
+            cutoff_date=cutoff_date,
+            number_pool_size=number_pool_size,
+            execution_spec=execution_spec,
+            test_draw_count=batch_size,
+            min_train_draws=min_train_draws,
+            skip_recent_test_draws=offset,
+            canonical_history=canonical_history,
+            excluded_dates=excluded_dates,
+        )
+        if (
+            batch.get("status") != "EVALUATED_RETROSPECTIVE_ONLY"
+            or batch.get("eligible_draw_count") != eligible_count
+            or batch.get("evaluated_draw_count") != batch_size
+        ):
+            raise SealedEvaluationError("Reverse DSL v2 batch did not preserve its canonical eligible target set.")
+        batch_distribution = batch.get("hit_distribution")
+        if not isinstance(batch_distribution, dict) or set(batch_distribution) != set(hit_distribution):
+            raise SealedEvaluationError("Reverse DSL v2 batch returned a malformed aggregate histogram.")
+        if sum(batch_distribution.values()) != batch_size:
+            raise SealedEvaluationError("Reverse DSL v2 batch histogram count does not match its draw count.")
+        batch_details = batch.get("per_draw")
+        if not isinstance(batch_details, list) or len(batch_details) != batch_size:
+            raise SealedEvaluationError("Reverse DSL v2 batch per-draw details are incomplete.")
+        for detail in batch_details:
+            if (
+                not isinstance(detail, dict)
+                or not isinstance(detail.get("test_date"), str)
+                or detail.get("direction") != "reverse_retrospective"
+                or type(detail.get("hit_count")) is not int
+                or not 0 <= detail["hit_count"] <= 6
+                or not isinstance(detail.get("hit_column_positions_1_to_6"), list)
+                or len(detail["hit_column_positions_1_to_6"]) != detail["hit_count"]
+                or any(type(pos) is not int or not 1 <= pos <= 6 for pos in detail["hit_column_positions_1_to_6"])
+                or "numbers" in detail
+            ):
+                raise SealedEvaluationError("Reverse DSL v2 batch contains invalid per-draw detail.")
+        if previous_batch_last_date is not None and batch["first_test_date"] >= previous_batch_last_date:
+            raise SealedEvaluationError("Reverse DSL v2 batches overlap or are not strictly newest-to-oldest.")
+        if first_test_date is None:
+            first_test_date = batch["first_test_date"]
+        last_test_date = batch["last_test_date"]
+        previous_batch_last_date = last_test_date
+        per_draw.extend(batch_details)
+        for hits in range(7):
+            count = batch_distribution[str(hits)]
+            if type(count) is not int or count < 0:
+                raise SealedEvaluationError("Reverse DSL v2 histogram contains an invalid count.")
+            hit_distribution[str(hits)] += count
+        skipped_context = batch["skipped_context_draw_count"]
+        skipped_consumed = batch["skipped_consumed_context_draw_count"]
+        skipped_missing = batch["skipped_missing_context_draw_count"]
+        skipped_insufficient = batch["skipped_insufficient_later_history_draw_count"]
+        offset += batch_size
+
+    total_draws = sum(hit_distribution.values())
+    if total_draws != eligible_count:
+        raise SealedEvaluationError("Reverse DSL v2 diagnostic did not cover every eligible target.")
+    total_hits = sum(int(hits) * count for hits, count in hit_distribution.items())
+    sum_squares = sum((int(hits) ** 2) * count for hits, count in hit_distribution.items())
+    mean_hits = total_hits / total_draws
+    if total_draws > 1:
+        sample_variance = max(0.0, (sum_squares - (total_hits * total_hits / total_draws)) / (total_draws - 1))
+        standard_error = math.sqrt(sample_variance / total_draws)
+    else:
+        standard_error = None
+    return {
+        "engine_version": execution_v2.VERSION,
+        "execution_dsl_version": 2,
+        "status": "EVALUATED_RETROSPECTIVE_ONLY",
+        "protocol": "full available reverse-time retrospective diagnostic; exact canonical B/C neighbours; consumed rows excluded",
+        "predictive_evidence": False,
+        "number_pool_size": number_pool_size,
+        "evaluated_draw_count": total_draws,
+        "eligible_draw_count": eligible_count,
+        "ineligible_target_count": len(available_history) - eligible_count,
+        "evaluation_order": "newest_to_oldest",
+        "first_test_date": first_test_date,
+        "last_test_date": last_test_date,
+        "minimum_later_training_draws": min_train_draws,
+        "mean_hits_out_of_6": round(mean_hits, 6),
+        "standard_error_of_mean_hits": round(standard_error, 6) if standard_error is not None else None,
+        "uniform_random_expected_hits_out_of_6": round(36 / number_pool_size, 6),
+        "hit_distribution": hit_distribution,
+        "per_draw": per_draw,
+        "per_draw_detail_present": True,
+        "target_number_sets_reported": False,
+        "predicted_number_values_reported": False,
+        "current_isolated_target_included": False,
+        "current_target_numbers_exposed": False,
+        "skipped_context_draw_count": skipped_context,
+        "skipped_consumed_context_draw_count": skipped_consumed,
+        "skipped_missing_context_draw_count": skipped_missing,
+        "skipped_insufficient_later_history_draw_count": skipped_insufficient,
+        "previously_consumed_rows_used_as_context": False,
+        "canonical_adjacency_enforced": True,
+        "automatic_candidate_selection": False,
+        "method_registry_modified": False,
+    }
+
+
 def _evaluate_full_reverse_history(
     pre_target_history: list[dict[str, Any]],
     *,
@@ -749,8 +899,20 @@ def _evaluate_full_reverse_history(
     number_pool_size: int,
     execution_spec: dict[str, Any],
     min_train_draws: int = DEFAULT_MIN_TRAIN_DRAWS,
+    canonical_history: list[dict[str, Any]] | None = None,
+    excluded_dates: set[str] | list[str] | tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """Evaluate every reverse-eligible row in bounded batches; return aggregates only."""
+    if execution_spec_version(execution_spec) == 2:
+        return _evaluate_full_reverse_history_v2(
+            pre_target_history,
+            canonical_history if canonical_history is not None else pre_target_history,
+            set(excluded_dates),
+            cutoff_date=cutoff_date,
+            number_pool_size=number_pool_size,
+            execution_spec=execution_spec,
+            min_train_draws=min_train_draws,
+        )
     eligible_count = len(pre_target_history) - min_train_draws
     if eligible_count < 1:
         raise SealedEvaluationError("Not enough later historical rows for reverse stress testing.")
