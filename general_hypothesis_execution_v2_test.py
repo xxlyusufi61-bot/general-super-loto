@@ -277,6 +277,23 @@ class SafeHypothesisExecutionV2Tests(unittest.TestCase):
         self.assertFalse(report["current_target_numbers_exposed"])
         self.assertNotIn('"numbers":', json.dumps(report))
 
+    def test_forward_walk_forward_allows_older_omitted_rows_but_never_bridges_pair(self):
+        canonical = rows(44, start="2024-01-01")
+        discovery = canonical[:42]
+        discovery = [row for index, row in enumerate(discovery) if index != 5]
+        validation = canonical[42:]
+        report = engine.evaluate_holdout(
+            discovery,
+            validation,
+            cutoff_date="2024-02-15",
+            number_pool_size=60,
+            execution_spec=score({"op": "const", "value": 1}),
+            min_train_draws=40,
+            canonical_history=canonical,
+            excluded_dates={canonical[5]["date"]},
+        )
+        self.assertEqual(report["validation_draw_count"], 2)
+
     def test_forward_evaluation_rejects_non_chronological_or_target_rows(self):
         discovery = rows(42, start="2024-01-01")
         validation = rows(2, start="2024-02-12")

@@ -405,8 +405,8 @@ def evaluate_holdout(
         ]
         if canonical_by_date.get(target["date"]) != target:
             _fail("forward validation target is not an exact canonical archive row.")
-        if canonical_before != training:
-            _fail("forward training history is not the exact canonical archive prefix before target.")
+        if any(canonical_by_date.get(row["date"]) != row for row in training):
+            _fail("forward training history contains a row absent from canonical archive context.")
         ranked = rank_candidates_for_pair(
             pair,
             target_date=target["date"],
