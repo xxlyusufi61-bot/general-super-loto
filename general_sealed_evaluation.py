@@ -1156,8 +1156,8 @@ def evaluate_claim(
     reverse["spec_sha256"] = reverse_diagnostic_sha
     reverse["diagnostic_spec_direction"] = execution_spec_direction(reverse_diagnostic_spec) or "legacy_direction_agnostic"
     for reverse_row in reverse.get("per_draw", []):
-        reverse_row["hypothesis_id"] = candidate["hypothesis_id"]
-        reverse_row["spec_sha256"] = candidate["spec_sha256"]
+        reverse_row["hypothesis_id"] = reverse_diagnostic_id
+        reverse_row["spec_sha256"] = reverse_diagnostic_sha
         reverse_row["target_numbers_reported"] = False
         reverse_row["predicted_number_values_reported"] = False
     bidirectional = evaluate_bidirectional_full_history(
@@ -1187,7 +1187,11 @@ def evaluate_claim(
         "validation_draw_count": len(validation),
         "forward_walk_forward": forward,
         "time_ordered_cross_validation": cv,
-        "reverse_retrospective_full_history_diagnostic": reverse,
+        **(
+            {"reverse_retrospective_stress_test_of_forward_candidate": reverse}
+            if execution_spec_version(spec) == 1
+            else {"reverse_retrospective_full_history_diagnostic": reverse}
+        ),
         "reverse_discovered_candidate_holdout": reverse_candidate_holdout,
         "reverse_time_ordered_cross_validation": reverse_cv,
         "bidirectional_full_history_adaptive_diagnostic": bidirectional,
