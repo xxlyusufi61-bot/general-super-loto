@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import tempfile
@@ -111,14 +112,22 @@ class SingleRequestTokenTestTests(unittest.TestCase):
             ledger.write_text('{"entries":[]}', encoding="utf-8")
             memory.write_text('{"entries":[]}', encoding="utf-8")
             registry.write_text('{"methods":{}}', encoding="utf-8")
-            usage_path.write_text(json.dumps({
-                "max_tokens_requested": 8192,
-                "model_finish_reason": "stop",
-                "response_complete": True,
-                "automatic_retries": 0,
-                "sdk_max_retries": 0,
-                "stream_requested": False,
-            }), encoding="utf-8")
+
+            archive_sha256 = hashlib.sha256(b"archive input").hexdigest()
+
+            def fake_call_model(_messages, *, request_label=None):
+                self.assertEqual(request_label, "forward")
+                research._NVIDIA_REQUESTS_ATTEMPTED += 1
+                research._NVIDIA_REQUEST_LABELS_ATTEMPTED.add("forward")
+                usage_path.write_text(json.dumps({
+                    "max_tokens_requested": 8192,
+                    "model_finish_reason": "stop",
+                    "response_complete": True,
+                    "automatic_retries": 0,
+                    "sdk_max_retries": 0,
+                    "stream_requested": False,
+                }), encoding="utf-8")
+                return response_text
 
             with patch.dict(os.environ, self.environment(), clear=True), patch.object(
                 token_test.sealed, "preflight", return_value={"status": "READY"}
@@ -129,7 +138,7 @@ class SingleRequestTokenTestTests(unittest.TestCase):
                 return_value=("2026-11-05", discovery, {}),
             ) as isolate, patch.object(
                 token_test.sealed, "load_archive",
-                return_value={"archive_sha256": "a" * 64, "rows": rows},
+                return_value={"archive_sha256": archive_sha256, "rows": rows},
             ), patch.object(
                 token_test.sealed, "load_ledger", return_value={}
             ), patch.object(
@@ -145,7 +154,7 @@ class SingleRequestTokenTestTests(unittest.TestCase):
                     {"role": "user", "content": json.dumps(prompt_payload)},
                 ],
             ) as build_messages, patch.object(
-                token_test.research, "call_model", return_value=response_text
+                token_test.research, "call_model", side_effect=fake_call_model
             ) as call_model, patch.object(
                 token_test.research, "USAGE_REPORT", usage_path
             ):
