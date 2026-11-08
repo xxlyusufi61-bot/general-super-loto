@@ -129,90 +129,51 @@ class SafeHypothesisExecutionV2Tests(unittest.TestCase):
         )
         self.assertEqual({item["score"] for item in ranking}, {3})
 
-    def test_mod5_residue_set_has_explicit_zero_through_four_semantics(self):
-        pair = [draw(0, numbers=[1, 2, 3, 4, 5, 6]), draw(1)]
-        view = {
-            "op": "mod5_project",
-            "state": state("A"),
-            "representation": "residue_set",
-        }
-        expression = bool_score({
-            "op": "residue_contains",
-            "view": view,
-            "residue": 0,
-        })
-        ranking = engine.rank_candidates_for_pair(
-            pair, target_date="2024-01-03", number_pool_size=60, execution_spec=score(expression)
-        )
-        self.assertEqual({item["score"] for item in ranking}, {1})
-        self.assertEqual([number % 5 for number in pair[0]["numbers"]], [1, 2, 3, 4, 0, 1])
+    def test_mod5_and_scalar_modulo_are_not_predefined_dsl_operations(self):
+        expressions = [
+            {"op": "mod5_project", "state": state("A"), "representation": "residue_counts"},
+            {
+                "op": "residue_frequency",
+                "view": {"op": "mod5_project", "state": state("A"), "representation": "residue_counts"},
+                "residue": 1,
+            },
+            {
+                "op": "residue_at",
+                "view": {"op": "mod5_project", "state": state("A"), "representation": "sorted_residues"},
+                "index": 0,
+            },
+            {
+                "op": "mod",
+                "left": {"op": "var", "name": "candidate"},
+                "right": {"op": "const", "value": 5},
+            },
+        ]
+        for expression in expressions:
+            with self.subTest(expression=expression):
+                with self.assertRaisesRegex(ValueError, "not in the v2 allowlist"):
+                    engine.validate_execution_spec(score(expression))
 
-    def test_mod5_residue_counts_preserve_multiplicity_and_fixed_length(self):
-        pair = [draw(0, numbers=[1, 2, 3, 4, 5, 6]), draw(1)]
+    def test_derived_set_cannot_enter_an_unimplemented_mod5_projection(self):
         expression = {
-            "op": "residue_frequency",
-            "view": {
-                "op": "mod5_project",
-                "state": state("A"),
-                "representation": "residue_counts",
-            },
-            "residue": 1,
-        }
-        ranking = engine.rank_candidates_for_pair(
-            pair, target_date="2024-01-03", number_pool_size=60, execution_spec=score(expression)
-        )
-        self.assertEqual({item["score"] for item in ranking}, {2})
-        checked = engine.validate_execution_spec(score(expression))
-        self.assertEqual(checked["score_expression"]["view"]["representation"], "residue_counts")
-
-    def test_mod5_sorted_residues_preserve_sorted_source_number_order(self):
-        pair = [draw(0, numbers=[1, 2, 3, 4, 5, 6]), draw(1)]
-        expression = {
-            "op": "residue_at",
-            "view": {
-                "op": "mod5_project",
-                "state": state("A"),
-                "representation": "sorted_residues",
-            },
-            "index": 4,
-        }
-        ranking = engine.rank_candidates_for_pair(
-            pair, target_date="2024-01-03", number_pool_size=60, execution_spec=score(expression)
-        )
-        self.assertEqual({item["score"] for item in ranking}, {0})
-
-    def test_mod5_modes_are_not_inferred_or_silently_defaulted(self):
-        bad = score({
             "op": "mod5_project",
-            "state": state("A"),
-            "representation": "whatever_is_best",
-        })
-        with self.assertRaisesRegex(ValueError, "explicitly selected"):
-            engine.validate_execution_spec(bad)
+            "state": {"op": "set_difference", "left": state("A"), "right": state("B")},
+            "representation": "sorted_residues",
+        }
+        with self.assertRaisesRegex(ValueError, "not in the v2 allowlist"):
+            engine.validate_execution_spec(score(expression))
 
-    def test_residue_frequency_and_index_are_type_and_range_checked(self):
-        bad_frequency = score({
-            "op": "residue_frequency",
-            "view": {
-                "op": "mod5_project",
-                "state": state("A"),
-                "representation": "residue_set",
-            },
-            "residue": 1,
-        })
-        with self.assertRaisesRegex(ValueError, "requires the residue_counts"):
-            engine.validate_execution_spec(bad_frequency)
-        bad_index = score({
-            "op": "residue_at",
-            "view": {
-                "op": "mod5_project",
-                "state": state("A"),
-                "representation": "sorted_residues",
-            },
-            "index": 6,
-        })
-        with self.assertRaisesRegex(ValueError, "index must be"):
-            engine.validate_execution_spec(bad_index)
+    def test_canonical_pair_check_rejects_a_non_adjacent_pair(self):
+        canonical = rows(4)
+        non_adjacent_pair = [canonical[0], canonical[2]]
+        spec = score(bool_score({"op": "contains_candidate", "state": state("B")}))
+        with self.assertRaisesRegex(ValueError, "immediately adjacent canonical"):
+            engine.rank_candidates_for_pair(
+                non_adjacent_pair,
+                target_date=canonical[3]["date"],
+                number_pool_size=60,
+                execution_spec=spec,
+                canonical_history=canonical[:3],
+            )
 
     def test_invalid_types_extra_keys_unknown_ops_and_bad_schema_rejected(self):
         cases = [
@@ -358,6 +319,30 @@ class SafeHypothesisExecutionV2Tests(unittest.TestCase):
                 execution_spec=score({"op": "const", "value": 1}, "reverse"),
                 min_train_draws=40, skip_recent_test_draws=5,
             )
+
+    def test_reverse_stress_does_not_bridge_a_consumed_canonical_neighbour(self):
+        canonical = rows(5)
+        available = [canonical[0], canonical[2], canonical[3], canonical[4]]
+        spec = score(
+            bool_score({"op": "contains_candidate", "state": state("B")}),
+            "reverse",
+        )
+        report = engine.evaluate_reverse_retrospective_stress(
+            available,
+            cutoff_date="2024-01-10",
+            number_pool_size=60,
+            execution_spec=spec,
+            test_draw_count=30,
+            min_train_draws=2,
+            canonical_history=canonical,
+            excluded_dates={canonical[1]["date"]},
+        )
+        self.assertEqual(report["eligible_draw_count"], 1)
+        self.assertEqual(report["evaluated_draw_count"], 1)
+        self.assertEqual(report["skipped_consumed_context_draw_count"], 1)
+        self.assertEqual(report["per_draw"][0]["test_date"], canonical[2]["date"])
+        self.assertTrue(report["canonical_adjacency_enforced"])
+        self.assertFalse(report["previously_consumed_rows_used_as_context"])
 
     def test_time_ordered_cross_validation_uses_contiguous_blocks(self):
         discovery = rows(42, start="2024-01-01")
