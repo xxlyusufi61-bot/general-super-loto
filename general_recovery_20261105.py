@@ -154,6 +154,7 @@ def prepare_recovery_archive(
         or plan.get("target_numbers_exposed") is not False
         or plan.get("target_in_discovery") is not False
         or plan.get("target_in_validation") is not False
+        or plan.get("target_in_reverse_validation") is not False
         or plan.get("validation_dates_previously_consumed") is not False
         or plan.get("hosted_model_request_performed") is not False
         or plan.get("real_archive_evaluation_performed") is not False
