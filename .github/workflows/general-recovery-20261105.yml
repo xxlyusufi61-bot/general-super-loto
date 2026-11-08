@@ -1,0 +1,266 @@
+name: GENERAL One-Time 2026-11-05 Recovery
+
+'on':
+  workflow_dispatch:
+    inputs:
+      confirmation_phrase:
+        description: "Exact one-time authorization phrase. A dispatch consumes the one-shot opportunity even if later preflight fails."
+        required: true
+        type: string
+        default: "NO"
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: general-nvidia-api
+  cancel-in-progress: false
+
+jobs:
+  recovery:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pinned NVIDIA OpenAI SDK
+        run: python -m pip install --disable-pip-version-check --no-input -r requirements.txt
+
+      - name: Hydrate verified GENERAL state-store data
+        id: state_bootstrap
+        uses: ./.github/actions/hydrate-automation-state
+        with:
+          token: ${{ github.token }}
+
+      - name: Verify active authoritative state store
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python3 general_automation_state_integrity_audit.py
+
+      - name: Authorize the single permitted recovery dispatch
+        id: one_shot
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_SHA: ${{ github.sha }}
+          RECOVERY_CONFIRMATION: ${{ inputs.confirmation_phrase }}
+        run: |
+          python3 general_recovery_20261105.py authorize \
+            --repository "$GITHUB_REPOSITORY" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --event "$GITHUB_EVENT_NAME" \
+            --ref "$GITHUB_REF" \
+            --head-sha "$GITHUB_SHA" \
+            --confirmation "$RECOVERY_CONFIRMATION" \
+            --token "$GITHUB_TOKEN" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Fetch the immutable archive snapshot from its pinned state commit
+        env:
+          RECOVERY_SOURCE_COMMIT: "8be67c7ba561862aa81af988f3544ef5fbb7be71"
+        run: |
+          git fetch --no-tags origin refs/heads/general-automation-state:refs/remotes/origin/general-automation-state
+          git cat-file -e "$RECOVERY_SOURCE_COMMIT^{commit}"
+          git show "$RECOVERY_SOURCE_COMMIT:super_loto_archive.json" > /tmp/general-recovery-pinned-archive.json
+
+      - name: Prepare and validate the exact 2026-11-05 archive
+        id: archive_prepare
+        env:
+          RECOVERY_SOURCE_COMMIT: "8be67c7ba561862aa81af988f3544ef5fbb7be71"
+        run: |
+          python3 general_recovery_20261105.py prepare \
+            --archive /tmp/general-recovery-pinned-archive.json \
+            --current-archive super_loto_archive.json \
+            --ledger general_evaluation_ledger.json \
+            --autonomous-state general_autonomous_research_state.json \
+            --source-commit "$RECOVERY_SOURCE_COMMIT" \
+            --output general_recovery_archive.json \
+            --metadata general_recovery_metadata.json \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Verify active autonomous authorization and clear global lock
+        run: |
+          python3 general_autonomous_research.py status > /tmp/general-recovery-auth-status.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          status = json.loads(Path("/tmp/general-recovery-auth-status.json").read_text(encoding="utf-8"))
+          if status.get("authorized") is not True or status.get("global_lock_clear") is not True:
+              raise SystemExit("Active autonomous authorization or clear global NVIDIA lock is missing.")
+          print("Autonomous authorization: active; global NVIDIA lock: clear.")
+          PY
+
+      - name: Verify remote global NVIDIA safety lock
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GENERAL_DEFAULT_BRANCH: main
+        run: |
+          python3 general_nvidia_guard.py check
+          echo "GENERAL_NVIDIA_GUARD_PASSED=1" >> "$GITHUB_ENV"
+
+      - name: Preflight fresh disjoint sealed windows before any hosted request
+        run: |
+          python3 general_sealed_evaluation.py preflight \
+            --archive general_recovery_archive.json \
+            --ledger general_evaluation_ledger.json
+
+      - name: Run exactly one forward and one reverse recovery discovery pass
+        id: research
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GENERAL_DEFAULT_BRANCH: main
+          GENERAL_ARCHIVE_FILE: general_recovery_archive.json
+          TASK_TEXT: "Perform the fixed one-time recovery research for the isolated 2026-11-05 target using only the pinned historical archive. Independently explore forward and reverse directions from scratch. Do not request, infer, or report winning-number predictions."
+          GENERAL_CONFIRM_LIVE_CALLS: "I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_2_NVIDIA_REQUESTS"
+          GENERAL_ALLOW_NVIDIA_CALL: "true"
+          GENERAL_NVIDIA_FREE_USAGE_VERIFIED: "true"
+          GENERAL_NVIDIA_GUARD_PASSED: "1"
+        run: python3 general_open_research.py
+
+      - name: Activate the global lock after an incomplete NVIDIA request
+        if: ${{ always() && steps.research.outcome != 'success' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GENERAL_DEFAULT_BRANCH: main
+        run: |
+          if [ -f /tmp/general_nvidia_api_attempted ] && [ ! -f /tmp/general_nvidia_api_succeeded ]; then
+            python3 general_nvidia_guard.py lock --reason "One-time 2026-11-05 recovery request failed or its response could not be validated; no automatic retry is allowed."
+          else
+            echo "No incomplete NVIDIA request detected; global lock unchanged."
+          fi
+
+      - name: Claim fresh sealed evaluation windows
+        id: sealed_claim
+        if: ${{ success() && steps.research.outcome == 'success' }}
+        run: |
+          python3 general_sealed_evaluation.py claim \
+            --archive general_recovery_archive.json \
+            --ledger general_evaluation_ledger.json \
+            --proposals open_research_proposals.json \
+            --specs open_research_execution_specs.json \
+            --output open_research_evaluation_claim.json \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Persist immutable historical archive snapshot on main
+        id: persist_snapshot
+        if: ${{ steps.sealed_claim.outputs.claim_created == 'true' }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add general_evaluation_snapshots/
+          if ! git diff --cached --quiet; then
+            git commit -m "Store immutable 2026-11-05 recovery evaluation snapshot"
+            git push origin HEAD:main
+          else
+            echo "The claim command verified that the identical immutable snapshot already exists."
+          fi
+
+      - name: Persist sealed evaluation claim
+        id: persist_claim
+        if: ${{ steps.sealed_claim.outputs.claim_created == 'true' }}
+        uses: ./.github/actions/publish-automation-state
+        with:
+          token: ${{ github.token }}
+          expected_generation: ${{ steps.state_bootstrap.outputs.generation }}
+          objects: evaluation_ledger
+          message: "Reserve one-time 2026-11-05 recovery validation windows"
+
+      - name: Run chronological sealed evaluation
+        id: evaluation
+        if: ${{ steps.sealed_claim.outputs.claim_created == 'true' }}
+        env:
+          SEALED_CLAIM_ID: ${{ steps.sealed_claim.outputs.claim_id }}
+        run: |
+          python3 general_sealed_evaluation.py evaluate \
+            --claim-id "$SEALED_CLAIM_ID" \
+            --ledger general_evaluation_ledger.json \
+            --proposals open_research_proposals.json \
+            --specs open_research_execution_specs.json \
+            --output open_research_evaluation_report.json
+
+      - name: Persist sealed evaluation completion
+        id: persist_eval
+        if: ${{ success() && steps.sealed_claim.outputs.claim_created == 'true' }}
+        uses: ./.github/actions/publish-automation-state
+        with:
+          token: ${{ github.token }}
+          expected_generation: ${{ steps.persist_claim.outputs.generation }}
+          objects: evaluation_ledger
+          message: "Complete one-time 2026-11-05 recovery evaluation"
+
+      - name: Append sanitized recovery research memory
+        if: ${{ always() && (steps.research.outcome == 'success' || steps.research.outcome == 'failure') }}
+        env:
+          RESEARCH_OUTCOME: ${{ steps.research.outcome }}
+          CLAIM_OUTCOME: ${{ steps.sealed_claim.outcome }}
+          CLAIM_PERSIST_OUTCOME: ${{ steps.persist_claim.outcome }}
+          EVALUATION_OUTCOME: ${{ steps.evaluation.outcome }}
+        run: |
+          failure_stage=""
+          if [ "$RESEARCH_OUTCOME" = "failure" ]; then
+            echo "The research runner records the directional failure stage."
+          elif [ "$CLAIM_OUTCOME" = "failure" ]; then
+            failure_stage="sealed_claim"
+          elif [ "$CLAIM_PERSIST_OUTCOME" = "failure" ]; then
+            failure_stage="sealed_claim_persistence"
+          elif [ "$EVALUATION_OUTCOME" = "failure" ]; then
+            failure_stage="sealed_evaluation"
+          fi
+          python3 general_research_memory.py record-cycle \
+            --archive general_recovery_archive.json \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --failure-stage "$failure_stage" \
+            --error-type "OneTimeRecoveryWorkflowStepFailure"
+
+      - name: Persist sanitized recovery research memory
+        id: persist_memory
+        if: ${{ always() && (steps.research.outcome == 'success' || steps.research.outcome == 'failure') }}
+        uses: ./.github/actions/publish-automation-state
+        with:
+          token: ${{ github.token }}
+          expected_generation: ${{ steps.persist_eval.outputs.generation || steps.persist_claim.outputs.generation || steps.state_bootstrap.outputs.generation }}
+          objects: research_memory
+          message: "Record sanitized one-time 2026-11-05 recovery research outcome"
+
+      - name: Upload number-safe recovery report and metadata
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: general-one-time-recovery-2026-11-05-${{ github.run_id }}
+          path: |
+            general_recovery_metadata.json
+            open_research_report.md
+            open_research_forward_report.md
+            open_research_reverse_report.md
+            open_research_proposals.json
+            open_research_execution_specs.json
+            open_research_usage_forward.json
+            open_research_usage_reverse.json
+            open_research_sealed_plan.json
+            open_research_evaluation_claim.json
+            open_research_evaluation_report.json
+            open_research_run_status.json
+          if-no-files-found: ignore
+          retention-days: 30
