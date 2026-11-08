@@ -4,8 +4,10 @@ from pathlib import Path
 from general_live_consent import (
     CONFIRMATION_PHRASE,
     COORDINATOR_CONFIRMATION_PHRASE,
+    SINGLE_REQUEST_CONFIRMATION_PHRASE,
     has_explicit_live_consent,
     has_explicit_coordinator_live_consent,
+    has_explicit_single_request_consent,
 )
 
 
@@ -15,6 +17,7 @@ EXPECTED_CONFIRMATION_PHRASE = (
 EXPECTED_COORDINATOR_PHRASE = (
     "I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_3_NVIDIA_REQUESTS"
 )
+EXPECTED_SINGLE_REQUEST_PHRASE = "I_APPROVE_ONE_NORMAL_RESEARCH_REQUEST_8192_TOKENS"
 LIVE_WORKFLOW_PATHS = (
     ".github/workflows/general-agent.yml",
     ".github/workflows/open-research.yml",
@@ -41,6 +44,13 @@ class LiveNvidiaConsentTests(unittest.TestCase):
         self.assertTrue(has_explicit_coordinator_live_consent(COORDINATOR_CONFIRMATION_PHRASE))
         self.assertFalse(has_explicit_coordinator_live_consent(COORDINATOR_CONFIRMATION_PHRASE + " extra"))
 
+    def test_single_request_consent_is_distinct_and_exact(self):
+        self.assertEqual(SINGLE_REQUEST_CONFIRMATION_PHRASE, EXPECTED_SINGLE_REQUEST_PHRASE)
+        self.assertTrue(has_explicit_single_request_consent(SINGLE_REQUEST_CONFIRMATION_PHRASE))
+        self.assertFalse(has_explicit_single_request_consent(SINGLE_REQUEST_CONFIRMATION_PHRASE + " extra"))
+        self.assertFalse(has_explicit_single_request_consent(" " + SINGLE_REQUEST_CONFIRMATION_PHRASE))
+        self.assertFalse(has_explicit_live_consent(SINGLE_REQUEST_CONFIRMATION_PHRASE))
+
     def test_standard_live_workflows_use_the_two_request_phrase(self):
         root = Path(__file__).resolve().parent
         for relative_path in LIVE_WORKFLOW_PATHS:
@@ -50,6 +60,23 @@ class LiveNvidiaConsentTests(unittest.TestCase):
                 workflow_text = workflow_path.read_text(encoding="utf-8")
                 self.assertIn(CONFIRMATION_PHRASE, workflow_text)
                 self.assertNotIn(COORDINATOR_CONFIRMATION_PHRASE, workflow_text)
+
+    def test_single_request_workflow_is_manual_one_shot_and_relocks(self):
+        root = Path(__file__).resolve().parent
+        workflow_path = root / ".github/workflows/general-single-request-normal-token-test.yml"
+        self.assertTrue(workflow_path.is_file())
+        workflow = workflow_path.read_text(encoding="utf-8")
+        self.assertIn("workflow_dispatch:", workflow)
+        self.assertIn(SINGLE_REQUEST_CONFIRMATION_PHRASE, workflow)
+        self.assertIn("github.run_attempt == 1", workflow)
+        self.assertIn("inputs.confirm_free_usage_verified == true", workflow)
+        self.assertIn("group: general-nvidia-api", workflow)
+        self.assertIn("single-request-check", workflow)
+        self.assertIn("single-request-unlock", workflow)
+        self.assertIn("steps.temporary-unlock.outputs.unlock_started == 'true'", workflow)
+        self.assertIn("general_nvidia_guard.py lock", workflow)
+        self.assertIn("general_single_request_token_test.py", workflow)
+        self.assertNotIn("schedule:", workflow)
 
     def test_coordinator_uses_its_separate_three_agent_approval(self):
         root = Path(__file__).resolve().parent

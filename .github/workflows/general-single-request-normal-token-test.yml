@@ -1,0 +1,215 @@
+name: GENERAL Single-Request Normal-Mode 8192 Token Test
+
+'on':
+  push:
+    branches:
+      - main
+    paths:
+      - "general_single_request_token_test.py"
+      - "general_single_request_token_test_test.py"
+      - "general_open_research.py"
+      - "general_open_research_test.py"
+      - "general_live_consent.py"
+      - "general_live_consent_test.py"
+      - "general_nvidia_guard.py"
+      - "tests/test_general_nvidia_guard.py"
+      - ".github/workflows/general-single-request-normal-token-test.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "general_single_request_token_test.py"
+      - "general_single_request_token_test_test.py"
+      - "general_open_research.py"
+      - "general_open_research_test.py"
+      - "general_live_consent.py"
+      - "general_live_consent_test.py"
+      - "general_nvidia_guard.py"
+      - "tests/test_general_nvidia_guard.py"
+      - ".github/workflows/general-single-request-normal-token-test.yml"
+  workflow_dispatch:
+    inputs:
+      confirmation_phrase:
+        description: "Exact one-request approval. Leave NO to run offline tests only."
+        required: true
+        type: string
+        default: "NO"
+      confirm_free_usage_verified:
+        description: "True only after the operator's existing free-only/no-billing verification remains valid."
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  offline-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pinned NVIDIA OpenAI SDK
+        run: python -m pip install --disable-pip-version-check --no-input -r requirements.txt
+      - name: Compile one-request validation modules
+        run: |
+          python3 -m py_compile \
+            general_live_consent.py general_live_consent_test.py \
+            general_nvidia_guard.py general_open_research.py general_open_research_test.py \
+            general_single_request_token_test.py general_single_request_token_test_test.py \
+            general_sealed_evaluation.py general_research_memory.py
+      - name: Run offline one-request, research, and safety regressions
+        run: |
+          python3 -m unittest -v \
+            general_live_consent_test \
+            general_open_research_test \
+            general_single_request_token_test_test \
+            general_nvidia_diagnostic_test \
+            general_hypothesis_proposals_test \
+            general_hypothesis_execution_test \
+            general_bidirectional_evaluation_test \
+            general_execution_spec_parser_test \
+            general_sealed_evaluation_test \
+            general_source_context_test \
+            general_research_memory_test
+          python3 -m unittest discover -s tests -v
+
+  token-test:
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && inputs.confirmation_phrase == 'I_APPROVE_ONE_NORMAL_RESEARCH_REQUEST_8192_TOKENS' && inputs.confirm_free_usage_verified == true }}
+    needs: offline-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      actions: read
+      contents: write
+    concurrency:
+      group: general-nvidia-api
+      cancel-in-progress: false
+    steps:
+      - name: Checkout exact main workflow commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pinned NVIDIA OpenAI SDK
+        run: python -m pip install --disable-pip-version-check --no-input -r requirements.txt
+      - name: Hydrate verified GENERAL state-store data
+        id: state_bootstrap
+        uses: ./.github/actions/hydrate-automation-state
+        with:
+          token: ${{ github.token }}
+      - name: Verify authoritative state-store integrity
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python3 general_automation_state_integrity_audit.py
+      - name: Verify exact workflow identity and active global lock
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_WORKFLOW_REF: ${{ github.workflow_ref }}
+          GITHUB_SHA: ${{ github.sha }}
+          GENERAL_CONFIRM_LIVE_CALLS: ${{ inputs.confirmation_phrase }}
+          GENERAL_DEFAULT_BRANCH: main
+        run: python3 general_nvidia_guard.py single-request-check
+      - name: Refresh local archive without publishing or changing state-store objects
+        run: python3 general_archive_fetch.py
+      - name: Preflight archive, target isolation, and both sealed directional windows
+        run: |
+          python3 - <<'PY'
+          import general_open_research as research
+          import general_sealed_evaluation as sealed
+          ledger = research.BASE / "general_evaluation_ledger.json"
+          preflight = sealed.preflight(research.ARCHIVE, ledger)
+          if not isinstance(preflight, dict) or preflight.get("status") != "READY":
+              raise SystemExit("Sealed forward/reverse preflight is not READY; no unlock or NVIDIA request.")
+          rows = research.parse_archive()
+          target, discovery, _plan = research.isolate_discovery_only(rows, ledger_path=ledger)
+          proof = sealed.load_archive(research.ARCHIVE)
+          if proof.get("rows") != rows:
+              raise SystemExit("Archive proof mismatch; no unlock or NVIDIA request.")
+          print("Archive rows:", len(rows))
+          print("Isolated target metadata:", target)
+          print("Eligible discovery rows:", len(discovery))
+          print("Fresh disjoint forward/reverse preflight: READY")
+          print("Target values and holdout rows emitted: NO")
+          PY
+      - name: Temporarily unlock only for this verified workflow run
+        id: temporary-unlock
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_WORKFLOW_REF: ${{ github.workflow_ref }}
+          GITHUB_SHA: ${{ github.sha }}
+          GENERAL_CONFIRM_LIVE_CALLS: ${{ inputs.confirmation_phrase }}
+          GENERAL_DEFAULT_BRANCH: main
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          echo "unlock_started=true" >> "$GITHUB_OUTPUT"
+          python3 general_nvidia_guard.py single-request-unlock
+      - name: Verify temporary unlock before the one permitted request
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GENERAL_DEFAULT_BRANCH: main
+        run: |
+          python3 general_nvidia_guard.py check
+          echo "GENERAL_NVIDIA_GUARD_PASSED=1" >> "$GITHUB_ENV"
+      - name: Run one normal-mode forward request with DEFAULT_MAX_COMPLETION_TOKENS
+        id: normal-token-test
+        timeout-minutes: 18
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_WORKFLOW_REF: ${{ github.workflow_ref }}
+          GITHUB_SHA: ${{ github.sha }}
+          GENERAL_CONFIRM_LIVE_CALLS: ${{ inputs.confirmation_phrase }}
+          GENERAL_DEFAULT_BRANCH: main
+          GENERAL_SINGLE_REQUEST_MODE: "true"
+          GENERAL_ALLOW_NVIDIA_CALL: "true"
+          GENERAL_NVIDIA_FREE_USAGE_VERIFIED: "true"
+        run: python3 general_single_request_token_test.py
+      - name: Restore the global fail-closed NVIDIA lock
+        if: ${{ always() && steps.temporary-unlock.outputs.unlock_started == 'true' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GENERAL_DEFAULT_BRANCH: main
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python3 general_nvidia_guard.py lock \
+            --reason "The one-request normal-mode 8192-token validation workflow ended; restore the fail-closed global lock."
+      - name: Upload sanitized request metadata only
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: general-single-request-normal-token-test-${{ github.run_id }}
+          path: |
+            general_single_request_token_test_result.json
+            open_research_usage_forward.json
+          if-no-files-found: ignore
+          retention-days: 14
