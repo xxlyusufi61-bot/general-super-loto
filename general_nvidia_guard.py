@@ -33,6 +33,7 @@ DIAGNOSTIC_REQUEST_SOURCE = "open-research-forward"
 DIAGNOSTIC_AUTHORIZED_ACTOR_LOGIN = "xxlyusufi61-bot"
 DIAGNOSTIC_AUTHORIZED_ACTOR_ID = 345811504
 SINGLE_REQUEST_WORKFLOW_PATH = ".github/workflows/general-single-request-normal-token-test.yml"
+SINGLE_REQUEST_WORKFLOW_ID = 410813288
 SINGLE_REQUEST_APPROVAL_PHRASE = "I_APPROVE_ONE_NORMAL_RESEARCH_REQUEST_8192_TOKENS"
 SINGLE_REQUEST_SOURCE = "open-research-single-forward"
 SINGLE_REQUEST_AUTHORIZED_ACTOR_LOGIN = DIAGNOSTIC_AUTHORIZED_ACTOR_LOGIN
@@ -456,8 +457,8 @@ def validate_single_request_workflow_run(run, env=None):
     if type(run.get("id")) is not int or run.get("id") != int(run_id):
         raise RuntimeError("GitHub single-request run identity does not match the current runner.")
     workflow_id = run.get("workflow_id")
-    if type(workflow_id) is not int or workflow_id < 1:
-        raise RuntimeError("GitHub single-request workflow ID is invalid.")
+    if type(workflow_id) is not int or workflow_id != SINGLE_REQUEST_WORKFLOW_ID:
+        raise RuntimeError("GitHub run does not belong to the registered single-request workflow ID.")
     if run.get("path") != SINGLE_REQUEST_WORKFLOW_PATH:
         raise RuntimeError("The run does not belong to the approved single-request workflow.")
     if run.get("event") != "workflow_dispatch":
