@@ -147,6 +147,7 @@ class RecoveryArchiveTests(unittest.TestCase):
                 source_archive_path=self.source,
                 current_archive_path=self.current,
                 ledger_path=self.ledger,
+                autonomous_state_path=self.autonomous_state,
                 output_path=self.output,
                 source_commit="e" * 40,
             )
@@ -159,6 +160,7 @@ class RecoveryArchiveTests(unittest.TestCase):
                     source_archive_path=self.source,
                     current_archive_path=self.current,
                     ledger_path=self.ledger,
+                    autonomous_state_path=self.autonomous_state,
                     output_path=self.output,
                     source_commit="d" * 40,
                 )
@@ -181,6 +183,7 @@ class RecoveryArchiveTests(unittest.TestCase):
                                     source_archive_path=self.source,
                                     current_archive_path=self.current,
                                     ledger_path=self.ledger,
+                                    autonomous_state_path=self.autonomous_state,
                                     output_path=self.output,
                                     source_commit="d" * 40,
                                 )
@@ -206,6 +209,7 @@ class RecoveryArchiveTests(unittest.TestCase):
                     source_archive_path=self.source,
                     current_archive_path=self.current,
                     ledger_path=self.ledger,
+                    autonomous_state_path=self.autonomous_state,
                     output_path=self.output,
                     source_commit="d" * 40,
                 )
