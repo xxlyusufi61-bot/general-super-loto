@@ -55,7 +55,7 @@ The memory writer checks that evaluation feedback matches the candidate/specific
 
 ## Persistence and immutability
 
-`general_research_memory.json` is append-only. Existing entries cannot be edited, reordered, or deleted by the memory writer. Duplicate run/direction entries are rejected. Each entry has a SHA-256 content hash. The file has a bounded safety limit of 10,000 entries; when that limit is reached, writes fail closed rather than deleting history. New entries must preserve non-decreasing target-date chronology.
+`general_research_memory.json` is append-only. Existing entries cannot be edited, reordered, or deleted by the memory writer. Duplicate run/direction entries are rejected. Each entry has a SHA-256 content hash. The file has a bounded safety limit of 10,000 entries; when that limit is reached, writes fail closed rather than deleting history. New entries must preserve non-decreasing target-date chronology. The writer validates only the newly appended suffix against the final persisted target date; the existing prefix is validated on load and is not rechecked as if it were new data.
 
 Both the manual blank-slate workflow and the scheduled autonomous workflow use the same memory writer after the research/evaluation outcome is known. The workflow commits `general_research_memory.json` together with any still-pending append-only evaluation-ledger or immutable-snapshot changes. It may also stage an archive file that the preceding validated archive-refresh step already produced, so the memory entry's archive hash points to a durable source archive. The memory writer itself never edits archive rows, the method registry, the global NVIDIA lock, or autonomous authorization state.
 
