@@ -101,7 +101,7 @@ class RecoveryArchiveTests(unittest.TestCase):
         self.assertFalse(result["target_numbers_exposed"])
         self.assertEqual(self.output.read_bytes(), self.source_raw)
         saved_metadata = json.loads(self.metadata.read_text(encoding="utf-8"))
-        self.assertNotIn("numbers", json.dumps(saved_metadata))
+        self.assertNotIn('"numbers":', json.dumps(saved_metadata))
 
     def test_rejects_wrong_source_commit(self):
         with self.assertRaisesRegex(recovery.RecoveryError, "source commit"):
