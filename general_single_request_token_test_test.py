@@ -12,6 +12,18 @@ from general_live_consent import SINGLE_REQUEST_CONFIRMATION_PHRASE
 
 
 class SingleRequestTokenTestTests(unittest.TestCase):
+    def setUp(self):
+        research._NVIDIA_REQUESTS_ATTEMPTED = 0
+        research._NVIDIA_REQUEST_LABELS_ATTEMPTED.clear()
+        Path("/tmp/general_nvidia_api_attempted").unlink(missing_ok=True)
+        Path("/tmp/general_nvidia_api_succeeded").unlink(missing_ok=True)
+
+    def tearDown(self):
+        research._NVIDIA_REQUESTS_ATTEMPTED = 0
+        research._NVIDIA_REQUEST_LABELS_ATTEMPTED.clear()
+        Path("/tmp/general_nvidia_api_attempted").unlink(missing_ok=True)
+        Path("/tmp/general_nvidia_api_succeeded").unlink(missing_ok=True)
+
     def environment(self):
         return {
             "GENERAL_SINGLE_REQUEST_MODE": "true",
