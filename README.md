@@ -22,6 +22,12 @@ GENERAL coordinates specialized tasks for Super Loto archive integrity, target-d
 - `.github/workflows/nvidia-safety-tests.yml` runs offline NVIDIA timeout/guard regression checks. It does not make a live inference request.
 - `.github/workflows/general.yml` is the Telegram heartbeat path. Its success is not proof that the GENERAL core or autonomous agents are continuously working.
 
+### Runtime state authority
+
+- `general-automation-state` is the authoritative source for the four migrated runtime objects: `super_loto_archive.json`, `general_evaluation_ledger.json`, `general_autonomous_research_state.json`, and `general_research_memory.json`. Runtime workflows hydrate these objects through `hydrate-automation-state` and publish approved updates through `publish-automation-state`.
+- Copies of those four files that remain on `main` are legacy/historical comparison snapshots only. They are not an operational source of truth and must not be used for runtime decisions, archive reads, research, or evaluation.
+- `main` remains the code/workflow branch. The global NVIDIA safety lock stays on `main`; the shared 40-requests-per-minute ledger stays on `general-nvidia-rate-limit-state`; immutable sealed evaluation snapshots remain on `main` and are not part of the mutable state-store allowlist.
+
 GitHub Actions is a job runner, not a continuously running server. A scheduled heartbeat is not proof of 24/7 agent reasoning. Do not claim 24/7 operation without independent evidence of a separate continuously available runtime.
 
 ## 3. Agent roles

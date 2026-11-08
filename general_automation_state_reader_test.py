@@ -331,7 +331,8 @@ class GitHubStateStoreReaderTests(unittest.TestCase):
         )
         result = client.read_shadow_comparison()
         self.assertEqual(result["mode"], "SHADOW_COMPARE")
-        self.assertEqual(result["authoritative_source"], "main")
+        self.assertEqual(result["authoritative_source"], contract.STATE_BRANCH)
+        self.assertEqual(result["comparison_source"], "main_legacy_snapshot")
         self.assertEqual(result["diverged_count"], 0)
         self.assertEqual(result["matched_count"], 0)
         self.assertEqual(result["not_registered_count"], 5)
@@ -363,7 +364,8 @@ class GitHubStateStoreReaderTests(unittest.TestCase):
         result = client.read_shadow_comparison()
         self.assertEqual(result["comparisons"]["research_memory"], "DIVERGED")
         self.assertEqual(result["diverged_count"], 1)
-        self.assertEqual(result["authoritative_source"], "main")
+        self.assertEqual(result["authoritative_source"], contract.STATE_BRANCH)
+        self.assertEqual(result["comparison_source"], "main_legacy_snapshot")
         self.assertEqual(state.blobs, original_state_blob)
 
     def test_shadow_read_rejects_missing_main_object_and_truncated_tree(self):

@@ -1,5 +1,7 @@
 import copy
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 import general_automation_state as contract
 import general_automation_state_runtime_audit as audit
@@ -42,7 +44,8 @@ def make_fixture():
     shadow = {
         "mode": "SHADOW_COMPARE",
         "state_store_commit_sha": HEAD,
-        "authoritative_source": "main",
+        "authoritative_source": contract.STATE_BRANCH,
+        "comparison_source": "main_legacy_snapshot",
         "read_only": True,
         "comparisons": {
             "archive": "MATCH",
@@ -80,22 +83,25 @@ class RuntimeStateAuditTests(unittest.TestCase):
     def build(self):
         return audit.build_runtime_audit_report(
             self.snapshot, self.shadow, self.lock,
+            mode="pre-cutover-diagnostic",
             domain_validator=self.validator,
         )
 
     def test_state_authoritative_audit_does_not_depend_on_legacy_main_parity(self):
         report = audit.build_runtime_audit_report(
             self.snapshot, None, self.lock,
-            mode="state-authoritative",
             domain_validator=self.validator,
         )
         self.assertEqual(
             report["authoritative_source"], contract.STATE_BRANCH
         )
+        self.assertEqual(report["audit_mode"], "STATE_AUTHORITATIVE")
         self.assertEqual(
             report["main_state_parity"],
             "NOT_REQUIRED_STATE_STORE_AUTHORITATIVE",
         )
+        self.assertFalse(report["legacy_main_comparison_performed"])
+        self.assertFalse(report["legacy_main_copies_authoritative"])
         self.assertFalse(report["legacy_main_copies_consumed"])
         self.assertTrue(report["read_only"])
         self.assertFalse(report["target_values_rendered"])
@@ -113,7 +119,10 @@ class RuntimeStateAuditTests(unittest.TestCase):
         self.assertEqual(report["mode"], "ACTIVE_STATE_RUNTIME_AUDIT")
         self.assertEqual(report["state_store_status"], "ACTIVE")
         self.assertEqual(report["state_store_generation"], 1)
-        self.assertEqual(report["main_state_parity"], "PASS")
+        self.assertEqual(report["audit_mode"], "LEGACY_MAIN_PARITY_DIAGNOSTIC_ONLY")
+        self.assertEqual(report["main_state_parity"], "PASS_LEGACY_DIAGNOSTIC_ONLY")
+        self.assertTrue(report["legacy_main_comparison_performed"])
+        self.assertFalse(report["legacy_main_copies_authoritative"])
         self.assertEqual(report["nvidia_lock"], "LOCKED_ON_MAIN_NOT_REGISTERED")
         self.assertTrue(report["read_only"])
         self.assertFalse(report["target_values_rendered"])
@@ -147,7 +156,8 @@ class RuntimeStateAuditTests(unittest.TestCase):
         shadow["diverged_count"] = 1
         with self.assertRaises(audit.RuntimeStateAuditError):
             audit.build_runtime_audit_report(
-                self.snapshot, shadow, self.lock, domain_validator=self.validator
+                self.snapshot, shadow, self.lock,
+                mode="pre-cutover-diagnostic", domain_validator=self.validator
             )
 
     def test_rejects_nvidia_lock_registered_in_state_store(self):
@@ -157,7 +167,8 @@ class RuntimeStateAuditTests(unittest.TestCase):
         shadow["not_registered_count"] = 0
         with self.assertRaises(audit.RuntimeStateAuditError):
             audit.build_runtime_audit_report(
-                self.snapshot, shadow, self.lock, domain_validator=self.validator
+                self.snapshot, shadow, self.lock,
+                mode="pre-cutover-diagnostic", domain_validator=self.validator
             )
 
     def test_rejects_unlocked_nvidia_global_lock(self):
@@ -184,6 +195,51 @@ class RuntimeStateAuditTests(unittest.TestCase):
         self.assertNotIn("draws", rendered)
         self.assertNotIn("numbers", rendered)
         self.assertNotIn("target_date", rendered)
+
+
+    def test_cli_defaults_to_state_authoritative_without_reading_main_copies(self):
+        with (
+            patch.object(audit, "GitHubStateStoreReader") as reader_class,
+            patch.object(Path, "read_text", return_value='{"locked": true}'),
+            patch.object(
+                audit, "build_runtime_audit_report",
+                return_value={"read_only": True},
+            ) as build_report,
+            patch("builtins.print"),
+        ):
+            client = reader_class.return_value
+            client.read_snapshot.return_value = self.snapshot
+            self.assertEqual(audit.main(["--repository", "owner/repository"]), 0)
+            client.read_shadow_comparison.assert_not_called()
+            self.assertIsNone(build_report.call_args.args[1])
+            self.assertEqual(build_report.call_args.kwargs["mode"], "state-authoritative")
+
+    def test_cli_runs_legacy_parity_only_when_explicitly_selected(self):
+        with (
+            patch.object(audit, "GitHubStateStoreReader") as reader_class,
+            patch.object(Path, "read_text", return_value='{"locked": true}'),
+            patch.object(
+                audit, "build_runtime_audit_report",
+                return_value={"read_only": True},
+            ) as build_report,
+            patch("builtins.print"),
+        ):
+            client = reader_class.return_value
+            client.read_snapshot.return_value = self.snapshot
+            client.read_shadow_comparison.return_value = self.shadow
+            self.assertEqual(
+                audit.main([
+                    "--repository", "owner/repository",
+                    "--pre-cutover-diagnostic",
+                ]),
+                0,
+            )
+            client.read_shadow_comparison.assert_called_once_with()
+            self.assertIs(build_report.call_args.args[1], self.shadow)
+            self.assertEqual(
+                build_report.call_args.kwargs["mode"],
+                "pre-cutover-diagnostic",
+            )
 
 
 if __name__ == "__main__":
