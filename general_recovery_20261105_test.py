@@ -332,5 +332,15 @@ class OneShotAuthorizationTests(unittest.TestCase):
             self._authorize(token="")
 
 
+
+class RecoveryWorkflowBindingTests(unittest.TestCase):
+    def test_memory_persistence_uses_the_fixed_recovery_archive(self):
+        workflow_path = Path(".github/workflows/general-recovery-20261105.yml")
+        workflow = workflow_path.read_text(encoding="utf-8")
+        start = workflow.index("python3 general_research_memory.py record-cycle")
+        end = workflow.index("\n      - name:", start)
+        memory_step = workflow[start:end]
+        self.assertIn("--archive general_recovery_archive.json", memory_step)
+
 if __name__ == "__main__":
     unittest.main()
