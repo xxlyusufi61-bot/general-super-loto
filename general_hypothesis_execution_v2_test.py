@@ -69,7 +69,7 @@ class SafeHypothesisExecutionV2Tests(unittest.TestCase):
             )
 
     def test_wrong_direction_and_non_adjacent_pair_order_fail_closed(self):
-        with self.assertRaisesRegex(ValueError, "forward-direction"):
+        with self.assertRaisesRegex(ValueError, "strictly later"):
             engine.rank_candidates_for_pair(
                 [draw(0), draw(1)],
                 target_date="2024-01-03",
