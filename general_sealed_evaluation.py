@@ -1069,11 +1069,10 @@ def _evaluate_reverse_validation_with_frozen_spec(
     for target in sorted(reverse_validation, key=lambda row: row["date"], reverse=True):
         target_date = target["date"]
         later_available = [row for row in full_pre_target_history if row["date"] > target_date]
-        if len(later_available) < min_train_draws:
-            skipped_insufficient_history += 1
-            continue
-
         if execution_spec_version(execution_spec) == 2:
+            if len(later_available) < min_train_draws:
+                skipped_insufficient_history += 1
+                continue
             later_canonical = [row for row in canonical if row["date"] > target_date]
             if len(later_canonical) < 2:
                 skipped_missing_context += 1
