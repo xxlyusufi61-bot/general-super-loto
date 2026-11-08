@@ -67,6 +67,8 @@ class SealedEvaluationDSLv2Tests(unittest.TestCase):
         return proposals_path, specs_path
 
     def test_claim_guard_rejects_consumed_adjacent_context_in_both_directions(self):
+        from datetime import date, timedelta
+
         canonical = []
         start = "2020-08-02"
         for index in range(5):
