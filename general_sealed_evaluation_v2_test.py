@@ -7,6 +7,7 @@ from general_sealed_evaluation import (
     SealedEvaluationError,
     _select_one_frozen_candidate,
     _evaluate_full_reverse_history,
+    _evaluate_forward_validation_with_details,
     _validate_dsl_v2_directional_context,
 )
 
@@ -30,6 +31,38 @@ def write_json(path: Path, payload):
 
 
 class SealedEvaluationDSLv2Tests(unittest.TestCase):
+    def test_sealed_v2_helpers_reject_missing_canonical_history(self):
+        from datetime import date, timedelta
+
+        discovery = []
+        start = date(2024, 1, 1)
+        for index in range(42):
+            day = (start + timedelta(days=index)).isoformat()
+            base = index * 7 % 60 + 1
+            numbers = sorted({((base + offset * 11 - 1) % 60) + 1 for offset in range(6)})
+            discovery.append({"date": day, "numbers": numbers})
+        validation = [{
+            "date": (start + timedelta(days=42)).isoformat(),
+            "numbers": sorted({((42 * 7 % 60 + offset * 11) % 60) + 1 for offset in range(6)}),
+        }]
+
+        with self.assertRaisesRegex(SealedEvaluationError, "requires canonical archive history"):
+            _evaluate_forward_validation_with_details(
+                discovery,
+                validation,
+                hypothesis_id="HYP-FORWARD",
+                spec_sha256="synthetic-only",
+                execution_spec=directional_spec("forward", "A"),
+            )
+
+        with self.assertRaisesRegex(SealedEvaluationError, "requires canonical archive history"):
+            _evaluate_full_reverse_history(
+                discovery + validation,
+                cutoff_date=(start + timedelta(days=44)).isoformat(),
+                number_pool_size=60,
+                execution_spec=directional_spec("reverse", "C"),
+            )
+
     def _write_documents(self, directory: Path, *, forward_direction="forward"):
         proposals_path = directory / "proposals.json"
         specs_path = directory / "specs.json"

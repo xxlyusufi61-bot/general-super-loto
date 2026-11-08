@@ -13,7 +13,9 @@ The canonical archive is chronological. The sealed evaluator, not the model, sel
 - Forward walk-forward scoring of target C: A is the immediately preceding row before B; B is the immediately preceding row; C is the hidden target. The expression may read only A and B.
 - Reverse retrospective scoring of target A: B is the first later row and C is the second later row. The expression may read only B and C. A remains hidden until the ranking is complete. This direction is retrospective stress testing only, never predictive evidence.
 
-The state-pair API accepts exactly two rows in chronological order and documents that its caller must bind adjacent rows from the canonical archive. The sealed forward and reverse evaluators construct those pairs from the validated, ordered archive. Calendar-day adjacency is not required; archive-row adjacency is.
+Every DSL v2 production entry point requires canonical_history; omission or an explicit null value fails closed. The pair-ranking API compares the supplied pair with the two immediately adjacent rows in that canonical context. Forward holdout also requires each fold's entire training history to equal the canonical archive prefix before that target. Reverse evaluators bind B/C to the first two later canonical rows, require available history to be an exact archive subset, and skip consumed neighbours without bridging. The sealed evaluator supplies context from its validated immutable archive snapshot. Direct callers remain responsible for passing the authoritative archive, not a hand-picked subset. Calendar-day adjacency is not required; archive-row adjacency is.
+
+Synthetic fixtures are isolated in test-only helpers and run through the explicitly named run_synthetic_contract_tests path. Production entry points do not infer or substitute a synthetic canonical history.
 
 Each input DrawState is the set of six distinct integers in the active 1..60 pool. Derived set operations remain bounded by that 60-number universe. The interpreter has no source-code execution, imports, functions, loops, file access, or network access. AST limits are 64 nodes and depth 12.
 

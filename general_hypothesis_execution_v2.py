@@ -282,14 +282,15 @@ def rank_candidates_for_pair(
     target_date: str,
     number_pool_size: int,
     execution_spec: dict[str, Any],
-    canonical_history: list[dict[str, Any]] | None = None,
+    canonical_history: list[dict[str, Any]],
     excluded_dates: set[str] | list[str] | tuple[str, ...] = (),
 ) -> list[dict[str, Any]]:
-    """Rank the 6-of-60 pool using only the two permitted adjacent state rows.
+    """Rank candidates using a required canonical archive context.
 
     Forward maps the two immediately preceding canonical rows to A/B; reverse
-    maps the first two later canonical rows to B/C. When canonical_history is
-    supplied, adjacency and previously-consumed-date exclusions are enforced.
+    maps the first two later canonical rows to B/C. The caller must provide the
+    authoritative chronological archive context. Exact adjacency and previously
+    consumed-date exclusions are checked before expression evaluation.
     The target row is never accepted, so target values cannot enter the expression.
     """
     if type(number_pool_size) is not int or number_pool_size not in ALLOWED_POOL_SIZES:
@@ -310,24 +311,25 @@ def rank_candidates_for_pair(
         if target >= first:
             _fail("reverse state pair B/C must be strictly later than hidden target A.")
 
-    if canonical_history is not None:
-        checked_canonical = _validate_rows(
-            canonical_history, field="canonical_history", maximum=MAX_INPUT_HISTORY_DRAWS
-        )
-        if spec["direction"] == "forward":
-            if any(date.fromisoformat(row["date"]) >= target for row in checked_canonical):
-                _fail("forward canonical context must contain only rows strictly before hidden target C.")
-            expected_pair = checked_canonical[-2:]
-        else:
-            if any(date.fromisoformat(row["date"]) <= target for row in checked_canonical):
-                _fail("reverse canonical context must contain only rows strictly after hidden target A.")
-            expected_pair = checked_canonical[:2]
-        if len(expected_pair) != 2 or expected_pair != checked_pair:
-            _fail("state pair is not the two immediately adjacent canonical archive rows.")
-        if not isinstance(excluded_dates, (set, list, tuple)):
-            _fail("excluded_dates must be a set, list, or tuple.")
-        if any(row["date"] in excluded_dates for row in checked_pair):
-            _fail("state pair contains a previously consumed holdout row.")
+    if canonical_history is None:
+        _fail("canonical_history is required for production candidate ranking.")
+    checked_canonical = _validate_rows(
+        canonical_history, field="canonical_history", maximum=MAX_INPUT_HISTORY_DRAWS
+    )
+    if spec["direction"] == "forward":
+        if any(date.fromisoformat(row["date"]) >= target for row in checked_canonical):
+            _fail("forward canonical context must contain only rows strictly before hidden target C.")
+        expected_pair = checked_canonical[-2:]
+    else:
+        if any(date.fromisoformat(row["date"]) <= target for row in checked_canonical):
+            _fail("reverse canonical context must contain only rows strictly after hidden target A.")
+        expected_pair = checked_canonical[:2]
+    if len(expected_pair) != 2 or expected_pair != checked_pair:
+        _fail("state pair is not the two immediately adjacent canonical archive rows.")
+    if not isinstance(excluded_dates, (set, list, tuple)):
+        _fail("excluded_dates must be a set, list, or tuple.")
+    if any(row["date"] in excluded_dates for row in checked_pair):
+        _fail("state pair contains a previously consumed holdout row.")
 
     if spec["direction"] == "forward":
         slots = {
@@ -361,7 +363,7 @@ def evaluate_holdout(
     number_pool_size: int,
     execution_spec: dict[str, Any],
     min_train_draws: int = DEFAULT_MIN_TRAIN_DRAWS,
-    canonical_history: list[dict[str, Any]] | None = None,
+    canonical_history: list[dict[str, Any]],
     excluded_dates: set[str] | list[str] | tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """Forward walk-forward scoring; each target C is hidden from its A/B inputs."""
@@ -383,6 +385,14 @@ def evaluate_holdout(
     spec = validate_execution_spec(execution_spec)
     if spec["direction"] != "forward":
         _fail("forward holdout requires a forward-direction specification.")
+    if canonical_history is None:
+        _fail("canonical_history is required for forward production evaluation.")
+    canonical = _validate_rows(
+        canonical_history, field="canonical_history", maximum=MAX_INPUT_HISTORY_DRAWS
+    )
+    if date.fromisoformat(canonical[-1]["date"]) >= cutoff:
+        _fail("forward canonical history contains the isolated target or a later draw.")
+    canonical_by_date = {row["date"]: row for row in canonical}
 
     scores: list[int] = []
     for index, target in enumerate(validation):
@@ -390,11 +400,13 @@ def evaluate_holdout(
         if len(training) < min_train_draws or len(training) < 2:
             _fail("a validation fold does not have enough earlier training draws.")
         pair = training[-2:]
-        canonical_before = None
-        if canonical_history is not None:
-            canonical_before = [
-                row for row in canonical_history if row["date"] < target["date"]
-            ]
+        canonical_before = [
+            row for row in canonical if row["date"] < target["date"]
+        ]
+        if canonical_by_date.get(target["date"]) != target:
+            _fail("forward validation target is not an exact canonical archive row.")
+        if canonical_before != training:
+            _fail("forward training history is not the exact canonical archive prefix before target.")
         ranked = rank_candidates_for_pair(
             pair,
             target_date=target["date"],
@@ -445,7 +457,7 @@ def evaluate_time_ordered_cv(
     execution_spec: dict[str, Any],
     folds: int = 5,
     min_train_draws: int = DEFAULT_MIN_TRAIN_DRAWS,
-    canonical_history: list[dict[str, Any]] | None = None,
+    canonical_history: list[dict[str, Any]],
     excluded_dates: set[str] | list[str] | tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """Evaluate fixed v2 expression on contiguous time-ordered folds without shuffling."""
@@ -504,9 +516,10 @@ def rank_candidates_retrospective(
     target_date: str,
     number_pool_size: int,
     execution_spec: dict[str, Any],
+    canonical_history: list[dict[str, Any]],
     min_train_draws: int = DEFAULT_MIN_TRAIN_DRAWS,
 ) -> list[dict[str, Any]]:
-    """Reverse-only diagnostic: hidden A is scored using the first later B/C rows."""
+    """Reverse-only diagnostic bound to the canonical next two B/C rows."""
     if type(number_pool_size) is not int or number_pool_size not in ALLOWED_POOL_SIZES:
         _fail("only the 6-of-60 number pool is supported.")
     if type(min_train_draws) is not int or not 2 <= min_train_draws <= MAX_INPUT_HISTORY_DRAWS:
@@ -519,6 +532,16 @@ def rank_candidates_retrospective(
         _fail("later historical reference is too short for reverse-time scoring.")
     if any(date.fromisoformat(row["date"]) <= target for row in checked):
         _fail("later_history contains the target or an earlier draw.")
+    canonical = _validate_rows(
+        canonical_history, field="canonical_history", maximum=MAX_INPUT_HISTORY_DRAWS
+    )
+    if any(date.fromisoformat(row["date"]) <= target for row in canonical):
+        _fail("reverse canonical context must contain only rows strictly after hidden target A.")
+    canonical_by_date = {row["date"]: row for row in canonical}
+    if any(canonical_by_date.get(row["date"]) != row for row in checked):
+        _fail("later_history is not an exact subset of the canonical archive.")
+    if len(canonical) < 2 or checked[:2] != canonical[:2]:
+        _fail("reverse history does not begin with the two immediately adjacent canonical B/C rows.")
     spec = validate_execution_spec(execution_spec)
     if spec["direction"] != "reverse":
         _fail("reverse retrospective scoring requires a reverse-direction specification.")
@@ -527,6 +550,7 @@ def rank_candidates_retrospective(
         target_date=target.isoformat(),
         number_pool_size=number_pool_size,
         execution_spec=spec,
+        canonical_history=canonical,
     )
 
 
@@ -585,7 +609,7 @@ def _reverse_eligible_targets(
 def reverse_eligible_target_count(
     available_history: list[dict[str, Any]],
     *,
-    canonical_history: list[dict[str, Any]] | None = None,
+    canonical_history: list[dict[str, Any]],
     excluded_dates: set[str] | list[str] | tuple[str, ...] = (),
     min_train_draws: int = DEFAULT_MIN_TRAIN_DRAWS,
 ) -> int:
@@ -596,9 +620,10 @@ def reverse_eligible_target_count(
         not isinstance(day, str) for day in excluded_dates
     ):
         _fail("excluded_dates must contain date strings.")
-    canonical = available_history if canonical_history is None else canonical_history
+    if canonical_history is None:
+        _fail("canonical_history is required for reverse eligibility evaluation.")
     eligible, _ = _reverse_eligible_targets(
-        available_history, canonical, set(excluded_dates), min_train_draws=min_train_draws
+        available_history, canonical_history, set(excluded_dates), min_train_draws=min_train_draws
     )
     return len(eligible)
 
@@ -612,7 +637,7 @@ def evaluate_reverse_retrospective_stress(
     test_draw_count: int = 30,
     min_train_draws: int = DEFAULT_MIN_TRAIN_DRAWS,
     skip_recent_test_draws: int = 0,
-    canonical_history: list[dict[str, Any]] | None = None,
+    canonical_history: list[dict[str, Any]],
     excluded_dates: set[str] | list[str] | tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """Run newest-to-oldest reverse tests using true later archive neighbours only."""
@@ -630,7 +655,9 @@ def evaluate_reverse_retrospective_stress(
         _fail("excluded_dates must contain date strings.")
     cutoff = _canonical_date(cutoff_date, "cutoff_date")
     checked = _validate_rows(history, field="history", maximum=MAX_INPUT_HISTORY_DRAWS)
-    canonical = checked if canonical_history is None else _validate_rows(
+    if canonical_history is None:
+        _fail("canonical_history is required for reverse production evaluation.")
+    canonical = _validate_rows(
         canonical_history, field="canonical_history", maximum=MAX_INPUT_HISTORY_DRAWS
     )
     if date.fromisoformat(canonical[-1]["date"]) >= cutoff:

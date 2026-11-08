@@ -904,9 +904,11 @@ def _evaluate_full_reverse_history(
 ) -> dict[str, Any]:
     """Evaluate every reverse-eligible row in bounded batches; return aggregates only."""
     if execution_spec_version(execution_spec) == 2:
+        if canonical_history is None:
+            raise SealedEvaluationError("DSL v2 full reverse evaluation requires canonical archive history.")
         return _evaluate_full_reverse_history_v2(
             pre_target_history,
-            canonical_history if canonical_history is not None else pre_target_history,
+            canonical_history,
             set(excluded_dates),
             cutoff_date=cutoff_date,
             number_pool_size=number_pool_size,
@@ -935,6 +937,8 @@ def _evaluate_full_reverse_history(
                 test_draw_count=batch_size,
                 min_train_draws=min_train_draws,
                 skip_recent_test_draws=offset,
+                canonical_history=canonical_history,
+                excluded_dates=excluded_dates,
             )
         else:
             batch = evaluate_reverse_retrospective_stress(
@@ -1045,6 +1049,8 @@ def _evaluate_reverse_validation_with_frozen_spec(
     min_train_draws: int = DEFAULT_MIN_TRAIN_DRAWS,
 ) -> dict[str, Any]:
     """Score reverse holdout targets using exact canonical B/C neighbours for DSL v2."""
+    if execution_spec_version(execution_spec) == 2 and canonical_history is None:
+        raise SealedEvaluationError("DSL v2 reverse holdout requires canonical archive history.")
     if len(reverse_validation) < MIN_VALIDATION_DRAWS:
         raise SealedEvaluationError("Reverse holdout is too short.")
     target_day = date.fromisoformat(isolated_target_date)
@@ -1176,17 +1182,17 @@ def _evaluate_forward_validation_with_details(
     excluded_dates: set[str] | list[str] | tuple[str, ...] = (),
 ) -> list[dict[str, Any]]:
     """Return per-draw column hits while reusing only history before each forward target."""
+    if execution_spec_version(execution_spec) == 2 and canonical_history is None:
+        raise SealedEvaluationError("DSL v2 forward detail evaluation requires canonical archive history.")
     details = []
     for index, target in enumerate(validation):
         training = (discovery + validation[:index])[-MAX_HISTORY_DRAWS:]
         if len(training) < DEFAULT_MIN_TRAIN_DRAWS:
             raise SealedEvaluationError("Forward per-draw report fell below the training minimum.")
         if execution_spec_version(execution_spec) == 2:
-            canonical_before = None
-            if canonical_history is not None:
-                canonical_before = [
-                    row for row in canonical_history if row["date"] < target["date"]
-                ]
+            canonical_before = [
+                row for row in canonical_history if row["date"] < target["date"]
+            ]
             ranking = execution_v2.rank_candidates_for_pair(
                 training[-2:],
                 target_date=target["date"],

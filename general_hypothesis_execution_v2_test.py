@@ -34,6 +34,12 @@ def bool_score(expression):
     return {"op": "bool_to_number", "arg": expression}
 
 
+def rank_synthetic_pair(pair, **kwargs):
+    """Test-only helper: bind the complete synthetic fixture as its canonical history."""
+    kwargs.setdefault("canonical_history", pair)
+    return engine.rank_candidates_for_pair(pair, **kwargs)
+
+
 class SafeHypothesisExecutionV2Tests(unittest.TestCase):
     def test_forward_state_pair_binds_only_a_and_b(self):
         pair = [
@@ -41,7 +47,7 @@ class SafeHypothesisExecutionV2Tests(unittest.TestCase):
             draw(1, numbers=[7, 8, 9, 10, 11, 12]),
         ]
         spec = score(bool_score({"op": "contains_candidate", "state": state("A")}))
-        ranking = engine.rank_candidates_for_pair(
+        ranking = rank_synthetic_pair(
             pair, target_date="2024-01-03", number_pool_size=60, execution_spec=spec
         )
         self.assertEqual([item["number"] for item in ranking[:6]], [1, 2, 3, 4, 5, 6])
@@ -53,7 +59,7 @@ class SafeHypothesisExecutionV2Tests(unittest.TestCase):
             draw(2, numbers=[13, 14, 15, 16, 17, 18]),
         ]
         spec = score(bool_score({"op": "contains_candidate", "state": state("B")}), "reverse")
-        ranking = engine.rank_candidates_for_pair(
+        ranking = rank_synthetic_pair(
             pair, target_date="2024-01-01", number_pool_size=60, execution_spec=spec
         )
         self.assertEqual([item["number"] for item in ranking[:6]], [7, 8, 9, 10, 11, 12])
@@ -70,21 +76,21 @@ class SafeHypothesisExecutionV2Tests(unittest.TestCase):
 
     def test_wrong_direction_and_non_adjacent_pair_order_fail_closed(self):
         with self.assertRaisesRegex(ValueError, "strictly later"):
-            engine.rank_candidates_for_pair(
+            rank_synthetic_pair(
                 [draw(0), draw(1)],
                 target_date="2024-01-03",
                 number_pool_size=60,
                 execution_spec=score(bool_score({"op": "contains_candidate", "state": state("C")}), "reverse"),
             )
         with self.assertRaisesRegex(ValueError, "strictly earlier"):
-            engine.rank_candidates_for_pair(
+            rank_synthetic_pair(
                 [draw(0), draw(1)],
                 target_date="2024-01-02",
                 number_pool_size=60,
                 execution_spec=score(bool_score({"op": "contains_candidate", "state": state("A")})),
             )
         with self.assertRaisesRegex(ValueError, "strictly later"):
-            engine.rank_candidates_for_pair(
+            rank_synthetic_pair(
                 [draw(1), draw(2)],
                 target_date="2024-01-02",
                 number_pool_size=60,
@@ -107,7 +113,7 @@ class SafeHypothesisExecutionV2Tests(unittest.TestCase):
                 "op": "contains_candidate",
                 "state": {"op": operation, "left": state("A"), "right": state("B")},
             })
-            ranking = engine.rank_candidates_for_pair(
+            ranking = rank_synthetic_pair(
                 pair,
                 target_date="2024-01-03",
                 number_pool_size=60,
@@ -124,7 +130,7 @@ class SafeHypothesisExecutionV2Tests(unittest.TestCase):
             "op": "cardinality",
             "state": {"op": "set_intersection", "left": state("A"), "right": state("B")},
         }
-        ranking = engine.rank_candidates_for_pair(
+        ranking = rank_synthetic_pair(
             pair, target_date="2024-01-03", number_pool_size=60, execution_spec=score(expression)
         )
         self.assertEqual({item["score"] for item in ranking}, {3})
@@ -162,12 +168,24 @@ class SafeHypothesisExecutionV2Tests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "not in the v2 allowlist"):
             engine.validate_execution_spec(score(expression))
 
+    def test_production_pair_api_rejects_missing_canonical_history(self):
+        pair = rows(2)
+        spec = score({"op": "const", "value": 1})
+        with self.assertRaisesRegex(ValueError, "canonical_history is required"):
+            engine.rank_candidates_for_pair(
+                pair,
+                target_date="2024-01-03",
+                number_pool_size=60,
+                execution_spec=spec,
+                canonical_history=None,
+            )
+
     def test_canonical_pair_check_rejects_a_non_adjacent_pair(self):
         canonical = rows(4)
         non_adjacent_pair = [canonical[0], canonical[2]]
         spec = score(bool_score({"op": "contains_candidate", "state": state("B")}))
         with self.assertRaisesRegex(ValueError, "immediately adjacent canonical"):
-            engine.rank_candidates_for_pair(
+            rank_synthetic_pair(
                 non_adjacent_pair,
                 target_date=canonical[3]["date"],
                 number_pool_size=60,
@@ -218,14 +236,14 @@ class SafeHypothesisExecutionV2Tests(unittest.TestCase):
             "right": {"op": "const", "value": 0},
         })
         with self.assertRaisesRegex(ValueError, "division by zero"):
-            engine.rank_candidates_for_pair(
+            rank_synthetic_pair(
                 [draw(0), draw(1)],
                 target_date="2024-01-03",
                 number_pool_size=60,
                 execution_spec=bad_division,
             )
         with self.assertRaisesRegex(ValueError, "only the 6-of-60"):
-            engine.rank_candidates_for_pair(
+            rank_synthetic_pair(
                 [draw(0), draw(1)],
                 target_date="2024-01-03",
                 number_pool_size=49,
@@ -250,6 +268,7 @@ class SafeHypothesisExecutionV2Tests(unittest.TestCase):
                 number_pool_size=60,
                 execution_spec=score(bool_score({"op": "contains_candidate", "state": state("B")})),
                 min_train_draws=40,
+                canonical_history=discovery + validation,
             )
         self.assertEqual(observed_pairs[0], [discovery[-2]["date"], discovery[-1]["date"]])
         self.assertEqual(observed_pairs[1], [discovery[-1]["date"], validation[0]["date"]])
@@ -266,6 +285,7 @@ class SafeHypothesisExecutionV2Tests(unittest.TestCase):
             engine.evaluate_holdout(
                 discovery, validation, cutoff_date="2024-02-15", number_pool_size=60,
                 execution_spec=score({"op": "const", "value": 1}), min_train_draws=40,
+                canonical_history=discovery + validation,
             )
 
     def test_reverse_ranker_uses_nearest_later_rows_b_and_c_only(self):
@@ -284,6 +304,7 @@ class SafeHypothesisExecutionV2Tests(unittest.TestCase):
                 number_pool_size=60,
                 execution_spec=score(bool_score({"op": "contains_candidate", "state": state("B")}), "reverse"),
                 min_train_draws=40,
+                canonical_history=later,
             )
         self.assertEqual(observed, [later[0]["date"], later[1]["date"]])
         self.assertEqual(len(ranking), 60)
@@ -297,6 +318,7 @@ class SafeHypothesisExecutionV2Tests(unittest.TestCase):
             execution_spec=score(bool_score({"op": "contains_candidate", "state": state("C")}), "reverse"),
             test_draw_count=5,
             min_train_draws=40,
+            canonical_history=history,
         )
         self.assertEqual(report["status"], "EVALUATED_RETROSPECTIVE_ONLY")
         self.assertFalse(report["predictive_evidence"])
@@ -312,19 +334,21 @@ class SafeHypothesisExecutionV2Tests(unittest.TestCase):
                 rows(45), cutoff_date="2024-02-14", number_pool_size=60,
                 execution_spec=score({"op": "const", "value": 1}, "reverse"),
                 min_train_draws=40,
+                canonical_history=rows(45),
             )
         with self.assertRaisesRegex(ValueError, "eligible historical range"):
             engine.evaluate_reverse_retrospective_stress(
                 rows(45), cutoff_date="2024-02-15", number_pool_size=60,
                 execution_spec=score({"op": "const", "value": 1}, "reverse"),
                 min_train_draws=40, skip_recent_test_draws=5,
+                canonical_history=rows(45),
             )
 
     def test_canonical_context_must_stay_strictly_on_the_permitted_side_of_target(self):
         pair = [draw(0), draw(1)]
         spec = score(bool_score({"op": "contains_candidate", "state": state("A")}))
         with self.assertRaisesRegex(ValueError, "strictly before hidden target C"):
-            engine.rank_candidates_for_pair(
+            rank_synthetic_pair(
                 pair,
                 target_date="2024-01-03",
                 number_pool_size=60,
@@ -338,7 +362,7 @@ class SafeHypothesisExecutionV2Tests(unittest.TestCase):
             "reverse",
         )
         with self.assertRaisesRegex(ValueError, "strictly after hidden target A"):
-            engine.rank_candidates_for_pair(
+            rank_synthetic_pair(
                 reverse_pair,
                 target_date="2024-01-02",
                 number_pool_size=60,
@@ -376,6 +400,7 @@ class SafeHypothesisExecutionV2Tests(unittest.TestCase):
         report = engine.evaluate_time_ordered_cv(
             discovery, validation, cutoff_date="2024-02-20", number_pool_size=60,
             execution_spec=score({"op": "const", "value": 1}), folds=3, min_train_draws=40,
+            canonical_history=discovery + validation,
         )
         self.assertEqual(report["folds"], 3)
         self.assertEqual(report["validation_draw_count"], 6)
@@ -397,7 +422,7 @@ class SafeHypothesisExecutionV2Tests(unittest.TestCase):
 
     def test_pre_scope_dates_and_invalid_draws_are_rejected(self):
         with self.assertRaisesRegex(ValueError, "before the active research scope"):
-            engine.rank_candidates_for_pair(
+            rank_synthetic_pair(
                 [draw(0, start="2020-08-01"), draw(1, start="2020-08-01")],
                 target_date="2020-08-04", number_pool_size=60,
                 execution_spec=score({"op": "const", "value": 1}),
@@ -405,7 +430,7 @@ class SafeHypothesisExecutionV2Tests(unittest.TestCase):
         invalid = draw(0)
         invalid["numbers"] = [1, 2, 3, 4, 5, 61]
         with self.assertRaisesRegex(ValueError, "invalid six-number"):
-            engine.rank_candidates_for_pair(
+            rank_synthetic_pair(
                 [invalid, draw(1)], target_date="2024-01-03", number_pool_size=60,
                 execution_spec=score({"op": "const", "value": 1}),
             )
@@ -413,7 +438,7 @@ class SafeHypothesisExecutionV2Tests(unittest.TestCase):
     def test_input_pair_is_not_mutated(self):
         pair = [draw(0), draw(1)]
         before = json.dumps(pair, sort_keys=True)
-        engine.rank_candidates_for_pair(
+        rank_synthetic_pair(
             pair, target_date="2024-01-03", number_pool_size=60,
             execution_spec=score(bool_score({"op": "contains_candidate", "state": state("A")})),
         )
