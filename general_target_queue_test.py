@@ -195,7 +195,7 @@ class DurableTargetQueueTests(unittest.TestCase):
             # not the compact canonical FIFO snapshot representation.
             legacy_raw = (
                 json.dumps({"source": "legacy-fixture", "draws": rows},
-                           ensure_ascii=False, indent=2).encode("utf-8") + b"\\n"
+                           ensure_ascii=False, indent=2).encode("utf-8") + b"\n"
             )
             archive.write_bytes(legacy_raw)
             attempt = {
