@@ -181,6 +181,28 @@ CANDIDATE_VALUE_BEFORE_CUE = re.compile(
 )
 
 
+DRAWN_NUMBER_AFTER_LABEL = re.compile(
+    r"(?ix)(?<![\w.])(?:the\s+)?(?:drawn|picked)\s+(?:lottery\s+)?"
+    r"(?:number|value)\s*(?::|=|#)?\s*(?:(?:is|was|equals?)\s+)?"
+    + NUMBER_VALUE_TOKEN + r"\b"
+)
+DRAWN_NUMBER_BEFORE_VERB = re.compile(
+    r"(?ix)(?<![\w.])" + NUMBER_VALUE_TOKEN
+    + r"(?:\s+(?:was|has\s+been|is))?\s+(?:drawn|picked)\b"
+)
+DRAWN_NUMBER_TURKISH_AFTER_LABEL = re.compile(
+    r"(?ix)(?<![\w.])(?:çekilen|cekilen|çekilmiş|cekilmis|"
+    r"çekilişte\s+çıkan|cekiliste\s+cikan)\s+"
+    r"(?:sayı|sayi|numara)(?:sı|si)?\s*(?::|=|#)?\s*"
+    + NUMBER_VALUE_TOKEN + r"\b"
+)
+DRAWN_NUMBER_TURKISH_BEFORE_VERB = re.compile(
+    r"(?ix)(?<![\w.])" + NUMBER_VALUE_TOKEN
+    + r"(?:\s+(?:numarası|numarasi|sayısı|sayisi))?\s+"
+    r"(?:çekildi|cekildi|çekilmiştir|cekilmistir|çekilmiş|cekilmis)\b"
+)
+
+
 ALLOWED_STATUSES = {
     "HYPOTHESES_CAPTURED",
     "NO_VALID_HYPOTHESIS",
@@ -248,6 +270,10 @@ def _contains_candidate_value_reference(value: Any) -> bool:
         return (
             CANDIDATE_VALUE_AFTER_CUE.search(value) is not None
             or CANDIDATE_VALUE_BEFORE_CUE.search(value) is not None
+            or DRAWN_NUMBER_AFTER_LABEL.search(value) is not None
+            or DRAWN_NUMBER_BEFORE_VERB.search(value) is not None
+            or DRAWN_NUMBER_TURKISH_AFTER_LABEL.search(value) is not None
+            or DRAWN_NUMBER_TURKISH_BEFORE_VERB.search(value) is not None
         )
     if isinstance(value, list):
         return any(_contains_candidate_value_reference(item) for item in value)
