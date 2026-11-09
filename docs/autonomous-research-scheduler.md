@@ -117,7 +117,7 @@ fetch or push failure blocks the corresponding NVIDIA request.
 - The sealed evaluator reserves disjoint forward and reverse holdouts and records
   consumed dates in its existing append-only ledger. The scheduler never changes
   those dates or silently reduces minimum history requirements.
-- - A target date is reserved in the scheduler's append-only attempt list before
+- A target date is reserved in the scheduler's append-only attempt list before
   the first hosted request. Only a recorded NO_PROVIDER_REQUEST_SENT outcome
   permits a bounded retry. Any delivery-uncertain or already-sent request is not
   repeated automatically.
@@ -153,9 +153,26 @@ target. If no executable GENERAL-origin hypothesis is available, the correct
 result is NO_APPLICABLE_OFFLINE_WORK; the workflow must not substitute a legacy
 Pydroid formula or a fixed catalog candidate.
 
-The finite target lifecycle is: RESERVED, directional discovery, proposal/DSL
-validation, applicable frozen evaluation, Telegram/reporting, and a terminal
-SUCCEEDED, NO_ELIGIBLE_CANDIDATE, or FAILED outcome. A technical failure before
-any provider request is sent may be retried within the bounded policy above.
-A valid empty hypothesis response is terminal scientific NO_ELIGIBLE_CANDIDATE.
-A sent or uncertain provider request remains blocked for manual recovery.
+The implemented target lifecycle is: RESERVED, directional discovery,
+proposal/DSL validation, applicable frozen evaluation, Telegram/reporting, and
+a terminal SUCCEEDED, NO_ELIGIBLE_CANDIDATE, or FAILED outcome. The scheduler
+serializes targets and blocks a newer target while the current target is
+unfinished or requires recovery.
+
+**Known scope boundary:** this version does not yet persist a FIFO of every
+intermediate draw that arrives while an earlier target is blocked. It retains
+the active attempt history and later sees the then-current canonical archive
+target; a durable multi-target snapshot queue is a separate implementation
+requirement before claiming lossless processing of every intervening draw.
+Do not interpret target blocking as proof that intermediate targets are queued.
+
+A technical failure before any provider request is sent may be retried within
+the bounded policy above. A valid empty hypothesis response is terminal
+scientific NO_ELIGIBLE_CANDIDATE. A sent or uncertain provider request remains
+blocked for manual recovery.
+
+The between-draw 8-call allocation is implemented as a quota category, not as
+an autonomous offline task runner. This version does not yet schedule offline
+hypothesis evaluation while waiting for a new draw. Offline evaluation remains
+available only through the existing explicitly invoked, leakage-free test and
+sealed-evaluation paths. No NVIDIA calls are made merely to fill the allocation.
