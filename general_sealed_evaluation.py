@@ -466,7 +466,10 @@ def preflight(
         "status": "READY",
         "ledger_entry_count": len(ledger["entries"]),
         "validation_dates_previously_consumed": False,
-        "previously_consumed_validation_draw_count": len(used_dates),
+        "previously_consumed_sealed_validation_draw_count": len(used_dates),
+        "previously_consumed_validation_draw_count": split["previously_consumed_validation_draw_count"],
+        "previously_consumed_offline_development_draw_count": split["previously_consumed_offline_development_draw_count"],
+        "offline_development_memory_sha256": split["offline_development_memory_sha256"],
         "forward_validation_dates": validation_dates,
         "reverse_validation_dates": reverse_validation_dates,
         "hosted_model_request_performed": False,
@@ -629,6 +632,8 @@ def create_claim(
         "validation_dates": validation_dates,
         "reverse_validation_dates": reverse_validation_dates,
         "previously_consumed_validation_dates": sorted(used_dates),
+        "previously_consumed_offline_development_draw_count": split["previously_consumed_offline_development_draw_count"],
+        "offline_development_memory_sha256": split["offline_development_memory_sha256"],
         "hypothesis_id": candidate["hypothesis_id"],
         "spec_sha256": candidate["spec_sha256"],
         "reverse_hypothesis_id": candidate["reverse_hypothesis_id"],
@@ -658,6 +663,8 @@ def create_claim(
         "archive_sha256": archive["archive_sha256"],
         "archive_record_count": archive["record_count"],
         "previously_consumed_validation_dates": sorted(used_dates),
+        "previously_consumed_offline_development_draw_count": split["previously_consumed_offline_development_draw_count"],
+        "offline_development_memory_sha256": split["offline_development_memory_sha256"],
         "archive_snapshot_path": str(snapshot_path).replace("\\", "/"),
         "hypothesis_id": candidate["hypothesis_id"],
         "spec_sha256": candidate["spec_sha256"],
@@ -695,6 +702,8 @@ def create_claim(
         "validation_start_date": validation[0]["date"],
         "validation_end_date": validation[-1]["date"],
         "validation_draw_count": len(validation),
+        "previously_consumed_offline_development_draw_count": split["previously_consumed_offline_development_draw_count"],
+        "offline_development_memory_sha256": split["offline_development_memory_sha256"],
         "reverse_validation_start_date": reverse_validation[0]["date"],
         "reverse_validation_end_date": reverse_validation[-1]["date"],
         "reverse_validation_draw_count": len(reverse_validation),
@@ -1055,6 +1064,26 @@ def evaluate_claim(
     r60 = split["regimes"]["R60"]
     validation_dates = [row["date"] for row in r60["validation_rows"]]
     reverse_validation_dates = [row["date"] for row in r60["reverse_validation_rows"]]
+    if (
+        "offline_development_memory_sha256" not in entry
+        or "previously_consumed_offline_development_draw_count" not in entry
+    ):
+        empty_offline_sha256 = _sha256_bytes(_canonical_json([]))
+        if (
+            split["previously_consumed_offline_development_draw_count"] != 0
+            or split["offline_development_memory_sha256"] != empty_offline_sha256
+        ):
+            raise SealedEvaluationError(
+                "Legacy claim has no offline-consumption snapshot; current offline memory is not empty."
+            )
+    elif (
+        entry["offline_development_memory_sha256"] != split["offline_development_memory_sha256"]
+        or entry["previously_consumed_offline_development_draw_count"]
+        != split["previously_consumed_offline_development_draw_count"]
+    ):
+        raise SealedEvaluationError(
+            "Offline development-consumption memory changed after the sealed claim."
+        )
     if validation_dates != entry["validation_dates"]:
         raise SealedEvaluationError("Snapshot forward validation dates do not match the sealed claim.")
     if reverse_validation_dates != entry.get("reverse_validation_dates"):
