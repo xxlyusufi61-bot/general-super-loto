@@ -135,6 +135,8 @@ def budget_category_for_source(source, requested=None):
         if requested not in NVIDIA_BUDGET_CATEGORY_LIMITS:
             raise ValueError("unknown NVIDIA daily budget category")
         return requested
+    if os.environ.get("GENERAL_NVIDIA_RESEARCH_RETRY_MODE", "").strip().lower() == "true":
+        return "retry_reserve"
     explicit = os.environ.get("GENERAL_NVIDIA_BUDGET_CATEGORY", "").strip()
     if explicit:
         if explicit not in NVIDIA_BUDGET_CATEGORY_LIMITS:
