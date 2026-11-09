@@ -83,14 +83,14 @@ def make_directional_v2_report(direction):
         "formal_execution_spec": spec,
     }
     return (
-        "<HYPOTHESIS_PROPOSALS_JSON>\\n"
+        "<HYPOTHESIS_PROPOSALS_JSON>\n"
         + json.dumps({"schema_version": 3, "proposals": [proposal]})
-        + "\\n</HYPOTHESIS_PROPOSALS_JSON>\\n"
-        + "<HYPOTHESIS_EXECUTION_SPECS_JSON>\\n"
+        + "\n</HYPOTHESIS_PROPOSALS_JSON>\n"
+        + "<HYPOTHESIS_EXECUTION_SPECS_JSON>\n"
         + json.dumps({"schema_version": 1, "specifications": [
             {"hypothesis_id": "HYP-001", "execution_spec": spec}
         ]})
-        + "\\n</HYPOTHESIS_EXECUTION_SPECS_JSON>"
+        + "\n</HYPOTHESIS_EXECUTION_SPECS_JSON>"
     )
 
 
