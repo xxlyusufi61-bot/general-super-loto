@@ -1493,8 +1493,10 @@ def direction_context(
                 "status": "EXPLORATORY_ONLY",
                 "candidate_selection": "NONE",
                 "automatic_candidate_selection": False,
-                "candidates_in_memory": len(offline_entry["candidates"]),
-                "candidates": candidate_summaries,
+                "candidates_in_memory": len(candidate_summaries),
+                "candidates_in_context": 0,
+                "candidate_context_truncated": False,
+                "candidates": [],
                 "development_window": {
                     "draw_count": offline_entry["development_window"]["draw_count"],
                     "window_sha256": offline_entry["development_window"]["window_sha256"],
@@ -1504,15 +1506,39 @@ def direction_context(
                 "interpretation": (
                     "Bounded offline GENERAL discovery feedback only. These definitions and aggregate "
                     "metrics are unverified development history, not approved formulas, candidate rankings, "
-                    "or independent confirmation. Reuse of the development interval is forbidden."
+                    "or independent confirmation. Reuse of the development interval is forbidden. "
+                    "Candidate definitions are included in original discovery order only as prompt space permits; "
+                    "no candidate was selected by validation or performance score."
                 ),
                 "holdout_reuse": (
                     "FORBIDDEN; this consumed offline development interval is historical feedback only."
                 ),
             }
+            # Preserve original generation order. Never sort or truncate by
+            # validation/CV/reverse performance; only a size-bound prefix may
+            # enter the prompt.
+            while candidate_summaries:
+                offline_context["candidates"] = list(candidate_summaries)
+                offline_context["candidates_in_context"] = len(candidate_summaries)
+                offline_context["candidate_context_truncated"] = (
+                    len(candidate_summaries) < len(offline_entry["candidates"])
+                )
+                if len(_canonical(context + [offline_context])) <= MAX_CONTEXT_CHARS:
+                    break
+                candidate_summaries.pop()
+            if not candidate_summaries:
+                offline_context["candidates"] = []
+                offline_context["candidates_in_context"] = 0
+                offline_context["candidate_context_truncated"] = bool(offline_entry["candidates"])
             _reject_number_values(offline_context, "Offline directional context")
             if len(_canonical(context + [offline_context])) <= MAX_CONTEXT_CHARS:
                 context.append(offline_context)
+            else:
+                # The provenance/consumption summary itself must fit. If it
+                # cannot, stop rather than silently discarding this safety fact.
+                raise ResearchMemoryError(
+                    "Offline development provenance exceeds the bounded forward context."
+                )
             break
 
     entries = [
