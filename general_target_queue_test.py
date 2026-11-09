@@ -191,12 +191,17 @@ class DurableTargetQueueTests(unittest.TestCase):
             root = Path(directory)
             archive = root / "archive.json"
             rows = synthetic_rows(90)
-            write_archive(archive, rows)
-            raw = queue._snapshot_bytes(rows)
+            # Legacy attempts hash the original pretty-printed archive document,
+            # not the compact canonical FIFO snapshot representation.
+            legacy_raw = (
+                json.dumps({"source": "legacy-fixture", "draws": rows},
+                           ensure_ascii=False, indent=2).encode("utf-8") + b"\\n"
+            )
+            archive.write_bytes(legacy_raw)
             attempt = {
                 "attempt_id": "c" * 64,
                 "target_date": rows[-1]["date"],
-                "archive_sha256": hashlib.sha256(raw).hexdigest(),
+                "archive_sha256": hashlib.sha256(legacy_raw).hexdigest(),
                 "archive_record_count": len(rows),
                 "claimed_at_utc": NOW.isoformat(),
                 "github_run_id": "123",
