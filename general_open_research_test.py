@@ -61,6 +61,39 @@ def make_directional_report(direction, *, alter_spec=False):
         + research.LESSONS_END
     )
 
+def make_directional_v2_report(direction):
+    slot = "A" if direction == "forward" else "C"
+    spec = {
+        "schema_version": 2,
+        "direction": direction,
+        "score_expression": {
+            "op": "bool_to_number",
+            "arg": {
+                "op": "contains_candidate",
+                "state": {"op": "state_ref", "slot": slot},
+            },
+        },
+    }
+    proposal = {
+        "hypothesis_id": "HYP-001",
+        "discovery_direction": direction,
+        "proposed_family": "direction-sealed state membership",
+        "research_rationale": "A direction-isolated state relation can be evaluated without exposing the target.",
+        "known_risks": ["Multiple testing and regime drift."],
+        "formal_execution_spec": spec,
+    }
+    return (
+        "<HYPOTHESIS_PROPOSALS_JSON>\\n"
+        + json.dumps({"schema_version": 3, "proposals": [proposal]})
+        + "\\n</HYPOTHESIS_PROPOSALS_JSON>\\n"
+        + "<HYPOTHESIS_EXECUTION_SPECS_JSON>\\n"
+        + json.dumps({"schema_version": 1, "specifications": [
+            {"hypothesis_id": "HYP-001", "execution_spec": spec}
+        ]})
+        + "\\n</HYPOTHESIS_EXECUTION_SPECS_JSON>"
+    )
+
+
 def make_fake_connection(response=None):
     connection = MagicMock()
     connection.sock = MagicMock()
@@ -317,6 +350,32 @@ class OpenResearchIsolationTests(unittest.TestCase):
         self.assertEqual([item["hypothesis_id"] for item in specs["specifications"]], ["HYP-001", "HYP-501"])
         self.assertEqual(specs["specifications"][0]["source_hypothesis_id"], "HYP-001")
         self.assertEqual(specs["specifications"][1]["source_hypothesis_id"], "HYP-001")
+
+    def test_directional_v2_specs_survive_proposal_parser_and_sealed_contract(self):
+        forward = research.parse_directional_result(
+            make_directional_v2_report("forward"), "forward"
+        )
+        reverse = research.parse_directional_result(
+            make_directional_v2_report("reverse"), "reverse"
+        )
+        self.assertEqual(forward["proposal_document"]["status"], "VALID_PROPOSALS")
+        self.assertEqual(reverse["proposal_document"]["status"], "VALID_PROPOSALS")
+        self.assertEqual(
+            forward["execution_spec_document"]["specifications"][0]["dsl_version"], 2
+        )
+        self.assertEqual(
+            reverse["execution_spec_document"]["specifications"][0]["dsl_version"], 2
+        )
+        proposals, specs = research.combine_directional_results(forward, reverse)
+        self.assertEqual(proposals["status"], "VALID_PROPOSALS")
+        self.assertEqual(specs["status"], "VALIDATED_SPECS")
+        self.assertEqual(
+            [item["execution_spec"]["direction"] for item in specs["specifications"]],
+            ["forward", "reverse"],
+        )
+        self.assertTrue(specs["synthetic_tests_passed"])
+        self.assertFalse(specs["execution_ready"])
+        self.assertFalse(specs["method_registry_modified"])
 
     def test_directional_execution_spec_must_match_authoritative_formal_definition(self):
         result = research.parse_directional_result(
