@@ -523,17 +523,28 @@ try:
         captured_request["payload"] = json.loads(request.data.decode("utf-8"))
         return _FakeResponse(final_and_reasoning)
 
-    with patch("general_core.reserve_nvidia_request"), patch(
+    with patch("general_core.reserve_nvidia_request") as reserve_call, patch(
         "general_core.urllib.request.urlopen",
         side_effect=capture_final_request
     ):
-        answer = core.ask_nvidia([{"role": "user", "content": "test"}])
+        answer = core.ask_nvidia(
+            [{"role": "user", "content": "test"}],
+            budget_category="forward_discovery",
+        )
     regression_check(
         answer == "FINAL_REPORT_ONLY",
         "Only the content field is returned as the final answer"
     )
     request_payload = captured_request["payload"]
     template_kwargs = request_payload.get("chat_template_kwargs", {})
+    regression_check(
+        request_payload.get("max_tokens") == 8192,
+        "GENERAL Core respects the shared 8192-token response ceiling"
+    )
+    regression_check(
+        reserve_call.call_args == (("general-core",), {"budget_category": "forward_discovery"}),
+        "GENERAL Core reserves its provider call in the shared forward-discovery bucket"
+    )
     regression_check(
         request_payload.get("reasoning_effort") == "low",
         "GLM reasoning budget is explicitly reduced to leave room for final content"
