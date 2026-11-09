@@ -213,6 +213,7 @@ jobs:
           GENERAL_ALLOW_NVIDIA_CALL: "true"
           GENERAL_NVIDIA_FREE_USAGE_VERIFIED: "true"
           GENERAL_NVIDIA_GUARD_PASSED: "1"
+          GENERAL_NVIDIA_RESEARCH_RETRY_MODE: ${{ steps.prepare.outputs.retryable == 'true' && 'true' || 'false' }}
         run: python3 general_open_research.py
       - name: Activate global lock after an incomplete provider request
         if: ${{ failure() && steps.research.outcome == 'failure' }}
@@ -223,10 +224,16 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          if [ -f /tmp/general_nvidia_api_attempted ] && [ ! -f /tmp/general_nvidia_api_succeeded ]; then
-            python3 general_nvidia_guard.py lock --reason "Autonomous NVIDIA request failed or its response could not be validated; no automatic retry is allowed."
+          incomplete_request=false
+          for direction in forward reverse; do
+            if [ -f "/tmp/general_nvidia_api_attempted_${direction}" ] && [ ! -f "/tmp/general_nvidia_api_succeeded_${direction}" ]; then
+              incomplete_request=true
+            fi
+          done
+          if [ "$incomplete_request" = "true" ]; then
+            python3 general_nvidia_guard.py lock --reason "Autonomous NVIDIA request delivery or response validation is uncertain; global safety pause is required. No automatic retry is allowed."
           else
-            echo "No incomplete NVIDIA request detected; global lock unchanged."
+            echo "No uncertain provider delivery detected; global lock unchanged."
           fi
       - name: Create the frozen sealed evaluation claim
         id: sealed_claim
@@ -304,10 +311,18 @@ jobs:
         env:
           ATTEMPT_ID: ${{ steps.attempt_reservation.outputs.attempt_id }}
         run: |
+          if [ -f /tmp/general_nvidia_api_attempted_forward ] && [ ! -f /tmp/general_nvidia_api_succeeded_forward ] || \
+             [ -f /tmp/general_nvidia_api_attempted_reverse ] && [ ! -f /tmp/general_nvidia_api_succeeded_reverse ]; then
+            reason_code="PROVIDER_DELIVERY_UNCERTAIN"
+          elif [ -f /tmp/general_nvidia_api_attempted_forward ] || [ -f /tmp/general_nvidia_api_attempted_reverse ]; then
+            reason_code="WORKFLOW_FAILED"
+          else
+            reason_code="NO_PROVIDER_REQUEST_SENT"
+          fi
           python3 general_autonomous_research.py finish \
             --attempt-id "$ATTEMPT_ID" \
             --outcome FAILED \
-            --reason-code WORKFLOW_FAILED
+            --reason-code "$reason_code"
       - name: Append sanitized GENERAL research memory
         if: ${{ always() && steps.attempt_reservation.outputs.attempt_id != '' }}
         env:
