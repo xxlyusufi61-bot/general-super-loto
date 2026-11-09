@@ -609,7 +609,7 @@ def prepare_data(target):
     }
 
 
-def ask_nvidia(messages):
+def ask_nvidia(messages, *, budget_category=None):
     if not has_explicit_live_consent(
         os.environ.get("GENERAL_CONFIRM_LIVE_CALLS", "")
     ):
@@ -642,7 +642,7 @@ def ask_nvidia(messages):
     body = json.dumps({
         "model": MODEL,
         "messages": messages,
-        "max_tokens": 1024,
+        "max_tokens": 8192,
         "temperature": 0.2,
         "reasoning_effort": "low",
         "chat_template_kwargs": {
@@ -662,7 +662,7 @@ def ask_nvidia(messages):
     )
 
     # Reserve a global account-wide slot immediately before the provider boundary.
-    reserve_nvidia_request("general-core")
+    reserve_nvidia_request("general-core", budget_category=budget_category)
     # Write the marker immediately before the provider boundary.
     attempt_marker.write_text(datetime.now(timezone.utc).isoformat(), encoding="utf-8")
     try:
@@ -997,10 +997,19 @@ def run_agent(agent, task, coordinator_context=None):
 
     print("GENERAL Core", VERSION, "| Agent:", agent)
 
-    answer = ask_nvidia([
-        {"role": "system", "content": system},
-        {"role": "user", "content": task}
-    ])
+    budget_category = {
+        "research": "forward_discovery",
+        "debug": "forward_critique",
+        "validation": "forward_critique",
+        "crossover": "between_draws",
+    }.get(agent, "forward_critique")
+    answer = ask_nvidia(
+        [
+            {"role": "system", "content": system},
+            {"role": "user", "content": task},
+        ],
+        budget_category=budget_category,
+    )
 
     report_check = validate_agent_report(agent, answer)
     if report_check.get("valid") is not True:
