@@ -6,7 +6,7 @@ general_offline_hypothesis_discovery.py is a bounded, deterministic symbolic-dis
 
 The scheduled autonomous workflow runs this step against only the oldest FIFO target snapshot, before the independent authorization/global-lock gate for hosted research. Materializing the snapshot changes only the job workspace. The offline runner reads the sealed evaluation ledger and does not update it, the canonical archive, the FIFO state, the NVIDIA lock, or autonomous authorization.
 
-This first implementation is not an unrestricted AI inventing arbitrary mathematics. It enumerates a bounded, versioned symbolic search grammar of eleven explicit safe-DSL candidates. Broader model-assisted proposal generation remains a separate provider-authorized activity.
+This first implementation is not an unrestricted AI inventing arbitrary mathematics. It enumerates a bounded, versioned symbolic search grammar of up to sixteen explicit safe-DSL candidates. Broader model-assisted proposal generation remains a separate provider-authorized activity.
 
 ## Research families and candidate definitions
 
@@ -16,7 +16,7 @@ The global method registry remains untouched. A→B→C, A→T, and MOD5→T rem
 - A→T: exact historical frequency; exact frequency within the ten most recent available earlier draws; distance at most one; same parity; and same modulo-ten remainder.
 - MOD5→T: same positive-integer modulo-five remainder across all prior available draws, and the same residue class within the ten most recent available earlier draws.
 
-Each candidate is a fully specified JSON AST in the safe DSL. Its proposal text is generated locally from that AST and must match the separately validated execution specification exactly. The DSL evaluator never executes Python, dynamic code, shell commands, file access, or network operations.
+Each candidate is a fully specified JSON AST in the safe DSL. The bounded grammar includes three recent-window lengths, two neighbourhood radii, and explicit transition/residue patterns. Its proposal text is generated locally from that AST and must match the separately validated execution specification exactly. The DSL evaluator never executes Python, dynamic code, shell commands, file access, or network operations.
 
 Modulo semantics are local to the corresponding candidate: positive values from 1 through 60 use the ordinary non-negative remainder operation. This does not install a global MOD5 convention or close the registry's open definition.
 
@@ -25,7 +25,7 @@ Modulo semantics are local to the corresponding candidate: positive values from 
 1. Validate the FIFO-materialized archive using the existing sealed archive/Data Guard path. The latest draw remains isolated as the target; only the sealed pre-target discovery partition is available.
 2. Exclude every validation date already consumed by the sealed evaluation ledger and every development date recorded in the offline consumption ledger.
 3. Retain each source archive row's original ordinal as sequence_index. A→B→C transitions count only when the three source rows have consecutive indices. Missing/removed draws are never bridged.
-4. Generate and freeze the candidate catalogue using only the earlier training prefix. At least forty training draws are required.
+4. Enumerate and formally freeze the candidate ASTs using only the earlier training prefix. At least forty training draws are required. A training-only score-vector screen removes expressions that assign an identical score to every number in that prefix; only candidates with at least two distinct score values and a positive score range proceed. The screen records aggregate variation metadata, never number rankings or values. The resulting candidate set is therefore conditioned on the actual training archive, while validation and target data remain unavailable.
 5. Evaluate the fixed candidates on the next ten fresh chronological development draws using forward walk-forward and five contiguous time-ordered CV folds. No shuffling or target/future row is permitted.
 6. Run the reverse-time diagnostic separately on pre-target discovery rows. It is labelled retrospective only and never counts as forward predictive evidence.
 7. Compare means with the uniform-random 6-of-60 expectation of 0.6 hits out of 6 and retain uncertainty metadata where the evaluator supplies it. This is a reference baseline, not a proof of statistical significance.
