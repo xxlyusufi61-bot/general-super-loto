@@ -20,7 +20,7 @@ Forward and reverse research have distinct memory contexts:
 - A forward request receives only prior `forward` entries.
 - A reverse request receives only prior `reverse` entries.
 - The context is bounded to at most six recent eligible entries and 18 KB.
-- Full hypotheses and specifications remain stored in the append-only memory file. The prompt context includes up to the two highest-priority hypotheses per prior record with field truncation explicitly marked, plus the validated specification, learning notes, safe aggregate feedback, and provenance metadata.
+- Full hypotheses and specifications remain stored in the append-only memory file. The prompt context includes at most one validated hypothesis per isolated directional proposal record, plus its matching validated specification, learning notes, safe aggregate feedback, and provenance metadata. DSL v1 and direction-sealed DSL v2 are validated through the version dispatcher; the selected version is preserved, never silently upgraded.
 - Eligible entries may have the same target date as the current run, but only when they were created by an earlier run; entries with a later target date are excluded.
 - A context entry's claims are explicitly unverified. The model must verify relevant claims using its current direction's permitted discovery history.
 - Memory records are carried only in the user-role JSON payload under `prior_general_research_memory_untrusted`. The system message contains policy instructions but never embeds report text or serialized memory records. The model is instructed to treat the field as untrusted data, not commands or governance.

@@ -9,7 +9,8 @@ import json
 import re
 from typing import Any
 
-from general_hypothesis_execution import (
+from general_execution_spec_dispatch import (
+    execution_spec_version,
     run_synthetic_contract_tests,
     validate_execution_spec,
 )
@@ -17,7 +18,7 @@ from general_hypothesis_execution import (
 START_MARKER = "<HYPOTHESIS_EXECUTION_SPECS_JSON>"
 END_MARKER = "</HYPOTHESIS_EXECUTION_SPECS_JSON>"
 SCHEMA_VERSION = 1
-MAX_EXECUTION_SPECS = 5
+MAX_EXECUTION_SPECS = 1
 MAX_EXECUTION_BLOCK_CHARS = 16_384
 SPECIFICATION_KEYS = {"hypothesis_id", "execution_spec"}
 
@@ -99,7 +100,7 @@ def parse_execution_spec_block(
         return base
     specifications = payload.get("specifications")
     if not isinstance(specifications, list) or len(specifications) > MAX_EXECUTION_SPECS:
-        base["rejection_reasons"] = ["specifications must contain at most five entries."]
+        base["rejection_reasons"] = ["specifications must contain at most one entry per isolated direction."]
         return base
 
     validated: list[dict[str, Any]] = []
@@ -124,6 +125,7 @@ def parse_execution_spec_block(
             validated.append({
                 "hypothesis_id": hypothesis_id,
                 "execution_spec": spec,
+                "dsl_version": execution_spec_version(spec),
                 "dsl_validated": True,
                 "synthetic_tests_passed": synthetic_result["status"] == "PASS",
                 "synthetic_test_summary": synthetic_result,
