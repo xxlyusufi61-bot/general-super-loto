@@ -16,6 +16,7 @@ from typing import Any
 
 import general_sealed_evaluation as sealed
 from general_nvidia_guard import validate_lock_state
+import general_target_queue as target_queue
 
 VERSION = "0.1.0"
 PROJECT = "GENERAL Super Loto"
@@ -78,7 +79,7 @@ def _is_sha256(value: Any) -> bool:
 
 def initial_state() -> dict[str, Any]:
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "project": PROJECT,
         "authorization": {
             "enabled": False,
@@ -91,16 +92,27 @@ def initial_state() -> dict[str, Any]:
         },
         "attempts": [],
         "events": [],
+        "target_queue": target_queue.initial_queue(),
     }
 
 
 def validate_state(value: Any) -> dict[str, Any]:
+    legacy_keys = {"schema_version", "project", "authorization", "attempts", "events"}
+    if isinstance(value, dict) and set(value) == legacy_keys and value.get("schema_version") == 1:
+        # Upgrade the legacy scheduler document in memory only. The caller persists
+        # it only through the ordinary, separately authorized state-store workflow.
+        value["schema_version"] = 2
+        value["target_queue"] = target_queue.initial_queue()
     if not isinstance(value, dict) or set(value) != {
-        "schema_version", "project", "authorization", "attempts", "events"
+        "schema_version", "project", "authorization", "attempts", "events", "target_queue"
     }:
         raise AutonomousResearchError("Autonomous scheduler state has an invalid schema.")
-    if type(value.get("schema_version")) is not int or value["schema_version"] != 1:
+    if type(value.get("schema_version")) is not int or value["schema_version"] != 2:
         raise AutonomousResearchError("Unsupported autonomous scheduler schema version.")
+    try:
+        target_queue.validate_queue(value["target_queue"])
+    except target_queue.TargetQueueError as exc:
+        raise AutonomousResearchError("Target FIFO queue failed validation: " + str(exc)) from None
     if value.get("project") != PROJECT:
         raise AutonomousResearchError("Autonomous scheduler project identity mismatch.")
 
@@ -333,6 +345,17 @@ def prepare_cycle(
 
     archive = sealed.load_archive(archive_path)
     target_date = _canonical_date(archive["last_date"], "archive.last_date")
+    queue = target_queue.validate_queue(state["target_queue"])
+    if queue["items"]:
+        front = queue["items"][0]
+        if (
+            target_date != front["target_date"]
+            or archive["archive_sha256"] != front["archive_sha256"]
+            or archive["record_count"] != front["archive_record_count"]
+        ):
+            raise AutonomousResearchError(
+                "Prepared archive is not the immutable FIFO head snapshot."
+            )
     attempts = state["attempts"]
     retryable = False
     retry_number = 1
@@ -493,6 +516,15 @@ def claim_attempt(
     if type(plan.get("archive_record_count")) is not int or plan["archive_record_count"] < 1:
         raise AutonomousResearchError("Plan archive record count is invalid.")
     attempt_number = 1
+    queue = target_queue.validate_queue(state["target_queue"])
+    if queue["items"]:
+        front = queue["items"][0]
+        if (
+            target_date != front["target_date"]
+            or archive_sha != front["archive_sha256"]
+            or plan["archive_record_count"] != front["archive_record_count"]
+        ):
+            raise AutonomousResearchError("Attempt does not match the immutable FIFO head.")
     if state["attempts"]:
         last_attempt = state["attempts"][-1]
         last_target = last_attempt["target_date"]
@@ -560,6 +592,21 @@ def record_outcome(
         "recorded_at_utc": _now_utc(now).isoformat(),
         "reason_code": reason_code,
     })
+    if outcome in {"SUCCEEDED", "NO_ELIGIBLE_CANDIDATE"} and state["target_queue"]["items"]:
+        attempt = next(item for item in state["attempts"] if item["attempt_id"] == attempt_id)
+        try:
+            state["target_queue"] = target_queue.complete_front(
+                state["target_queue"],
+                target_date=attempt["target_date"],
+                archive_sha256=attempt["archive_sha256"],
+                archive_record_count=attempt["archive_record_count"],
+                outcome=outcome,
+                now=now,
+            )
+        except target_queue.TargetQueueError as exc:
+            raise AutonomousResearchError(
+                "Terminal outcome cannot release the FIFO head: " + str(exc)
+            ) from None
     return validate_state(state)
 
 
@@ -621,6 +668,15 @@ def main(argv: list[str] | None = None) -> int:
     finish.add_argument("--outcome", choices=sorted(ALLOWED_OUTCOMES), required=True)
     finish.add_argument("--reason-code", choices=sorted(ALLOWED_REASON_CODES), required=True)
 
+    queue_capture = sub.add_parser("queue-capture")
+    queue_capture.add_argument("--state", type=Path, default=Path("general_autonomous_research_state.json"))
+    queue_capture.add_argument("--archive", type=Path, default=Path("super_loto_archive.json"))
+    queue_capture.add_argument("--github-output")
+
+    queue_materialize = sub.add_parser("queue-materialize")
+    queue_materialize.add_argument("--state", type=Path, default=Path("general_autonomous_research_state.json"))
+    queue_materialize.add_argument("--output", type=Path, default=Path("super_loto_archive.json"))
+
     args = parser.parse_args(argv)
     try:
         state = read_state(args.state)
@@ -652,6 +708,27 @@ def main(argv: list[str] | None = None) -> int:
                 "authorized": result["authorized"],
                 "lock_clear": result["global_lock_clear"],
             })
+        elif args.command == "queue-capture":
+            updated_queue, queue_summary = target_queue.capture_new_targets(
+                state["target_queue"],
+                archive_path=args.archive,
+                attempts=state["attempts"],
+                events=state["events"],
+            )
+            state["target_queue"] = updated_queue
+            if queue_summary["changed"]:
+                write_state(args.state, state)
+            result = {"status": "FIFO_CAPTURE_COMPLETE", **queue_summary}
+            _write_github_output(args.github_output, {
+                "changed": queue_summary["changed"],
+                "has_pending": queue_summary["has_pending"],
+                "pending_target_count": queue_summary["pending_target_count"],
+                "front_target_date": queue_summary["front_target_date"],
+            })
+        elif args.command == "queue-materialize":
+            result = target_queue.materialize_front(
+                state["target_queue"], args.output
+            )
         elif args.command == "prepare":
             result = prepare_cycle(
                 state,
