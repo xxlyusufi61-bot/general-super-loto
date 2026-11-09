@@ -1,0 +1,48 @@
+# GENERAL offline mathematical hypothesis discovery v0.1
+
+## Purpose and execution boundary
+
+general_offline_hypothesis_discovery.py is a bounded, deterministic symbolic-discovery and offline-evaluation runner. It makes no hosted-model, NVIDIA, Telegram, or other network request. It does not use Pydroid and does not import earlier manual/Pydroid formula work.
+
+The scheduled autonomous workflow runs this step against only the oldest FIFO target snapshot, before the independent authorization/global-lock gate for hosted research. Materializing the snapshot changes only the job workspace. The offline runner reads the sealed evaluation ledger and does not update it, the canonical archive, the FIFO state, the NVIDIA lock, or autonomous authorization.
+
+This first implementation is not an unrestricted AI inventing arbitrary mathematics. It enumerates a bounded, versioned symbolic search grammar of eleven explicit safe-DSL candidates. Broader model-assisted proposal generation remains a separate provider-authorized activity.
+
+## Research families and candidate definitions
+
+The global method registry remains untouched. A→B→C, A→T, and MOD5→T remain OPEN_DEFINITION; these candidates are research proposals only.
+
+- A→B→C: four Boolean membership transitions over three consecutive archive draws: present/present/present; present/present/absent; absent/present/present; present/absent/present. A candidate is scored by the count of matching consecutive triples.
+- A→T: exact historical frequency; exact frequency within the ten most recent available earlier draws; distance at most one; same parity; and same modulo-ten remainder.
+- MOD5→T: same positive-integer modulo-five remainder across all prior available draws, and the same residue class within the ten most recent available earlier draws.
+
+Each candidate is a fully specified JSON AST in the safe DSL. Its proposal text is generated locally from that AST and must match the separately validated execution specification exactly. The DSL evaluator never executes Python, dynamic code, shell commands, file access, or network operations.
+
+Modulo semantics are local to the corresponding candidate: positive values from 1 through 60 use the ordinary non-negative remainder operation. This does not install a global MOD5 convention or close the registry's open definition.
+
+## Chronology, isolation, and evaluation
+
+1. Validate the FIFO-materialized archive using the existing sealed archive/Data Guard path. The latest draw remains isolated as the target; only the sealed pre-target discovery partition is available.
+2. Exclude every validation date already consumed by the sealed evaluation ledger and every development date recorded in the offline consumption ledger.
+3. Retain each source archive row's original ordinal as sequence_index. A→B→C transitions count only when the three source rows have consecutive indices. Missing/removed draws are never bridged.
+4. Generate and freeze the candidate catalogue using only the earlier training prefix. At least forty training draws are required.
+5. Evaluate the fixed candidates on the next ten fresh chronological development draws using forward walk-forward and five contiguous time-ordered CV folds. No shuffling or target/future row is permitted.
+6. Run the reverse-time diagnostic separately on pre-target discovery rows. It is labelled retrospective only and never counts as forward predictive evidence.
+7. Compare means with the uniform-random 6-of-60 expectation of 0.6 hits out of 6 and retain uncertainty metadata where the evaluator supplies it. This is a reference baseline, not a proof of statistical significance.
+8. Do not select a candidate, tune it on the same development interval, promote it, or modify the method registry. Walk-forward and CV reuse the same frozen development interval and are not independent confirmation.
+
+Every evaluated development interval is consumed. Its exact dates are retained only in the dedicated offline consumption ledger so they cannot be reused; the candidate memory entry stores only the window count and a SHA-256 digest. These dates are not passed into later hypothesis-generation context. Future runs need a strictly later fresh interval. Existing sealed holdout consumption remains separately authoritative in general_evaluation_ledger.json.
+
+## Offline GENERAL memory
+
+general_offline_research_memory.json is a separate append-only file created only after a successful offline evaluation. It stores GENERAL-origin candidate definitions, specification hashes, safe aggregate walk-forward/CV/reverse summaries, archive/target provenance, and a digest of the consumed development window.
+
+It does not store raw archive rows, draw-number sets, target numbers, per-draw hit records, candidate rankings, or exact development-date lists inside the hypothesis entries. A separate consumption sub-ledger retains exact development dates solely to enforce non-reuse. Duplicate JSON keys, invalid hashes, non-monotonic dates, duplicated windows, modified prefixes, and candidate/spec mismatches fail closed. Existing entries cannot be edited or deleted.
+
+The pre-existing general_research_memory.json remains governed by its sealed-claim/ledger writer. This new offline store does not bypass or weaken that path and does not import legacy history.
+
+The repository is public. Any offline memory committed by the scheduled workflow is public repository content. The file intentionally excludes draw values and raw rows, but candidate definitions and aggregate research results remain visible.
+
+## Interpretation and status
+
+A successful cycle reports COMPLETED_EXPLORATORY_ONLY. It is not a verified formula, winning-number prediction, or evidence of a repeatable advantage. The only accepted outcome is a reproducible, bounded exploratory measurement, including a null/unsuccessful result. Canonical approval still requires separate review and explicit user approval.
