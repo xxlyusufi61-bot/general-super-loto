@@ -119,5 +119,25 @@ class AutomationStateCutoverWorkflowTests(unittest.TestCase):
             self.assertIn("GENERAL_DEFAULT_BRANCH: main", workflow)
 
 
+    def test_offline_learning_uses_existing_research_memory_state_object(self):
+        workflow = read(WORKFLOWS / "general-autonomous-research.yml")
+        start = workflow.index(
+            "      - name: Persist offline GENERAL learning through the existing state store"
+        )
+        end = workflow.index(
+            "      - name: Send offline hypothesis and evaluation summary to Telegram",
+            start,
+        )
+        persist_step = workflow[start:end]
+        self.assertIn("uses: ./.github/actions/publish-automation-state", persist_step)
+        self.assertIn("objects: research_memory", persist_step)
+        self.assertNotIn("git push", persist_step)
+        self.assertNotIn("general_offline_research_memory.json", workflow)
+        self.assertIn(
+            "steps.persist_offline_memory.outputs.generation || steps.persist_queue.outputs.generation",
+            workflow,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
