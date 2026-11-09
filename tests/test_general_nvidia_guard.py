@@ -543,6 +543,35 @@ class GlobalNvidiaLockTests(unittest.TestCase):
                 budget_category="forward_discovery", package_id="run-123:1",
             )
 
+    def test_legacy_migration_preserves_over_budget_history_until_it_expires(self):
+        now = datetime(2026, 11, 1, 12, 0, 0, tzinfo=timezone.utc)
+        history = []
+        for index in range(73):
+            stamp = now - timedelta(hours=23, minutes=(72 - index) * 15)
+            history.append({
+                "commit_sha": format(index + 1, "040x"),
+                "reserved_at_utc": stamp.isoformat(),
+                "source": "open-research-forward",
+            })
+        legacy = {
+            "schema_version": 1,
+            "window_seconds": 60,
+            "max_requests": 40,
+            "requests": [],
+            "diagnostic_run_ids": [],
+            "updated_at_utc": history[-1]["reserved_at_utc"],
+        }
+        migrated = migrate_legacy_rate_limit_state(legacy, history, now=now)
+        self.assertEqual(len(migrated["daily_requests"]), 73)
+        with self.assertRaisesRegex(ValueError, "24-hour NVIDIA budget"):
+            reserve_rate_limit_slot(
+                migrated,
+                "new-forward-call",
+                now=now,
+                budget_category="forward_discovery",
+                package_id="after-migration",
+            )
+
     def test_legacy_budget_migration_requires_reconstructed_reservations(self):
         now = datetime(2026, 11, 1, 1, 0, 0, tzinfo=timezone.utc)
         stamp = (now - timedelta(hours=1)).isoformat()
