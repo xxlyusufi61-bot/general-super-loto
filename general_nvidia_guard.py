@@ -226,6 +226,19 @@ def validate_rate_limit_state(value):
         diagnostic_run_ids = value.get("diagnostic_run_ids", [])
         if not isinstance(diagnostic_run_ids, list) or len(diagnostic_run_ids) > MAX_DIAGNOSTIC_RUN_IDS:
             raise ValueError("diagnostic run-id history is invalid")
+        seen_diagnostic_run_ids = set()
+        for run_id in diagnostic_run_ids:
+            if (
+                not isinstance(run_id, str)
+                or not run_id.isascii()
+                or not run_id.isdigit()
+                or len(run_id) > 32
+                or str(int(run_id)) != run_id
+                or int(run_id) < 1
+                or run_id in seen_diagnostic_run_ids
+            ):
+                raise ValueError("diagnostic run-id history contains an invalid or duplicate ID")
+            seen_diagnostic_run_ids.add(run_id)
         if value.get("updated_at_utc") is not None:
             _parse_aware_timestamp(value["updated_at_utc"], "NVIDIA rate-limit updated_at_utc")
         return value
