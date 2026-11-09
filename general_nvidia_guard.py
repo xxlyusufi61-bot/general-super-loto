@@ -491,10 +491,13 @@ def _run_git(arguments, *, cwd=None):
     return completed.stdout
 
 
-def _fetch_remote_branch(branch):
+def _fetch_remote_branch(branch, *, full_history=False):
     if not isinstance(branch, str) or not branch or "/" in branch or ".." in branch:
         raise RuntimeError("Invalid GENERAL safety-state branch; NVIDIA request blocked.")
     refspec = "+refs/heads/" + branch + ":refs/remotes/origin/" + branch
+    if not full_history:
+        _run_git(["fetch", "--no-tags", "--depth=1", "origin", refspec])
+        return
     shallow = _run_git(["rev-parse", "--is-shallow-repository"]).strip() == "true"
     if shallow:
         _run_git(["fetch", "--unshallow", "--no-tags", "origin", refspec])
@@ -777,7 +780,7 @@ def _ensure_rate_limit_worktree():
     if _RATE_LIMIT_WORKTREE is not None and Path(_RATE_LIMIT_WORKTREE).is_dir():
         return Path(_RATE_LIMIT_WORKTREE)
 
-    _fetch_remote_branch(RATE_LIMIT_BRANCH)
+    _fetch_remote_branch(RATE_LIMIT_BRANCH, full_history=True)
     remote_ref = "refs/remotes/origin/" + RATE_LIMIT_BRANCH
     worktree = Path(tempfile.mkdtemp(prefix="general-nvidia-rate-limit-"))
     # git worktree add expects a path that does not already exist.
