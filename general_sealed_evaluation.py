@@ -429,6 +429,8 @@ def get_used_validation_dates(ledger: dict[str, Any]) -> set[str]:
 def preflight(
     archive_path: str | Path,
     ledger_path: str | Path,
+    *,
+    offline_memory_path: str | Path = "general_research_memory.json",
 ) -> dict[str, Any]:
     """Fail before any hosted-model request if no fresh validation interval exists."""
     archive = load_archive(archive_path)
@@ -438,6 +440,7 @@ def preflight(
         archive["rows"],
         archive_sha256=archive["archive_sha256"],
         used_validation_dates=used_dates,
+        offline_memory_path=offline_memory_path,
     )
     r60 = split["regimes"]["R60"]
     validation_dates = [row["date"] for row in r60["validation_rows"]]
@@ -586,6 +589,7 @@ def create_claim(
     specs_path: str | Path,
     *,
     snapshot_directory: str | Path = SNAPSHOT_DIRECTORY,
+    offline_memory_path: str | Path = "general_research_memory.json",
 ) -> dict[str, Any]:
     """Claim one fresh interval; call this before running a real-archive score."""
     candidate = _select_one_frozen_candidate(proposals_path, specs_path)
@@ -603,6 +607,7 @@ def create_claim(
         archive["rows"],
         archive_sha256=archive["archive_sha256"],
         used_validation_dates=used_dates,
+        offline_memory_path=offline_memory_path,
     )
     r60 = split["regimes"]["R60"]
     validation = r60["validation_rows"]
@@ -1029,6 +1034,7 @@ def evaluate_claim(
     specs_path: str | Path,
     *,
     output_path: str | Path,
+    offline_memory_path: str | Path = "general_research_memory.json",
 ) -> dict[str, Any]:
     """Evaluate one already-persisted claim against its immutable archive snapshot."""
     ledger = load_ledger(ledger_path)
@@ -1058,6 +1064,7 @@ def evaluate_claim(
         archive["rows"],
         archive_sha256=archive["archive_sha256"],
         used_validation_dates=set(recorded_prior_dates),
+        offline_memory_path=offline_memory_path,
     )
     if split["target_date"] != entry["target_date"]:
         raise SealedEvaluationError("Snapshot target cutoff does not match the ledger.")
