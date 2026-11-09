@@ -640,7 +640,6 @@ class NvidiaUsageObservationTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "request cap reached"):
                 research.call_model(
                     [{"role": "user", "content": "fifth request must be blocked"}],
-                    request_label="unlabelled",
                 )
 
         self.assertEqual(client_factory.call_count, 4)
