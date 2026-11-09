@@ -168,17 +168,17 @@ def _validate_proposal(
     if formal is not None:
         try:
             formal = validate_execution_spec(formal)
-            if (
-                formal.get("schema_version") == 2
-                and formal.get("direction") != direction
-            ):
-                raise ValueError(
-                    "DSL v2 direction must match the proposal's isolated discovery direction."
-                )
         except (TypeError, ValueError):
             raise ValueError(
                 "formal_execution_spec is not a valid safe-DSL expression."
             ) from None
+        if (
+            formal.get("schema_version") == 2
+            and formal.get("direction") != direction
+        ):
+            raise ValueError(
+                "DSL v2 direction must match the proposal's isolated discovery direction."
+            )
         rendered = _render_expression(formal["score_expression"])
         hypothesis = (
             "The score defined by the attached formal DSL expression is hypothesized "
