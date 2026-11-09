@@ -1448,7 +1448,7 @@ def direction_context(
     memory_path: str | Path = MEMORY_PATH,
     limit: int = MAX_CONTEXT_ENTRIES,
 ) -> list[dict[str, Any]]:
-    """Return bounded same-direction GENERAL history from prior runs no later than this target."""
+    """Return bounded same-direction GENERAL history and forward-only offline learning."""
     if direction not in {"forward", "reverse"}:
         raise ResearchMemoryError("Direction must be forward or reverse.")
     try:
@@ -1457,14 +1457,70 @@ def direction_context(
         raise ResearchMemoryError("Current target date is invalid.") from None
     if current_target.isoformat() != target_date:
         raise ResearchMemoryError("Current target date is not canonical.")
+    if type(limit) is not int or not 1 <= limit <= MAX_CONTEXT_ENTRIES:
+        raise ResearchMemoryError("Research-memory context limit is invalid.")
     memory = load_memory(memory_path)
+    now = datetime.now(timezone.utc)
+    context = []
+
+    # The offline symbolic namespace is forward-only. It is deliberately kept
+    # out of reverse prompts to preserve directional separation. Only one most
+    # recent prior offline cycle is included to bound the prompt payload.
+    if direction == "forward":
+        for offline_entry in reversed(memory["offline_research"]["entries"]):
+            if date.fromisoformat(offline_entry["target_date"]) > current_target:
+                continue
+            if _validate_timestamp(offline_entry["created_at_utc"]) >= now:
+                continue
+            candidate_summaries = []
+            for candidate in offline_entry["candidates"]:
+                candidate_summaries.append({
+                    "hypothesis_id": candidate["hypothesis_id"],
+                    "family": candidate["family"],
+                    "template_id": candidate["template_id"],
+                    "formal_definition": candidate["proposal"]["exact_definition"],
+                    "specification_sha256": candidate["specification_sha256"],
+                    "training_signal": candidate["training_signal"],
+                    "forward_walk_forward": candidate["forward_walk_forward"],
+                    "time_ordered_cross_validation": candidate["time_ordered_cross_validation"],
+                    "reverse_retrospective_only": candidate["reverse_retrospective_only"],
+                })
+            offline_context = {
+                "prior_target_date": offline_entry["target_date"],
+                "prior_recorded_at_utc": offline_entry["created_at_utc"],
+                "source": "GENERAL/offline-symbolic-discovery",
+                "direction": "forward",
+                "status": "EXPLORATORY_ONLY",
+                "candidate_selection": "NONE",
+                "automatic_candidate_selection": False,
+                "candidates_in_memory": len(offline_entry["candidates"]),
+                "candidates": candidate_summaries,
+                "development_window": {
+                    "draw_count": offline_entry["development_window"]["draw_count"],
+                    "window_sha256": offline_entry["development_window"]["window_sha256"],
+                    "dates_stored": False,
+                    "consumed_for_exploratory_feedback": True,
+                },
+                "interpretation": (
+                    "Bounded offline GENERAL discovery feedback only. These definitions and aggregate "
+                    "metrics are unverified development history, not approved formulas, candidate rankings, "
+                    "or independent confirmation. Reuse of the development interval is forbidden."
+                ),
+                "holdout_reuse": (
+                    "FORBIDDEN; this consumed offline development interval is historical feedback only."
+                ),
+            }
+            _reject_number_values(offline_context, "Offline directional context")
+            if len(_canonical(context + [offline_context])) <= MAX_CONTEXT_CHARS:
+                context.append(offline_context)
+            break
+
     entries = [
         item for item in memory["entries"]
         if item["direction"] == direction
         and date.fromisoformat(item["target_date"]) <= current_target
-        and _validate_timestamp(item["created_at_utc"]) < datetime.now(timezone.utc)
+        and _validate_timestamp(item["created_at_utc"]) < now
     ]
-    context = []
     for entry in reversed(entries):
         compact = {
             "prior_target_date": entry["target_date"],
@@ -1490,10 +1546,10 @@ def direction_context(
             "direction": direction,
         }
         _reject_number_values(compact, "Directional context")
-        candidate = context + [compact]
-        if len(candidate) > limit or len(_canonical(candidate)) > MAX_CONTEXT_CHARS:
+        candidate_context = context + [compact]
+        if len(candidate_context) > limit or len(_canonical(candidate_context)) > MAX_CONTEXT_CHARS:
             continue
-        context = candidate
+        context = candidate_context
     return context
 
 
