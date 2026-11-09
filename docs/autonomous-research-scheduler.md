@@ -184,9 +184,13 @@ When the queue is first introduced to a scheduler state with no prior attempts,
 the bootstrap cursor starts immediately before the latest canonical draw, so
 the current draw is queued rather than replaying the entire historical archive.
 When an older state has a terminal attempt, capture starts after its last
-terminal target. An unfinished legacy target is queued only when its snapshot
-identity and record count can be proven exactly; otherwise the scheduler stops
-for manual recovery rather than guessing at an old snapshot.
+terminal target. An unfinished legacy target is queued only when the current
+canonical archive is still exactly the raw archive recorded by that attempt:
+the source archive SHA-256, final target date, and record count must all match.
+This intentionally distinguishes the legacy attempt's raw-file digest (which
+includes metadata and JSON formatting) from the FIFO snapshot's newly computed
+canonical digest. If the original source archive cannot be proven byte-for-byte,
+the scheduler stops for manual recovery rather than guessing at an old snapshot.
 
 FIFO retention does not relax the existing research contract. Every target still
 requires its own leakage-free pre-target partition, canonical adjacency, fresh
