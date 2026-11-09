@@ -113,7 +113,7 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.confirm_live_calls == 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_4_NVIDIA_REQUESTS' && inputs.confirm_free_usage_verified == true }}
     needs: test
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 60
     permissions:
       contents: write
       issues: write
@@ -238,10 +238,16 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          if [ -f /tmp/general_nvidia_api_attempted ] && [ ! -f /tmp/general_nvidia_api_succeeded ]; then
-            python3 general_nvidia_guard.py lock --reason "GENERAL blank-slate NVIDIA request failed or its response could not be validated; global safety pause is required because quota, authorization, billing/limit, or service state is uncertain."
+          incomplete_request=false
+          for request_label in forward reverse forward_critique between_draws unlabelled; do
+            if [ -f "/tmp/general_nvidia_api_attempted_${request_label}" ] && [ ! -f "/tmp/general_nvidia_api_succeeded_${request_label}" ]; then
+              incomplete_request=true
+            fi
+          done
+          if [ "$incomplete_request" = "true" ]; then
+            python3 general_nvidia_guard.py lock --reason "GENERAL blank-slate NVIDIA request delivery or validation is uncertain; global safety pause is required. No automatic retry is permitted."
           else
-            echo "No incomplete NVIDIA request detected; global lock unchanged."
+            echo "No incomplete provider request detected; global lock unchanged."
           fi
       - name: Submit a structured rule-change request for Telegram approval if proposed
         if: ${{ success() }}
