@@ -28,7 +28,8 @@ RESEARCH_SCOPE_START = date(2020, 8, 2)
 NUMERIC_BINARY_OPS = {"add", "sub", "mul", "div", "mod", "min", "max"}
 COMPARISON_OPS = {"eq", "ne", "lt", "lte", "gt", "gte"}
 BOOLEAN_BINARY_OPS = {"and", "or"}
-VARIABLES = {"candidate", "value", "draw_age"}
+VARIABLES = {"candidate", "value", "draw_age", "a_contains_candidate", "b_contains_candidate", "c_contains_candidate"}
+TRIPLE_BOOLEAN_VARIABLES = {"a_contains_candidate", "b_contains_candidate", "c_contains_candidate"}
 
 
 def _fail(message: str) -> None:
@@ -53,6 +54,7 @@ def _validate_node(
     depth: int,
     state: dict[str, int],
     inside_aggregate: bool = False,
+    inside_triple_aggregate: bool = False,
 ) -> str:
     if depth > MAX_AST_DEPTH:
         _fail("expression depth exceeds the configured limit.")
@@ -61,7 +63,6 @@ def _validate_node(
     state["nodes"] += 1
     if state["nodes"] > MAX_AST_NODES:
         _fail("expression contains too many nodes.")
-
     op = node["op"]
     if op == "const":
         if set(node) != {"op", "value"}:
@@ -69,23 +70,22 @@ def _validate_node(
         value = node["value"]
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             _fail("numeric constants must be finite and within the safe bound.")
-        # Check integers against the bound before float conversion so even
-        # extremely large JSON integers fail cleanly instead of raising overflow.
         if isinstance(value, int):
             if abs(value) > MAX_ABS_LITERAL:
                 _fail("numeric constants must be finite and within the safe bound.")
         elif not math.isfinite(value) or abs(value) > MAX_ABS_LITERAL:
             _fail("numeric constants must be finite and within the safe bound.")
         return "number"
-
     if op == "var":
         if set(node) != {"op", "name"} or node.get("name") not in VARIABLES:
             _fail("variable node is invalid.")
-        if node["name"] in {"value", "draw_age"} and not inside_aggregate:
-            _fail("history variables may only appear inside the aggregate expression.")
-        return "number"
-
-    if op == "aggregate_history_numbers":
+        name = node["name"]
+        if name in {"value", "draw_age"} and (not inside_aggregate or inside_triple_aggregate):
+            _fail("number-history variables may only appear inside the number aggregate.")
+        if name in TRIPLE_BOOLEAN_VARIABLES and not inside_triple_aggregate:
+            _fail("A/B/C presence variables may only appear inside the consecutive-triple aggregate.")
+        return "boolean" if name in TRIPLE_BOOLEAN_VARIABLES else "number"
+    if op in {"aggregate_history_numbers", "aggregate_history_triples"}:
         if inside_aggregate:
             _fail("nested history aggregates are not supported.")
         if set(node) != {"op", "aggregate", "expression"}:
@@ -96,46 +96,40 @@ def _validate_node(
         state["aggregates"] += 1
         if state["aggregates"] > 1:
             _fail("exactly one history aggregate is allowed.")
+        triple = op == "aggregate_history_triples"
         child_type = _validate_node(
-            node.get("expression"),
-            depth=depth + 1,
-            state=state,
-            inside_aggregate=True,
+            node.get("expression"), depth=depth + 1, state=state,
+            inside_aggregate=True, inside_triple_aggregate=triple,
         )
         if aggregate == "count" and child_type != "boolean":
             _fail("count aggregate requires a boolean expression.")
         if aggregate == "sum" and child_type != "number":
             _fail("sum aggregate requires a numeric expression.")
         return "number"
-
     if op in {"abs", "not"}:
         if set(node) != {"op", "arg"}:
             _fail("unary node keys are invalid.")
         child_type = _validate_node(
-            node.get("arg"),
-            depth=depth + 1,
-            state=state,
+            node.get("arg"), depth=depth + 1, state=state,
             inside_aggregate=inside_aggregate,
+            inside_triple_aggregate=inside_triple_aggregate,
         )
         expected = "number" if op == "abs" else "boolean"
         if child_type != expected:
             _fail(op + " received an expression of the wrong type.")
         return expected
-
     if op in NUMERIC_BINARY_OPS | COMPARISON_OPS | BOOLEAN_BINARY_OPS:
         if set(node) != {"op", "left", "right"}:
             _fail("binary node keys are invalid.")
         left_type = _validate_node(
-            node.get("left"),
-            depth=depth + 1,
-            state=state,
+            node.get("left"), depth=depth + 1, state=state,
             inside_aggregate=inside_aggregate,
+            inside_triple_aggregate=inside_triple_aggregate,
         )
         right_type = _validate_node(
-            node.get("right"),
-            depth=depth + 1,
-            state=state,
+            node.get("right"), depth=depth + 1, state=state,
             inside_aggregate=inside_aggregate,
+            inside_triple_aggregate=inside_triple_aggregate,
         )
         if op in NUMERIC_BINARY_OPS | COMPARISON_OPS:
             if left_type != "number" or right_type != "number":
@@ -144,7 +138,6 @@ def _validate_node(
         if left_type != "boolean" or right_type != "boolean":
             _fail(op + " requires boolean operands.")
         return "boolean"
-
     _fail("operator is not in the allowlist: " + op)
     return "invalid"
 
