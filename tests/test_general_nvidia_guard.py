@@ -14,6 +14,11 @@ from general_live_consent import CONFIRMATION_PHRASE
 
 from general_nvidia_guard import (
     NVIDIA_REQUESTS_PER_MINUTE,
+    NVIDIA_NORMAL_REQUESTS_PER_MINUTE,
+    NVIDIA_DAILY_REQUEST_BUDGET,
+    NVIDIA_BUDGET_CATEGORY_LIMITS,
+    NVIDIA_MAX_REQUESTS_PER_PACKAGE,
+    migrate_legacy_rate_limit_state,
     RATE_LIMIT_BRANCH,
     DIAGNOSTIC_REPOSITORY,
     DIAGNOSTIC_WORKFLOW_ID,
@@ -404,74 +409,159 @@ class GlobalNvidiaLockTests(unittest.TestCase):
         self.assertIn("GENERAL_DIAGNOSTIC_MODE: \"true\"", workflow)
         self.assertIn("group: general-nvidia-api", workflow)
 
-    def test_shared_rate_limiter_allows_40_and_blocks_the_41st_request(self):
+    def test_shared_rate_limiter_allows_30_normal_requests_and_waits_before_31st(self):
         now = datetime(2026, 11, 1, 1, 0, 0, tzinfo=timezone.utc)
         state = initial_rate_limit_state()
-        for index in range(NVIDIA_REQUESTS_PER_MINUTE):
+        for index in range(NVIDIA_NORMAL_REQUESTS_PER_MINUTE):
             state, wait = reserve_rate_limit_slot(
-                state, "offline-test-agent-" + str(index), now=now
+                state, "offline-test-agent-" + str(index), now=now,
+                budget_category="forward_discovery",
             )
             self.assertEqual(wait, 0)
             self.assertIsNotNone(state)
         blocked, wait = reserve_rate_limit_slot(
-            state, "offline-test-agent-41", now=now
+            state, "offline-test-agent-31", now=now,
+            budget_category="forward_discovery",
         )
         self.assertIsNone(blocked)
         self.assertGreater(wait, 0)
-        self.assertEqual(len(state["requests"]), 40)
+        self.assertEqual(len(state["requests"]), 30)
+        self.assertEqual(state["max_requests"], 40)
+        self.assertEqual(state["normal_max_requests"], 30)
 
+    def test_immutable_40_request_hard_limit_is_retained_in_validation(self):
+        state = initial_rate_limit_state()
+        now = datetime(2026, 11, 1, 1, 0, 0, tzinfo=timezone.utc)
+        stamp = (now + timedelta(seconds=30)).isoformat()
+        state["requests"] = [
+            {"reserved_at_utc": stamp, "source": "legacy-reservation"}
+            for _ in range(NVIDIA_REQUESTS_PER_MINUTE)
+        ]
+        self.assertEqual(validate_rate_limit_state(state), state)
+        with self.assertRaisesRegex(ValueError, "40-requests-per-minute hard limit"):
+            reserve_rate_limit_slot(
+                state, "hard-limit-test", now=now,
+                budget_category="forward_discovery",
+            )
     def test_shared_rate_limiter_releases_a_slot_after_the_rolling_window(self):
         now = datetime(2026, 11, 1, 1, 0, 0, tzinfo=timezone.utc)
         state = initial_rate_limit_state()
-        for index in range(40):
-            state, _ = reserve_rate_limit_slot(state, "agent-" + str(index), now=now)
+        for index in range(NVIDIA_NORMAL_REQUESTS_PER_MINUTE):
+            state, _ = reserve_rate_limit_slot(
+                state, "agent-" + str(index), now=now,
+                budget_category="forward_discovery",
+            )
         next_state, wait = reserve_rate_limit_slot(
-            state, "next-agent", now=now + timedelta(seconds=62)
+            state, "next-agent", now=now + timedelta(seconds=62),
+            budget_category="forward_discovery",
         )
         self.assertEqual(wait, 0)
         self.assertIsNotNone(next_state)
         self.assertEqual(len(next_state["requests"]), 1)
-
     def test_shared_rate_limiter_rejects_corrupt_or_non_chronological_state(self):
         now = datetime(2026, 11, 1, 1, 0, 0, tzinfo=timezone.utc)
         invalid = [
             None,
             [],
             {"schema_version": 2, "window_seconds": 60, "max_requests": 40, "requests": []},
-            {
-                "schema_version": 1,
-                "window_seconds": 60,
-                "max_requests": 41,
-                "requests": [],
-            },
-            {
-                "schema_version": 1,
-                "window_seconds": 60,
-                "max_requests": 40,
-                "requests": [{"reserved_at_utc": "not-a-date", "source": "agent"}],
-            },
+            {"schema_version": 1, "window_seconds": 60, "max_requests": 41, "requests": []},
+            {"schema_version": 1, "window_seconds": 60, "max_requests": 40,
+             "requests": [{"reserved_at_utc": "not-a-date", "source": "agent"}]},
         ]
         for value in invalid:
             with self.subTest(value=value):
                 with self.assertRaises(ValueError):
                     validate_rate_limit_state(value)
 
-        first = now.isoformat()
-        second = (now - timedelta(seconds=1)).isoformat()
-        state = {
-            "schema_version": 1,
-            "window_seconds": 60,
-            "max_requests": 40,
+        legacy = {
+            "schema_version": 1, "window_seconds": 60, "max_requests": 40,
             "requests": [
-                {"reserved_at_utc": first, "source": "agent-a"},
-                {"reserved_at_utc": second, "source": "agent-b"},
+                {"reserved_at_utc": now.isoformat(), "source": "agent-a"},
+                {"reserved_at_utc": (now - timedelta(seconds=1)).isoformat(), "source": "agent-b"},
             ],
             "updated_at_utc": now.isoformat(),
         }
         with self.assertRaisesRegex(ValueError, "not chronological"):
-            validate_rate_limit_state(state)
+            validate_rate_limit_state(legacy)
 
+    def test_rolling_day_budget_and_category_allocations_sum_to_72(self):
+        self.assertEqual(sum(NVIDIA_BUDGET_CATEGORY_LIMITS.values()), NVIDIA_DAILY_REQUEST_BUDGET)
+        self.assertEqual(NVIDIA_BUDGET_CATEGORY_LIMITS, {
+            "forward_discovery": 40, "forward_critique": 12,
+            "reverse_diagnostic": 8, "between_draws": 8, "retry_reserve": 4,
+        })
+        now = datetime(2026, 11, 1, 1, 0, 0, tzinfo=timezone.utc)
+        state = initial_rate_limit_state()
+        counts = (
+            ("forward_discovery", 40), ("forward_critique", 12),
+            ("reverse_diagnostic", 8), ("between_draws", 8), ("retry_reserve", 4),
+        )
+        index = 0
+        for category, count in counts:
+            for _ in range(count):
+                at = now + timedelta(seconds=3 * index)
+                state, wait = reserve_rate_limit_slot(
+                    state, "source-" + category, now=at,
+                    budget_category=category, package_id="package-" + str(index),
+                )
+                self.assertEqual(wait, 0)
+                index += 1
+        self.assertEqual(len(state["daily_requests"]), 72)
+        with self.assertRaisesRegex(ValueError, "24-hour NVIDIA budget"):
+            reserve_rate_limit_slot(
+                state, "extra-request", now=now + timedelta(seconds=3 * index),
+                budget_category="retry_reserve", package_id="package-extra",
+            )
 
+    def test_category_allocation_is_enforced_independently(self):
+        now = datetime(2026, 11, 1, 1, 0, 0, tzinfo=timezone.utc)
+        state = initial_rate_limit_state()
+        for index in range(NVIDIA_BUDGET_CATEGORY_LIMITS["reverse_diagnostic"]):
+            state, _ = reserve_rate_limit_slot(
+                state, "reverse", now=now + timedelta(seconds=2 * index),
+                budget_category="reverse_diagnostic", package_id="reverse-" + str(index),
+            )
+        with self.assertRaisesRegex(ValueError, "allocation for reverse_diagnostic"):
+            reserve_rate_limit_slot(
+                state, "reverse", now=now + timedelta(seconds=40),
+                budget_category="reverse_diagnostic", package_id="reverse-over",
+            )
+
+    def test_job_package_is_limited_to_four_requests(self):
+        now = datetime(2026, 11, 1, 1, 0, 0, tzinfo=timezone.utc)
+        state = initial_rate_limit_state()
+        for index in range(NVIDIA_MAX_REQUESTS_PER_PACKAGE):
+            state, _ = reserve_rate_limit_slot(
+                state, "package-source-" + str(index),
+                now=now + timedelta(seconds=index),
+                budget_category="forward_discovery", package_id="run-123:1",
+            )
+        with self.assertRaisesRegex(ValueError, "four-request maximum"):
+            reserve_rate_limit_slot(
+                state, "package-source-5",
+                now=now + timedelta(seconds=5),
+                budget_category="forward_discovery", package_id="run-123:1",
+            )
+
+    def test_legacy_budget_migration_requires_reconstructed_reservations(self):
+        now = datetime(2026, 11, 1, 1, 0, 0, tzinfo=timezone.utc)
+        stamp = (now - timedelta(hours=1)).isoformat()
+        legacy = {
+            "schema_version": 1, "window_seconds": 60, "max_requests": 40,
+            "requests": [{"reserved_at_utc": stamp, "source": "open-research-forward"}],
+            "diagnostic_run_ids": [], "updated_at_utc": stamp,
+        }
+        migrated = migrate_legacy_rate_limit_state(
+            legacy,
+            [{"commit_sha": "a" * 40, "reserved_at_utc": stamp, "source": "open-research-forward"}],
+            now=now,
+        )
+        self.assertEqual(migrated["schema_version"], 2)
+        self.assertEqual(len(migrated["daily_requests"]), 1)
+        self.assertEqual(migrated["daily_requests"][0]["category"], "forward_discovery")
+        self.assertEqual(migrated["requests"], legacy["requests"])
+        with self.assertRaisesRegex(ValueError, "incomplete"):
+            migrate_legacy_rate_limit_state(legacy, [], now=now)
     def test_shared_rate_limit_persistence_uses_git_push_not_rest_contents_api(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             worktree = Path(temporary_directory)
