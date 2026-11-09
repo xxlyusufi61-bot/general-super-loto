@@ -875,7 +875,7 @@ def call_model(
     request_label: str | None = None,
 ) -> str:
     global _NVIDIA_REQUESTS_ATTEMPTED
-    if request_label not in {None, "forward", "reverse"}:
+    if request_label not in {None, "forward", "reverse", "forward_critique", "between_draws"}:
         raise ValueError("Unknown NVIDIA request label.")
     request_usage_name = (
         USAGE_REPORT.name
