@@ -197,7 +197,7 @@ the scheduler stops for manual recovery rather than guessing at an old snapshot.
 FIFO retention does not relax the existing research contract. Every target still
 requires its own leakage-free pre-target partition, canonical adjacency, fresh
 disjoint sealed holdouts, unchanged minimum training history, and time-ordered
-evaluation. Consumed holdout dates remain unavailable to later targets. A queued
+evaluation. Consumed sealed holdout dates and offline development dates remain unavailable to later discovery and validation windows. Offline consumption is read from the validated research-memory namespace; each sealed claim pins its digest and count so a memory change after claim creation fails closed. A queued
 target may therefore remain pending when its own frozen snapshot cannot satisfy
 fresh sealed-window requirements; the scheduler must wait or require recovery,
 not use later draws, lower minimums, reuse consumed dates, or skip ahead.
