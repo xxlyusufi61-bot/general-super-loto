@@ -43,6 +43,8 @@ The existing sealed directional entries remain governed by their sealed-claim/le
 
 The offline namespace is published only through the existing dedicated general-automation-state branch and the four-object transactional state writer as part of the existing research_memory object. It is not committed directly to main and does not add a fifth state object. Candidate definitions and aggregate results remain visible to readers of that protected state object; raw draw values and rows are excluded.
 
+After a successful append, the scheduled workflow sends a separate number-safe Telegram summary. It includes the bounded DSL expressions, candidate IDs, training-only score-variation metadata, forward walk-forward/CV means, and reverse retrospective means. It never sends target draw values, predicted-number values, per-draw hit positions, or candidate rankings. The offline-specific formatter validates the formal DSL/proposal hash and research flags before sending; each family is a separate message and messages are rate-spaced.
+
 ## Interpretation and status
 
 A successful cycle reports COMPLETED_EXPLORATORY_ONLY. It is not a verified formula, winning-number prediction, or evidence of a repeatable advantage. The only accepted outcome is a reproducible, bounded exploratory measurement, including a null/unsuccessful result. Canonical approval still requires separate review and explicit user approval.
