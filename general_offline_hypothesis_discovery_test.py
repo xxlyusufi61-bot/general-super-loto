@@ -97,6 +97,28 @@ class OfflineHypothesisDiscoveryTests(unittest.TestCase):
             self.assertEqual(len(memory["entries"]), 1)
             self.assertEqual(len(memory["consumed_development_windows"]), 1)
             self.assertEqual(len(memory["consumed_development_windows"][0]["dates"]), 10)
+            next_sealed_partition = offline.sealed.split_archive(
+                synthetic_archive(),
+                archive_sha256="f" * 64,
+                used_validation_dates=set(),
+                offline_memory_path=memory_path,
+            )
+            r60 = next_sealed_partition["regimes"]["R60"]
+            offline_dates = set(memory["consumed_development_windows"][0]["dates"])
+            selected_sealed_dates = {
+                row["date"]
+                for field in ("discovery_rows", "validation_rows", "reverse_validation_rows")
+                for row in r60[field]
+            }
+            self.assertFalse(offline_dates.intersection(selected_sealed_dates))
+            self.assertEqual(
+                next_sealed_partition["previously_consumed_offline_development_draw_count"],
+                10,
+            )
+            self.assertEqual(
+                next_sealed_partition["offline_development_memory_sha256"],
+                offline._sha(offline._canonical(memory["consumed_development_windows"])),
+            )
             self.assertEqual(
                 offline.memory_context(
                     memory_path,
