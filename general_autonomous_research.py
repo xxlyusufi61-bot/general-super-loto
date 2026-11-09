@@ -22,11 +22,14 @@ PROJECT = "GENERAL Super Loto"
 RESEARCH_SCOPE_START = date(2020, 8, 2)
 AUTO_CONFIRMATION_PHRASE = "I_AUTHORIZE_AUTONOMOUS_FREE_ONLY_NVIDIA_RESEARCH_NO_BILLING"
 MAX_AUTHORIZATION_DAYS = 30
+MAX_ATTEMPTS_PER_TARGET = 3
 ALLOWED_OUTCOMES = {"SUCCEEDED", "FAILED", "NO_ELIGIBLE_CANDIDATE"}
 ALLOWED_REASON_CODES = {
     "EVALUATION_COMPLETED",
     "WORKFLOW_FAILED",
     "NO_FROZEN_DIRECTIONAL_CANDIDATE",
+    "NO_PROVIDER_REQUEST_SENT",
+    "PROVIDER_DELIVERY_UNCERTAIN",
 }
 
 
@@ -83,7 +86,7 @@ def initial_state() -> dict[str, Any]:
             "expires_at_utc": None,
             "authorization_days": 0,
             "free_usage_verified": False,
-            "max_requests_per_target": 2,
+            "max_requests_per_target": None,
             "last_paused_at_utc": None,
         },
         "attempts": [],
@@ -112,8 +115,10 @@ def validate_state(value: Any) -> dict[str, Any]:
         raise AutonomousResearchError("Authorization flags must be booleans.")
     if type(auth["authorization_days"]) is not int or not 0 <= auth["authorization_days"] <= MAX_AUTHORIZATION_DAYS:
         raise AutonomousResearchError("Authorization duration is outside the supported range.")
-    if type(auth["max_requests_per_target"]) is not int or auth["max_requests_per_target"] != 2:
-        raise AutonomousResearchError("The autonomous request cap must remain exactly two per target.")
+    if auth["max_requests_per_target"] not in (None, 2):
+        raise AutonomousResearchError("Deprecated target request-cap metadata is invalid.")
+    # Legacy v1 states may still contain 2. It is ignored; all provider calls
+    # are governed by the shared rolling budget and per-package limiter.
     for key in ("authorized_at_utc", "expires_at_utc", "last_paused_at_utc"):
         if auth[key] is not None:
             _timestamp(auth[key], "authorization." + key)
@@ -162,8 +167,13 @@ def validate_state(value: Any) -> dict[str, Any]:
             not isinstance(run_id, str) or not run_id.isdigit() or len(run_id) > 32
         ):
             raise AutonomousResearchError("GitHub run identifier is invalid.")
-    if attempt_dates != sorted(set(attempt_dates)):
-        raise AutonomousResearchError("Attempt targets must be unique and strictly chronological.")
+    if attempt_dates != sorted(attempt_dates):
+        raise AutonomousResearchError("Attempt targets must remain chronological.")
+    target_counts: dict[str, int] = {}
+    for target in attempt_dates:
+        target_counts[target] = target_counts.get(target, 0) + 1
+    if any(count > MAX_ATTEMPTS_PER_TARGET for count in target_counts.values()):
+        raise AutonomousResearchError("A target exceeded the bounded pre-provider retry limit.")
 
     terminal_attempts: set[str] = set()
     required_event = {"attempt_id", "outcome", "recorded_at_utc", "reason_code"}
@@ -180,6 +190,23 @@ def validate_state(value: Any) -> dict[str, Any]:
         if event["attempt_id"] in terminal_attempts:
             raise AutonomousResearchError("An attempt already has a terminal event.")
         terminal_attempts.add(event["attempt_id"])
+
+    attempts_by_target: dict[str, list[dict[str, Any]]] = {}
+    for item in attempts:
+        attempts_by_target.setdefault(item["target_date"], []).append(item)
+    event_by_attempt = {event["attempt_id"]: event for event in events}
+    for target, target_attempts in attempts_by_target.items():
+        if len(target_attempts) > 1:
+            for prior_attempt in target_attempts[:-1]:
+                prior_event = event_by_attempt.get(prior_attempt["attempt_id"])
+                if (
+                    prior_event is None
+                    or prior_event["outcome"] != "FAILED"
+                    or prior_event["reason_code"] != "NO_PROVIDER_REQUEST_SENT"
+                ):
+                    raise AutonomousResearchError(
+                        "Repeated target attempts are allowed only after a proven no-provider-request failure."
+                    )
     return value
 
 
@@ -248,7 +275,7 @@ def activate_state(
         "expires_at_utc": expires.isoformat(),
         "authorization_days": authorization_days,
         "free_usage_verified": True,
-        "max_requests_per_target": 2,
+        "max_requests_per_target": None,
         "last_paused_at_utc": state["authorization"].get("last_paused_at_utc"),
     }
     return validate_state(state)
@@ -307,18 +334,71 @@ def prepare_cycle(
     archive = sealed.load_archive(archive_path)
     target_date = _canonical_date(archive["last_date"], "archive.last_date")
     attempts = state["attempts"]
+    retryable = False
+    retry_number = 1
     if attempts:
-        last_target = attempts[-1]["target_date"]
+        last_attempt = attempts[-1]
+        last_target = last_attempt["target_date"]
         if target_date < last_target:
             raise AutonomousResearchError("Archive target moved backwards relative to the attempt ledger.")
+        last_event = next(
+            (event for event in reversed(state["events"]) if event["attempt_id"] == last_attempt["attempt_id"]),
+            None,
+        )
+        same_target_attempts = sum(1 for item in attempts if item["target_date"] == target_date)
         if target_date == last_target:
-            return {
-                "status": "NO_NEW_TARGET_DRAW",
-                "eligible": False,
-                "target_date": target_date,
-                "archive_sha256": archive["archive_sha256"],
-                **status,
-            }
+            if last_event is None:
+                return {
+                    "status": "TARGET_ATTEMPT_IN_PROGRESS",
+                    "eligible": False,
+                    "target_date": target_date,
+                    "archive_sha256": archive["archive_sha256"],
+                    **status,
+                }
+            if (
+                last_event["outcome"] == "FAILED"
+                and last_event["reason_code"] == "NO_PROVIDER_REQUEST_SENT"
+            ):
+                if same_target_attempts >= MAX_ATTEMPTS_PER_TARGET:
+                    return {
+                        "status": "TARGET_RETRY_LIMIT_REACHED",
+                        "eligible": False,
+                        "target_date": target_date,
+                        "archive_sha256": archive["archive_sha256"],
+                        **status,
+                    }
+                retryable = True
+                retry_number = same_target_attempts + 1
+            else:
+                return {
+                    "status": "NO_NEW_TARGET_DRAW",
+                    "eligible": False,
+                    "target_date": target_date,
+                    "archive_sha256": archive["archive_sha256"],
+                    **status,
+                }
+        else:
+            if last_event is None:
+                return {
+                    "status": "PREVIOUS_TARGET_INCOMPLETE",
+                    "eligible": False,
+                    "target_date": target_date,
+                    "pending_target_date": last_target,
+                    **status,
+                }
+            if last_event["outcome"] == "FAILED":
+                blocking_status = (
+                    "PREVIOUS_TARGET_RETRY_REQUIRED"
+                    if last_event["reason_code"] == "NO_PROVIDER_REQUEST_SENT"
+                    else "PREVIOUS_TARGET_MANUAL_RECOVERY_REQUIRED"
+                )
+                return {
+                    "status": blocking_status,
+                    "eligible": False,
+                    "target_date": target_date,
+                    "pending_target_date": last_target,
+                    **status,
+                }
 
     ledger = sealed.load_ledger(ledger_path)
     if any(entry.get("target_date") == target_date for entry in ledger["entries"]):
@@ -387,6 +467,9 @@ def prepare_cycle(
         "target_numbers_exposed": False,
         "forward_reverse_holdouts_disjoint": True,
         "previously_consumed_holdout_dates_reused": False,
+        "retryable": retryable,
+        "retry_number": retry_number,
+        "maximum_target_attempts": MAX_ATTEMPTS_PER_TARGET,
     }
 
 
@@ -409,13 +492,37 @@ def claim_attempt(
         raise AutonomousResearchError("Plan archive hash is invalid.")
     if type(plan.get("archive_record_count")) is not int or plan["archive_record_count"] < 1:
         raise AutonomousResearchError("Plan archive record count is invalid.")
-    if state["attempts"] and target_date <= state["attempts"][-1]["target_date"]:
-        raise AutonomousResearchError("Target date was already attempted or is not newer.")
+    attempt_number = 1
+    if state["attempts"]:
+        last_attempt = state["attempts"][-1]
+        last_target = last_attempt["target_date"]
+        if target_date < last_target:
+            raise AutonomousResearchError("Target date is older than the current active target.")
+        last_event = next(
+            (event for event in reversed(state["events"]) if event["attempt_id"] == last_attempt["attempt_id"]),
+            None,
+        )
+        if target_date == last_target:
+            previous_count = sum(1 for item in state["attempts"] if item["target_date"] == target_date)
+            if (
+                last_event is None
+                or last_event["outcome"] != "FAILED"
+                or last_event["reason_code"] != "NO_PROVIDER_REQUEST_SENT"
+            ):
+                raise AutonomousResearchError("A target retry requires proof that no provider request was sent.")
+            if previous_count >= MAX_ATTEMPTS_PER_TARGET:
+                raise AutonomousResearchError("The bounded no-send retry limit for this target is exhausted.")
+            attempt_number = previous_count + 1
+        else:
+            if last_event is None:
+                raise AutonomousResearchError("The previous target is incomplete; new target activation is blocked.")
+            if last_event["outcome"] == "FAILED":
+                raise AutonomousResearchError("The previous target must be resolved before a new target is activated.")
     if github_run_id is not None and (not github_run_id.isdigit() or len(github_run_id) > 32):
         raise AutonomousResearchError("GitHub run identifier is invalid.")
 
     attempt_id = hashlib.sha256(
-        ("GENERAL-AUTO-RESEARCH-V1|" + target_date + "|" + archive_sha).encode("utf-8")
+        ("GENERAL-AUTO-RESEARCH-V2|" + target_date + "|" + archive_sha + "|" + str(attempt_number)).encode("utf-8")
     ).hexdigest()
     if any(item["attempt_id"] == attempt_id for item in state["attempts"]):
         raise AutonomousResearchError("This autonomous attempt was already claimed.")
