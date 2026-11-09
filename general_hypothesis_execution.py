@@ -223,7 +223,7 @@ def _checked_number(value: Any) -> float | int:
 
 def _evaluate_node(
     node: dict[str, Any],
-    context: dict[str, float | int],
+    context: dict[str, Any],
     history: list[dict[str, Any]],
     *,
     direction: str = "forward",
@@ -238,31 +238,67 @@ def _evaluate_node(
     if op == "aggregate_history_numbers":
         aggregate = node["aggregate"]
         expression = node["expression"]
-        if aggregate == "count":
-            total = 0
-            for draw_age, row in enumerate(reversed(history) if direction == "forward" else history):
-                for number in row["numbers"]:
-                    local = {
-                        "candidate": context["candidate"],
-                        "value": number,
-                        "draw_age": draw_age,
-                    }
-                    matched = _evaluate_node(expression, local, [], direction=direction)
-                    if not isinstance(matched, bool):
-                        _fail("count aggregate expression did not return a boolean.")
-                    total += int(matched)
-            return total
+        ordered = list(reversed(history)) if direction == "forward" else list(history)
+        explicit_sequence = bool(ordered) and all("sequence_index" in row for row in ordered)
+        anchor = ordered[0].get("sequence_index", 0) if explicit_sequence else 0
         contributions = []
-        for draw_age, row in enumerate(reversed(history) if direction == "forward" else history):
+        total = 0
+        for position, row in enumerate(ordered):
+            age = (
+                anchor - row["sequence_index"]
+                if direction == "forward" and explicit_sequence
+                else row["sequence_index"] - anchor
+                if explicit_sequence
+                else position
+            )
             for number in row["numbers"]:
                 local = {
                     "candidate": context["candidate"],
                     "value": number,
-                    "draw_age": draw_age,
+                    "draw_age": age,
                 }
-                contribution = _evaluate_node(expression, local, [], direction=direction)
-                contributions.append(_checked_number(contribution))
-        return _checked_number(math.fsum(contributions))
+                result = _evaluate_node(expression, local, [], direction=direction)
+                if aggregate == "count":
+                    if not isinstance(result, bool):
+                        _fail("count aggregate expression did not return a boolean.")
+                    total += int(result)
+                else:
+                    contributions.append(_checked_number(result))
+        return total if aggregate == "count" else _checked_number(math.fsum(contributions))
+
+    if op == "aggregate_history_triples":
+        aggregate = node["aggregate"]
+        expression = node["expression"]
+        ordered = list(history) if direction == "forward" else list(reversed(history))
+        explicit_sequence = bool(ordered) and all("sequence_index" in row for row in ordered)
+        total = 0
+        contributions = []
+        for index in range(max(0, len(ordered) - 2)):
+            a, b, c = ordered[index:index + 3]
+            if explicit_sequence:
+                a_index = a["sequence_index"]
+                b_index = b["sequence_index"]
+                c_index = c["sequence_index"]
+                if direction == "forward":
+                    adjacent = b_index == a_index + 1 and c_index == b_index + 1
+                else:
+                    adjacent = b_index == a_index - 1 and c_index == b_index - 1
+                if not adjacent:
+                    continue
+            local = {
+                "candidate": context["candidate"],
+                "a_contains_candidate": context["candidate"] in a["numbers"],
+                "b_contains_candidate": context["candidate"] in b["numbers"],
+                "c_contains_candidate": context["candidate"] in c["numbers"],
+            }
+            result = _evaluate_node(expression, local, [], direction=direction)
+            if aggregate == "count":
+                if not isinstance(result, bool):
+                    _fail("consecutive-triple count expression did not return a boolean.")
+                total += int(result)
+            else:
+                contributions.append(_checked_number(result))
+        return total if aggregate == "count" else _checked_number(math.fsum(contributions))
 
     if op == "abs":
         return _checked_number(abs(_evaluate_node(node["arg"], context, history, direction=direction)))
