@@ -668,6 +668,8 @@ def main(argv: list[str] | None = None) -> int:
                 "forward_validation_count": result.get("forward_validation_count"),
                 "reverse_validation_count": result.get("reverse_validation_count"),
                 "discovery_count": result.get("discovery_count"),
+                "retryable": result.get("retryable") is True,
+                "retry_number": result.get("retry_number"),
             })
         elif args.command == "claim":
             plan = prepare_cycle(
