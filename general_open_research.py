@@ -25,7 +25,10 @@ from general_live_consent import (
     has_explicit_live_consent,
     has_explicit_single_request_consent,
 )
-from general_hypothesis_proposals import parse_hypothesis_proposals
+from general_hypothesis_proposals import (
+    execution_spec_matches_proposal,
+    parse_hypothesis_proposals,
+)
 from general_execution_spec_parser import parse_execution_spec_block
 import general_sealed_evaluation as sealed
 import general_research_memory as research_memory
@@ -260,32 +263,36 @@ def build_messages(
         "If no rule change is needed, omit the entire rule-change block. Rule-change requests are submitted "
         "separately for user approval; malformed or incomplete blocks are rejected.\n"
         "Also include exactly one machine-readable hypothesis proposal block. It is a research queue only, "
-        "not an approved or executable formula. If no testable hypothesis is supported, use an empty proposals "
-        "list. At most five proposals; provide no source code and no winning-number predictions.\n"
+        "not an approved or executable formula. Return zero or one proposal only: choose the single most "
+        "defensible testable hypothesis using discovery data only, or return an empty list. Do not emit "
+        "a list of alternatives. This keeps the whole-block fail-closed contract atomic instead of allowing "
+        "a mixed list of valid and invalid proposals to interfere with each other.\n"
         "<HYPOTHESIS_PROPOSALS_JSON>\n"
-        "{\"schema_version\":2,\"proposals\":[{"
+        "{\"schema_version\":3,\"proposals\":[{"
         "\"hypothesis_id\":\"HYP-001\","
         f"\"discovery_direction\":\"{direction}\","
         "\"proposed_family\":\"free descriptive label; not a registry status\","
         "\"hypothesis\":\"testable statement\","
-        "\"exact_definition\":\"precise mathematical steps, no executable code\","
+        "\"exact_definition\":\"human-readable explanation of the authoritative formal_execution_spec\","
         "\"inputs\":\"strictly pre-target inputs\","
-        "\"output_rule\":\"deterministic ranking and scoring rule\","
-        "\"parameter_policy\":\"how parameters are fixed\","
+        "\"output_rule\":\"exact output produced by the formal execution definition\","
+        "\"parameter_policy\":\"how parameters are fixed without using sealed outcomes\","
         "\"selection_policy\":\"development-only selection policy\","
         "\"falsification_criterion\":\"what result rejects this hypothesis\","
         "\"known_risks\":[\"overfitting risk\"],"
-        "\"evaluation_protocols\":[\"forward_walk_forward\","
-        "\"reverse_retrospective_stress_test\","
-        "\"time_ordered_cross_validation\","
-        "\"uniform_random_6_of_N\"]}]}\n"
+        "\"formal_execution_spec\":null}]}\n"
         "</HYPOTHESIS_PROPOSALS_JSON>\n"
         "Use exactly the schema keys shown; do not add prediction numbers, source code, weights chosen from hidden "
-        "targets, or any claim of validation. Proposed family names are descriptive only: they do not create or "
-        "change a method registry entry. An empty proposals list is an acceptable result.\n"
-        "Order proposals by priority using discovery data only; put the most defensible, testable "
-        "hypothesis first. Do not use the sealed validation interval, validation outcomes, or later "
-        "draws to order or select proposals.\n"
+        "targets, model-selected evaluation protocol fields, or any claim of validation. The coordinator "
+        "assigns the four mandatory evaluation protocols locally to every validated proposal; they are not "
+        "model-controlled fields. Proposed family names are descriptive only and never change the method registry.\n"
+        "The formal_execution_spec field is the authoritative machine-readable mathematical definition. It must "
+        "be either null (if the hypothesis cannot be represented faithfully by the current safe DSL) or a complete "
+        "schema_version 1 execution_spec object. The separate execution-specification block MUST be identical "
+        "to this object for the same hypothesis_id. The exact_definition and output_rule prose must describe "
+        "that formal object without adding operations, parameters, selection steps, or semantics that the object "
+        "does not implement. Do not approximate an unrepresentable hypothesis with a different DSL expression.\n"
+        "Do not use sealed validation rows, validation outcomes, or post-target records to define or order the proposal.\n"
         "Also include exactly one HYPOTHESIS_EXECUTION_SPECS_JSON block for this direction only. "
         "Provide zero or one matching execution specification for the first proposal in this isolated pass, "
         "when it can be represented faithfully by this DSL. Never provide a spec for another direction. "
@@ -618,6 +625,25 @@ def parse_directional_result(
         report,
         allowed_hypothesis_ids=set(original_ids),
     )
+    if execution["specifications"]:
+        proposals_by_id = {
+            item["hypothesis_id"]: item for item in proposals["proposals"]
+        }
+        if any(
+            not execution_spec_matches_proposal(
+                proposals_by_id.get(item["hypothesis_id"], {}),
+                item["execution_spec"],
+            )
+            for item in execution["specifications"]
+        ):
+            execution["status"] = "REJECTED"
+            execution["dsl_validated"] = False
+            execution["synthetic_tests_passed"] = False
+            execution["execution_ready"] = False
+            execution["rejection_reasons"] = [
+                "Execution specification does not exactly match the proposal's formal mathematical definition."
+            ]
+            execution["specifications"] = []
     if len(execution["specifications"]) > 1:
         execution["status"] = "REJECTED_DIRECTIONAL_SPEC_COUNT"
         execution["dsl_validated"] = False
@@ -699,6 +725,8 @@ def combine_directional_results(
             and first is not None
             and matching_specs[0].get("hypothesis_id") == first.get("hypothesis_id")
             and matching_specs[0].get("source_hypothesis_id") == first.get("source_hypothesis_id")
+            and first.get("formal_execution_spec") is not None
+            and execution_spec_matches_proposal(first, matching_specs[0].get("execution_spec", {}))
             and spec_doc.get("dsl_validated") is True
             and spec_doc.get("synthetic_tests_passed") is True
             and matching_specs[0].get("synthetic_tests_passed") is True

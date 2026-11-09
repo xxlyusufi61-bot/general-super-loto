@@ -20,6 +20,7 @@ from typing import Any
 from general_hypothesis_proposals import (
     PROPOSAL_KEYS,
     _validate_proposal,
+    execution_spec_matches_proposal,
     parse_hypothesis_proposals,
 )
 from general_execution_spec_parser import parse_execution_spec_block
@@ -146,17 +147,27 @@ DRAW_SET_WORD_TEXT = re.compile(
     r"(?ix)(?<![\w.])" + NUMBER_VALUE_TOKEN
     + r"(?:(?:\s*[,;|/]\s*|\s+(?:and|ve)\s+)" + NUMBER_VALUE_TOKEN + r"){5}(?![\w])"
 )
+# Generic nouns such as "numbers" and "values" are deliberately not candidate
+# cues by themselves. "Each MOD5 class contains 12 numbers" is a class-size
+# statement, not a predicted or ranked lottery value.
 CANDIDATE_CUE = (
-    r"(?:candidate(?:s)?|prediction(?:s)?|predicted|winning|drawn|"
-    r"rank(?:ed|ing)?|top(?:[- ]ranked)?|highest(?:[- ]ranked)?|best|first|number(?:s)?|value(?:s)?|winner|winning|"
-    r"aday(?:lar|ı|ın|ları)?|tahmin(?:i|ler|\s+edilen)?|kazanan(?:ı|lar|ları)?|çıkan|cikan|"
-    r"sayı(?:lar|ları|sı)?|sayi(?:lar|lari|si)?|numara(?:lar|ları|sı)?|numara(?:lar|lari|si)?|"
-    r"değer(?:ler|leri|i)?|deger(?:ler|leri|i)?|sıralama|siralama)"
+    r"(?:candidate(?:s)?|prediction(?:s)?|predicted|winning|"
+    r"rank(?:ed|ing)?|top(?:[- ]ranked)?|highest(?:[- ]ranked)?|best|first|"
+    r"winner|selected|chosen|"
+    r"aday(?:lar|ı|ın|ları)?(?:\s+(?:sayı(?:lar|ları|sı)?|sayi(?:lar|lari|si)?|"
+    r"numara(?:lar|ları|sı)?|değer(?:ler|leri|i)?|deger(?:ler|leri|i)?))?|"
+    r"tahmin(?:i|ler)?(?:\s+edilen)?(?:\s+(?:sayı(?:lar|ları|sı)?|sayi(?:lar|lari|si)?|"
+    r"numara(?:lar|ları|sı)?|değer(?:ler|leri|i)?|deger(?:ler|leri|i)?))?|"
+    r"kazanan(?:ı|lar|ları)?(?:\s+(?:sayı(?:lar|ları|sı)?|sayi(?:lar|lari|si)?|"
+    r"numara(?:lar|ları|sı)?|değer(?:ler|leri|i)?|deger(?:ler|leri|i)?))?|"
+    r"çıkan\s+(?:sayı|numara)|cikan\s+(?:sayi|numara)|"
+    r"sıralama|siralama)"
 )
 CANDIDATE_CONNECTOR = (
     r"(?:the|number|numbers|value|values|no\.?|is|are|was|were|of|at|"
-    r"include|includes|list|set|output|result|pick|picks|first|"
-    r"birinci|seçilen|secilen|olarak|edilen|değeri|degeri|numarası|numarasi)"
+    r"include|includes|list|set|output|result|pick|picks|first|remains|only|a|an|"
+    r"birinci|seçilen|secilen|olarak|edilen|değeri|degeri|numarası|numarasi|"
+    r"sayı|sayıları|sayi|sayilari|numara|numaralar|değer|değerleri|deger|degerleri)"
 )
 CANDIDATE_VALUE_AFTER_CUE = re.compile(
     r"(?ix)\b" + CANDIDATE_CUE
@@ -532,7 +543,7 @@ def _validate_entry(entry: Any, expected_id: int) -> dict[str, Any]:
         if proposal.get("discovery_direction") != entry["direction"]:
             raise ResearchMemoryError("A directional memory entry contains another direction's proposal.")
         try:
-            checked_proposal = _validate_proposal(proposal)
+            checked_proposal = _validate_proposal(proposal, canonical=True)
         except (TypeError, ValueError):
             raise ResearchMemoryError("Stored proposal failed the canonical proposal validator.") from None
         if {key: checked_proposal[key] for key in PROPOSAL_KEYS} != proposal:
@@ -949,6 +960,22 @@ def _direction_artifacts(
         specs["status"] = "REJECTED"
         specs["specifications"] = []
         specs["rejection_reasons"] = ["Execution specification is not attached to this direction's proposal."]
+    if specs["specifications"]:
+        proposals_by_id = {
+            item["hypothesis_id"]: item for item in proposals["proposals"]
+        }
+        if any(
+            not execution_spec_matches_proposal(
+                proposals_by_id.get(item["hypothesis_id"], {}),
+                item["execution_spec"],
+            )
+            for item in specs["specifications"]
+        ):
+            specs["status"] = "REJECTED"
+            specs["specifications"] = []
+            specs["rejection_reasons"] = [
+                "Execution specification does not exactly match the proposal's formal mathematical definition."
+            ]
     if specs["status"] == "VALIDATED_SPECS" and (
         not proposals["proposals"]
         or len(specs["specifications"]) != 1

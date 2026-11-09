@@ -9,18 +9,28 @@ import json
 import re
 from typing import Any
 
+from general_hypothesis_execution import validate_execution_spec
+
 START_MARKER = "<HYPOTHESIS_PROPOSALS_JSON>"
 END_MARKER = "</HYPOTHESIS_PROPOSALS_JSON>"
-SCHEMA_VERSION = 2
-MAX_PROPOSALS = 5
+SCHEMA_VERSION = 3
+# One proposal per isolated direction prevents mixed-quality lists from
+# invalidating unrelated candidates while retaining atomic block rejection.
+MAX_PROPOSALS = 1
 ALLOWED_EVALUATION_PROTOCOLS = {
     "forward_walk_forward",
     "reverse_retrospective_stress_test",
     "time_ordered_cross_validation",
     "uniform_random_6_of_N",
 }
+REQUIRED_PROTOCOLS = [
+    "forward_walk_forward",
+    "reverse_retrospective_stress_test",
+    "time_ordered_cross_validation",
+    "uniform_random_6_of_N",
+]
 TOP_LEVEL_KEYS = {"schema_version", "proposals"}
-PROPOSAL_KEYS = {
+MODEL_PROPOSAL_KEYS = {
     "hypothesis_id",
     "discovery_direction",
     "proposed_family",
@@ -32,8 +42,9 @@ PROPOSAL_KEYS = {
     "selection_policy",
     "falsification_criterion",
     "known_risks",
-    "evaluation_protocols",
+    "formal_execution_spec",
 }
+PROPOSAL_KEYS = MODEL_PROPOSAL_KEYS | {"evaluation_protocols"}
 TEXT_FIELDS = {
     "proposed_family",
     "hypothesis",
@@ -44,7 +55,6 @@ TEXT_FIELDS = {
     "selection_policy",
     "falsification_criterion",
 }
-REQUIRED_PROTOCOLS = set(ALLOWED_EVALUATION_PROTOCOLS)
 
 
 def _valid_text(value: Any, field: str, *, minimum: int = 3) -> str:
@@ -58,10 +68,40 @@ def _valid_text(value: Any, field: str, *, minimum: int = 3) -> str:
     return normalized
 
 
-def _validate_proposal(value: Any) -> dict[str, Any]:
+def _canonical_json(value: Any) -> str:
+    return json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
+    )
+
+
+def execution_spec_matches_proposal(
+    proposal: dict[str, Any],
+    execution_spec: dict[str, Any],
+) -> bool:
+    """Require the separately parsed DSL block to equal the proposal's formal meaning."""
+    formal = proposal.get("formal_execution_spec")
+    if not isinstance(formal, dict) or not isinstance(execution_spec, dict):
+        return False
+    try:
+        return _canonical_json(formal) == _canonical_json(execution_spec)
+    except (TypeError, ValueError):
+        return False
+
+
+def _validate_proposal(
+    value: Any,
+    *,
+    canonical: bool = False,
+) -> dict[str, Any]:
+    """Validate model input or the canonical stored form of one proposal.
+
+    Model output cannot choose or omit the required evaluation protocols. The
+    coordinator assigns those after validating the exact model-controlled keys.
+    """
     if not isinstance(value, dict):
         raise ValueError("Each proposal must be a JSON object.")
-    if set(value) != PROPOSAL_KEYS:
+    expected_keys = PROPOSAL_KEYS if canonical else MODEL_PROPOSAL_KEYS
+    if set(value) != expected_keys:
         raise ValueError("Proposal keys do not match the exact allowed schema.")
     proposal_id = value.get("hypothesis_id")
     if not isinstance(proposal_id, str) or re.fullmatch(r"HYP-(?!000)[0-9]{3}", proposal_id) is None:
@@ -81,23 +121,30 @@ def _validate_proposal(value: Any) -> dict[str, Any]:
     proposal["known_risks"] = [
         _valid_text(risk, "known_risks item", minimum=5) for risk in risks
     ]
-    protocols = value.get("evaluation_protocols")
-    if (
-        not isinstance(protocols, list)
-        or any(not isinstance(item, str) for item in protocols)
-        or len(protocols) != len(set(protocols))
-        or set(protocols) != REQUIRED_PROTOCOLS
-    ):
-        raise ValueError(
-            "evaluation_protocols must contain all four required protocol identifiers exactly once."
-        )
-    proposal["evaluation_protocols"] = list(protocols)
+
+    formal = value.get("formal_execution_spec")
+    if formal is not None:
+        try:
+            formal = validate_execution_spec(formal)
+        except (TypeError, ValueError):
+            raise ValueError(
+                "formal_execution_spec is not a valid safe-DSL expression."
+            ) from None
+    proposal["formal_execution_spec"] = formal
+
+    if canonical:
+        protocols = value.get("evaluation_protocols")
+        if protocols != REQUIRED_PROTOCOLS:
+            raise ValueError(
+                "Stored evaluation_protocols do not match the four coordinator-required protocols."
+            )
+    proposal["evaluation_protocols"] = list(REQUIRED_PROTOCOLS)
+
     # These fields are assigned locally, never accepted from the model.
     proposal["status"] = "PROPOSAL_ONLY"
     proposal["execution_ready"] = False
     proposal["registry_write_allowed"] = False
     return proposal
-
 
 def parse_hypothesis_proposals(report: str) -> dict[str, Any]:
     """Extract one bounded proposal block; malformed proposals fail closed."""
@@ -148,7 +195,7 @@ def parse_hypothesis_proposals(report: str) -> dict[str, Any]:
         return base
     proposals = payload.get("proposals")
     if not isinstance(proposals, list) or len(proposals) > MAX_PROPOSALS:
-        base["rejection_reasons"] = ["proposals must be a list containing at most five entries."]
+        base["rejection_reasons"] = ["proposals must be a list containing at most one entry per direction."]
         return base
 
     validated: list[dict[str, Any]] = []
