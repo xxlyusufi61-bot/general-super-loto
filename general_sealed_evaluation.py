@@ -18,7 +18,14 @@ from pathlib import Path
 from typing import Any
 
 import general_data_guard as guard
+import general_hypothesis_execution_v2 as execution_v2
 from general_bidirectional_evaluation import evaluate_bidirectional_full_history
+from general_execution_spec_dispatch import (
+    execution_spec_direction,
+    execution_spec_version,
+    run_synthetic_contract_tests as run_any_synthetic_contract_tests,
+    validate_execution_spec as validate_any_execution_spec,
+)
 from general_hypothesis_execution import (
     VERSION as ENGINE_VERSION,
     MAX_HISTORY_DRAWS,
@@ -261,6 +268,53 @@ def split_archive(
     }
 
 
+def _validate_dsl_v2_directional_context(
+    candidate: dict[str, Any],
+    split: dict[str, Any],
+    canonical_pre_target_rows: list[dict[str, Any]],
+    used_dates: set[str],
+) -> None:
+    """Reject a v2 claim before ledger mutation if its state neighbours are not canonical."""
+    r60 = split["regimes"]["R60"]
+    discovery = r60["discovery_rows"]
+    forward_validation = r60["validation_rows"]
+    reverse_validation = r60["reverse_validation_rows"]
+    available_by_date = {
+        row["date"]: row
+        for row in discovery + forward_validation + reverse_validation
+    }
+
+    if candidate.get("execution_spec_dsl_version") == 2:
+        for index, target in enumerate(forward_validation):
+            expected_previous = [
+                row for row in canonical_pre_target_rows if row["date"] < target["date"]
+            ][-2:]
+            allowed_training = discovery + forward_validation[:index]
+            training_by_date = {row["date"]: row for row in allowed_training}
+            if (
+                len(expected_previous) != 2
+                or any(row["date"] in used_dates for row in expected_previous)
+                or any(training_by_date.get(row["date"]) != row for row in expected_previous)
+            ):
+                raise SealedEvaluationError(
+                    "Forward DSL v2 target lacks its exact two immediately preceding unconsumed canonical states."
+                )
+
+    if candidate.get("reverse_execution_spec_dsl_version") == 2:
+        for target in reverse_validation:
+            expected_later = [
+                row for row in canonical_pre_target_rows if row["date"] > target["date"]
+            ][:2]
+            if (
+                len(expected_later) != 2
+                or any(row["date"] in used_dates for row in expected_later)
+                or any(available_by_date.get(row["date"]) != row for row in expected_later)
+            ):
+                raise SealedEvaluationError(
+                    "Reverse DSL v2 target lacks its exact two immediately following unconsumed canonical states."
+                )
+
+
 def _ledger_empty() -> dict[str, Any]:
     return {
         "schema_version": LEDGER_SCHEMA_VERSION,
@@ -490,21 +544,25 @@ def _select_one_frozen_candidate(
     if set(specs_by_id) != required_ids:
         return None
 
-    def freeze(item: dict[str, Any]) -> dict[str, Any]:
+    def freeze(item: dict[str, Any], expected_direction: str) -> dict[str, Any]:
         if item.get("dsl_validated") is not True or item.get("synthetic_tests_passed") is not True:
             raise SealedEvaluationError("A directional specification did not pass DSL/synthetic validation.")
-        spec = validate_execution_spec(item.get("execution_spec"))
-        synthetic = run_synthetic_contract_tests(spec)
+        spec = validate_any_execution_spec(item.get("execution_spec"))
+        spec_direction = execution_spec_direction(spec)
+        if spec_direction is not None and spec_direction != expected_direction:
+            raise SealedEvaluationError("DSL v2 direction does not match its isolated discovery direction.")
+        synthetic = run_any_synthetic_contract_tests(spec)
         if synthetic.get("status") != "PASS" or synthetic.get("real_archive_used") is not False:
             raise SealedEvaluationError("A directional specification failed its synthetic-only contract test.")
         return {
             "execution_spec": spec,
+            "dsl_version": execution_spec_version(spec),
             "spec_sha256": _sha256_bytes(_canonical_json(spec)),
             "synthetic_test_summary": synthetic,
         }
 
-    forward = freeze(specs_by_id[forward_id])
-    reverse = freeze(specs_by_id[reverse_id])
+    forward = freeze(specs_by_id[forward_id], "forward")
+    reverse = freeze(specs_by_id[reverse_id], "reverse")
     return {
         "hypothesis_id": forward_id,
         "discovery_direction": forward_proposal["discovery_direction"],
@@ -513,6 +571,8 @@ def _select_one_frozen_candidate(
         "reverse_discovery_direction": reverse_proposal["discovery_direction"],
         "reverse_execution_spec": reverse["execution_spec"],
         "reverse_spec_sha256": reverse["spec_sha256"],
+        "execution_spec_dsl_version": forward["dsl_version"],
+        "reverse_execution_spec_dsl_version": reverse["dsl_version"],
         "reverse_synthetic_test_summary": reverse["synthetic_test_summary"],
     }
 
@@ -557,6 +617,10 @@ def create_claim(
         archive_sha256=archive["archive_sha256"],
         used_validation_dates=used_dates,
     )
+    canonical_pre_target_rows = [
+        row for row in archive["rows"] if row["date"] < split["target_date"]
+    ]
+    _validate_dsl_v2_directional_context(candidate, split, canonical_pre_target_rows, used_dates)
     r60 = split["regimes"]["R60"]
     validation = r60["validation_rows"]
     reverse_validation = r60["reverse_validation_rows"]
@@ -589,6 +653,8 @@ def create_claim(
         "spec_sha256": candidate["spec_sha256"],
         "reverse_hypothesis_id": candidate["reverse_hypothesis_id"],
         "reverse_spec_sha256": candidate["reverse_spec_sha256"],
+        "execution_spec_dsl_version": candidate["execution_spec_dsl_version"],
+        "reverse_execution_spec_dsl_version": candidate["reverse_execution_spec_dsl_version"],
         "engine_version": ENGINE_VERSION,
     }
     claim_id = _sha256_bytes(_canonical_json(claim_material))
@@ -617,8 +683,10 @@ def create_claim(
         "archive_snapshot_path": str(snapshot_path).replace("\\", "/"),
         "hypothesis_id": candidate["hypothesis_id"],
         "spec_sha256": candidate["spec_sha256"],
+        "execution_spec_dsl_version": candidate["execution_spec_dsl_version"],
         "reverse_hypothesis_id": candidate["reverse_hypothesis_id"],
         "reverse_spec_sha256": candidate["reverse_spec_sha256"],
+        "reverse_execution_spec_dsl_version": candidate["reverse_execution_spec_dsl_version"],
         "regime": "R60",
         "number_pool_size": 60,
         "discovery_count": split["discovery_count"],
@@ -648,6 +716,8 @@ def create_claim(
         "archive_sha256": archive["archive_sha256"],
         "hypothesis_id": candidate["hypothesis_id"],
         "spec_sha256": candidate["spec_sha256"],
+        "execution_spec_dsl_version": candidate["execution_spec_dsl_version"],
+        "reverse_execution_spec_dsl_version": candidate["reverse_execution_spec_dsl_version"],
         "validation_start_date": validation[0]["date"],
         "validation_end_date": validation[-1]["date"],
         "validation_draw_count": len(validation),
@@ -672,6 +742,156 @@ def _find_claim(ledger: dict[str, Any], claim_id: str) -> dict[str, Any]:
     return found[0]
 
 
+def _evaluate_full_reverse_history_v2(
+    available_history: list[dict[str, Any]],
+    canonical_history: list[dict[str, Any]],
+    excluded_dates: set[str],
+    *,
+    cutoff_date: str,
+    number_pool_size: int,
+    execution_spec: dict[str, Any],
+    min_train_draws: int = DEFAULT_MIN_TRAIN_DRAWS,
+) -> dict[str, Any]:
+    """Batch reverse diagnostics without bridging previously consumed archive rows."""
+    eligible_count = execution_v2.reverse_eligible_target_count(
+        available_history,
+        canonical_history=canonical_history,
+        excluded_dates=excluded_dates,
+        min_train_draws=min_train_draws,
+    )
+    if eligible_count < 1:
+        return {
+            "engine_version": execution_v2.VERSION,
+            "execution_dsl_version": 2,
+            "status": "SKIPPED_NO_ELIGIBLE_REVERSE_TARGETS",
+            "protocol": "reverse retrospective test; exact canonical B/C adjacency required; consumed context excluded",
+            "predictive_evidence": False,
+            "number_pool_size": number_pool_size,
+            "evaluated_draw_count": 0,
+            "eligible_draw_count": 0,
+            "ineligible_target_count": len(available_history),
+            "mean_hits_out_of_6": None,
+            "standard_error_of_mean_hits": None,
+            "uniform_random_expected_hits_out_of_6": 36 / number_pool_size,
+            "hit_distribution": {str(hits): 0 for hits in range(7)},
+            "per_draw": [],
+            "first_test_date": None,
+            "last_test_date": None,
+            "skipped_context_draw_count": 0,
+            "previously_consumed_rows_used_as_context": False,
+            "canonical_adjacency_enforced": True,
+        }
+
+    hit_distribution = {str(hits): 0 for hits in range(7)}
+    per_draw: list[dict[str, Any]] = []
+    offset = 0
+    skipped_context = skipped_consumed = skipped_missing = skipped_insufficient = 0
+    first_test_date = last_test_date = previous_batch_last_date = None
+
+    while offset < eligible_count:
+        batch_size = min(MAX_VALIDATION_DRAWS, eligible_count - offset)
+        batch = execution_v2.evaluate_reverse_retrospective_stress(
+            available_history,
+            cutoff_date=cutoff_date,
+            number_pool_size=number_pool_size,
+            execution_spec=execution_spec,
+            test_draw_count=batch_size,
+            min_train_draws=min_train_draws,
+            skip_recent_test_draws=offset,
+            canonical_history=canonical_history,
+            excluded_dates=excluded_dates,
+        )
+        if (
+            batch.get("status") != "EVALUATED_RETROSPECTIVE_ONLY"
+            or batch.get("eligible_draw_count") != eligible_count
+            or batch.get("evaluated_draw_count") != batch_size
+        ):
+            raise SealedEvaluationError("Reverse DSL v2 batch did not preserve its canonical eligible target set.")
+        batch_distribution = batch.get("hit_distribution")
+        if not isinstance(batch_distribution, dict) or set(batch_distribution) != set(hit_distribution):
+            raise SealedEvaluationError("Reverse DSL v2 batch returned a malformed aggregate histogram.")
+        if sum(batch_distribution.values()) != batch_size:
+            raise SealedEvaluationError("Reverse DSL v2 batch histogram count does not match its draw count.")
+        batch_details = batch.get("per_draw")
+        if not isinstance(batch_details, list) or len(batch_details) != batch_size:
+            raise SealedEvaluationError("Reverse DSL v2 batch per-draw details are incomplete.")
+        for detail in batch_details:
+            if (
+                not isinstance(detail, dict)
+                or not isinstance(detail.get("test_date"), str)
+                or detail.get("direction") != "reverse_retrospective"
+                or type(detail.get("hit_count")) is not int
+                or not 0 <= detail["hit_count"] <= 6
+                or not isinstance(detail.get("hit_column_positions_1_to_6"), list)
+                or len(detail["hit_column_positions_1_to_6"]) != detail["hit_count"]
+                or any(type(pos) is not int or not 1 <= pos <= 6 for pos in detail["hit_column_positions_1_to_6"])
+                or "numbers" in detail
+            ):
+                raise SealedEvaluationError("Reverse DSL v2 batch contains invalid per-draw detail.")
+        if previous_batch_last_date is not None and batch["first_test_date"] >= previous_batch_last_date:
+            raise SealedEvaluationError("Reverse DSL v2 batches overlap or are not strictly newest-to-oldest.")
+        if first_test_date is None:
+            first_test_date = batch["first_test_date"]
+        last_test_date = batch["last_test_date"]
+        previous_batch_last_date = last_test_date
+        per_draw.extend(batch_details)
+        for hits in range(7):
+            count = batch_distribution[str(hits)]
+            if type(count) is not int or count < 0:
+                raise SealedEvaluationError("Reverse DSL v2 histogram contains an invalid count.")
+            hit_distribution[str(hits)] += count
+        skipped_context = batch["skipped_context_draw_count"]
+        skipped_consumed = batch["skipped_consumed_context_draw_count"]
+        skipped_missing = batch["skipped_missing_context_draw_count"]
+        skipped_insufficient = batch["skipped_insufficient_later_history_draw_count"]
+        offset += batch_size
+
+    total_draws = sum(hit_distribution.values())
+    if total_draws != eligible_count:
+        raise SealedEvaluationError("Reverse DSL v2 diagnostic did not cover every eligible target.")
+    total_hits = sum(int(hits) * count for hits, count in hit_distribution.items())
+    sum_squares = sum((int(hits) ** 2) * count for hits, count in hit_distribution.items())
+    mean_hits = total_hits / total_draws
+    if total_draws > 1:
+        sample_variance = max(0.0, (sum_squares - (total_hits * total_hits / total_draws)) / (total_draws - 1))
+        standard_error = math.sqrt(sample_variance / total_draws)
+    else:
+        standard_error = None
+    return {
+        "engine_version": execution_v2.VERSION,
+        "execution_dsl_version": 2,
+        "status": "EVALUATED_RETROSPECTIVE_ONLY",
+        "protocol": "full available reverse-time retrospective diagnostic; exact canonical B/C neighbours; consumed rows excluded",
+        "predictive_evidence": False,
+        "number_pool_size": number_pool_size,
+        "evaluated_draw_count": total_draws,
+        "eligible_draw_count": eligible_count,
+        "ineligible_target_count": len(available_history) - eligible_count,
+        "evaluation_order": "newest_to_oldest",
+        "first_test_date": first_test_date,
+        "last_test_date": last_test_date,
+        "minimum_later_training_draws": min_train_draws,
+        "mean_hits_out_of_6": round(mean_hits, 6),
+        "standard_error_of_mean_hits": round(standard_error, 6) if standard_error is not None else None,
+        "uniform_random_expected_hits_out_of_6": round(36 / number_pool_size, 6),
+        "hit_distribution": hit_distribution,
+        "per_draw": per_draw,
+        "per_draw_detail_present": True,
+        "target_number_sets_reported": False,
+        "predicted_number_values_reported": False,
+        "current_isolated_target_included": False,
+        "current_target_numbers_exposed": False,
+        "skipped_context_draw_count": skipped_context,
+        "skipped_consumed_context_draw_count": skipped_consumed,
+        "skipped_missing_context_draw_count": skipped_missing,
+        "skipped_insufficient_later_history_draw_count": skipped_insufficient,
+        "previously_consumed_rows_used_as_context": False,
+        "canonical_adjacency_enforced": True,
+        "automatic_candidate_selection": False,
+        "method_registry_modified": False,
+    }
+
+
 def _evaluate_full_reverse_history(
     pre_target_history: list[dict[str, Any]],
     *,
@@ -679,8 +899,22 @@ def _evaluate_full_reverse_history(
     number_pool_size: int,
     execution_spec: dict[str, Any],
     min_train_draws: int = DEFAULT_MIN_TRAIN_DRAWS,
+    canonical_history: list[dict[str, Any]] | None = None,
+    excluded_dates: set[str] | list[str] | tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """Evaluate every reverse-eligible row in bounded batches; return aggregates only."""
+    if execution_spec_version(execution_spec) == 2:
+        if canonical_history is None:
+            raise SealedEvaluationError("DSL v2 full reverse evaluation requires canonical archive history.")
+        return _evaluate_full_reverse_history_v2(
+            pre_target_history,
+            canonical_history,
+            set(excluded_dates),
+            cutoff_date=cutoff_date,
+            number_pool_size=number_pool_size,
+            execution_spec=execution_spec,
+            min_train_draws=min_train_draws,
+        )
     eligible_count = len(pre_target_history) - min_train_draws
     if eligible_count < 1:
         raise SealedEvaluationError("Not enough later historical rows for reverse stress testing.")
@@ -694,15 +928,28 @@ def _evaluate_full_reverse_history(
 
     while offset < eligible_count:
         batch_size = min(MAX_VALIDATION_DRAWS, eligible_count - offset)
-        batch = evaluate_reverse_retrospective_stress(
-            pre_target_history,
-            cutoff_date=cutoff_date,
-            number_pool_size=number_pool_size,
-            execution_spec=execution_spec,
-            test_draw_count=batch_size,
-            min_train_draws=min_train_draws,
-            skip_recent_test_draws=offset,
-        )
+        if execution_spec_version(execution_spec) == 2:
+            batch = execution_v2.evaluate_reverse_retrospective_stress(
+                pre_target_history,
+                cutoff_date=cutoff_date,
+                number_pool_size=number_pool_size,
+                execution_spec=execution_spec,
+                test_draw_count=batch_size,
+                min_train_draws=min_train_draws,
+                skip_recent_test_draws=offset,
+                canonical_history=canonical_history,
+                excluded_dates=excluded_dates,
+            )
+        else:
+            batch = evaluate_reverse_retrospective_stress(
+                pre_target_history,
+                cutoff_date=cutoff_date,
+                number_pool_size=number_pool_size,
+                execution_spec=execution_spec,
+                test_draw_count=batch_size,
+                min_train_draws=min_train_draws,
+                skip_recent_test_draws=offset,
+            )
         if batch.get("status") != "EVALUATED_RETROSPECTIVE_ONLY":
             raise SealedEvaluationError("Reverse-time batch did not return its expected diagnostic status.")
         if batch.get("evaluated_draw_count") != batch_size:
@@ -797,34 +1044,74 @@ def _evaluate_reverse_validation_with_frozen_spec(
     hypothesis_id: str,
     spec_sha256: str,
     execution_spec: dict[str, Any],
+    canonical_history: list[dict[str, Any]] | None = None,
+    excluded_dates: set[str] | list[str] | tuple[str, ...] = (),
     min_train_draws: int = DEFAULT_MIN_TRAIN_DRAWS,
 ) -> dict[str, Any]:
-    """Score the oldest sealed interval against strictly later historical rows only."""
+    """Score reverse holdout targets using exact canonical B/C neighbours for DSL v2."""
+    if execution_spec_version(execution_spec) == 2 and canonical_history is None:
+        raise SealedEvaluationError("DSL v2 reverse holdout requires canonical archive history.")
     if len(reverse_validation) < MIN_VALIDATION_DRAWS:
         raise SealedEvaluationError("Reverse holdout is too short.")
     target_day = date.fromisoformat(isolated_target_date)
+    canonical = sorted(
+        canonical_history if canonical_history is not None else full_pre_target_history,
+        key=lambda row: row["date"],
+    )
     history_by_date = {row["date"]: row for row in full_pre_target_history}
+    canonical_by_date = {row["date"]: row for row in canonical}
+    blocked = set(excluded_dates)
     if len(history_by_date) != len(full_pre_target_history):
         raise SealedEvaluationError("Reverse evaluation history has duplicate dates.")
-    if any(
-        date.fromisoformat(row["date"]) >= target_day
-        for row in full_pre_target_history + reverse_validation
-    ):
-        raise SealedEvaluationError("Reverse evaluation includes the current target or a later draw.")
+    if any(date.fromisoformat(row["date"]) >= target_day for row in canonical):
+        raise SealedEvaluationError("Reverse canonical history includes the current target or a later draw.")
+    if not blocked.issubset(canonical_by_date):
+        raise SealedEvaluationError("Previously consumed reverse context dates are absent from canonical history.")
+    if set(history_by_date).intersection(blocked):
+        raise SealedEvaluationError("Previously consumed rows entered reverse evaluation history.")
+
     details = []
+    skipped_consumed_context = skipped_missing_context = skipped_insufficient_history = 0
     for target in sorted(reverse_validation, key=lambda row: row["date"], reverse=True):
         target_date = target["date"]
-        later_history = [
-            row for day, row in sorted(history_by_date.items())
-            if day > target_date
-        ][:MAX_HISTORY_DRAWS]
-        ranking = rank_candidates_retrospective(
-            later_history,
-            target_date=target_date,
-            number_pool_size=60,
-            execution_spec=execution_spec,
-            min_train_draws=min_train_draws,
-        )
+        later_available = [row for row in full_pre_target_history if row["date"] > target_date]
+        if execution_spec_version(execution_spec) == 2:
+            if len(later_available) < min_train_draws:
+                skipped_insufficient_history += 1
+                continue
+            later_canonical = [row for row in canonical if row["date"] > target_date]
+            if len(later_canonical) < 2:
+                skipped_missing_context += 1
+                continue
+            pair = later_canonical[:2]
+            if any(row["date"] in blocked for row in pair):
+                skipped_consumed_context += 1
+                continue
+            if any(history_by_date.get(row["date"]) != row for row in pair):
+                skipped_consumed_context += 1
+                continue
+            if later_available[:2] != pair:
+                skipped_missing_context += 1
+                continue
+            ranking = execution_v2.rank_candidates_for_pair(
+                pair,
+                target_date=target_date,
+                number_pool_size=60,
+                execution_spec=execution_spec,
+                canonical_history=later_canonical,
+                excluded_dates=blocked,
+            )
+        else:
+            # Preserve the legacy DSL v1 evaluator's original bounded history window.
+            # v2 uses only the exact adjacent B/C pair above.
+            ranking = rank_candidates_retrospective(
+                later_available[:MAX_HISTORY_DRAWS],
+                target_date=target_date,
+                number_pool_size=60,
+                execution_spec=execution_spec,
+                min_train_draws=min_train_draws,
+            )
+
         target_numbers = set(target["numbers"])
         matched_positions = [
             position
@@ -836,40 +1123,52 @@ def _evaluate_reverse_validation_with_frozen_spec(
             "direction": "reverse_retrospective",
             "hypothesis_id": hypothesis_id,
             "spec_sha256": spec_sha256,
-            "later_training_draw_count": len(later_history),
+            "later_training_draw_count": len(later_available),
             "hit_column_positions_1_to_6": matched_positions,
             "hit_count": len(matched_positions),
             "target_numbers_reported": False,
             "predicted_number_values_reported": False,
         })
+
     hit_distribution = {
         str(hits): sum(row["hit_count"] == hits for row in details)
         for hits in range(7)
     }
+    evaluated_count = len(details)
+    mean_hits = (
+        round(sum(row["hit_count"] for row in details) / evaluated_count, 6)
+        if evaluated_count else None
+    )
     return {
-        "status": "EVALUATED_RETROSPECTIVE_ONLY",
+        "status": "EVALUATED_RETROSPECTIVE_ONLY" if evaluated_count else "SKIPPED_NO_ELIGIBLE_REVERSE_TARGETS",
         "direction": "reverse_retrospective",
         "predictive_evidence": False,
         "evaluation_order": "newest_to_oldest",
         "hypothesis_id": hypothesis_id,
         "spec_sha256": spec_sha256,
-        "test_draw_count": len(details),
-        "first_test_date": details[0]["test_date"],
-        "last_test_date": details[-1]["test_date"],
-        "mean_hits_out_of_6": round(
-            sum(row["hit_count"] for row in details) / len(details), 6
-        ),
+        "test_draw_count": evaluated_count,
+        "eligible_draw_count": evaluated_count,
+        "skipped_draw_count": len(reverse_validation) - evaluated_count,
+        "skipped_consumed_context_draw_count": skipped_consumed_context,
+        "skipped_missing_context_draw_count": skipped_missing_context,
+        "skipped_insufficient_later_history_draw_count": skipped_insufficient_history,
+        "first_test_date": details[0]["test_date"] if details else None,
+        "last_test_date": details[-1]["test_date"] if details else None,
+        "mean_hits_out_of_6": mean_hits,
         "uniform_random_expected_hits_out_of_6": 0.6,
         "hit_distribution": hit_distribution,
         "per_draw": details,
         "target_number_sets_reported": False,
         "predicted_number_values_reported": False,
+        "previously_consumed_rows_used_as_context": False,
+        "canonical_adjacency_enforced": execution_spec_version(execution_spec) == 2,
         "interpretation": (
-            "This direction-specific fixed-specification test uses only draws later than each test date. "
-            "Because it uses later historical information, it is retrospective stress testing only and "
-            "must never be interpreted as evidence of forward prediction."
+            "DSL v2 reverse targets use only the two immediately following canonical archive rows as B/C. "
+            "Targets whose adjacent context includes a previously consumed holdout are skipped, never bridged. "
+            "Reverse results remain retrospective-only."
         ),
     }
+
 
 
 def _evaluate_forward_validation_with_details(
@@ -879,19 +1178,36 @@ def _evaluate_forward_validation_with_details(
     hypothesis_id: str,
     spec_sha256: str,
     execution_spec: dict[str, Any],
+    canonical_history: list[dict[str, Any]] | None = None,
+    excluded_dates: set[str] | list[str] | tuple[str, ...] = (),
 ) -> list[dict[str, Any]]:
     """Return per-draw column hits while reusing only history before each forward target."""
+    if execution_spec_version(execution_spec) == 2 and canonical_history is None:
+        raise SealedEvaluationError("DSL v2 forward detail evaluation requires canonical archive history.")
     details = []
     for index, target in enumerate(validation):
         training = (discovery + validation[:index])[-MAX_HISTORY_DRAWS:]
         if len(training) < DEFAULT_MIN_TRAIN_DRAWS:
             raise SealedEvaluationError("Forward per-draw report fell below the training minimum.")
-        ranking = rank_candidates(
-            training,
-            cutoff_date=target["date"],
-            number_pool_size=60,
-            execution_spec=execution_spec,
-        )
+        if execution_spec_version(execution_spec) == 2:
+            canonical_before = [
+                row for row in canonical_history if row["date"] < target["date"]
+            ]
+            ranking = execution_v2.rank_candidates_for_pair(
+                training[-2:],
+                target_date=target["date"],
+                number_pool_size=60,
+                execution_spec=execution_spec,
+                canonical_history=canonical_before,
+                excluded_dates=excluded_dates,
+            )
+        else:
+            ranking = rank_candidates(
+                training,
+                cutoff_date=target["date"],
+                number_pool_size=60,
+                execution_spec=execution_spec,
+            )
         actual = set(target["numbers"])
         matched_positions = [
             position
@@ -1006,6 +1322,12 @@ def evaluate_claim(
         archive_sha256=archive["archive_sha256"],
         used_validation_dates=set(recorded_prior_dates),
     )
+    replay_canonical_pre_target = [
+        row for row in archive["rows"] if row["date"] < split["target_date"]
+    ]
+    _validate_dsl_v2_directional_context(
+        candidate, split, replay_canonical_pre_target, set(recorded_prior_dates)
+    )
     if split["target_date"] != entry["target_date"]:
         raise SealedEvaluationError("Snapshot target cutoff does not match the ledger.")
     r60 = split["regimes"]["R60"]
@@ -1019,9 +1341,16 @@ def evaluate_claim(
         raise SealedEvaluationError("Frozen reverse hypothesis changed after the one-shot claim.")
     if candidate["reverse_spec_sha256"] != entry.get("reverse_spec_sha256"):
         raise SealedEvaluationError("Frozen reverse execution specification changed after the claim.")
+    if entry.get("execution_spec_dsl_version", 1) != candidate["execution_spec_dsl_version"]:
+        raise SealedEvaluationError("Forward execution DSL version changed after the one-shot claim.")
+    if entry.get("reverse_execution_spec_dsl_version", 1) != candidate["reverse_execution_spec_dsl_version"]:
+        raise SealedEvaluationError("Reverse execution DSL version changed after the one-shot claim.")
     discovery = r60["discovery_rows"]
     validation = r60["validation_rows"]
     reverse_validation = r60["reverse_validation_rows"]
+    canonical_pre_target_history = [
+        row for row in archive["rows"] if row["date"] < split["target_date"]
+    ]
     spec = candidate["execution_spec"]
     reverse_spec = candidate["reverse_execution_spec"]
     if (
@@ -1031,20 +1360,34 @@ def evaluate_claim(
     ):
         raise SealedEvaluationError("Claim no longer satisfies both directional evaluation minimums.")
 
-    forward = evaluate_holdout(
-        discovery,
-        validation,
-        cutoff_date=split["target_date"],
-        number_pool_size=60,
-        execution_spec=spec,
-        min_train_draws=DEFAULT_MIN_TRAIN_DRAWS,
-    )
+    if execution_spec_version(spec) == 2:
+        forward = execution_v2.evaluate_holdout(
+            discovery,
+            validation,
+            cutoff_date=split["target_date"],
+            number_pool_size=60,
+            execution_spec=spec,
+            min_train_draws=DEFAULT_MIN_TRAIN_DRAWS,
+            canonical_history=canonical_pre_target_history,
+            excluded_dates=set(recorded_prior_dates),
+        )
+    else:
+        forward = evaluate_holdout(
+            discovery,
+            validation,
+            cutoff_date=split["target_date"],
+            number_pool_size=60,
+            execution_spec=spec,
+            min_train_draws=DEFAULT_MIN_TRAIN_DRAWS,
+        )
     forward_details = _evaluate_forward_validation_with_details(
         discovery,
         validation,
         hypothesis_id=candidate["hypothesis_id"],
         spec_sha256=candidate["spec_sha256"],
         execution_spec=spec,
+        canonical_history=canonical_pre_target_history,
+        excluded_dates=set(recorded_prior_dates),
     )
     detail_mean = round(
         sum(item["hit_count"] for item in forward_details) / len(forward_details), 6
@@ -1056,15 +1399,28 @@ def evaluate_claim(
     forward["per_draw_target_numbers_reported"] = False
     forward["predicted_number_values_reported"] = False
     folds = min(5, len(validation))
-    cv = evaluate_time_ordered_cv(
-        discovery,
-        validation,
-        cutoff_date=split["target_date"],
-        number_pool_size=60,
-        execution_spec=spec,
-        folds=folds,
-        min_train_draws=DEFAULT_MIN_TRAIN_DRAWS,
-    )
+    if execution_spec_version(spec) == 2:
+        cv = execution_v2.evaluate_time_ordered_cv(
+            discovery,
+            validation,
+            cutoff_date=split["target_date"],
+            number_pool_size=60,
+            execution_spec=spec,
+            folds=folds,
+            min_train_draws=DEFAULT_MIN_TRAIN_DRAWS,
+            canonical_history=canonical_pre_target_history,
+            excluded_dates=set(recorded_prior_dates),
+        )
+    else:
+        cv = evaluate_time_ordered_cv(
+            discovery,
+            validation,
+            cutoff_date=split["target_date"],
+            number_pool_size=60,
+            execution_spec=spec,
+            folds=folds,
+            min_train_draws=DEFAULT_MIN_TRAIN_DRAWS,
+        )
     full_r60_history = sorted(
         discovery + validation + reverse_validation,
         key=lambda row: row["date"],
@@ -1076,21 +1432,42 @@ def evaluate_claim(
         hypothesis_id=candidate["reverse_hypothesis_id"],
         spec_sha256=candidate["reverse_spec_sha256"],
         execution_spec=reverse_spec,
+        canonical_history=canonical_pre_target_history,
+        excluded_dates=set(recorded_prior_dates),
         min_train_draws=DEFAULT_MIN_TRAIN_DRAWS,
     )
-    reverse_cv = _summarize_blocked_reverse_cv(reverse_candidate_holdout)
+    if len(reverse_candidate_holdout["per_draw"]) >= MIN_VALIDATION_DRAWS:
+        reverse_cv = _summarize_blocked_reverse_cv(reverse_candidate_holdout)
+    else:
+        reverse_cv = {
+            "status": "SKIPPED_INSUFFICIENT_ADJACENT_CONTEXT",
+            "direction": "reverse_retrospective",
+            "predictive_evidence": False,
+            "folds": 0,
+            "validation_draw_count": len(reverse_candidate_holdout["per_draw"]),
+            "mean_hits_out_of_6": None,
+            "independent_confirmation": False,
+            "automatic_candidate_selection": False,
+            "reason": "Fewer than two reverse holdout targets retained their exact, unconsumed canonical B/C neighbours.",
+        }
+    reverse_diagnostic_spec = spec if execution_spec_version(spec) == 1 else reverse_spec
+    reverse_diagnostic_id = candidate["hypothesis_id"] if execution_spec_version(spec) == 1 else candidate["reverse_hypothesis_id"]
+    reverse_diagnostic_sha = candidate["spec_sha256"] if execution_spec_version(spec) == 1 else candidate["reverse_spec_sha256"]
     reverse = _evaluate_full_reverse_history(
         full_r60_history,
         cutoff_date=split["target_date"],
         number_pool_size=60,
-        execution_spec=spec,
+        execution_spec=reverse_diagnostic_spec,
         min_train_draws=DEFAULT_MIN_TRAIN_DRAWS,
+        canonical_history=canonical_pre_target_history,
+        excluded_dates=set(recorded_prior_dates),
     )
-    reverse["hypothesis_id"] = candidate["hypothesis_id"]
-    reverse["spec_sha256"] = candidate["spec_sha256"]
+    reverse["hypothesis_id"] = reverse_diagnostic_id
+    reverse["spec_sha256"] = reverse_diagnostic_sha
+    reverse["diagnostic_spec_direction"] = execution_spec_direction(reverse_diagnostic_spec) or "legacy_direction_agnostic"
     for reverse_row in reverse.get("per_draw", []):
-        reverse_row["hypothesis_id"] = candidate["hypothesis_id"]
-        reverse_row["spec_sha256"] = candidate["spec_sha256"]
+        reverse_row["hypothesis_id"] = reverse_diagnostic_id
+        reverse_row["spec_sha256"] = reverse_diagnostic_sha
         reverse_row["target_numbers_reported"] = False
         reverse_row["predicted_number_values_reported"] = False
     bidirectional = evaluate_bidirectional_full_history(
@@ -1104,6 +1481,10 @@ def evaluate_claim(
         "status": "EVALUATED_EXPLORATORY_FIXED_SPEC",
         "orchestrator_version": VERSION,
         "engine_version": ENGINE_VERSION,
+        "execution_dsl_versions": {
+            "forward": candidate["execution_spec_dsl_version"],
+            "reverse": candidate["reverse_execution_spec_dsl_version"],
+        },
         "claim_id": claim_id,
         "hypothesis_id": candidate["hypothesis_id"],
         "spec_sha256": candidate["spec_sha256"],
@@ -1120,7 +1501,11 @@ def evaluate_claim(
         "validation_draw_count": len(validation),
         "forward_walk_forward": forward,
         "time_ordered_cross_validation": cv,
-        "reverse_retrospective_stress_test_of_forward_candidate": reverse,
+        **(
+            {"reverse_retrospective_stress_test_of_forward_candidate": reverse}
+            if execution_spec_version(spec) == 1
+            else {"reverse_retrospective_full_history_diagnostic": reverse}
+        ),
         "reverse_discovered_candidate_holdout": reverse_candidate_holdout,
         "reverse_time_ordered_cross_validation": reverse_cv,
         "bidirectional_full_history_adaptive_diagnostic": bidirectional,
@@ -1128,8 +1513,10 @@ def evaluate_claim(
             "rule": "Freeze the first eligible forward/both proposal and the first eligible reverse/both proposal independently; one exact matching DSL spec for each direction.",
             "forward_hypothesis_id": candidate["hypothesis_id"],
             "forward_spec_sha256": candidate["spec_sha256"],
+            "forward_execution_spec_dsl_version": candidate["execution_spec_dsl_version"],
             "reverse_hypothesis_id": candidate["reverse_hypothesis_id"],
             "reverse_spec_sha256": candidate["reverse_spec_sha256"],
+            "reverse_execution_spec_dsl_version": candidate["reverse_execution_spec_dsl_version"],
             "evaluated_directional_specification_count": 2 if candidate["hypothesis_id"] != candidate["reverse_hypothesis_id"] else 1,
             "selection_used_validation_scores": False,
             "automatic_candidate_selection": False,
@@ -1138,7 +1525,7 @@ def evaluate_claim(
         "interpretation_limits": [
             "This is one exploratory fixed-specification evaluation, not proof of a predictive mechanism.",
             "The blocked CV folds reuse the same sealed validation interval and are correlated summaries, not independent confirmation.",
-            "The forward candidate's full-history reverse result uses later historical draws and is retrospective stress testing only, not predictive evidence.",
+            "The full-history reverse diagnostic uses later historical rows and is retrospective only. For direction-sealed DSL v2 it uses the reverse-discovered B/C specification; a forward v2 specification is never reinterpreted against reverse slots.",
             "The separately reverse-discovered candidate is evaluated only on the disjoint oldest R60 holdout, using strictly later history; this is retrospective only and not predictive evidence.",
             "The reverse blocked-CV folds reuse that same sealed reverse interval and are correlated descriptive summaries, not independent confirmation.",
             "The uniform-random expected overlap is 36/60 = 0.6 hits per six-number set; report uncertainty and do not infer an advantage from mean hits alone.",
@@ -1148,6 +1535,7 @@ def evaluate_claim(
             "Its per-draw report records the target date, selected safe-catalog ID, hit count, and matched top-six column positions 1-6, but no target or predicted number values.",
             "The full-history adaptive diagnostic uses repeated overlapping selection windows; results are exploratory and are not independent confirmations.",
             "The reverse-discovered candidate report includes per-date hit count and matched top-six column positions, but excludes actual target numbers and predicted number values.",
+            "The DSL v2 full-history reverse diagnostic skips targets whose exact next two canonical states include previously consumed holdout dates; it never bridges the chronology gap.",
             "No number-level target outcomes or complete candidate rankings are included in this report.",
         ],
         "method_registry_modified": False,
