@@ -858,16 +858,11 @@ def run_cycle(
     sealed_ledger = sealed.load_ledger(sealed_ledger_path)
     memory = load_memory(memory_path)
     consumed_dates = sealed.get_used_validation_dates(sealed_ledger)
-    offline_dates = {
-        day
-        for window in memory["consumed_development_windows"]
-        for day in window["dates"]
-    }
-    all_used_dates = consumed_dates | offline_dates
     partition = sealed.split_archive(
         archive["rows"],
         archive_sha256=archive["archive_sha256"],
-        used_validation_dates=all_used_dates,
+        used_validation_dates=consumed_dates,
+        offline_memory_path=memory_path,
     )
     if (
         partition.get("target_numbers_exposed") is not False
