@@ -60,6 +60,7 @@ DEFAULT_CONNECT_TIMEOUT_SECONDS = 30
 DEFAULT_REQUEST_SEND_TIMEOUT_SECONDS = 30
 _NVIDIA_REQUESTS_ATTEMPTED = 0
 _NVIDIA_REQUEST_LABELS_ATTEMPTED: set[str] = set()
+_NVIDIA_REQUEST_LABELS_SUCCEEDED: set[str] = set()
 
 QUOTA_LIMITATION_NOTE = (
     "No supported account-level remaining-quota API was identified in the NVIDIA "
@@ -950,7 +951,7 @@ def call_model(
             raise RuntimeError(
                 "Primary directional NVIDIA requests must run once each in forward-then-reverse order."
             )
-    if request_label == "forward_critique" and "forward" not in _NVIDIA_REQUEST_LABELS_ATTEMPTED:
+    if request_label == "forward_critique" and "forward" not in _NVIDIA_REQUEST_LABELS_SUCCEEDED:
         raise RuntimeError("Forward critique requires a completed forward discovery request.")
 
     request_max_tokens = (
@@ -1153,6 +1154,7 @@ def call_model(
     success_marker.write_text(
         datetime.now(timezone.utc).isoformat(), encoding="utf-8"
     )
+    _NVIDIA_REQUEST_LABELS_SUCCEEDED.add(request_key)
     Path("/tmp/general_nvidia_api_succeeded").write_text(
         datetime.now(timezone.utc).isoformat(), encoding="utf-8"
     )
@@ -1209,6 +1211,7 @@ def main() -> int:
             pass
     _NVIDIA_REQUESTS_ATTEMPTED = 0
     _NVIDIA_REQUEST_LABELS_ATTEMPTED.clear()
+    _NVIDIA_REQUEST_LABELS_SUCCEEDED.clear()
     write_run_status("RUNNING", stage)
     try:
         ledger_path = BASE / "general_evaluation_ledger.json"
