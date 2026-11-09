@@ -268,7 +268,7 @@ def validate_rate_limit_state(value):
         previous = stamp
 
     daily = value.get("daily_requests")
-    if not isinstance(daily, list) or len(daily) > NVIDIA_DAILY_REQUEST_BUDGET:
+    if not isinstance(daily, list) or len(daily) > 10000:
         raise ValueError("NVIDIA rolling 24-hour request history is invalid")
     previous = None
     reservation_ids = set()
@@ -296,11 +296,9 @@ def validate_rate_limit_state(value):
             raise ValueError("NVIDIA reservation identifier is duplicated")
         reservation_ids.add(reservation_id)
         category_counts[category] += 1
-    if len(daily) > NVIDIA_DAILY_REQUEST_BUDGET:
-        raise ValueError("NVIDIA daily hard budget was exceeded")
-    for category, count in category_counts.items():
-        if count > NVIDIA_BUDGET_CATEGORY_LIMITS[category]:
-            raise ValueError("NVIDIA daily category budget was exceeded: " + category)
+    # Historical migration may legitimately discover that the old system used
+    # more than the new budget. Preserve every such reservation and let the
+    # reservation function block new calls until the rolling window recovers.
 
     ids = value.get("diagnostic_run_ids")
     if not isinstance(ids, list) or len(ids) > MAX_DIAGNOSTIC_RUN_IDS:
