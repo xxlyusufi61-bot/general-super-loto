@@ -523,8 +523,8 @@ def _validate_entry(entry: Any, expected_id: int) -> dict[str, Any]:
         "REJECTED_DIRECTION_MISMATCH", "NOT_RUN",
     }:
         raise ResearchMemoryError("Proposal status is invalid.")
-    if not isinstance(entry["proposals"], list) or len(entry["proposals"]) > 5:
-        raise ResearchMemoryError("Stored proposal list is invalid.")
+    if not isinstance(entry["proposals"], list) or len(entry["proposals"]) > 1:
+        raise ResearchMemoryError("Stored proposal list must contain at most one atomic directional proposal.")
     seen_proposals = set()
     for proposal in entry["proposals"]:
         if not isinstance(proposal, dict) or set(proposal) != PROPOSAL_KEYS:

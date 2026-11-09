@@ -444,16 +444,7 @@ class DirectionalMemoryContextTests(unittest.TestCase):
 
     def test_large_memory_entry_is_compacted_without_discarding_all_feedback(self):
         entry = sample_entry("forward", 1, "2026-11-04")
-        for index in range(2, 6):
-            proposal = copy.deepcopy(entry["proposals"][0])
-            proposal["hypothesis_id"] = f"HYP-{index:03d}"
-            for key in (
-                "proposed_family", "hypothesis", "exact_definition", "inputs",
-                "output_rule", "parameter_policy", "selection_policy",
-                "falsification_criterion",
-            ):
-                proposal[key] = "x" * 1800
-            entry["proposals"].append(proposal)
+        entry["proposals"][0]["proposed_family"] = "A" * 1800
         entry["learning_notes"] = {
             "observations": ["An observation with enough detail. " * 15],
             "failed_approaches": ["A failed approach with enough detail. " * 15],
@@ -467,11 +458,11 @@ class DirectionalMemoryContextTests(unittest.TestCase):
             write_json(path, value)
             context = memory.direction_context("forward", "2026-11-04", memory_path=path)
         self.assertEqual(len(context), 1)
-        self.assertEqual(context[0]["proposals_in_memory"], 5)
-        self.assertEqual(len(context[0]["hypotheses"]), 2)
-        self.assertLessEqual(len(context[0]["hypotheses"][1]["exact_definition"]), 850)
-        self.assertIn("exact_definition", context[0]["hypotheses"][1]["truncated_fields"])
-        self.assertIn("[TRUNCATED]", context[0]["hypotheses"][1]["exact_definition"])
+        self.assertEqual(context[0]["proposals_in_memory"], 1)
+        self.assertEqual(len(context[0]["hypotheses"]), 1)
+        self.assertLessEqual(len(context[0]["hypotheses"][0]["proposed_family"]), 180)
+        self.assertIn("proposed_family", context[0]["hypotheses"][0]["truncated_fields"])
+        self.assertIn("[TRUNCATED]", context[0]["hypotheses"][0]["proposed_family"])
         self.assertLessEqual(len(memory._canonical(context)), memory.MAX_CONTEXT_CHARS)
 
     def test_direction_context_refuses_invalid_direction(self):

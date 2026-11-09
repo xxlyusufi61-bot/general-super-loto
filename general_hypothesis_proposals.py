@@ -166,8 +166,8 @@ def _validate_proposal(
         )
         exact_definition = "Formal DSL definition: score(candidate) = " + rendered + "."
         output_rule = (
-            "Score all 60 candidates with the formal DSL expression; rank by descending "
-            "score and break equal-score ties by ascending candidate value."
+            "Score every member of the complete supported number pool with the formal DSL "
+            "expression; rank by descending score and break equal-score ties by ascending value."
         )
         parameter_policy = (
             "All constants in the validated DSL expression are frozen before sealed "
