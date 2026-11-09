@@ -31,7 +31,7 @@ Modulo semantics are local to the corresponding candidate: positive values from 
 7. Compare means with the uniform-random 6-of-60 expectation of 0.6 hits out of 6 and retain uncertainty metadata where the evaluator supplies it. This is a reference baseline, not a proof of statistical significance.
 8. Do not select a candidate, tune it on the same development interval, promote it, or modify the method registry. Walk-forward and CV reuse the same frozen development interval and are not independent confirmation.
 
-Every evaluated development interval is consumed. Its exact dates are retained only in the dedicated offline consumption ledger so they cannot be reused; the candidate memory entry stores only the window count and a SHA-256 digest. These dates are not passed into later hypothesis-generation context. Future runs need a strictly later fresh interval. Existing sealed holdout consumption remains separately authoritative in general_evaluation_ledger.json.
+Every evaluated development interval is consumed. Its exact dates are retained only in the dedicated offline consumption ledger so they cannot be reused; the candidate memory entry stores only the window count and a SHA-256 digest. These dates are not passed into later hypothesis-generation context. The sealed evaluator also loads this validated offline consumption ledger and excludes those dates from every later discovery, forward-validation, and reverse-validation partition. Each sealed claim pins the offline-consumption digest and count; if the offline memory changes before evaluation, the claim fails closed. Existing sealed holdout consumption remains separately authoritative in general_evaluation_ledger.json.
 
 ## Offline GENERAL memory
 
