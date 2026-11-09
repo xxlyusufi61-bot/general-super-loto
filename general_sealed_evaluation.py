@@ -101,11 +101,42 @@ def _copy_row(row: dict[str, Any]) -> dict[str, Any]:
     return {"date": row["date"], "numbers": list(row["numbers"])}
 
 
+def _offline_development_consumption(
+    memory_path: str | Path = "general_research_memory.json",
+) -> tuple[list[str], str]:
+    """Load validated offline-development dates and their immutable snapshot digest."""
+    path = Path(memory_path)
+    if not path.exists():
+        dates: list[str] = []
+    else:
+        try:
+            # Import lazily to avoid a module cycle: the offline runner itself
+            # imports this sealed evaluator, while the combined memory loader
+            # validates its offline namespace through that runner's validator.
+            from general_research_memory import load_memory
+            memory = load_memory(path)
+            offline = memory["offline_research"]
+            windows = offline["consumed_development_windows"]
+            dates = sorted({
+                day
+                for window in windows
+                for day in window["dates"]
+            })
+        except Exception as exc:
+            raise SealedEvaluationError(
+                "Offline development-consumption memory is invalid; sealed research fails closed ("
+                + type(exc).__name__ + ")."
+            ) from None
+    digest = _sha256_bytes(_canonical_json(dates))
+    return dates, digest
+
+
 def split_archive(
     rows: list[dict[str, Any]],
     *,
     archive_sha256: str = "",
     used_validation_dates: set[str] | None = None,
+    offline_memory_path: str | Path = "general_research_memory.json",
 ) -> dict[str, Any]:
     """Create fresh disjoint discovery and directional holdouts, per regime.
 
@@ -143,11 +174,20 @@ def split_archive(
         raise SealedEvaluationError("Target/future row leaked into the pre-target partition.")
 
     if used_validation_dates is None:
-        used_dates: set[str] = set()
+        sealed_used_dates: set[str] = set()
     elif isinstance(used_validation_dates, (set, list, tuple)):
-        used_dates = set(used_validation_dates)
+        sealed_used_dates = set(used_validation_dates)
     else:
         raise SealedEvaluationError("Previously consumed validation dates must be a set/list/tuple.")
+    offline_used_list, offline_memory_sha256 = _offline_development_consumption(
+        offline_memory_path
+    )
+    offline_used_dates = set(offline_used_list)
+    if sealed_used_dates.intersection(offline_used_dates):
+        raise SealedEvaluationError(
+            "Offline development dates overlap sealed holdout dates; research fails closed."
+        )
+    used_dates = sealed_used_dates | offline_used_dates
     for value in used_dates:
         if not isinstance(value, str):
             raise SealedEvaluationError("Previously consumed validation date is not text.")
@@ -250,6 +290,8 @@ def split_archive(
         "archive_record_count": len(rows),
         "pre_target_draw_count": len(pre_target),
         "previously_consumed_validation_draw_count": len(used_dates),
+        "previously_consumed_offline_development_draw_count": len(offline_used_dates),
+        "offline_development_memory_sha256": offline_memory_sha256,
         "target_numbers_exposed": False,
         "target_in_discovery": False,
         "target_in_validation": False,
@@ -363,6 +405,8 @@ def public_plan(split: dict[str, Any]) -> dict[str, Any]:
             "schema_version", "orchestrator_version", "engine_version",
             "target_date", "archive_sha256", "archive_record_count",
             "pre_target_draw_count", "previously_consumed_validation_draw_count",
+            "previously_consumed_offline_development_draw_count",
+            "offline_development_memory_sha256",
             "target_numbers_exposed", "target_in_discovery", "target_in_validation",
             "discovery_count",
         )
