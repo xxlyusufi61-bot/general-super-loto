@@ -642,7 +642,7 @@ def ask_nvidia(messages):
     body = json.dumps({
         "model": MODEL,
         "messages": messages,
-        "max_tokens": 1024,
+        "max_tokens": 8192,
         "temperature": 0.2,
         "reasoning_effort": "low",
         "chat_template_kwargs": {
@@ -997,10 +997,24 @@ def run_agent(agent, task, coordinator_context=None):
 
     print("GENERAL Core", VERSION, "| Agent:", agent)
 
-    answer = ask_nvidia([
-        {"role": "system", "content": system},
-        {"role": "user", "content": task}
-    ])
+    budget_category = {
+        "research": "forward_discovery",
+        "debug": "forward_critique",
+        "validation": "forward_critique",
+        "crossover": "between_draws",
+    }.get(agent, "forward_critique")
+    previous_budget_category = os.environ.get("GENERAL_NVIDIA_BUDGET_CATEGORY")
+    os.environ["GENERAL_NVIDIA_BUDGET_CATEGORY"] = budget_category
+    try:
+        answer = ask_nvidia([
+            {"role": "system", "content": system},
+            {"role": "user", "content": task},
+        ])
+    finally:
+        if previous_budget_category is None:
+            os.environ.pop("GENERAL_NVIDIA_BUDGET_CATEGORY", None)
+        else:
+            os.environ["GENERAL_NVIDIA_BUDGET_CATEGORY"] = previous_budget_category
 
     report_check = validate_agent_report(agent, answer)
     if report_check.get("valid") is not True:

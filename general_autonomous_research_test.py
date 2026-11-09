@@ -62,11 +62,11 @@ class AutonomousResearchStateTests(unittest.TestCase):
                 authorization_days=7, global_lock=locked, now=NOW,
             )
 
-    def test_activation_is_expiring_and_requests_are_capped_at_two_per_target(self):
+    def test_activation_is_expiring_and_target_request_cap_is_removed(self):
         state = active_state(days=7)
         auth = state["authorization"]
         self.assertTrue(auto.authorization_status(state, now=NOW)["authorized"])
-        self.assertEqual(auth["max_requests_per_target"], 2)
+        self.assertIsNone(auth["max_requests_per_target"])
         self.assertEqual(
             auth["expires_at_utc"],
             (NOW + timedelta(days=7)).isoformat(),
@@ -227,13 +227,13 @@ class AutonomousResearchStateTests(unittest.TestCase):
                 state, plan, github_run_id="445566", now=NOW,
             )
             self.assertEqual(attempt["target_date"], plan["target_date"])
-            with self.assertRaisesRegex(auto.AutonomousResearchError, "already attempted"):
+            with self.assertRaisesRegex(auto.AutonomousResearchError, "retry requires proof"):
                 auto.claim_attempt(state, plan, github_run_id="445567", now=NOW)
             skipped = auto.prepare_cycle(
                 state, archive_path=archive, ledger_path=ledger,
                 global_lock_path=lock, now=NOW,
             )
-            self.assertEqual(skipped["status"], "NO_NEW_TARGET_DRAW")
+            self.assertEqual(skipped["status"], "TARGET_ATTEMPT_IN_PROGRESS")
             self.assertFalse(skipped["eligible"])
 
             finished = auto.record_outcome(
@@ -246,6 +246,128 @@ class AutonomousResearchStateTests(unittest.TestCase):
                     state, attempt["attempt_id"], outcome="FAILED",
                     reason_code="WORKFLOW_FAILED", now=NOW,
                 )
+
+    def test_only_proven_no_send_failures_allow_bounded_same_target_retry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root / "archive.json"
+            ledger = root / "ledger.json"
+            lock = root / "lock.json"
+            archive.write_text(json.dumps({"draws": synthetic_rows(90)}), encoding="utf-8")
+            ledger.write_text(
+                json.dumps({"schema_version": 1, "purpose": "test", "entries": []}),
+                encoding="utf-8",
+            )
+            lock.write_text(json.dumps(initial_lock_state()), encoding="utf-8")
+            state = active_state()
+            plan = auto.prepare_cycle(
+                state, archive_path=archive, ledger_path=ledger,
+                global_lock_path=lock, now=NOW,
+            )
+            first = auto.claim_attempt(state, plan, github_run_id="420000001", now=NOW)
+            auto.record_outcome(
+                state, first["attempt_id"], outcome="FAILED",
+                reason_code="NO_PROVIDER_REQUEST_SENT", now=NOW,
+            )
+
+            retry_plan = auto.prepare_cycle(
+                state, archive_path=archive, ledger_path=ledger,
+                global_lock_path=lock, now=NOW + timedelta(minutes=1),
+            )
+            self.assertTrue(retry_plan["eligible"])
+            self.assertTrue(retry_plan["retryable"])
+            self.assertEqual(retry_plan["retry_number"], 2)
+            second = auto.claim_attempt(
+                state, retry_plan, github_run_id="420000002", now=NOW + timedelta(minutes=1),
+            )
+            self.assertNotEqual(first["attempt_id"], second["attempt_id"])
+            auto.record_outcome(
+                state, second["attempt_id"], outcome="FAILED",
+                reason_code="NO_PROVIDER_REQUEST_SENT", now=NOW + timedelta(minutes=1),
+            )
+
+            third_plan = auto.prepare_cycle(
+                state, archive_path=archive, ledger_path=ledger,
+                global_lock_path=lock, now=NOW + timedelta(minutes=2),
+            )
+            self.assertTrue(third_plan["eligible"])
+            third = auto.claim_attempt(
+                state, third_plan, github_run_id="420000003", now=NOW + timedelta(minutes=2),
+            )
+            auto.record_outcome(
+                state, third["attempt_id"], outcome="FAILED",
+                reason_code="NO_PROVIDER_REQUEST_SENT", now=NOW + timedelta(minutes=2),
+            )
+            blocked = auto.prepare_cycle(
+                state, archive_path=archive, ledger_path=ledger,
+                global_lock_path=lock, now=NOW + timedelta(minutes=3),
+            )
+            self.assertFalse(blocked["eligible"])
+            self.assertEqual(blocked["status"], "TARGET_RETRY_LIMIT_REACHED")
+
+    def test_provider_delivery_uncertainty_never_allows_target_retry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root / "archive.json"
+            ledger = root / "ledger.json"
+            lock = root / "lock.json"
+            archive.write_text(json.dumps({"draws": synthetic_rows(90)}), encoding="utf-8")
+            ledger.write_text(
+                json.dumps({"schema_version": 1, "purpose": "test", "entries": []}),
+                encoding="utf-8",
+            )
+            lock.write_text(json.dumps(initial_lock_state()), encoding="utf-8")
+            state = active_state()
+            plan = auto.prepare_cycle(
+                state, archive_path=archive, ledger_path=ledger,
+                global_lock_path=lock, now=NOW,
+            )
+            attempt = auto.claim_attempt(state, plan, github_run_id="420000004", now=NOW)
+            auto.record_outcome(
+                state, attempt["attempt_id"], outcome="FAILED",
+                reason_code="PROVIDER_DELIVERY_UNCERTAIN", now=NOW,
+            )
+            blocked = auto.prepare_cycle(
+                state, archive_path=archive, ledger_path=ledger,
+                global_lock_path=lock, now=NOW + timedelta(minutes=1),
+            )
+            self.assertFalse(blocked["eligible"])
+            self.assertEqual(blocked["status"], "NO_NEW_TARGET_DRAW")
+
+    def test_new_target_cannot_skip_a_previous_proven_no_send_target(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root / "archive.json"
+            ledger = root / "ledger.json"
+            lock = root / "lock.json"
+            rows = synthetic_rows(90)
+            archive.write_text(json.dumps({"draws": rows}), encoding="utf-8")
+            ledger.write_text(
+                json.dumps({"schema_version": 1, "purpose": "test", "entries": []}),
+                encoding="utf-8",
+            )
+            lock.write_text(json.dumps(initial_lock_state()), encoding="utf-8")
+            state = active_state()
+            plan = auto.prepare_cycle(
+                state, archive_path=archive, ledger_path=ledger,
+                global_lock_path=lock, now=NOW,
+            )
+            attempt = auto.claim_attempt(state, plan, github_run_id="420000005", now=NOW)
+            auto.record_outcome(
+                state, attempt["attempt_id"], outcome="FAILED",
+                reason_code="NO_PROVIDER_REQUEST_SENT", now=NOW,
+            )
+            rows.append({
+                "date": (date.fromisoformat(rows[-1]["date"]) + timedelta(days=2)).isoformat(),
+                "numbers": [1, 2, 3, 4, 5, 6],
+            })
+            archive.write_text(json.dumps({"draws": rows}), encoding="utf-8")
+            blocked = auto.prepare_cycle(
+                state, archive_path=archive, ledger_path=ledger,
+                global_lock_path=lock, now=NOW + timedelta(days=1),
+            )
+            self.assertFalse(blocked["eligible"])
+            self.assertEqual(blocked["status"], "PREVIOUS_TARGET_RETRY_REQUIRED")
 
     def test_target_date_regression_fails_closed(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -282,6 +404,135 @@ class AutonomousResearchStateTests(unittest.TestCase):
             path.write_text('{"locked": false}', encoding="utf-8")
             with self.assertRaisesRegex(auto.AutonomousResearchError, "failed validation"):
                 auto.read_global_lock(path)
+
+
+
+
+    def test_legacy_state_schema_is_upgraded_in_memory_without_losing_history(self):
+        state = auto.initial_state()
+        state.pop("target_queue")
+        state["schema_version"] = 1
+        state["attempts"].append({
+            "attempt_id": "e" * 64,
+            "target_date": "2026-10-29",
+            "archive_sha256": "f" * 64,
+            "archive_record_count": 978,
+            "claimed_at_utc": NOW.isoformat(),
+            "github_run_id": "98765",
+        })
+        upgraded = auto.validate_state(state)
+        self.assertEqual(upgraded["schema_version"], 2)
+        self.assertEqual(upgraded["target_queue"], auto.target_queue.initial_queue())
+        self.assertEqual(upgraded["attempts"][0]["attempt_id"], "e" * 64)
+
+    def test_prepare_requires_the_persisted_fifo_head_snapshot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root / "archive.json"
+            ledger = root / "ledger.json"
+            lock = root / "lock.json"
+            rows = synthetic_rows(90)
+            raw = auto.target_queue._snapshot_bytes(rows)
+            archive.write_bytes(raw)
+            ledger.write_text(
+                json.dumps({"schema_version": 1, "purpose": "test", "entries": []}),
+                encoding="utf-8",
+            )
+            lock.write_text(json.dumps(initial_lock_state()), encoding="utf-8")
+            state = active_state()
+            item = auto.target_queue._make_item(
+                rows, source_archive_sha256="a" * 64,
+                enqueued_at_utc=NOW.isoformat(),
+            )
+            state["target_queue"] = {
+                "schema_version": 1,
+                "observed_through_date": rows[-1]["date"],
+                "items": [item],
+                "completed": [],
+            }
+            plan = auto.prepare_cycle(
+                state, archive_path=archive, ledger_path=ledger,
+                global_lock_path=lock, now=NOW,
+            )
+            self.assertTrue(plan["eligible"])
+            self.assertEqual(plan["target_date"], rows[-1]["date"])
+
+            later_rows = rows + synthetic_rows(
+                1, start=(date.fromisoformat(rows[-1]["date"]) + timedelta(days=2)).isoformat()
+            )
+            archive.write_bytes(auto.target_queue._snapshot_bytes(later_rows))
+            with self.assertRaisesRegex(auto.AutonomousResearchError, "immutable FIFO head"):
+                auto.prepare_cycle(
+                    state, archive_path=archive, ledger_path=ledger,
+                    global_lock_path=lock, now=NOW,
+                )
+
+    def test_terminal_scheduler_outcome_releases_only_the_matching_fifo_head(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root / "archive.json"
+            ledger = root / "ledger.json"
+            lock = root / "lock.json"
+            rows = synthetic_rows(90)
+            archive.write_bytes(auto.target_queue._snapshot_bytes(rows))
+            ledger.write_text(
+                json.dumps({"schema_version": 1, "purpose": "test", "entries": []}),
+                encoding="utf-8",
+            )
+            lock.write_text(json.dumps(initial_lock_state()), encoding="utf-8")
+            state = active_state()
+            item = auto.target_queue._make_item(
+                rows, source_archive_sha256="b" * 64,
+                enqueued_at_utc=NOW.isoformat(),
+            )
+            state["target_queue"] = {
+                "schema_version": 1,
+                "observed_through_date": rows[-1]["date"],
+                "items": [item],
+                "completed": [],
+            }
+            plan = auto.prepare_cycle(
+                state, archive_path=archive, ledger_path=ledger,
+                global_lock_path=lock, now=NOW,
+            )
+            attempt = auto.claim_attempt(state, plan, github_run_id="98766", now=NOW)
+            auto.record_outcome(
+                state, attempt["attempt_id"], outcome="SUCCEEDED",
+                reason_code="EVALUATION_COMPLETED", now=NOW,
+            )
+            self.assertEqual(state["target_queue"]["items"], [])
+            self.assertEqual(len(state["target_queue"]["completed"]), 1)
+            self.assertEqual(
+                state["target_queue"]["completed"][0]["target_date"], rows[-1]["date"]
+            )
+
+    def test_no_send_failure_keeps_fifo_head_for_safe_same_target_retry(self):
+        rows = synthetic_rows(90)
+        item = auto.target_queue._make_item(
+            rows, source_archive_sha256="c" * 64,
+            enqueued_at_utc=NOW.isoformat(),
+        )
+        state = active_state()
+        state["target_queue"] = {
+            "schema_version": 1,
+            "observed_through_date": rows[-1]["date"],
+            "items": [item],
+            "completed": [],
+        }
+        state["attempts"].append({
+            "attempt_id": "d" * 64,
+            "target_date": rows[-1]["date"],
+            "archive_sha256": item["archive_sha256"],
+            "archive_record_count": len(rows),
+            "claimed_at_utc": NOW.isoformat(),
+            "github_run_id": "98767",
+        })
+        auto.record_outcome(
+            state, "d" * 64, outcome="FAILED",
+            reason_code="NO_PROVIDER_REQUEST_SENT", now=NOW,
+        )
+        self.assertEqual(len(state["target_queue"]["items"]), 1)
+        self.assertEqual(state["target_queue"]["completed"], [])
 
 
 if __name__ == "__main__":
