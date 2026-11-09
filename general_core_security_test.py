@@ -527,10 +527,7 @@ try:
         "general_core.urllib.request.urlopen",
         side_effect=capture_final_request
     ):
-        answer = core.ask_nvidia(
-            [{"role": "user", "content": "test"}],
-            budget_category="forward_discovery",
-        )
+        answer = core.ask_nvidia([{"role": "user", "content": "test"}])
     regression_check(
         answer == "FINAL_REPORT_ONLY",
         "Only the content field is returned as the final answer"
@@ -542,8 +539,8 @@ try:
         "GENERAL Core respects the shared 8192-token response ceiling"
     )
     regression_check(
-        reserve_call.call_args == (("general-core",), {"budget_category": "forward_discovery"}),
-        "GENERAL Core reserves its provider call in the shared forward-discovery bucket"
+        reserve_call.call_args == (("general-core",), {}),
+        "GENERAL Core uses the shared provider reservation guard"
     )
     regression_check(
         request_payload.get("reasoning_effort") == "low",
