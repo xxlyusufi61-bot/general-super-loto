@@ -210,7 +210,7 @@ uncertain provider request remains blocked for manual recovery.
 
 Before checking hosted-research authorization, the scheduled cycle
 materializes only the current FIFO head in the job workspace and runs the
-bounded offline symbolic discovery/evaluation task. A successful exploratory
+bounded offline symbolic discovery/evaluation task (up to sixteen safe-DSL candidates screened using only the earlier training prefix). A successful exploratory
 cycle appends only to the offline_research namespace in the existing general_research_memory.json object via the generation-guarded state writer, sends its number-safe
 report through Telegram, and uploads a short-lived report artifact. The existing sealed directional entries and evaluation ledger remain unchanged by
 this runner; the offline namespace is isolated inside the same research_memory object. A waiting or failed offline cycle does not consume the FIFO target,
