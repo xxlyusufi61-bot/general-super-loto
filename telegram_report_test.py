@@ -1,9 +1,11 @@
+import hashlib
 import json
 import tempfile
 import unittest
 from pathlib import Path
 
-from telegram_report import format_message, format_research_messages, read_report
+from telegram_report import format_message, format_offline_research_messages, format_research_messages, read_report
+from general_hypothesis_proposals import _render_expression
 
 
 class TelegramReportTests(unittest.TestCase):
@@ -53,6 +55,124 @@ class TelegramReportTests(unittest.TestCase):
         self.assertIn("Hata ayrıntıları", message)
         self.assertIn("https://github.com/example/run", message)
         self.assertNotIn("Result:", message)
+
+    def _offline_report_fixture(self):
+        spec = {
+            "schema_version": 1,
+            "score_expression": {
+                "op": "aggregate_history_numbers",
+                "aggregate": "count",
+                "expression": {
+                    "op": "eq",
+                    "left": {"op": "var", "name": "value"},
+                    "right": {"op": "var", "name": "candidate"},
+                },
+            },
+        }
+        encoded = json.dumps(
+            spec, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
+        ).encode("utf-8")
+        proposal = {
+            "hypothesis_id": "HYP-001",
+            "discovery_direction": "forward",
+            "proposed_family": "A→T",
+            "formal_execution_spec": spec,
+            "exact_definition": (
+                "Formal DSL definition: score(candidate) = "
+                + _render_expression(spec["score_expression"]) + "."
+            ),
+            "status": "PROPOSAL_ONLY",
+            "execution_ready": False,
+            "registry_write_allowed": False,
+        }
+        candidate = {
+            "hypothesis_id": "HYP-001",
+            "family": "A→T",
+            "template_id": "at_exact_historical_frequency",
+            "proposal": proposal,
+            "execution_spec": spec,
+            "specification_sha256": hashlib.sha256(encoded).hexdigest(),
+            "training_signal": {
+                "distinct_score_values": 3,
+                "score_range": 8,
+                "training_draw_count": 50,
+                "selection_source": "training_prefix_only",
+                "validation_data_used": False,
+                "target_data_used": False,
+            },
+            "synthetic_tests": {
+                "status": "PASS",
+                "target_values_used": False,
+                "real_archive_used": False,
+            },
+            "forward_walk_forward": {
+                "mean_hits_out_of_6": 0.7,
+                "uniform_random_expected_hits_out_of_6": 0.6,
+                "validation_draw_count": 10,
+                "predictive_claim": False,
+            },
+            "time_ordered_cross_validation": {
+                "mean_hits_out_of_6": 0.65,
+                "uniform_random_expected_hits_out_of_6": 0.6,
+                "validation_draw_count": 10,
+                "folds": 5,
+                "predictive_claim": False,
+            },
+            "reverse_retrospective_only": {
+                "status": "EVALUATED_RETROSPECTIVE_ONLY",
+                "mean_hits_out_of_6": 0.55,
+                "uniform_random_expected_hits_out_of_6": 0.6,
+                "evaluated_draw_count": 10,
+                "predictive_evidence": False,
+            },
+        }
+        return {
+            "schema_version": 1,
+            "runner_version": "0.1.0",
+            "status": "COMPLETED_EXPLORATORY_ONLY",
+            "target_date": "2026-11-08",
+            "training_draw_count": 50,
+            "development_draw_count": 10,
+            "candidate_count": 1,
+            "candidate_selection": "NONE",
+            "automatic_candidate_selection": False,
+            "method_registry_modified": False,
+            "target_numbers_exposed": False,
+            "target_or_future_rows_used": False,
+            "sealed_holdout_used": False,
+            "development_interval_is_confirmatory": False,
+            "candidates": [candidate],
+        }
+
+    def test_offline_research_report_shows_formulas_and_metrics_without_draw_values(self):
+        messages = format_offline_research_messages(
+            self._offline_report_fixture(),
+            "https://github.com/example/run",
+            "general-automation-state",
+            "Çevrimdışı keşif",
+        )
+        self.assertEqual(len(messages), 2)
+        self.assertIn("ÇEVRİMDIŞI MATEMATİKSEL KEŞİF", messages[0])
+        self.assertIn("10 yeni çekiliş", messages[0])
+        self.assertIn("A→T", messages[1])
+        self.assertIn("HYP-001", messages[1])
+        self.assertIn("AGGREGATE_HISTORY_NUMBERS", messages[1])
+        self.assertIn("0.700/6", messages[1])
+        self.assertIn("0.650/6", messages[1])
+        self.assertIn("0.550/6", messages[1])
+        self.assertIn("YOK", messages[0])
+        self.assertNotIn("1, 2, 3, 4, 5, 6", "\n".join(messages))
+        self.assertNotIn("predicted number", "\n".join(messages).lower())
+
+    def test_offline_telegram_report_rejects_target_values_and_noncanonical_candidates(self):
+        report = self._offline_report_fixture()
+        report["target_numbers_exposed"] = True
+        with self.assertRaisesRegex(ValueError, "target_numbers_exposed"):
+            format_offline_research_messages(report)
+        report = self._offline_report_fixture()
+        report["candidates"][0]["proposal"]["execution_ready"] = True
+        with self.assertRaisesRegex(ValueError, "non-executable DSL candidate"):
+            format_offline_research_messages(report)
 
     def test_research_reports_are_separate_and_hide_all_draw_values(self):
         spec_a = "a" * 64
