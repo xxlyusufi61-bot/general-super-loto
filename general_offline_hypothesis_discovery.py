@@ -188,22 +188,6 @@ def _candidate_templates() -> list[tuple[str, str, str, dict[str, Any]]]:
             _make_spec(_number_count(same_value)),
         ),
         (
-            "A→T", "at_recent_exact_frequency",
-            "Count exact candidate occurrences within the ten most recent available earlier draws.",
-            _make_spec(_number_count(_and(
-                same_value, _binary("lte", draw_age, _const(9))
-            ))),
-        ),
-        (
-            "A→T", "at_neighbourhood_one",
-            "Count earlier draw values whose absolute distance from the candidate is at most one.",
-            _make_spec(_number_count(_binary(
-                "lte",
-                {"op": "abs", "arg": _binary("sub", value, candidate)},
-                _const(1),
-            ))),
-        ),
-        (
             "A→T", "at_same_parity",
             "Count earlier draw values with the same modulo-two remainder as the candidate.",
             _make_spec(_number_count(_binary(
@@ -221,19 +205,41 @@ def _candidate_templates() -> list[tuple[str, str, str, dict[str, Any]]]:
                 _binary("mod", candidate, _const(10)),
             ))),
         ),
-        (
-            "MOD5→T", "mod5_same_residue_frequency",
-            "Count earlier values in the candidate's explicitly defined non-negative modulo-five residue class.",
-            _make_spec(_number_count(same_mod5)),
-        ),
-        (
-            "MOD5→T", "mod5_recent_same_residue_frequency",
-            "Count same-residue modulo-five values within the ten most recent available earlier draws.",
-            _make_spec(_number_count(_and(
-                same_mod5, _binary("lte", draw_age, _const(9))
-            ))),
-        ),
     ]
+    for window in (5, 10, 20):
+        templates.append((
+            "A→T",
+            "at_recent_exact_frequency_" + str(window),
+            "Count exact candidate occurrences within a bounded recent earlier-draw window.",
+            _make_spec(_number_count(_and(
+                same_value, _binary("lte", draw_age, _const(window - 1))
+            ))),
+        ))
+    for radius in (1, 2):
+        templates.append((
+            "A→T",
+            "at_neighbourhood_radius_" + str(radius),
+            "Count earlier draw values whose absolute distance from the candidate is within a bounded neighbourhood.",
+            _make_spec(_number_count(_binary(
+                "lte",
+                {"op": "abs", "arg": _binary("sub", value, candidate)},
+                _const(radius),
+            ))),
+        ))
+    templates.append((
+        "MOD5→T", "mod5_same_residue_frequency",
+        "Count earlier values in the candidate's explicitly defined non-negative modulo-five residue class.",
+        _make_spec(_number_count(same_mod5)),
+    ))
+    for window in (5, 10, 20):
+        templates.append((
+            "MOD5→T",
+            "mod5_recent_same_residue_frequency_" + str(window),
+            "Count same-residue modulo-five values within a bounded recent earlier-draw window.",
+            _make_spec(_number_count(_and(
+                same_mod5, _binary("lte", draw_age, _const(window - 1))
+            ))),
+        ))
     if len(templates) > MAX_CANDIDATES:
         raise OfflineResearchError("The bounded symbolic candidate catalogue exceeded its hard limit.")
     return templates
@@ -272,7 +278,7 @@ def _parse_one_proposal(
 
 
 def generate_hypotheses(training_history: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Generate a fixed, bounded DSL search catalogue from training data only."""
+    """Enumerate, formally validate, then screen candidates on the training prefix only."""
     checked = engine._validate_rows(
         training_history,
         pool_size=60,
@@ -282,13 +288,30 @@ def generate_hypotheses(training_history: list[dict[str, Any]]) -> list[dict[str
     if len(checked) < MIN_TRAIN_DRAWS:
         raise OfflineResearchError("At least the existing 40-draw minimum is required for hypothesis generation.")
     output = []
-    for index, (family, name, rationale, raw_spec) in enumerate(_candidate_templates(), start=1):
+    for family, name, rationale, raw_spec in _candidate_templates():
         spec = engine.validate_execution_spec(raw_spec)
         synthetic = engine.run_synthetic_contract_tests(spec)
         if synthetic.get("status") != "PASS":
             raise OfflineResearchError("A generated DSL candidate failed deterministic synthetic execution.")
+
+        # A training-only score-variation test discards expressions that assign
+        # one identical score to every number in this prefix. No validation or
+        # target row is available to this screening step.
+        training_scores = engine._rank_checked_history(
+            checked,
+            number_pool_size=60,
+            spec=spec,
+            direction="forward",
+        )
+        score_values = [item["score"] for item in training_scores]
+        distinct_score_count = len(set(score_values))
+        score_range = max(score_values) - min(score_values)
+        if distinct_score_count < 2 or score_range <= 0:
+            continue
+
+        hypothesis_id = "HYP-" + str(len(output) + 1).zfill(3)
         proposal = _parse_one_proposal(
-            "HYP-" + str(index).zfill(3),
+            hypothesis_id,
             "forward",
             family,
             rationale,
@@ -301,6 +324,14 @@ def generate_hypotheses(training_history: list[dict[str, Any]]) -> list[dict[str
             "proposal": proposal,
             "execution_spec": spec,
             "specification_sha256": _sha(_canonical(spec)),
+            "training_signal": {
+                "distinct_score_values": distinct_score_count,
+                "score_range": score_range,
+                "training_draw_count": len(checked),
+                "selection_source": "training_prefix_only",
+                "validation_data_used": False,
+                "target_data_used": False,
+            },
             "synthetic_tests": {
                 "status": synthetic["status"],
                 "synthetic_cases": synthetic["synthetic_cases"],
