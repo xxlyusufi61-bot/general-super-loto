@@ -803,7 +803,7 @@ def _ensure_rate_limit_worktree():
     if _RATE_LIMIT_WORKTREE is not None and Path(_RATE_LIMIT_WORKTREE).is_dir():
         return Path(_RATE_LIMIT_WORKTREE)
 
-    _fetch_remote_branch(RATE_LIMIT_BRANCH, full_history=True)
+    _fetch_remote_branch(RATE_LIMIT_BRANCH)
     remote_ref = "refs/remotes/origin/" + RATE_LIMIT_BRANCH
     worktree = Path(tempfile.mkdtemp(prefix="general-nvidia-rate-limit-"))
     # git worktree add expects a path that does not already exist.
@@ -866,6 +866,15 @@ def read_remote_rate_limit():
         raise RuntimeError("shared NVIDIA rate-limit branch head is unreadable; API use blocked")
     if state.get("schema_version") == 1:
         try:
+            # Only the one-time legacy migration needs full commit history.
+            # Normal v2 reservations use a shallow fetch of the current head.
+            _fetch_remote_branch(RATE_LIMIT_BRANCH, full_history=True)
+            remote_ref = "refs/remotes/origin/" + RATE_LIMIT_BRANCH
+            _run_git(["reset", "--hard", remote_ref], cwd=worktree)
+            state = validate_rate_limit_state(json.loads(path.read_text(encoding="utf-8")))
+            head = _run_git(["rev-parse", "HEAD"], cwd=worktree).strip()
+            if state.get("schema_version") != 1 or not head:
+                raise RuntimeError("legacy state changed unexpectedly during migration")
             history = _reconstruct_legacy_reservations(worktree, datetime.now(timezone.utc))
             state = migrate_legacy_rate_limit_state(state, history)
         except Exception as error:
