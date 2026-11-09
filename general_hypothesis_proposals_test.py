@@ -177,6 +177,50 @@ class HypothesisProposalContractTests(unittest.TestCase):
         self.assertIn("candidate_present_in_B", exact)
         self.assertIn("candidate_present_in_C", exact)
 
+    def test_accepts_direction_sealed_v2_definition_and_renders_its_ast(self):
+        spec = {
+            "schema_version": 2,
+            "direction": "forward",
+            "score_expression": {
+                "op": "bool_to_number",
+                "arg": {
+                    "op": "contains_candidate",
+                    "state": {"op": "state_ref", "slot": "A"},
+                },
+            },
+        }
+        result = parse_hypothesis_proposals(
+            wrapped([candidate(formal_execution_spec=spec)])
+        )
+        self.assertEqual(result["status"], "VALID_PROPOSALS")
+        proposal = result["proposals"][0]
+        self.assertEqual(proposal["formal_execution_spec"], spec)
+        self.assertIn("BOOL_TO_NUMBER", proposal["exact_definition"])
+        self.assertIn("STATE_REF[A]", proposal["exact_definition"])
+        self.assertFalse(proposal["execution_ready"])
+
+    def test_duplicate_json_keys_and_nonstandard_numbers_fail_closed(self):
+        duplicate = (
+            START_MARKER
+            + '\\n{"schema_version":3,"schema_version":3,"proposals":[]}\\n'
+            + END_MARKER
+        )
+        duplicate_result = parse_hypothesis_proposals(duplicate)
+        self.assertEqual(duplicate_result["status"], "REJECTED")
+        self.assertEqual(duplicate_result["proposals"], [])
+
+        nonstandard = (
+            START_MARKER
+            + '\\n{"schema_version":3,"proposals":[{"hypothesis_id":"HYP-001",'
+            + '"discovery_direction":"forward","proposed_family":"candidate",'
+            + '"research_rationale":"A plausible hypothesis rationale.","known_risks":["overfitting"],'
+            + '"formal_execution_spec":{"schema_version":1,"score_expression":{"op":"const","value":NaN}}}]}\\n'
+            + END_MARKER
+        )
+        nonstandard_result = parse_hypothesis_proposals(nonstandard)
+        self.assertEqual(nonstandard_result["status"], "REJECTED")
+        self.assertEqual(nonstandard_result["proposals"], [])
+
     def test_family_remains_free_text_and_is_not_a_registry_write(self):
         item = candidate(proposed_family="novel and not in the method registry")
         result = parse_hypothesis_proposals(wrapped([item]))
