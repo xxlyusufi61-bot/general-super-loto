@@ -227,7 +227,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
                 state, plan, github_run_id="445566", now=NOW,
             )
             self.assertEqual(attempt["target_date"], plan["target_date"])
-            with self.assertRaisesRegex(auto.AutonomousResearchError, "already attempted"):
+            with self.assertRaisesRegex(auto.AutonomousResearchError, "retry requires proof"):
                 auto.claim_attempt(state, plan, github_run_id="445567", now=NOW)
             skipped = auto.prepare_cycle(
                 state, archive_path=archive, ledger_path=ledger,
