@@ -591,6 +591,65 @@ class GlobalNvidiaLockTests(unittest.TestCase):
         self.assertEqual(migrated["requests"], legacy["requests"])
         with self.assertRaisesRegex(ValueError, "incomplete"):
             migrate_legacy_rate_limit_state(legacy, [], now=now)
+    def test_rate_limit_worktree_uses_shallow_fetch_for_normal_reads(self):
+        previous = nvidia_guard._RATE_LIMIT_WORKTREE
+        nvidia_guard._RATE_LIMIT_WORKTREE = None
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                worktree = Path(directory) / "rate-limit-worktree"
+                worktree.mkdir()
+                with patch("tempfile.mkdtemp", return_value=str(worktree)), patch.object(
+                    nvidia_guard, "_fetch_remote_branch"
+                ) as fetch, patch.object(nvidia_guard, "_run_git"):
+                    result = nvidia_guard._ensure_rate_limit_worktree()
+                self.assertEqual(result, worktree)
+                fetch.assert_called_once_with(RATE_LIMIT_BRANCH)
+        finally:
+            nvidia_guard._RATE_LIMIT_WORKTREE = previous
+
+    def test_legacy_read_fetches_full_history_only_for_migration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            worktree = Path(directory)
+            now = datetime(2026, 11, 1, 12, 0, 0, tzinfo=timezone.utc)
+            stamp = (now - timedelta(hours=1)).isoformat()
+            legacy = {
+                "schema_version": 1,
+                "window_seconds": 60,
+                "max_requests": 40,
+                "requests": [],
+                "diagnostic_run_ids": [],
+                "updated_at_utc": stamp,
+            }
+            (worktree / "general_nvidia_rate_limit.json").write_text(
+                json.dumps(legacy), encoding="utf-8"
+            )
+            reconstructed = [{
+                "commit_sha": "a" * 40,
+                "reserved_at_utc": stamp,
+                "source": "open-research-forward",
+            }]
+            git_results = iter(["initial-head", "reset-ok", "full-history-head"])
+            with patch.object(
+                nvidia_guard, "_ensure_rate_limit_worktree", return_value=worktree
+            ), patch.object(nvidia_guard, "_fetch_remote_branch") as fetch, patch.object(
+                nvidia_guard, "_run_git", side_effect=lambda *args, **kwargs: next(git_results)
+            ) as git, patch.object(
+                nvidia_guard, "_reconstruct_legacy_reservations", return_value=reconstructed
+            ):
+                state, head = nvidia_guard.read_remote_rate_limit()
+
+            self.assertEqual(state["schema_version"], 2)
+            self.assertEqual(len(state["daily_requests"]), 1)
+            self.assertEqual(head, "full-history-head")
+            fetch.assert_called_once_with(RATE_LIMIT_BRANCH, full_history=True)
+            self.assertIn(
+                unittest.mock.call(
+                    ["reset", "--hard", "refs/remotes/origin/" + RATE_LIMIT_BRANCH],
+                    cwd=worktree,
+                ),
+                git.call_args_list,
+            )
+
     def test_shared_rate_limit_persistence_uses_git_push_not_rest_contents_api(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             worktree = Path(temporary_directory)
