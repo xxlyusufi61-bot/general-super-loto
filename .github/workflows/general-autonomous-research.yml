@@ -156,6 +156,23 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: python3 general_automation_state_integrity_audit.py
+      - name: Capture every unseen canonical draw in the durable FIFO
+        id: queue_capture
+        run: |
+          python3 general_autonomous_research.py queue-capture \
+            --archive super_loto_archive.json \
+            --github-output "$GITHUB_OUTPUT"
+          cat "$GITHUB_OUTPUT"
+      - name: Persist FIFO snapshots without changing protected archive or ledger objects
+        id: persist_queue
+        if: ${{ steps.queue_capture.outputs.changed == 'true' }}
+        uses: ./.github/actions/publish-automation-state
+        with:
+          token: ${{ github.token }}
+          expected_generation: ${{ steps.state_bootstrap.outputs.generation }}
+          objects: autonomous_research_state
+          message: "Append newly observed draw snapshots to autonomous FIFO"
+
       - name: Check explicit authorization and local global-lock state
         id: status
         run: |
@@ -172,9 +189,15 @@ jobs:
         run: |
           python3 general_nvidia_guard.py check
           echo "GENERAL_NVIDIA_GUARD_PASSED=1" >> "$GITHUB_ENV"
+      - name: Materialize only the oldest queued target snapshot
+        if: ${{ steps.status.outputs.authorized == 'true' && steps.status.outputs.lock_clear == 'true' && steps.queue_capture.outputs.has_pending == 'true' }}
+        run: |
+          python3 general_autonomous_research.py queue-materialize \
+            --output super_loto_archive.json
+
       - name: Prepare one cycle only for a new target and fresh sealed windows
         id: prepare
-        if: ${{ steps.status.outputs.authorized == 'true' && steps.status.outputs.lock_clear == 'true' }}
+        if: ${{ steps.status.outputs.authorized == 'true' && steps.status.outputs.lock_clear == 'true' && steps.queue_capture.outputs.has_pending == 'true' }}
         run: |
           python3 general_autonomous_research.py prepare \
             --archive super_loto_archive.json \
@@ -197,7 +220,7 @@ jobs:
         uses: ./.github/actions/publish-automation-state
         with:
           token: ${{ github.token }}
-          expected_generation: ${{ steps.state_bootstrap.outputs.generation }}
+          expected_generation: ${{ steps.persist_queue.outputs.generation || steps.state_bootstrap.outputs.generation }}
           objects: autonomous_research_state
           message: "Reserve autonomous research target"
       - name: Run independent forward and reverse NVIDIA discovery
