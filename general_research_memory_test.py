@@ -246,6 +246,61 @@ class ResearchMemoryValidationTests(unittest.TestCase):
             with self.subTest(value=value):
                 memory._reject_candidate_value_references({"observations": [value]}, "Safe note")
 
+    def test_single_drawn_number_values_are_rejected_without_blocking_math_counts(self):
+        unsafe_values = (
+            "Drawn number: 17.",
+            "17 was drawn.",
+            "17 has been drawn.",
+            "The drawn number was 17.",
+            "Çekilen sayı: 17.",
+            "Çekilen sayı on yedi.",
+            "17 çekildi.",
+            "17 numarası çekildi.",
+        )
+        for value in unsafe_values:
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(
+                    memory.ResearchMemoryError, "candidate/predicted number value"
+                ):
+                    memory._reject_candidate_value_references(value, "Unsafe drawn value")
+
+        safe_values = (
+            "Each MOD5 class contains 12 numbers.",
+            "17 observations were drawn from a synthetic sample.",
+            "The experiment drew 17 observations from a synthetic distribution.",
+            "Each residue class contains twelve values.",
+        )
+        for value in safe_values:
+            with self.subTest(value=value):
+                memory._reject_candidate_value_references(value, "Safe mathematical note")
+
+        for value in ("17 was drawn.", "Çekilen sayı: 17.", "17 çekildi."):
+            payload = {
+                "schema_version": 1,
+                "observations": [value],
+                "failed_approaches": [],
+                "next_tests": [],
+            }
+            report = (
+                memory.LESSONS_START
+                + json.dumps(payload, ensure_ascii=False)
+                + memory.LESSONS_END
+            )
+            with self.subTest(learning_note=value):
+                with self.assertRaisesRegex(
+                    memory.ResearchMemoryError, "candidate/predicted number value"
+                ):
+                    memory._parse_learning_notes(report)
+
+            entry = sample_entry()
+            entry["learning_notes"]["observations"] = [value]
+            entry["content_sha256"] = _hash_entry(entry)
+            with self.subTest(stored_learning_note=value):
+                with self.assertRaisesRegex(
+                    memory.ResearchMemoryError, "candidate/predicted number value"
+                ):
+                    memory._validate_entry(entry, 1)
+
     def test_candidate_value_and_partial_ranking_phrases_remain_blocked(self):
         unsafe_values = (
             "Candidate number: 17.",
