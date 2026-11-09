@@ -299,21 +299,25 @@ def capture_new_targets(
             )
             if last_event is None or last_event.get("outcome") == "FAILED":
                 prefix = [row for row in rows if row["date"] <= anchor]
-                if not prefix or prefix[-1]["date"] != anchor:
+                if (
+                    not prefix
+                    or prefix[-1]["date"] != anchor
+                    or archive["last_date"] != anchor
+                    or source_sha != last_attempt.get("archive_sha256")
+                    or archive["record_count"] != last_attempt.get("archive_record_count")
+                ):
                     raise TargetQueueError(
-                        "Legacy active target is absent from the canonical archive; manual recovery is required."
+                        "Legacy active target source archive identity cannot be proven; manual recovery is required."
                     )
+                # The legacy attempt hash covers the original raw archive document
+                # (including its formatting and metadata), while this FIFO snapshot
+                # has a new canonical serialization. Prove legacy identity using
+                # the exact raw source hash/count, then bind future FIFO processing
+                # to the canonical snapshot's own independent digest.
                 legacy_item = _make_item(
                     prefix, source_archive_sha256=source_sha,
                     enqueued_at_utc=last_attempt["claimed_at_utc"],
                 )
-                if (
-                    legacy_item["archive_sha256"] != last_attempt.get("archive_sha256")
-                    or legacy_item["archive_record_count"] != last_attempt.get("archive_record_count")
-                ):
-                    raise TargetQueueError(
-                        "Legacy active target snapshot cannot be proven identical; manual recovery is required."
-                    )
                 queue["items"].append(legacy_item)
         else:
             anchor = rows[-2]["date"] if len(rows) > 1 else None
