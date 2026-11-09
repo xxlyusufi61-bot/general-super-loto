@@ -484,17 +484,21 @@ class GlobalNvidiaLockTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "not chronological"):
             validate_rate_limit_state(legacy)
 
-    def test_rolling_day_budget_and_category_allocations_sum_to_72(self):
+    def test_rolling_day_budget_and_category_allocations_sum_to_200(self):
         self.assertEqual(sum(NVIDIA_BUDGET_CATEGORY_LIMITS.values()), NVIDIA_DAILY_REQUEST_BUDGET)
+        self.assertEqual(NVIDIA_DAILY_REQUEST_BUDGET, 200)
         self.assertEqual(NVIDIA_BUDGET_CATEGORY_LIMITS, {
-            "forward_discovery": 40, "forward_critique": 12,
-            "reverse_diagnostic": 8, "between_draws": 8, "retry_reserve": 4,
+            "forward_discovery": 100,
+            "forward_critique": 30,
+            "reverse_diagnostic": 20,
+            "between_draws": 30,
+            "retry_reserve": 20,
         })
         now = datetime(2026, 11, 1, 1, 0, 0, tzinfo=timezone.utc)
         state = initial_rate_limit_state()
         counts = (
-            ("forward_discovery", 40), ("forward_critique", 12),
-            ("reverse_diagnostic", 8), ("between_draws", 8), ("retry_reserve", 4),
+            ("forward_discovery", 100), ("forward_critique", 30),
+            ("reverse_diagnostic", 20), ("between_draws", 30), ("retry_reserve", 20),
         )
         index = 0
         for category, count in counts:
@@ -506,12 +510,52 @@ class GlobalNvidiaLockTests(unittest.TestCase):
                 )
                 self.assertEqual(wait, 0)
                 index += 1
-        self.assertEqual(len(state["daily_requests"]), 72)
+        self.assertEqual(len(state["daily_requests"]), 200)
         with self.assertRaisesRegex(ValueError, "24-hour NVIDIA budget"):
             reserve_rate_limit_slot(
                 state, "extra-request", now=now + timedelta(seconds=3 * index),
                 budget_category="retry_reserve", package_id="package-extra",
             )
+
+    def test_schema_v2_72_request_ledger_is_upgraded_in_memory_without_losing_history(self):
+        now = datetime(2026, 11, 1, 1, 0, 0, tzinfo=timezone.utc)
+        old_ledger = initial_rate_limit_state()
+        old_ledger["daily_max_requests"] = 72
+        old_ledger["category_limits"] = {
+            "forward_discovery": 40,
+            "forward_critique": 12,
+            "reverse_diagnostic": 8,
+            "between_draws": 8,
+            "retry_reserve": 4,
+        }
+        reservation = {
+            "reserved_at_utc": now.isoformat(),
+            "source": "legacy-forward-critique",
+            "category": "forward_critique",
+            "package_id": "old-run:1",
+            "reservation_id": "legacy-reservation-1",
+        }
+        old_ledger["daily_requests"] = [reservation]
+
+        normalized = validate_rate_limit_state(old_ledger)
+        self.assertEqual(normalized["daily_max_requests"], 200)
+        self.assertEqual(normalized["category_limits"], NVIDIA_BUDGET_CATEGORY_LIMITS)
+        self.assertEqual(normalized["daily_requests"], [reservation])
+        self.assertEqual(old_ledger["daily_max_requests"], 72)
+        self.assertEqual(old_ledger["category_limits"]["forward_discovery"], 40)
+
+        reserved, wait = reserve_rate_limit_slot(
+            old_ledger,
+            "new-forward-discovery",
+            now=now + timedelta(seconds=2),
+            budget_category="forward_discovery",
+            package_id="new-run:1",
+        )
+        self.assertEqual(wait, 0)
+        self.assertEqual(reserved["daily_max_requests"], 200)
+        self.assertEqual(reserved["category_limits"], NVIDIA_BUDGET_CATEGORY_LIMITS)
+        self.assertEqual(len(reserved["daily_requests"]), 2)
+        self.assertEqual(reserved["daily_requests"][0], reservation)
 
     def test_category_allocation_is_enforced_independently(self):
         now = datetime(2026, 11, 1, 1, 0, 0, tzinfo=timezone.utc)
@@ -546,8 +590,8 @@ class GlobalNvidiaLockTests(unittest.TestCase):
     def test_legacy_migration_preserves_over_budget_history_until_it_expires(self):
         now = datetime(2026, 11, 1, 12, 0, 0, tzinfo=timezone.utc)
         history = []
-        for index in range(73):
-            stamp = now - timedelta(hours=23) + timedelta(minutes=19 * index)
+        for index in range(201):
+            stamp = now - timedelta(hours=23) + timedelta(seconds=414 * index)
             history.append({
                 "commit_sha": format(index + 1, "040x"),
                 "reserved_at_utc": stamp.isoformat(),
@@ -562,7 +606,7 @@ class GlobalNvidiaLockTests(unittest.TestCase):
             "updated_at_utc": history[-1]["reserved_at_utc"],
         }
         migrated = migrate_legacy_rate_limit_state(legacy, history, now=now)
-        self.assertEqual(len(migrated["daily_requests"]), 73)
+        self.assertEqual(len(migrated["daily_requests"]), 201)
         with self.assertRaisesRegex(ValueError, "24-hour NVIDIA budget"):
             reserve_rate_limit_slot(
                 migrated,
