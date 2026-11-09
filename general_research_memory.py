@@ -27,7 +27,7 @@ from general_execution_spec_parser import parse_execution_spec_block
 from general_hypothesis_execution import validate_execution_spec
 
 VERSION = "0.2.0"
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 PROJECT = "GENERAL Super Loto"
 RESEARCH_EPOCH = "general-open-research-memory-v2"
 RESEARCH_SCOPE_START = date(2020, 8, 2)
@@ -416,6 +416,9 @@ def _reserved_validation_dates(plan: dict[str, Any]) -> set[str]:
 
 
 def empty_memory() -> dict[str, Any]:
+    # Offline symbolic learning is a separate append-only namespace within the
+    # existing research_memory state object. It is not a fifth state-store object.
+    from general_offline_hypothesis_discovery import empty_memory as empty_offline_memory
     return {
         "schema_version": SCHEMA_VERSION,
         "project": PROJECT,
@@ -427,6 +430,7 @@ def empty_memory() -> dict[str, Any]:
             "consumed holdout rows/dates, target values, or predicted number values are permitted."
         ),
         "entries": [],
+        "offline_research": empty_offline_memory(),
     }
 
 
@@ -721,9 +725,20 @@ def load_memory(path: str | Path = MEMORY_PATH) -> dict[str, Any]:
         payload = json.loads(target.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError):
         raise ResearchMemoryError("Research-memory file could not be read as valid UTF-8 JSON.") from None
+    legacy_keys = {"schema_version", "project", "research_epoch", "purpose", "entries"}
+    current_keys = legacy_keys | {"offline_research"}
+    if not isinstance(payload, dict):
+        raise ResearchMemoryError("Research-memory file has an invalid schema; failing closed.")
+    # Existing schema-v2 state is upgraded in memory only. The next legitimate
+    # append through the established research_memory state object persists v3.
+    if payload.get("schema_version") == 2 and set(payload) == legacy_keys:
+        payload = dict(payload)
+        payload["schema_version"] = SCHEMA_VERSION
+        from general_offline_hypothesis_discovery import empty_memory as empty_offline_memory
+        payload["offline_research"] = empty_offline_memory()
     if (
-        not isinstance(payload, dict)
-        or set(payload) != {"schema_version", "project", "research_epoch", "purpose", "entries"}
+        set(payload) != current_keys
+        or type(payload.get("schema_version")) is not int
         or payload.get("schema_version") != SCHEMA_VERSION
         or payload.get("project") != PROJECT
         or payload.get("research_epoch") != RESEARCH_EPOCH
@@ -732,6 +747,14 @@ def load_memory(path: str | Path = MEMORY_PATH) -> dict[str, Any]:
         or len(payload["entries"]) > MAX_ENTRIES
     ):
         raise ResearchMemoryError("Research-memory file has an invalid schema; failing closed.")
+    from general_offline_hypothesis_discovery import validate_memory_document
+    try:
+        validate_memory_document(payload["offline_research"])
+    except Exception as exc:
+        raise ResearchMemoryError(
+            "Offline research-memory namespace failed its independent validator: "
+            + type(exc).__name__
+        ) from None
     seen_cycles: set[str] = set()
     previous_target: date | None = None
     for index, entry in enumerate(payload["entries"], start=1):
@@ -744,6 +767,45 @@ def load_memory(path: str | Path = MEMORY_PATH) -> dict[str, Any]:
             raise ResearchMemoryError("Research-memory entries must remain chronological.")
         previous_target = current_target
     return payload
+
+
+def append_offline_research_memory(
+    updated_offline: dict[str, Any],
+    *,
+    path: str | Path = MEMORY_PATH,
+) -> dict[str, Any]:
+    """Append one validated offline cycle inside the existing research_memory state object."""
+    from general_offline_hypothesis_discovery import validate_memory_document
+    current = load_memory(path)
+    old_offline = current["offline_research"]
+    checked_offline = validate_memory_document(updated_offline)
+    old_entries = old_offline["entries"]
+    old_windows = old_offline["consumed_development_windows"]
+    if (
+        checked_offline["entries"][:len(old_entries)] != old_entries
+        or checked_offline["consumed_development_windows"][:len(old_windows)] != old_windows
+        or len(checked_offline["entries"]) != len(old_entries) + 1
+        or len(checked_offline["consumed_development_windows"]) != len(old_windows) + 1
+    ):
+        raise ResearchMemoryError("Offline learning must append exactly one new cycle without changing its prefix.")
+    updated = dict(current)
+    updated["offline_research"] = checked_offline
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(target.name + ".tmp")
+    temporary.write_text(
+        json.dumps(updated, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
+    verified = load_memory(temporary)
+    if verified != updated:
+        raise ResearchMemoryError("Combined research-memory append failed read-back validation.")
+    temporary.replace(target)
+    return {
+        "status": "APPENDED",
+        "offline_entries": len(checked_offline["entries"]),
+        "sealed_entries_unchanged": True,
+    }
 
 
 def _parse_learning_notes(report: str) -> dict[str, list[str]]:
@@ -1298,8 +1360,12 @@ def record_cycle(
 def _write_memory(memory: dict[str, Any], path: str | Path) -> None:
     target = Path(path)
     checked = load_memory(target)
-    if memory.keys() != checked.keys() or memory["entries"][:len(checked["entries"])] != checked["entries"]:
-        raise ResearchMemoryError("Memory update is not append-only; existing entries changed.")
+    if (
+        memory.keys() != checked.keys()
+        or memory["entries"][:len(checked["entries"])] != checked["entries"]
+        or memory["offline_research"] != checked["offline_research"]
+    ):
+        raise ResearchMemoryError("Sealed-memory update changed an existing prefix or the offline namespace.")
     if len(memory["entries"]) < len(checked["entries"]):
         raise ResearchMemoryError("Memory entries cannot be deleted.")
     # The persisted prefix was already validated by load_memory above and is
