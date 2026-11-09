@@ -147,6 +147,19 @@ class OfflineHypothesisDiscoveryTests(unittest.TestCase):
                 "GENERAL/offline-symbolic-discovery",
             )
             self.assertEqual(forward_prompt_memory[0]["candidate_selection"], "NONE")
+            self.assertGreater(forward_prompt_memory[0]["candidates_in_context"], 0)
+            self.assertLessEqual(
+                forward_prompt_memory[0]["candidates_in_context"],
+                forward_prompt_memory[0]["candidates_in_memory"],
+            )
+            in_context_templates = [
+                item["template_id"] for item in forward_prompt_memory[0]["candidates"]
+            ]
+            all_templates = [
+                item["template_id"] for item in memory["entries"][0]["candidates"]
+            ]
+            self.assertEqual(in_context_templates, all_templates[:len(in_context_templates)])
+            self.assertIsInstance(forward_prompt_memory[0]["candidate_context_truncated"], bool)
             self.assertTrue(
                 forward_prompt_memory[0]["development_window"]["consumed_for_exploratory_feedback"]
             )
