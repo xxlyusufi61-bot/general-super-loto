@@ -93,9 +93,14 @@ def _render_expression(node: dict[str, Any]) -> str:
             "value": "historical_draw_value",
             "draw_age": "directional_draw_age",
         }[node["name"]]
-    if op == "aggregate_history_numbers":
+    if op in {"aggregate_history_numbers", "aggregate_history_triples"}:
+        aggregate_name = (
+            "AGGREGATE_HISTORY_TRIPLES"
+            if op == "aggregate_history_triples"
+            else "AGGREGATE_HISTORY_NUMBERS"
+        )
         return (
-            "AGGREGATE_HISTORY_NUMBERS[" + node["aggregate"].upper() + "]("
+            aggregate_name + "[" + node["aggregate"].upper() + "]("
             + _render_expression(node["expression"]) + ")"
         )
     if op == "abs":
