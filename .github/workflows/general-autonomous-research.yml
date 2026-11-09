@@ -211,7 +211,7 @@ jobs:
             --status success \
             --branch general-automation-state \
             --run-url "https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
-            --kind research \
+            --kind offline \
             --report-log general_offline_research_report.json
       - name: Upload offline research report
         if: ${{ always() && steps.offline_discovery.outcome != 'skipped' }}
