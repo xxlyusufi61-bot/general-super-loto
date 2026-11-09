@@ -35,13 +35,13 @@ Every evaluated development interval is consumed. Its exact dates are retained o
 
 ## Offline GENERAL memory
 
-general_offline_research_memory.json is a separate append-only file created only after a successful offline evaluation. It stores GENERAL-origin candidate definitions, specification hashes, safe aggregate walk-forward/CV/reverse summaries, archive/target provenance, and a digest of the consumed development window.
+Offline results live in a dedicated offline_research namespace inside the existing general_research_memory.json research_memory state object. This preserves the four-object state-store contract without adding a fifth object or branch. The namespace is created only after a successful offline evaluation and stores GENERAL-origin candidate definitions, specification hashes, safe aggregate walk-forward/CV/reverse summaries, archive/target provenance, and a digest of the consumed development window.
 
 It does not store raw archive rows, draw-number sets, target numbers, per-draw hit records, candidate rankings, or exact development-date lists inside the hypothesis entries. A separate consumption sub-ledger retains exact development dates solely to enforce non-reuse. Duplicate JSON keys, invalid hashes, non-monotonic dates, duplicated windows, modified prefixes, and candidate/spec mismatches fail closed. Existing entries cannot be edited or deleted.
 
-The pre-existing general_research_memory.json remains governed by its sealed-claim/ledger writer. This new offline store does not bypass or weaken that path and does not import legacy history.
+The existing sealed directional entries remain governed by their sealed-claim/ledger writer and are immutable to the offline writer. The combined root uses a schema-v3 envelope; schema-v2 files are upgraded in memory to an empty offline namespace and are only persisted through the existing generation-guarded research_memory state-store writer. Offline appends cannot change sealed entries.
 
-The repository is public. Any offline memory committed by the scheduled workflow is public repository content. The file intentionally excludes draw values and raw rows, but candidate definitions and aggregate research results remain visible.
+The offline namespace is published only through the existing dedicated general-automation-state branch and the four-object transactional state writer. It is not committed directly to main. Candidate definitions and aggregate results remain visible to readers of that protected state object; raw draw values and rows are excluded.
 
 ## Interpretation and status
 
