@@ -25,13 +25,13 @@ scheduler does not expose target values to discovery.
   The separate manual unlock workflow remains the only way to clear that lock.
 - The former target-wide two-request cap is removed. All requests from all GENERAL
   agents now share the same provider reservation ledger.
-- Shared rolling budget: at most 72 reservations in any 24-hour window.
+- Shared rolling budget: at most 200 reservations in any 24-hour window.
 - Normal operating ceiling: 30 reservations in any 60-second window. Immutable
   hard ceiling: 40 reservations in any 60-second window.
 - Every workflow run package may reserve at most four requests.
-- Daily category allocations are forward discovery 40, forward critique 12,
-  reverse retrospective diagnostics 8, between-draw research 8, and controlled
-  retry reserve 4. The allocations total exactly 72 and are enforced separately.
+- Daily category allocations are forward discovery 100, forward critique 30,
+  reverse retrospective diagnostics 20, between-draw research 30, and controlled
+  retry reserve 20. The allocations total exactly 200 and are enforced separately.
 - Each call's requested completion limit is at most 8,192 tokens. This is a
   response-token ceiling, not a promise that the model will use that many tokens.
 - The rolling daily budget is an internal safety ceiling, not a provider free-tier
@@ -59,7 +59,7 @@ through the same shared ledger before the HTTP request is sent. The ledger is st
 on the separate `general-nvidia-rate-limit-state` branch so rate accounting does not
 change the canonical archive, evaluation ledger, or `main` branch.
 
-The guard enforces a rolling limit of at most 72 reservations in any 24-hour
+The guard enforces a rolling limit of at most 200 reservations in any 24-hour
 window, a 30-per-minute normal operating ceiling, and the immutable 40-per-minute
 hard limit across the repository's shared NVIDIA key. It reads the current safety lock
 and initializes a dedicated Git worktree for the ledger, then records each request
