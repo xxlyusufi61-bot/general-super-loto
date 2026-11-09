@@ -366,6 +366,8 @@ def _metric_summary(report: dict[str, Any]) -> dict[str, Any]:
     ):
         raise OfflineResearchError("Evaluation uncertainty summary is invalid.")
     result["standard_error_of_mean_hits"] = standard_error
+    if type(report.get("folds")) is int:
+        result["folds"] = report["folds"]
     result["predictive_claim"] = False
     return result
 
@@ -1009,6 +1011,7 @@ def run_cycle(
         "training_draw_count": evaluation["training_draw_count"],
         "development_draw_count": evaluation["development_draw_count"],
         "development_window_sha256": evaluation["development_window_sha256"],
+        "development_interval_is_confirmatory": False,
         "candidate_count": len(evaluation["candidates"]),
         "candidate_selection": "NONE",
         "method_registry_modified": False,
