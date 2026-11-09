@@ -225,8 +225,8 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           incomplete_request=false
-          for direction in forward reverse; do
-            if [ -f "/tmp/general_nvidia_api_attempted_${direction}" ] && [ ! -f "/tmp/general_nvidia_api_succeeded_${direction}" ]; then
+          for request_label in forward reverse forward_critique between_draws unlabelled; do
+            if [ -f "/tmp/general_nvidia_api_attempted_${request_label}" ] && [ ! -f "/tmp/general_nvidia_api_succeeded_${request_label}" ]; then
               incomplete_request=true
             fi
           done
@@ -311,10 +311,19 @@ jobs:
         env:
           ATTEMPT_ID: ${{ steps.attempt_reservation.outputs.attempt_id }}
         run: |
-          if [ -f /tmp/general_nvidia_api_attempted_forward ] && [ ! -f /tmp/general_nvidia_api_succeeded_forward ] || \
-             [ -f /tmp/general_nvidia_api_attempted_reverse ] && [ ! -f /tmp/general_nvidia_api_succeeded_reverse ]; then
+          incomplete_request=false
+          any_request=false
+          for request_label in forward reverse forward_critique between_draws unlabelled; do
+            if [ -f "/tmp/general_nvidia_api_attempted_${request_label}" ]; then
+              any_request=true
+              if [ ! -f "/tmp/general_nvidia_api_succeeded_${request_label}" ]; then
+                incomplete_request=true
+              fi
+            fi
+          done
+          if [ "$incomplete_request" = "true" ]; then
             reason_code="PROVIDER_DELIVERY_UNCERTAIN"
-          elif [ -f /tmp/general_nvidia_api_attempted_forward ] || [ -f /tmp/general_nvidia_api_attempted_reverse ]; then
+          elif [ "$any_request" = "true" ]; then
             reason_code="WORKFLOW_FAILED"
           else
             reason_code="NO_PROVIDER_REQUEST_SENT"
