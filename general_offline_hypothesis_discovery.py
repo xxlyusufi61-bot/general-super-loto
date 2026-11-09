@@ -497,6 +497,11 @@ def _validate_candidate(candidate: Any) -> dict[str, Any]:
     )
     if reparsed != proposal:
         raise OfflineResearchError("Stored proposal differs from the canonical proposal contract.")
+    if (
+        candidate["hypothesis_id"] != proposal["hypothesis_id"]
+        or candidate["family"] != proposal["proposed_family"]
+    ):
+        raise OfflineResearchError("Candidate identity/family does not match its canonical proposal.")
     if proposal["discovery_direction"] != "forward":
         raise OfflineResearchError("Offline symbolic memory accepts only forward hypotheses.")
     spec = engine.validate_execution_spec(candidate["execution_spec"])
@@ -665,6 +670,15 @@ def load_memory(path: str | Path) -> dict[str, Any]:
             or len(cycle["dates"]) != entry["development_window"]["draw_count"]
         ):
             raise OfflineResearchError("Offline memory entry does not match its consumed development window.")
+        if any(day >= entry["target_date"] for day in cycle["dates"]):
+            raise OfflineResearchError("Consumed development data reaches the isolated target or a later date.")
+        expected_cycle_id = _sha(_canonical({
+            "archive_sha256": entry["archive_sha256"],
+            "target_date": entry["target_date"],
+            "development_window_sha256": cycle["window_sha256"],
+        }))
+        if entry["cycle_id"] != expected_cycle_id:
+            raise OfflineResearchError("Offline memory cycle provenance hash is invalid.")
     return payload
 
 
