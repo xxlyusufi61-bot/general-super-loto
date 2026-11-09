@@ -233,7 +233,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
                 state, archive_path=archive, ledger_path=ledger,
                 global_lock_path=lock, now=NOW,
             )
-            self.assertEqual(skipped["status"], "NO_NEW_TARGET_DRAW")
+            self.assertEqual(skipped["status"], "TARGET_ATTEMPT_IN_PROGRESS")
             self.assertFalse(skipped["eligible"])
 
             finished = auto.record_outcome(
@@ -264,7 +264,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
                 state, archive_path=archive, ledger_path=ledger,
                 global_lock_path=lock, now=NOW,
             )
-            first = auto.claim_attempt(state, plan, github_run_id="retry-1", now=NOW)
+            first = auto.claim_attempt(state, plan, github_run_id="420000001", now=NOW)
             auto.record_outcome(
                 state, first["attempt_id"], outcome="FAILED",
                 reason_code="NO_PROVIDER_REQUEST_SENT", now=NOW,
@@ -278,7 +278,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
             self.assertTrue(retry_plan["retryable"])
             self.assertEqual(retry_plan["retry_number"], 2)
             second = auto.claim_attempt(
-                state, retry_plan, github_run_id="retry-2", now=NOW + timedelta(minutes=1),
+                state, retry_plan, github_run_id="420000002", now=NOW + timedelta(minutes=1),
             )
             self.assertNotEqual(first["attempt_id"], second["attempt_id"])
             auto.record_outcome(
@@ -292,7 +292,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
             )
             self.assertTrue(third_plan["eligible"])
             third = auto.claim_attempt(
-                state, third_plan, github_run_id="retry-3", now=NOW + timedelta(minutes=2),
+                state, third_plan, github_run_id="420000003", now=NOW + timedelta(minutes=2),
             )
             auto.record_outcome(
                 state, third["attempt_id"], outcome="FAILED",
@@ -322,7 +322,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
                 state, archive_path=archive, ledger_path=ledger,
                 global_lock_path=lock, now=NOW,
             )
-            attempt = auto.claim_attempt(state, plan, github_run_id="uncertain", now=NOW)
+            attempt = auto.claim_attempt(state, plan, github_run_id="420000004", now=NOW)
             auto.record_outcome(
                 state, attempt["attempt_id"], outcome="FAILED",
                 reason_code="PROVIDER_DELIVERY_UNCERTAIN", now=NOW,
@@ -352,7 +352,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
                 state, archive_path=archive, ledger_path=ledger,
                 global_lock_path=lock, now=NOW,
             )
-            attempt = auto.claim_attempt(state, plan, github_run_id="pending", now=NOW)
+            attempt = auto.claim_attempt(state, plan, github_run_id="420000005", now=NOW)
             auto.record_outcome(
                 state, attempt["attempt_id"], outcome="FAILED",
                 reason_code="NO_PROVIDER_REQUEST_SENT", now=NOW,
