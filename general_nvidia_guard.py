@@ -464,6 +464,14 @@ def migrate_legacy_rate_limit_state(previous, reservation_history, now=None):
             for item in daily
         ):
             raise ValueError("legacy NVIDIA reservation history is incomplete; provider requests blocked")
+    updated = previous.get("updated_at_utc")
+    if updated is not None and _parse_aware_timestamp(updated, "legacy ledger update timestamp") >= cutoff:
+        updated_stamp = _parse_aware_timestamp(updated, "legacy ledger update timestamp")
+        if not any(
+            abs(( _parse_aware_timestamp(item["reserved_at_utc"], "legacy reservation timestamp") - updated_stamp).total_seconds()) <= 120
+            for item in daily
+        ):
+            raise ValueError("legacy NVIDIA reservation history is incomplete; provider requests blocked")
     state = initial_rate_limit_state()
     state["requests"] = list(previous["requests"])
     state["daily_requests"] = daily
@@ -798,7 +806,7 @@ def _ensure_rate_limit_worktree():
 
 def _reconstruct_legacy_reservations(worktree, now):
     cutoff = now.astimezone(timezone.utc) - timedelta(seconds=NVIDIA_DAILY_WINDOW_SECONDS)
-    since = cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")
+    since = (cutoff - timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
     log = _run_git(
         ["log", "--since=" + since, "--format=%H%x09%s", "--", RATE_LIMIT_PATH],
         cwd=worktree,
