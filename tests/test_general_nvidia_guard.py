@@ -415,7 +415,7 @@ class GlobalNvidiaLockTests(unittest.TestCase):
         for index in range(NVIDIA_NORMAL_REQUESTS_PER_MINUTE):
             state, wait = reserve_rate_limit_slot(
                 state, "offline-test-agent-" + str(index), now=now,
-                budget_category="forward_discovery",
+                budget_category="forward_discovery", package_id="rate-test-" + str(index),
             )
             self.assertEqual(wait, 0)
             self.assertIsNotNone(state)
@@ -449,11 +449,11 @@ class GlobalNvidiaLockTests(unittest.TestCase):
         for index in range(NVIDIA_NORMAL_REQUESTS_PER_MINUTE):
             state, _ = reserve_rate_limit_slot(
                 state, "agent-" + str(index), now=now,
-                budget_category="forward_discovery",
+                budget_category="forward_discovery", package_id="window-test-" + str(index),
             )
         next_state, wait = reserve_rate_limit_slot(
             state, "next-agent", now=now + timedelta(seconds=62),
-            budget_category="forward_discovery",
+            budget_category="forward_discovery", package_id="window-next",
         )
         self.assertEqual(wait, 0)
         self.assertIsNotNone(next_state)
