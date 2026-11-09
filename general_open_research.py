@@ -51,7 +51,7 @@ API_URL = API_BASE_URL + "/chat/completions"
 OPENAI_SDK_VERSION = "3.45.0"
 DOCUMENTATION_REVIEW_DATE = "2026-10-25"
 
-MAX_NVIDIA_REQUESTS_PER_RUN = 2
+MAX_NVIDIA_REQUESTS_PER_RUN = 4
 DEFAULT_MAX_COMPLETION_TOKENS = 8192
 DIAGNOSTIC_MAX_COMPLETION_TOKENS = 8192
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 600
@@ -933,7 +933,7 @@ def call_model(
                 "Normal-mode one-request cap reached; no additional provider request was sent."
             )
         raise RuntimeError(
-            "Autonomous research request cap reached (2 total); no additional provider request was sent."
+            "Autonomous research job-package cap reached (4 total); no additional provider request was sent."
         )
     request_key = request_label or "unlabelled"
     if request_key in _NVIDIA_REQUEST_LABELS_ATTEMPTED:
@@ -983,13 +983,16 @@ def call_model(
             pass
         raise
 
-    attempt_marker = Path("/tmp/general_nvidia_api_attempted")
-    success_marker = Path("/tmp/general_nvidia_api_succeeded")
-    for marker in (attempt_marker, success_marker):
-        try:
-            marker.unlink()
-        except FileNotFoundError:
-            pass
+    # Per-direction markers are cumulative for the entire job package.
+    # A successful forward call must not erase evidence that reverse was never
+    # sent or that a later reverse delivery became uncertain.
+    safe_request_key = request_key if request_key in {"forward", "reverse"} else "unlabelled"
+    attempt_marker = Path("/tmp/general_nvidia_api_attempted_" + safe_request_key)
+    success_marker = Path("/tmp/general_nvidia_api_succeeded_" + safe_request_key)
+    run_attempt_marker = Path("/tmp/general_nvidia_api_attempted")
+    run_attempt_marker.write_text(
+        datetime.now(timezone.utc).isoformat(), encoding="utf-8"
+    )
     _NVIDIA_REQUESTS_ATTEMPTED += 1
     _NVIDIA_REQUEST_LABELS_ATTEMPTED.add(request_key)
     attempt_marker.write_text(
@@ -1143,6 +1146,9 @@ def call_model(
     success_marker.write_text(
         datetime.now(timezone.utc).isoformat(), encoding="utf-8"
     )
+    Path("/tmp/general_nvidia_api_succeeded").write_text(
+        datetime.now(timezone.utc).isoformat(), encoding="utf-8"
+    )
     return content.strip()
 
 
@@ -1176,6 +1182,20 @@ def main() -> int:
     archive_sha256 = None
     stage = "archive_preflight"
     failed_direction = None
+    for marker in (
+        Path("/tmp/general_nvidia_api_attempted"),
+        Path("/tmp/general_nvidia_api_succeeded"),
+        Path("/tmp/general_nvidia_api_attempted_forward"),
+        Path("/tmp/general_nvidia_api_succeeded_forward"),
+        Path("/tmp/general_nvidia_api_attempted_reverse"),
+        Path("/tmp/general_nvidia_api_succeeded_reverse"),
+    ):
+        try:
+            marker.unlink()
+        except FileNotFoundError:
+            pass
+    _NVIDIA_REQUESTS_ATTEMPTED = 0
+    _NVIDIA_REQUEST_LABELS_ATTEMPTED.clear()
     write_run_status("RUNNING", stage)
     try:
         ledger_path = BASE / "general_evaluation_ledger.json"
