@@ -18,7 +18,7 @@ from general_execution_spec_dispatch import (
 START_MARKER = "<HYPOTHESIS_EXECUTION_SPECS_JSON>"
 END_MARKER = "</HYPOTHESIS_EXECUTION_SPECS_JSON>"
 SCHEMA_VERSION = 1
-MAX_EXECUTION_SPECS = 5
+MAX_EXECUTION_SPECS = 1
 MAX_EXECUTION_BLOCK_CHARS = 16_384
 SPECIFICATION_KEYS = {"hypothesis_id", "execution_spec"}
 
@@ -100,7 +100,7 @@ def parse_execution_spec_block(
         return base
     specifications = payload.get("specifications")
     if not isinstance(specifications, list) or len(specifications) > MAX_EXECUTION_SPECS:
-        base["rejection_reasons"] = ["specifications must contain at most five entries."]
+        base["rejection_reasons"] = ["specifications must contain at most one entry per isolated direction."]
         return base
 
     validated: list[dict[str, Any]] = []
