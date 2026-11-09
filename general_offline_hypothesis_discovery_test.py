@@ -6,6 +6,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 import general_offline_hypothesis_discovery as offline
+import general_research_memory as combined_memory
 
 
 def synthetic_archive(count=120):
@@ -77,6 +78,10 @@ class OfflineHypothesisDiscoveryTests(unittest.TestCase):
                 self.assertEqual(candidate["time_ordered_cross_validation"]["validation_draw_count"], 10)
                 self.assertEqual(candidate["time_ordered_cross_validation"]["predictive_claim"], False)
                 self.assertFalse(candidate["reverse_retrospective_only"]["predictive_evidence"])
+            combined = combined_memory.load_memory(memory_path)
+            self.assertEqual(combined["entries"], [])
+            self.assertEqual(combined["schema_version"], 3)
+            self.assertIn("offline_research", combined)
             memory = offline.load_memory(memory_path)
             self.assertEqual(len(memory["entries"]), 1)
             self.assertEqual(len(memory["consumed_development_windows"]), 1)
@@ -150,7 +155,7 @@ class OfflineHypothesisDiscoveryTests(unittest.TestCase):
                 '{"schema_version":1,"schema_version":1,"purpose":"x","entries":[],"consumed_development_windows":[]}',
                 encoding="utf-8",
             )
-            with self.assertRaises(offline.OfflineResearchError):
+            with self.assertRaises(combined_memory.ResearchMemoryError):
                 offline.load_memory(path)
 
 
