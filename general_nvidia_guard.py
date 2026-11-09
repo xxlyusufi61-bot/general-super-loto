@@ -147,6 +147,10 @@ def budget_category_for_source(source, requested=None):
         return "forward_discovery"
     if source == "open-research-reverse":
         return "reverse_diagnostic"
+    if source == "open-research-forward-critique":
+        return "forward_critique"
+    if source == "open-research-between-draws":
+        return "between_draws"
     agent = os.environ.get("AGENT_ID", os.environ.get("GENERAL_AGENT_ID", "")).strip().lower()
     if agent == "research":
         return "forward_discovery"
