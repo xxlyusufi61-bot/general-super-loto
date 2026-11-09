@@ -141,38 +141,68 @@ method registry remains unchanged; unsupported hypotheses remain untested
 rather than being approximated.
 
 
-## Between-draw work and queue completion
+## FIFO target snapshots and between-draw work
 
-The 8-call between-draw allocation is a shared category ceiling for independent
-GENERAL work that does not consume a new draw target. It is not an instruction to
-spend eight calls every day. Offline candidate tests do not consume NVIDIA calls.
-A background task is eligible only when it has a bounded, explicit input snapshot
-and a finite stopping rule. It must not reuse consumed sealed holdouts, inspect
-target values, or mark an unfinished task complete merely to release the next
-target. If no executable GENERAL-origin hypothesis is available, the correct
-result is NO_APPLICABLE_OFFLINE_WORK; the workflow must not substitute a legacy
-Pydroid formula or a fixed catalog candidate.
+The between-draw allocation is a 30-request rolling-budget category shared by
+GENERAL and its agents. It is a ceiling, not a requirement to spend the allocation.
+Offline candidate tests do not consume NVIDIA requests. The autonomous offline
+task runner remains a separate outstanding feature; a quota category alone does
+not make offline research run automatically.
 
-The implemented target lifecycle is: RESERVED, directional discovery,
+The scheduler state schema v2 contains a bounded durable FIFO. On each scheduled
+archive refresh, the capture step appends every newly observed canonical draw
+after the persisted observation cursor, in archive chronology. Each queue item
+contains a compressed, content-addressed archive prefix ending exactly at that
+target. The snapshot records its target date, row count, SHA-256, source-archive
+SHA-256, and enqueue timestamp. Snapshot payloads are decompressed with strict
+size limits, checked for duplicate JSON keys, validated as sorted 6-of-60 rows,
+and hash-verified before use.
+
+The queue is stored inside the existing `autonomous_research_state` object on
+the dedicated state-store branch. It does not add a new state object or merge
+runtime state into `main`. The scheduler materializes only the oldest snapshot
+into the job workspace, then the existing archive validator, target isolation,
+sealed preflight, and research workflow run against that exact snapshot. Target
+numbers are not written to queue summaries or GitHub outputs. Newer targets
+remain queued and cannot replace the current FIFO head.
+
+The queue is bounded to 128 pending targets, 1.5 MB per uncompressed snapshot,
+and 5 MB of total compressed pending snapshots. If a limit is reached, the
+capture step fails closed without advancing the observation cursor or dropping
+any target. A changed or missing historical archive prefix, corrupt snapshot,
+hash mismatch, missing cursor, or unprovable legacy active-target snapshot also
+blocks processing rather than silently repairing or skipping a draw.
+
+A target leaves the queue only after the scheduler records SUCCEEDED or
+NO_ELIGIBLE_CANDIDATE for the matching target date, snapshot hash, and row count.
+A proven NO_PROVIDER_REQUEST_SENT failure retains the same FIFO head for its
+bounded retry. Any other failure, delivery uncertainty, or manual-recovery
+requirement also retains the head and blocks later targets. A target already
+being processed is never replaced by the latest archive head.
+
+When the queue is first introduced to a scheduler state with no prior attempts,
+the bootstrap cursor starts immediately before the latest canonical draw, so
+the current draw is queued rather than replaying the entire historical archive.
+When an older state has a terminal attempt, capture starts after its last
+terminal target. An unfinished legacy target is queued only when its snapshot
+identity and record count can be proven exactly; otherwise the scheduler stops
+for manual recovery rather than guessing at an old snapshot.
+
+FIFO retention does not relax the existing research contract. Every target still
+requires its own leakage-free pre-target partition, canonical adjacency, fresh
+disjoint sealed holdouts, unchanged minimum training history, and time-ordered
+evaluation. Consumed holdout dates remain unavailable to later targets. A queued
+target may therefore remain pending when its own frozen snapshot cannot satisfy
+fresh sealed-window requirements; the scheduler must wait or require recovery,
+not use later draws, lower minimums, reuse consumed dates, or skip ahead.
+
+The implemented target lifecycle remains: RESERVED, directional discovery,
 proposal/DSL validation, applicable frozen evaluation, Telegram/reporting, and
-a terminal SUCCEEDED, NO_ELIGIBLE_CANDIDATE, or FAILED outcome. The scheduler
-serializes targets and blocks a newer target while the current target is
-unfinished or requires recovery.
+a terminal SUCCEEDED, NO_ELIGIBLE_CANDIDATE, or FAILED outcome. A valid empty
+hypothesis response is a terminal scientific NO_ELIGIBLE_CANDIDATE. A sent or
+uncertain provider request remains blocked for manual recovery.
 
-**Known scope boundary:** this version does not yet persist a FIFO of every
-intermediate draw that arrives while an earlier target is blocked. It retains
-the active attempt history and later sees the then-current canonical archive
-target; a durable multi-target snapshot queue is a separate implementation
-requirement before claiming lossless processing of every intervening draw.
-Do not interpret target blocking as proof that intermediate targets are queued.
-
-A technical failure before any provider request is sent may be retried within
-the bounded policy above. A valid empty hypothesis response is terminal
-scientific NO_ELIGIBLE_CANDIDATE. A sent or uncertain provider request remains
-blocked for manual recovery.
-
-The between-draw 8-call allocation is implemented as a quota category, not as
-an autonomous offline task runner. This version does not yet schedule offline
-hypothesis evaluation while waiting for a new draw. Offline evaluation remains
-available only through the existing explicitly invoked, leakage-free test and
-sealed-evaluation paths. No NVIDIA calls are made merely to fill the allocation.
+The autonomous offline task runner is not included in this FIFO step. Until that
+separate feature is implemented, offline evaluation remains available only
+through the existing explicitly invoked, leakage-free test and sealed-evaluation
+paths. No NVIDIA calls are made merely to fill the between-draw allocation.
