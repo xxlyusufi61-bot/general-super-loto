@@ -34,7 +34,7 @@ jobs:
           python-version: "3.12"
 
       - name: Check global NVIDIA safety lock
-        if: ${{ inputs.confirm_live_calls == 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_2_NVIDIA_REQUESTS' && inputs.confirm_free_usage_verified == true }}
+        if: ${{ inputs.confirm_live_calls == 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_4_NVIDIA_REQUESTS' && inputs.confirm_free_usage_verified == true }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
@@ -45,7 +45,7 @@ jobs:
 
       - name: Test NVIDIA API connection
         id: nvidia-api-test
-        if: ${{ inputs.confirm_live_calls == 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_2_NVIDIA_REQUESTS' && inputs.confirm_free_usage_verified == true }}
+        if: ${{ inputs.confirm_live_calls == 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_4_NVIDIA_REQUESTS' && inputs.confirm_free_usage_verified == true }}
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
@@ -137,7 +137,7 @@ jobs:
           PY
 
       - name: Report no NVIDIA request when confirmation is absent
-        if: ${{ (inputs.confirm_live_calls != 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_2_NVIDIA_REQUESTS' || inputs.confirm_free_usage_verified != true) }}
+        if: ${{ (inputs.confirm_live_calls != 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_4_NVIDIA_REQUESTS' || inputs.confirm_free_usage_verified != true) }}
         run: |
           echo "::notice::No live NVIDIA request was authorized or made."
           echo "This workflow requires the exact free-only confirmation phrase for any live request."
