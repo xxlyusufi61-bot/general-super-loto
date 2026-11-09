@@ -199,6 +199,24 @@ class HypothesisProposalContractTests(unittest.TestCase):
         self.assertIn("STATE_REF[A]", proposal["exact_definition"])
         self.assertFalse(proposal["execution_ready"])
 
+    def test_v2_direction_must_match_isolated_proposal_direction(self):
+        reverse_spec = execution_spec()
+        reverse_spec["schema_version"] = 2
+        reverse_spec["direction"] = "reverse"
+        reverse_spec["score_expression"] = {
+            "op": "bool_to_number",
+            "arg": {
+                "op": "contains_candidate",
+                "state": {"op": "state_ref", "slot": "C"},
+            },
+        }
+        result = parse_hypothesis_proposals(
+            wrapped([candidate(discovery_direction="forward", formal_execution_spec=reverse_spec)])
+        )
+        self.assertEqual(result["status"], "REJECTED")
+        self.assertEqual(result["proposals"], [])
+        self.assertIn("direction must match", result["rejection_reasons"][0])
+
     def test_duplicate_json_keys_and_nonstandard_numbers_fail_closed(self):
         duplicate = (
             START_MARKER
