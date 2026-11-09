@@ -113,6 +113,25 @@ class OfflineHypothesisDiscoveryTests(unittest.TestCase):
                 ),
                 [],
             )
+            forward_prompt_memory = combined_memory.direction_context(
+                "forward", result["target_date"], memory_path=memory_path
+            )
+            reverse_prompt_memory = combined_memory.direction_context(
+                "reverse", result["target_date"], memory_path=memory_path
+            )
+            self.assertEqual(len(forward_prompt_memory), 1)
+            self.assertEqual(
+                forward_prompt_memory[0]["source"],
+                "GENERAL/offline-symbolic-discovery",
+            )
+            self.assertEqual(forward_prompt_memory[0]["candidate_selection"], "NONE")
+            self.assertTrue(
+                forward_prompt_memory[0]["development_window"]["consumed_for_exploratory_feedback"]
+            )
+            self.assertEqual(reverse_prompt_memory, [])
+            prompt_json = json.dumps(forward_prompt_memory, ensure_ascii=False)
+            self.assertNotIn("validation_dates", prompt_json)
+            self.assertNotIn("draw_numbers", prompt_json)
             self.assertNotIn("numbers", memory["entries"][0])
             self.assertNotIn("validation_dates", memory["entries"][0])
 
