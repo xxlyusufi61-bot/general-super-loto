@@ -31,13 +31,7 @@ def candidate(**overrides):
         "hypothesis_id": "HYP-001",
         "discovery_direction": "forward",
         "proposed_family": "unclassified historical relationship",
-        "hypothesis": "A reproducible relationship may remain after controlling for chronology.",
-        "exact_definition": "Count prior occurrences of each candidate exactly as encoded by formal_execution_spec.",
-        "inputs": "Only draws with dates strictly earlier than the scoring date.",
-        "output_rule": "Return the exact numeric score defined by formal_execution_spec.",
-        "parameter_policy": "No fitted thresholds or post-holdout parameter changes.",
-        "selection_policy": "Select only within development data using time-ordered validation.",
-        "falsification_criterion": "Reject if performance does not persist against uniform random 6-of-60 baselines.",
+        "research_rationale": "A repeatable historical association deserves a controlled chronological test.",
         "known_risks": ["Multiple testing", "Regime drift and unstable relationships"],
         "formal_execution_spec": execution_spec(),
     }
@@ -65,6 +59,9 @@ class HypothesisProposalContractTests(unittest.TestCase):
         proposal = result["proposals"][0]
         self.assertEqual(proposal["evaluation_protocols"], REQUIRED_PROTOCOLS)
         self.assertEqual(proposal["formal_execution_spec"], execution_spec())
+        self.assertIn("Formal DSL definition:", proposal["exact_definition"])
+        self.assertIn("formal DSL expression", proposal["hypothesis"])
+        self.assertNotIn("A repeatable historical association", proposal["exact_definition"])
         self.assertEqual(proposal["status"], "PROPOSAL_ONLY")
         self.assertIs(proposal["execution_ready"], False)
         self.assertIs(proposal["registry_write_allowed"], False)
@@ -133,6 +130,8 @@ class HypothesisProposalContractTests(unittest.TestCase):
         )
         self.assertEqual(result["status"], "VALID_PROPOSALS")
         self.assertIsNone(result["proposals"][0]["formal_execution_spec"])
+        self.assertIn("no faithful representation", result["proposals"][0]["hypothesis"])
+        self.assertIn("No candidate ranking", result["proposals"][0]["output_rule"])
 
     def test_invalid_formal_execution_definition_is_rejected(self):
         result = parse_hypothesis_proposals(

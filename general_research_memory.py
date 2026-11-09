@@ -542,14 +542,14 @@ def _validate_entry(entry: Any, expected_id: int) -> dict[str, Any]:
         seen_proposals.add(proposal_id)
         if proposal.get("discovery_direction") != entry["direction"]:
             raise ResearchMemoryError("A directional memory entry contains another direction's proposal.")
+        _reject_number_values(proposal, "Stored proposal")
+        _reject_candidate_value_references(proposal, "Stored proposal")
         try:
             checked_proposal = _validate_proposal(proposal, canonical=True)
         except (TypeError, ValueError):
             raise ResearchMemoryError("Stored proposal failed the canonical proposal validator.") from None
         if {key: checked_proposal[key] for key in PROPOSAL_KEYS} != proposal:
             raise ResearchMemoryError("Stored proposal is not in canonical validated form.")
-        _reject_number_values(proposal, "Stored proposal")
-        _reject_candidate_value_references(proposal, "Stored proposal")
     if entry["execution_spec_status"] not in {
         "VALIDATED_SPECS", "VALID_EMPTY", "MISSING_BLOCK", "REJECTED", "NOT_RUN",
     }:
@@ -565,6 +565,15 @@ def _validate_entry(entry: Any, expected_id: int) -> dict[str, Any]:
             raise ResearchMemoryError("Stored execution specification failed the canonical DSL validator.") from None
         if checked_spec != entry["execution_spec"]:
             raise ResearchMemoryError("Stored execution specification is not canonical.")
+        if (
+            not entry["proposals"]
+            or not execution_spec_matches_proposal(
+                entry["proposals"][0], checked_spec
+            )
+        ):
+            raise ResearchMemoryError(
+                "Stored execution specification does not match the proposal's formal mathematical definition."
+            )
         if entry["execution_spec_sha256"] != _sha(_canonical(entry["execution_spec"])):
             raise ResearchMemoryError("Stored execution-spec hash does not match its definition.")
     elif entry["execution_spec_sha256"] is not None:

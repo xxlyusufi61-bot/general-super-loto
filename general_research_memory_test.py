@@ -19,24 +19,16 @@ def _hash_entry(entry):
 
 
 def sample_entry(direction="forward", entry_id=1, target="2026-10-20", status="HYPOTHESES_CAPTURED"):
-    proposal = {
+    raw_proposal = {
         "hypothesis_id": "HYP-001" if direction == "forward" else "HYP-501",
         "discovery_direction": direction,
         "proposed_family": "bounded transition hypothesis",
-        "hypothesis": "Earlier-state counts may rank later values.",
-        "exact_definition": "Count previous occurrences before each chronological cutoff.",
-        "inputs": "Strictly earlier R60 history only.",
-        "output_rule": "Rank candidates by descending count with a fixed tie-break.",
-        "parameter_policy": "No fitted thresholds.",
-        "selection_policy": "Select only on the direction's discovery interval.",
-        "falsification_criterion": "Reject if forward performance does not exceed the null baseline.",
+        "research_rationale": "A simple historical relation is worth testing against chronological null baselines.",
         "known_risks": ["Multiple testing and nonstationarity."],
         "formal_execution_spec": None,
-        "evaluation_protocols": [
-            "forward_walk_forward", "reverse_retrospective_stress_test",
-            "time_ordered_cross_validation", "uniform_random_6_of_N",
-        ],
     }
+    validated_proposal = memory._validate_proposal(raw_proposal)
+    proposal = {key: validated_proposal[key] for key in memory.PROPOSAL_KEYS}
     entry = {
         "entry_id": entry_id,
         "cycle_id": hashlib.sha256(f"cycle-{entry_id}-{direction}".encode()).hexdigest(),
@@ -59,14 +51,23 @@ def sample_entry(direction="forward", entry_id=1, target="2026-10-20", status="H
         "execution_spec_status": "VALID_EMPTY",
         "execution_spec": None,
         "execution_spec_sha256": None,
-        "learning_notes": {"observations": ["The candidate is simple and reproducible."], "failed_approaches": [], "next_tests": ["Compare against a uniform random baseline."]},
+        "learning_notes": {
+            "observations": ["The candidate is simple and reproducible."],
+            "failed_approaches": [],
+            "next_tests": ["Compare against a uniform random baseline."],
+        },
         "evaluation_feedback": None,
         "failure": None,
-        "discovery_window": {"start_date": "2026-09-01", "end_date": "2026-10-01", "draw_count": 20, "holdout_dates_copied": False, "archive_rows_copied": False},
+        "discovery_window": {
+            "start_date": "2026-09-01",
+            "end_date": "2026-10-01",
+            "draw_count": 20,
+            "holdout_dates_copied": False,
+            "archive_rows_copied": False,
+        },
     }
     entry["content_sha256"] = _hash_entry(entry)
     return entry
-
 
 class ResearchMemoryValidationTests(unittest.TestCase):
     def test_empty_memory_is_fresh_and_has_no_legacy_import(self):
@@ -530,18 +531,12 @@ def directional_report(direction):
         "hypothesis_id": source_id,
         "discovery_direction": direction,
         "proposed_family": "bounded transition hypothesis",
-        "hypothesis": "Earlier-state counts may rank later values.",
-        "exact_definition": "Count prior occurrences exactly as formal_execution_spec defines.",
-        "inputs": "Strictly earlier R60 history only.",
-        "output_rule": "Rank candidates by the exact formal execution score.",
-        "parameter_policy": "No fitted thresholds.",
-        "selection_policy": "Select only on the direction's discovery interval.",
-        "falsification_criterion": "Reject if the result does not exceed a uniform random baseline.",
+        "research_rationale": "A simple count baseline is being tested against a chronological null.",
         "known_risks": ["Multiple testing and nonstationarity."],
         "formal_execution_spec": spec,
     }
     return (
-        "Complete narrative report for " + direction + " direction.\\n\\n"
+        "Complete narrative report for " + direction + " direction.\n\n"
         "<HYPOTHESIS_PROPOSALS_JSON>"
         + json.dumps({"schema_version": 3, "proposals": [proposal]})
         + "</HYPOTHESIS_PROPOSALS_JSON>"

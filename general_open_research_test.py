@@ -38,13 +38,7 @@ def make_directional_report(direction, *, alter_spec=False):
         "hypothesis_id": "HYP-001",
         "discovery_direction": direction,
         "proposed_family": "generic count baseline",
-        "hypothesis": "prior counts rank future items",
-        "exact_definition": "Count each candidate's prior appearances exactly as formal_execution_spec defines.",
-        "inputs": "historical numbers before target",
-        "output_rule": "rank by the exact score in formal_execution_spec",
-        "parameter_policy": "use fixed constants only",
-        "selection_policy": "select on discovery rows only",
-        "falsification_criterion": "reject if no stable effect",
+        "research_rationale": "Historical counts may be a useful baseline to challenge against a null model.",
         "known_risks": ["multiple testing risk"],
         "formal_execution_spec": proposal_formal_spec,
     }
@@ -224,8 +218,11 @@ class OpenResearchIsolationTests(unittest.TestCase):
         self.assertIn("</HYPOTHESIS_PROPOSALS_JSON>", system)
         self.assertIn('"schema_version":3', system)
         self.assertIn('"formal_execution_spec":null', system)
-        self.assertIn("coordinator assigns the four mandatory evaluation protocols locally", system.lower())
+        self.assertIn("coordinator assigns the four mandatory evaluation protocols", system.lower())
+        self.assertIn("all mathematical explanation fields", system.lower())
+        self.assertIn('"research_rationale"', system)
         self.assertNotIn('"evaluation_protocols"', system)
+        self.assertNotIn('"exact_definition"', system)
         self.assertIn("zero or one proposal only", system.lower())
         self.assertIn("whole-block fail-closed contract", system.lower())
         self.assertIn("schema_version 1", lowered)
