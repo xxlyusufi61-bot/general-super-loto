@@ -610,7 +610,7 @@ class GlobalNvidiaLockTests(unittest.TestCase):
     def test_legacy_read_fetches_full_history_only_for_migration(self):
         with tempfile.TemporaryDirectory() as directory:
             worktree = Path(directory)
-            now = datetime(2026, 11, 1, 12, 0, 0, tzinfo=timezone.utc)
+            now = datetime.now(timezone.utc)
             stamp = (now - timedelta(hours=1)).isoformat()
             legacy = {
                 "schema_version": 1,
