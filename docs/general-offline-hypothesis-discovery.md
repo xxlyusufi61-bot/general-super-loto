@@ -41,7 +41,7 @@ It does not store raw archive rows, draw-number sets, target numbers, per-draw h
 
 The existing sealed directional entries remain governed by their sealed-claim/ledger writer and are immutable to the offline writer. The combined root uses a schema-v3 envelope; schema-v2 files are upgraded in memory to an empty offline namespace and are only persisted through the existing generation-guarded research_memory state-store writer. Offline appends cannot change sealed entries.
 
-The offline namespace is published only through the existing dedicated general-automation-state branch and the four-object transactional state writer. It is not committed directly to main. Candidate definitions and aggregate results remain visible to readers of that protected state object; raw draw values and rows are excluded.
+The offline namespace is published only through the existing dedicated general-automation-state branch and the four-object transactional state writer as part of the existing research_memory object. It is not committed directly to main and does not add a fifth state object. Candidate definitions and aggregate results remain visible to readers of that protected state object; raw draw values and rows are excluded.
 
 ## Interpretation and status
 
