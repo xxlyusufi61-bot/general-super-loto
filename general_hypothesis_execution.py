@@ -173,9 +173,18 @@ def _validate_rows(
         _fail(field + " must be a non-empty list within the configured size limit.")
     checked: list[dict[str, Any]] = []
     previous: date | None = None
+    previous_sequence_index: int | None = None
+    sequence_mode: bool | None = None
     for index, row in enumerate(rows, start=1):
-        if not isinstance(row, dict) or set(row) != {"date", "numbers"}:
+        if not isinstance(row, dict) or set(row) not in (
+            {"date", "numbers"}, {"date", "numbers", "sequence_index"}
+        ):
             _fail(field + " row " + str(index) + " has an invalid shape.")
+        has_sequence = "sequence_index" in row
+        if sequence_mode is None:
+            sequence_mode = has_sequence
+        elif sequence_mode != has_sequence:
+            _fail(field + " must either provide sequence_index for every row or for none.")
         current = _canonical_date(row.get("date"), field + " date")
         if previous is not None and current <= previous:
             _fail(field + " must be strictly chronological with unique dates.")
@@ -190,7 +199,16 @@ def _validate_rows(
             or any(number < 1 or number > pool_size for number in numbers)
         ):
             _fail(field + " contains an invalid six-number draw for its regime.")
-        checked.append({"date": current.isoformat(), "numbers": list(numbers)})
+        item = {"date": current.isoformat(), "numbers": list(numbers)}
+        if has_sequence:
+            sequence_index = row["sequence_index"]
+            if type(sequence_index) is not int or sequence_index < 0:
+                _fail(field + " sequence_index must be a non-negative integer.")
+            if previous_sequence_index is not None and sequence_index <= previous_sequence_index:
+                _fail(field + " sequence_index values must be strictly increasing.")
+            item["sequence_index"] = sequence_index
+            previous_sequence_index = sequence_index
+        checked.append(item)
         previous = current
     return checked
 
