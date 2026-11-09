@@ -27,13 +27,21 @@ class OfflineHypothesisDiscoveryTests(unittest.TestCase):
             for index, row in enumerate(synthetic_archive(50))
         ]
         candidates = offline.generate_hypotheses(training)
-        self.assertEqual(len(candidates), 11)
+        self.assertGreaterEqual(len(candidates), 1)
+        self.assertLessEqual(len(candidates), offline.MAX_CANDIDATES)
         self.assertEqual(
             {item["family"] for item in candidates},
             {"A→B→C", "A→T", "MOD5→T"},
         )
         self.assertTrue(all(item["synthetic_tests"]["status"] == "PASS" for item in candidates))
         self.assertTrue(all(item["proposal"]["execution_ready"] is False for item in candidates))
+        self.assertTrue(all(
+            item["training_signal"]["distinct_score_values"] >= 2
+            and item["training_signal"]["score_range"] > 0
+            and item["training_signal"]["validation_data_used"] is False
+            and item["training_signal"]["target_data_used"] is False
+            for item in candidates
+        ))
 
     def test_candidates_are_formal_safe_dsl_and_registry_is_never_promoted(self):
         training = [
@@ -69,11 +77,13 @@ class OfflineHypothesisDiscoveryTests(unittest.TestCase):
                 report_path=report_path,
             )
             self.assertEqual(result["status"], "COMPLETED_EXPLORATORY_ONLY")
-            self.assertEqual(result["candidate_count"], 11)
+            self.assertGreaterEqual(result["candidate_count"], 1)
+            self.assertLessEqual(result["candidate_count"], offline.MAX_CANDIDATES)
             self.assertEqual(result["candidate_selection"], "NONE")
             self.assertFalse(result["target_numbers_exposed"])
             self.assertFalse(result["sealed_holdout_used"])
             for candidate in result["candidates"]:
+                self.assertTrue(candidate["training_signal"]["training_draw_count"] >= offline.MIN_TRAIN_DRAWS)
                 self.assertEqual(candidate["forward_walk_forward"]["validation_draw_count"], 10)
                 self.assertEqual(candidate["time_ordered_cross_validation"]["validation_draw_count"], 10)
                 self.assertEqual(candidate["time_ordered_cross_validation"]["predictive_claim"], False)
@@ -128,6 +138,42 @@ class OfflineHypothesisDiscoveryTests(unittest.TestCase):
             )
             self.assertEqual(second["status"], "WAITING_FOR_NEW_DEVELOPMENT_DRAWS")
             self.assertEqual(offline.load_memory(memory_path), before)
+
+    def test_training_prefix_changes_the_training_only_discovery_signal(self):
+        variable_rows = [
+            {**row, "sequence_index": index}
+            for index, row in enumerate(synthetic_archive(50))
+        ]
+        constant_rows = [
+            {
+                "date": row["date"],
+                "numbers": [1, 2, 3, 4, 5, 6],
+                "sequence_index": index,
+            }
+            for index, row in enumerate(synthetic_archive(50))
+        ]
+        variable = offline.generate_hypotheses(variable_rows)
+        constant = offline.generate_hypotheses(constant_rows)
+        variable_exact = next(
+            item for item in variable
+            if item["template_id"] == "at_exact_historical_frequency"
+        )
+        constant_exact = next(
+            item for item in constant
+            if item["template_id"] == "at_exact_historical_frequency"
+        )
+        self.assertNotEqual(
+            variable_exact["training_signal"]["score_range"],
+            constant_exact["training_signal"]["score_range"],
+        )
+        self.assertEqual(
+            constant_exact["training_signal"]["validation_data_used"],
+            False,
+        )
+        self.assertEqual(
+            constant_exact["training_signal"]["target_data_used"],
+            False,
+        )
 
     def test_target_numbers_do_not_change_generated_hypothesis_definitions(self):
         rows = synthetic_archive()
