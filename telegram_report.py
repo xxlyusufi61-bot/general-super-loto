@@ -4,6 +4,8 @@ import hashlib
 import json
 import math
 import os
+import re
+import time
 import urllib.parse
 import urllib.request
 from datetime import date
@@ -291,7 +293,6 @@ def _validate_offline_candidate(candidate, training_count, development_count):
     if not isinstance(candidate, dict) or set(candidate) != required:
         raise ValueError("Offline candidate fields do not match the safe report schema.")
     hypothesis_id = candidate.get("hypothesis_id")
-    import re
     if not isinstance(hypothesis_id, str) or not re.fullmatch(r"HYP-[0-9]{3}", hypothesis_id):
         raise ValueError("Offline hypothesis identifier is invalid.")
     family = candidate.get("family")
@@ -616,8 +617,10 @@ def main():
         messages = format_offline_research_messages(report, args.run_url, args.branch, args.title)
     else:
         messages = [format_message(args.title, args.status, args.run_url, args.branch, args.kind, report)]
-    for message in messages:
+    for index, message in enumerate(messages):
         _send_message(token, chat_id, message)
+        if args.kind == "offline" and index + 1 < len(messages):
+            time.sleep(1.1)
     print("TELEGRAM RAPOR TESLİMİ: BAŞARILI (" + str(len(messages)) + " mesaj)")
 
 
