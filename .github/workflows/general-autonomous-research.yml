@@ -187,7 +187,7 @@ jobs:
           python3 general_offline_hypothesis_discovery.py run \
             --archive super_loto_archive.json \
             --sealed-ledger general_evaluation_ledger.json \
-            --memory general_offline_research_memory.json \
+            --memory general_research_memory.json \
             --report general_offline_research_report.json \
             --github-output "$GITHUB_OUTPUT"
           cat "$GITHUB_OUTPUT"
