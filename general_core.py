@@ -609,7 +609,7 @@ def prepare_data(target):
     }
 
 
-def ask_nvidia(messages, *, budget_category=None):
+def ask_nvidia(messages):
     if not has_explicit_live_consent(
         os.environ.get("GENERAL_CONFIRM_LIVE_CALLS", "")
     ):
@@ -662,7 +662,7 @@ def ask_nvidia(messages, *, budget_category=None):
     )
 
     # Reserve a global account-wide slot immediately before the provider boundary.
-    reserve_nvidia_request("general-core", budget_category=budget_category)
+    reserve_nvidia_request("general-core")
     # Write the marker immediately before the provider boundary.
     attempt_marker.write_text(datetime.now(timezone.utc).isoformat(), encoding="utf-8")
     try:
@@ -1003,13 +1003,18 @@ def run_agent(agent, task, coordinator_context=None):
         "validation": "forward_critique",
         "crossover": "between_draws",
     }.get(agent, "forward_critique")
-    answer = ask_nvidia(
-        [
+    previous_budget_category = os.environ.get("GENERAL_NVIDIA_BUDGET_CATEGORY")
+    os.environ["GENERAL_NVIDIA_BUDGET_CATEGORY"] = budget_category
+    try:
+        answer = ask_nvidia([
             {"role": "system", "content": system},
             {"role": "user", "content": task},
-        ],
-        budget_category=budget_category,
-    )
+        ])
+    finally:
+        if previous_budget_category is None:
+            os.environ.pop("GENERAL_NVIDIA_BUDGET_CATEGORY", None)
+        else:
+            os.environ["GENERAL_NVIDIA_BUDGET_CATEGORY"] = previous_budget_category
 
     report_check = validate_agent_report(agent, answer)
     if report_check.get("valid") is not True:
