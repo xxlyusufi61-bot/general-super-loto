@@ -183,7 +183,7 @@ CANDIDATE_VALUE_BEFORE_CUE = re.compile(
 
 DRAWN_NUMBER_AFTER_LABEL = re.compile(
     r"(?ix)(?<![\w.])(?:the\s+)?(?:drawn|picked)\s+(?:lottery\s+)?"
-    r"(?:number|value)\s*(?::|=|#)?\s*(?:(?:is|was|equals?)\s+)?"
+    r"(?:number|value)\s*(?::|=|\#)?\s*(?:(?:is|was|equals?)\s+)?"
     + NUMBER_VALUE_TOKEN + r"\b"
 )
 DRAWN_NUMBER_BEFORE_VERB = re.compile(
@@ -193,7 +193,7 @@ DRAWN_NUMBER_BEFORE_VERB = re.compile(
 DRAWN_NUMBER_TURKISH_AFTER_LABEL = re.compile(
     r"(?ix)(?<![\w.])(?:çekilen|cekilen|çekilmiş|cekilmis|"
     r"çekilişte\s+çıkan|cekiliste\s+cikan)\s+"
-    r"(?:sayı|sayi|numara)(?:sı|si)?\s*(?::|=|#)?\s*"
+    r"(?:sayı|sayi|numara)(?:sı|si)?\s*(?::|=|\#)?\s*"
     + NUMBER_VALUE_TOKEN + r"\b"
 )
 DRAWN_NUMBER_TURKISH_BEFORE_VERB = re.compile(
