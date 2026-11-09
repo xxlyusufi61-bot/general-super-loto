@@ -800,7 +800,7 @@ def _reconstruct_legacy_reservations(worktree, now):
     )
     history = []
     for line in log.splitlines():
-        parts = line.split("\\t", 1)
+        parts = line.split("\t", 1)
         if len(parts) != 2 or parts[1] != "chore: reserve shared NVIDIA request slot":
             continue
         commit_sha = parts[0]
