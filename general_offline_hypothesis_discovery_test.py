@@ -117,7 +117,7 @@ class OfflineHypothesisDiscoveryTests(unittest.TestCase):
             )
             self.assertEqual(
                 next_sealed_partition["offline_development_memory_sha256"],
-                offline._sha(offline._canonical(memory["consumed_development_windows"])),
+                offline._sha(offline._canonical(sorted(offline_dates))),
             )
             self.assertEqual(
                 offline.memory_context(
