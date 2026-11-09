@@ -1185,6 +1185,7 @@ def write_run_status(
 
 
 def main() -> int:
+    global _NVIDIA_REQUESTS_ATTEMPTED
     target = None
     archive_sha256 = None
     stage = "archive_preflight"
