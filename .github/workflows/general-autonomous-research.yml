@@ -173,6 +173,58 @@ jobs:
           objects: autonomous_research_state
           message: "Append newly observed draw snapshots to autonomous FIFO"
 
+      - name: Materialize oldest FIFO snapshot for offline mathematical research
+        id: offline_materialize
+        if: \${{ steps.queue_capture.outputs.has_pending == 'true' }}
+        run: |
+          python3 general_autonomous_research.py queue-materialize \
+            --output super_loto_archive.json
+      - name: Run bounded offline hypothesis discovery and evaluation
+        id: offline_discovery
+        if: \${{ steps.queue_capture.outputs.has_pending == 'true' }}
+        continue-on-error: true
+        run: |
+          python3 general_offline_hypothesis_discovery.py run \
+            --archive super_loto_archive.json \
+            --sealed-ledger general_evaluation_ledger.json \
+            --memory general_offline_research_memory.json \
+            --report general_offline_research_report.json \
+            --github-output "$GITHUB_OUTPUT"
+          cat "$GITHUB_OUTPUT"
+      - name: Persist only a validated offline GENERAL memory append
+        id: persist_offline_memory
+        if: \${{ steps.offline_discovery.outcome == 'success' && steps.offline_discovery.outputs.offline_status == 'COMPLETED_EXPLORATORY_ONLY' && steps.offline_discovery.outputs.offline_memory_entries_added == '1' }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add general_offline_research_memory.json
+          if ! git diff --cached --quiet; then
+            git commit -m "Append validated offline GENERAL research memory"
+            git push origin HEAD:main
+          fi
+          echo "memory_persisted=true" >> "$GITHUB_OUTPUT"
+      - name: Send offline hypothesis and evaluation summary to Telegram
+        if: \${{ steps.persist_offline_memory.outputs.memory_persisted == 'true' }}
+        env:
+          TELEGRAM_BOT_TOKEN: \${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: \${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python3 telegram_report.py \
+            --title "GENERAL çevrimdışı matematiksel keşif" \
+            --status success \
+            --branch main \
+            --run-url "https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --kind research \
+            --report-log general_offline_research_report.json
+      - name: Upload offline research report
+        if: \${{ always() && steps.offline_discovery.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: general-offline-research-\${{ github.run_id }}
+          path: |
+            general_offline_research_report.json
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Check explicit authorization and local global-lock state
         id: status
         run: |
