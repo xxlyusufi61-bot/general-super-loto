@@ -547,7 +547,7 @@ class GlobalNvidiaLockTests(unittest.TestCase):
         now = datetime(2026, 11, 1, 12, 0, 0, tzinfo=timezone.utc)
         history = []
         for index in range(73):
-            stamp = now - timedelta(hours=23, minutes=(72 - index) * 15)
+            stamp = now - timedelta(hours=23) + timedelta(minutes=19 * index)
             history.append({
                 "commit_sha": format(index + 1, "040x"),
                 "reserved_at_utc": stamp.isoformat(),
