@@ -20,7 +20,7 @@ name: GENERAL Agent
         type: string
         default: "GENERAL sisteminin mevcut durumunu ve sonraki geliştirme adımlarını değerlendir."
       confirm_live_calls:
-        description: "Leave NO to block live NVIDIA calls. The exact approval phrase authorizes at most two NVIDIA requests per operation; use it only after verifying free-only/no-billing status."
+        description: "Leave NO to block live NVIDIA calls. The exact approval phrase authorizes at most four NVIDIA requests in this job package; use it only after verifying free-only/no-billing status."
         required: true
         type: string
         default: "NO"
