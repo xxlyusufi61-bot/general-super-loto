@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       confirm_live_calls:
-        description: "Leave NO to block live NVIDIA API calls. The exact approval phrase authorizes at most two NVIDIA requests per operation; this test makes no more than one. Use it only after verifying free-only/no-billing status."
+        description: "Leave NO to block live NVIDIA API calls. The exact approval phrase authorizes at most four NVIDIA requests in this job package; this test makes no more than one. Use it only after verifying free-only/no-billing status."
         required: true
         type: string
         default: "NO"
