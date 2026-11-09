@@ -980,7 +980,7 @@ def call_model(
                 single_request_exception=True,
             )
         else:
-            reserve_nvidia_request("open-research-" + request_key)
+            reserve_nvidia_request("open-research-" + request_key.replace("_", "-"))
     except Exception:
         try:
             client.close()
