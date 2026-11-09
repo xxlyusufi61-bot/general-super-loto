@@ -427,6 +427,27 @@ def evaluate_hypotheses(
         raise OfflineResearchError("Reverse diagnostic input contains the target or a later record.")
 
     candidates = generate_hypotheses(training)
+    if not candidates:
+        return {
+            "schema_version": 1,
+            "runner_version": VERSION,
+            "status": "NO_ELIGIBLE_TRAINING_HYPOTHESIS",
+            "target_date": target,
+            "direction": "forward",
+            "training_draw_count": len(training),
+            "candidate_count": 0,
+            "candidates": [],
+            "candidate_selection": "NONE",
+            "automatic_candidate_selection": False,
+            "method_registry_modified": False,
+            "target_numbers_exposed": False,
+            "target_or_future_rows_used": False,
+            "development_interval_consumed": False,
+            "interpretation": (
+                "The bounded DSL catalogue produced no candidate with non-constant training-prefix scores. "
+                "No development rows were evaluated or consumed."
+            ),
+        }
     results = []
     for candidate in candidates:
         spec = candidate["execution_spec"]
@@ -464,6 +485,7 @@ def evaluate_hypotheses(
             "proposal": candidate["proposal"],
             "execution_spec": spec,
             "specification_sha256": candidate["specification_sha256"],
+            "training_signal": candidate["training_signal"],
             "synthetic_tests": candidate["synthetic_tests"],
             "forward_walk_forward": _metric_summary(forward),
             "time_ordered_cross_validation": _metric_summary(cross_validation),
@@ -917,6 +939,24 @@ def run_cycle(
         target_date=partition["target_date"],
         folds=folds,
     )
+    if evaluation["status"] == "NO_ELIGIBLE_TRAINING_HYPOTHESIS":
+        result = {
+            "schema_version": 1,
+            "runner_version": VERSION,
+            "status": evaluation["status"],
+            "target_date": evaluation["target_date"],
+            "archive_sha256": archive["archive_sha256"],
+            "training_draw_count": evaluation["training_draw_count"],
+            "candidate_count": 0,
+            "candidate_selection": "NONE",
+            "development_interval_consumed": False,
+            "target_numbers_exposed": False,
+            "target_or_future_rows_used": False,
+            "memory_entries_added": 0,
+            "interpretation": evaluation["interpretation"],
+        }
+        _write_json_atomic(report_path, result)
+        return result
     if evaluation["development_window_sha256"] != _sha(
         _canonical([row["date"] for row in development])
     ):
