@@ -1,5 +1,6 @@
 import copy
 import json
+import random
 import tempfile
 import unittest
 from datetime import date, timedelta
@@ -11,11 +12,11 @@ import general_research_memory as combined_memory
 
 def synthetic_archive(count=120):
     start = date(2020, 8, 2)
+    generator = random.Random(20261109)
     rows = []
     for index in range(count):
         day = (start + timedelta(days=index * 3)).isoformat()
-        base = (index * 7) % 60 + 1
-        numbers = sorted({((base + offset * 11 - 1) % 60) + 1 for offset in range(6)})
+        numbers = sorted(generator.sample(range(1, 61), 6))
         rows.append({"date": day, "numbers": numbers})
     return rows
 
