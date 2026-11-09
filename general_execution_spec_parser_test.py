@@ -32,6 +32,31 @@ def wrapped(items):
 
 
 class ExecutionSpecParserTests(unittest.TestCase):
+    def test_directional_v2_spec_uses_dispatch_without_upgrading_v1(self):
+        item = {
+            "hypothesis_id": "HYP-001",
+            "execution_spec": {
+                "schema_version": 2,
+                "direction": "forward",
+                "score_expression": {
+                    "op": "bool_to_number",
+                    "arg": {
+                        "op": "contains_candidate",
+                        "state": {"op": "state_ref", "slot": "A"},
+                    },
+                },
+            },
+        }
+        result = parse_execution_spec_block(
+            wrapped([item]),
+            allowed_hypothesis_ids={"HYP-001"},
+        )
+        self.assertEqual(result["status"], "VALIDATED_SPECS")
+        self.assertEqual(result["specifications"][0]["dsl_version"], 2)
+        self.assertEqual(result["specifications"][0]["execution_spec"]["schema_version"], 2)
+        self.assertFalse(result["execution_ready"])
+        self.assertFalse(result["method_registry_modified"])
+
     def test_valid_spec_is_dsl_validated_but_not_execution_approved(self):
         result = parse_execution_spec_block(
             wrapped([specification()]),
@@ -51,6 +76,50 @@ class ExecutionSpecParserTests(unittest.TestCase):
         )
         self.assertFalse(result["specifications"][0]["execution_ready"])
         self.assertFalse(result["specifications"][0]["registry_write_allowed"])
+
+    def test_valid_directional_v2_spec_is_synthetic_tested_but_not_approved(self):
+        item = {
+            "hypothesis_id": "HYP-001",
+            "execution_spec": {
+                "schema_version": 2,
+                "direction": "forward",
+                "score_expression": {
+                    "op": "bool_to_number",
+                    "arg": {
+                        "op": "contains_candidate",
+                        "state": {"op": "state_ref", "slot": "A"},
+                    },
+                },
+            },
+        }
+        result = parse_execution_spec_block(wrapped([item]), allowed_hypothesis_ids={"HYP-001"})
+        self.assertEqual(result["status"], "VALIDATED_SPECS")
+        self.assertTrue(result["dsl_validated"])
+        self.assertTrue(result["synthetic_tests_passed"])
+        self.assertEqual(result["specifications"][0]["dsl_version"], 2)
+        self.assertEqual(result["specifications"][0]["synthetic_test_summary"]["execution_dsl_version"], 2)
+        self.assertFalse(result["execution_ready"])
+        self.assertFalse(result["method_registry_modified"])
+
+    def test_v2_hidden_slot_reference_is_rejected_by_parser(self):
+        item = {
+            "hypothesis_id": "HYP-001",
+            "execution_spec": {
+                "schema_version": 2,
+                "direction": "forward",
+                "score_expression": {
+                    "op": "bool_to_number",
+                    "arg": {
+                        "op": "contains_candidate",
+                        "state": {"op": "state_ref", "slot": "C"},
+                    },
+                },
+            },
+        }
+        result = parse_execution_spec_block(wrapped([item]), allowed_hypothesis_ids={"HYP-001"})
+        self.assertEqual(result["status"], "REJECTED")
+        self.assertEqual(result["specifications"], [])
+        self.assertFalse(result["execution_ready"])
 
     def test_empty_specification_list_is_valid(self):
         result = parse_execution_spec_block(wrapped([]))

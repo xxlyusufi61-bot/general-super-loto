@@ -9,7 +9,7 @@ import json
 import re
 from typing import Any
 
-from general_hypothesis_execution import validate_execution_spec
+from general_execution_spec_dispatch import validate_execution_spec
 
 START_MARKER = "<HYPOTHESIS_PROPOSALS_JSON>"
 END_MARKER = "</HYPOTHESIS_PROPOSALS_JSON>"
@@ -83,7 +83,7 @@ def execution_spec_matches_proposal(
 
 
 def _render_expression(node: dict[str, Any]) -> str:
-    """Render a validated DSL tree without accepting model-authored formula prose."""
+    """Render a validated v1 or direction-sealed v2 AST without model-authored prose."""
     op = node["op"]
     if op == "const":
         return repr(node["value"])
@@ -92,21 +92,35 @@ def _render_expression(node: dict[str, Any]) -> str:
             "candidate": "candidate_value",
             "value": "historical_draw_value",
             "draw_age": "directional_draw_age",
+            "a_contains_candidate": "candidate_present_in_A",
+            "b_contains_candidate": "candidate_present_in_B",
+            "c_contains_candidate": "candidate_present_in_C",
         }[node["name"]]
-    if op == "aggregate_history_numbers":
+    if op == "state_ref":
+        return "STATE_REF[" + node["slot"] + "]"
+    if op in {"aggregate_history_numbers", "aggregate_history_triples"}:
+        aggregate_name = (
+            "AGGREGATE_HISTORY_TRIPLES"
+            if op == "aggregate_history_triples"
+            else "AGGREGATE_HISTORY_NUMBERS"
+        )
         return (
-            "AGGREGATE_HISTORY_NUMBERS[" + node["aggregate"].upper() + "]("
+            aggregate_name + "[" + node["aggregate"].upper() + "]("
             + _render_expression(node["expression"]) + ")"
         )
-    if op == "abs":
-        return "ABS(" + _render_expression(node["arg"]) + ")"
-    if op == "not":
-        return "NOT(" + _render_expression(node["arg"]) + ")"
+    if op in {"contains_candidate", "cardinality"}:
+        label = "CONTAINS_CANDIDATE" if op == "contains_candidate" else "CARDINALITY"
+        return label + "(" + _render_expression(node["state"]) + ")"
+    if op in {"abs", "not", "bool_to_number"}:
+        return op.upper() + "(" + _render_expression(node["arg"]) + ")"
     symbols = {
         "add": "+", "sub": "-", "mul": "*", "div": "/",
         "mod": "MOD", "min": "MIN", "max": "MAX",
         "eq": "==", "ne": "!=", "lt": "<", "lte": "<=",
         "gt": ">", "gte": ">=", "and": "AND", "or": "OR",
+        "set_union": "UNION", "set_intersection": "INTERSECTION",
+        "set_difference": "DIFFERENCE",
+        "set_symmetric_difference": "SYMMETRIC_DIFFERENCE",
     }
     return (
         "(" + _render_expression(node["left"]) + " "
@@ -158,6 +172,13 @@ def _validate_proposal(
             raise ValueError(
                 "formal_execution_spec is not a valid safe-DSL expression."
             ) from None
+        if (
+            formal.get("schema_version") == 2
+            and formal.get("direction") != direction
+        ):
+            raise ValueError(
+                "DSL v2 direction must match the proposal's isolated discovery direction."
+            )
         rendered = _render_expression(formal["score_expression"])
         hypothesis = (
             "The score defined by the attached formal DSL expression is hypothesized "
@@ -232,6 +253,19 @@ def _validate_proposal(
     proposal["registry_write_allowed"] = False
     return proposal
 
+def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("Duplicate JSON object key: " + key)
+        result[key] = value
+    return result
+
+
+def _reject_nonstandard_json_constant(value: str) -> None:
+    raise ValueError("Non-standard JSON numeric constant: " + value)
+
+
 def parse_hypothesis_proposals(report: str) -> dict[str, Any]:
     """Extract one bounded proposal block; malformed proposals fail closed."""
     base: dict[str, Any] = {
@@ -269,9 +303,15 @@ def parse_hypothesis_proposals(report: str) -> dict[str, Any]:
         if len(lines) >= 3 and lines[-1].strip() == "```":
             raw = "\n".join(lines[1:-1]).strip()
     try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError:
-        base["rejection_reasons"] = ["Proposal block is not valid JSON."]
+        payload = json.loads(
+            raw,
+            object_pairs_hook=_unique_json_object,
+            parse_constant=_reject_nonstandard_json_constant,
+        )
+    except (json.JSONDecodeError, ValueError):
+        base["rejection_reasons"] = [
+            "Proposal block is invalid JSON, contains duplicate keys, or uses non-standard numeric constants."
+        ]
         return base
     if not isinstance(payload, dict) or set(payload) != TOP_LEVEL_KEYS:
         base["rejection_reasons"] = ["Top-level proposal JSON keys do not match the allowed schema."]

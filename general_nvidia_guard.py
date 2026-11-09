@@ -14,14 +14,38 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 LOCK_PATH = "general_nvidia_lock.json"
 RATE_LIMIT_PATH = "general_nvidia_rate_limit.json"
 RATE_LIMIT_BRANCH = "general-nvidia-rate-limit-state"
-NVIDIA_REQUESTS_PER_MINUTE = 40
+NVIDIA_REQUESTS_PER_MINUTE = 40  # immutable hard ceiling
+NVIDIA_NORMAL_REQUESTS_PER_MINUTE = 30
 NVIDIA_RATE_WINDOW_SECONDS = 60
+NVIDIA_DAILY_WINDOW_SECONDS = 86400
+NVIDIA_DAILY_REQUEST_BUDGET = 200
+NVIDIA_MAX_REQUESTS_PER_PACKAGE = 4
+NVIDIA_BUDGET_CATEGORY_LIMITS = {
+    "forward_discovery": 100,
+    "forward_critique": 30,
+    "reverse_diagnostic": 20,
+    "between_draws": 30,
+    "retry_reserve": 20,
+}
+# The shared state branch currently stores schema-v2 ledgers using this exact
+# former budget. Accept it only as a known predecessor, normalize it in memory,
+# and preserve every reservation; the next authorized reservation persists v2
+# with the new limits. No zero-fill or history rewrite is performed.
+LEGACY_NVIDIA_DAILY_REQUEST_BUDGET = 72
+LEGACY_NVIDIA_BUDGET_CATEGORY_LIMITS = {
+    "forward_discovery": 40,
+    "forward_critique": 12,
+    "reverse_diagnostic": 8,
+    "between_draws": 8,
+    "retry_reserve": 4,
+}
 RATE_LIMIT_RESERVATION_SAFETY_SECONDS = 30
 MAX_REASON_LENGTH = 320
 MAX_DIAGNOSTIC_RUN_IDS = 10000
@@ -117,15 +141,38 @@ def should_activate_after_failure(attempted, succeeded):
 
 
 
-def initial_rate_limit_state():
-    return {
-        "schema_version": 1,
-        "window_seconds": NVIDIA_RATE_WINDOW_SECONDS,
-        "max_requests": NVIDIA_REQUESTS_PER_MINUTE,
-        "requests": [],
-        "diagnostic_run_ids": [],
-        "updated_at_utc": None,
-    }
+def budget_category_for_source(source, requested=None):
+    """Resolve every provider request into one of the five shared daily buckets."""
+    if requested is not None:
+        if requested not in NVIDIA_BUDGET_CATEGORY_LIMITS:
+            raise ValueError("unknown NVIDIA daily budget category")
+        return requested
+    if os.environ.get("GENERAL_NVIDIA_RESEARCH_RETRY_MODE", "").strip().lower() == "true":
+        return "retry_reserve"
+    explicit = os.environ.get("GENERAL_NVIDIA_BUDGET_CATEGORY", "").strip()
+    if explicit:
+        if explicit not in NVIDIA_BUDGET_CATEGORY_LIMITS:
+            raise ValueError("GENERAL_NVIDIA_BUDGET_CATEGORY is invalid")
+        return explicit
+    source = str(source)
+    if source == "open-research-forward":
+        return "forward_discovery"
+    if source == "open-research-reverse":
+        return "reverse_diagnostic"
+    if source == "open-research-forward-critique":
+        return "forward_critique"
+    if source == "open-research-between-draws":
+        return "between_draws"
+    agent = os.environ.get("AGENT_ID", os.environ.get("GENERAL_AGENT_ID", "")).strip().lower()
+    if agent == "research":
+        return "forward_discovery"
+    if agent in {"crossover"}:
+        return "between_draws"
+    if agent in {"debug", "validation"}:
+        return "forward_critique"
+    # Diagnostics, coordinator support calls, and unclassified normal agents
+    # consume the conservative critique bucket; no request escapes accounting.
+    return "forward_critique"
 
 
 def _parse_aware_timestamp(value, field_name):
@@ -140,118 +187,344 @@ def _parse_aware_timestamp(value, field_name):
     return parsed.astimezone(timezone.utc)
 
 
+def initial_rate_limit_state():
+    return {
+        "schema_version": 2,
+        "window_seconds": NVIDIA_RATE_WINDOW_SECONDS,
+        "max_requests": NVIDIA_REQUESTS_PER_MINUTE,
+        "normal_max_requests": NVIDIA_NORMAL_REQUESTS_PER_MINUTE,
+        "daily_window_seconds": NVIDIA_DAILY_WINDOW_SECONDS,
+        "daily_max_requests": NVIDIA_DAILY_REQUEST_BUDGET,
+        "category_limits": dict(NVIDIA_BUDGET_CATEGORY_LIMITS),
+        "package_max_requests": NVIDIA_MAX_REQUESTS_PER_PACKAGE,
+        "requests": [],
+        "daily_requests": [],
+        "diagnostic_run_ids": [],
+        "updated_at_utc": None,
+    }
+
+
 def validate_rate_limit_state(value):
     if not isinstance(value, dict):
         raise ValueError("NVIDIA rate-limit state must be a JSON object")
-    if value.get("schema_version") != 1:
-        raise ValueError("unsupported NVIDIA rate-limit schema")
-    if value.get("window_seconds") != NVIDIA_RATE_WINDOW_SECONDS:
-        raise ValueError("NVIDIA rate-limit window was changed or is invalid")
-    if value.get("max_requests") != NVIDIA_REQUESTS_PER_MINUTE:
-        raise ValueError("NVIDIA request cap was changed or is invalid")
+    # Schema v1 is readable only so its accounting can be reconstructed from
+    # the append-only state-branch commit history before any new provider call.
+    if value.get("schema_version") == 1:
+        allowed = {
+            "schema_version", "window_seconds", "max_requests", "requests",
+            "diagnostic_run_ids", "updated_at_utc",
+        }
+        legacy_allowed = allowed - {"diagnostic_run_ids"}
+        if set(value) not in (allowed, legacy_allowed):
+            raise ValueError("legacy NVIDIA rate-limit schema is invalid")
+        if value.get("window_seconds") != NVIDIA_RATE_WINDOW_SECONDS:
+            raise ValueError("NVIDIA rate-limit window was changed or is invalid")
+        if value.get("max_requests") != NVIDIA_REQUESTS_PER_MINUTE:
+            raise ValueError("NVIDIA hard request cap was changed or is invalid")
+        requests = value.get("requests")
+        if not isinstance(requests, list) or len(requests) > NVIDIA_REQUESTS_PER_MINUTE:
+            raise ValueError("NVIDIA rate-limit history is invalid")
+        previous = None
+        for entry in requests:
+            if not isinstance(entry, dict) or set(entry) != {"reserved_at_utc", "source"}:
+                raise ValueError("legacy NVIDIA request entry is invalid")
+            stamp = _parse_aware_timestamp(entry.get("reserved_at_utc"), "NVIDIA request timestamp")
+            source = entry.get("source")
+            if not isinstance(source, str) or not source or len(source) > 80:
+                raise ValueError("NVIDIA request source is invalid")
+            if previous is not None and stamp < previous:
+                raise ValueError("NVIDIA request history is not chronological")
+            previous = stamp
+        diagnostic_run_ids = value.get("diagnostic_run_ids", [])
+        if not isinstance(diagnostic_run_ids, list) or len(diagnostic_run_ids) > MAX_DIAGNOSTIC_RUN_IDS:
+            raise ValueError("diagnostic run-id history is invalid")
+        seen_diagnostic_run_ids = set()
+        for run_id in diagnostic_run_ids:
+            if (
+                not isinstance(run_id, str)
+                or not run_id.isascii()
+                or not run_id.isdigit()
+                or len(run_id) > 32
+                or str(int(run_id)) != run_id
+                or int(run_id) < 1
+                or run_id in seen_diagnostic_run_ids
+            ):
+                raise ValueError("diagnostic run-id history contains an invalid or duplicate ID")
+            seen_diagnostic_run_ids.add(run_id)
+        if value.get("updated_at_utc") is not None:
+            _parse_aware_timestamp(value["updated_at_utc"], "NVIDIA rate-limit updated_at_utc")
+        return value
+
+    required = {
+        "schema_version", "window_seconds", "max_requests", "normal_max_requests",
+        "daily_window_seconds", "daily_max_requests", "category_limits",
+        "package_max_requests", "requests", "daily_requests",
+        "diagnostic_run_ids", "updated_at_utc",
+    }
+    if value.get("schema_version") != 2 or set(value) != required:
+        raise ValueError("unsupported or malformed NVIDIA budget ledger schema")
+    fixed = (
+        ("window_seconds", NVIDIA_RATE_WINDOW_SECONDS),
+        ("max_requests", NVIDIA_REQUESTS_PER_MINUTE),
+        ("normal_max_requests", NVIDIA_NORMAL_REQUESTS_PER_MINUTE),
+        ("daily_window_seconds", NVIDIA_DAILY_WINDOW_SECONDS),
+        ("package_max_requests", NVIDIA_MAX_REQUESTS_PER_PACKAGE),
+    )
+    for key, expected in fixed:
+        if type(value.get(key)) is not int or value[key] != expected:
+            raise ValueError("NVIDIA budget constant was changed: " + key)
+
+    stored_daily_budget = value.get("daily_max_requests")
+    stored_category_limits = value.get("category_limits")
+    if type(stored_daily_budget) is not int:
+        raise ValueError("NVIDIA daily budget constant has an invalid type")
+    is_current_budget = (
+        stored_daily_budget == NVIDIA_DAILY_REQUEST_BUDGET
+        and stored_category_limits == NVIDIA_BUDGET_CATEGORY_LIMITS
+    )
+    is_known_legacy_budget = (
+        stored_daily_budget == LEGACY_NVIDIA_DAILY_REQUEST_BUDGET
+        and stored_category_limits == LEGACY_NVIDIA_BUDGET_CATEGORY_LIMITS
+    )
+    if not (is_current_budget or is_known_legacy_budget):
+        raise ValueError("NVIDIA daily category allocations or budget are unknown")
+
+    # Upgrade only the in-memory configuration. Reservation records are
+    # validated and retained unchanged; persistence occurs only with the next
+    # separately authorized reservation.
+    if is_known_legacy_budget:
+        value = dict(value)
+        value["daily_max_requests"] = NVIDIA_DAILY_REQUEST_BUDGET
+        value["category_limits"] = dict(NVIDIA_BUDGET_CATEGORY_LIMITS)
+
     requests = value.get("requests")
     if not isinstance(requests, list) or len(requests) > NVIDIA_REQUESTS_PER_MINUTE:
-        raise ValueError("NVIDIA rate-limit request history is invalid")
+        raise ValueError("NVIDIA rolling rate history is invalid")
     previous = None
-    for index, entry in enumerate(requests):
-        if not isinstance(entry, dict):
-            raise ValueError("NVIDIA rate-limit history entry is invalid")
-        stamp = _parse_aware_timestamp(
-            entry.get("reserved_at_utc"),
-            "NVIDIA rate-limit history timestamp",
-        )
+    for entry in requests:
+        if not isinstance(entry, dict) or set(entry) != {"reserved_at_utc", "source"}:
+            raise ValueError("NVIDIA rolling request entry is invalid")
+        stamp = _parse_aware_timestamp(entry.get("reserved_at_utc"), "NVIDIA request timestamp")
         source = entry.get("source")
         if not isinstance(source, str) or not source or len(source) > 80:
-            raise ValueError("NVIDIA rate-limit history source is invalid")
+            raise ValueError("NVIDIA request source is invalid")
         if previous is not None and stamp < previous:
-            raise ValueError("NVIDIA rate-limit history is not chronological")
+            raise ValueError("NVIDIA rolling request history is not chronological")
         previous = stamp
-    diagnostic_run_ids = value.get("diagnostic_run_ids", [])
-    if not isinstance(diagnostic_run_ids, list) or len(diagnostic_run_ids) > MAX_DIAGNOSTIC_RUN_IDS:
+
+    daily = value.get("daily_requests")
+    if not isinstance(daily, list) or len(daily) > 10000:
+        raise ValueError("NVIDIA rolling 24-hour request history is invalid")
+    previous = None
+    reservation_ids = set()
+    category_counts = {name: 0 for name in NVIDIA_BUDGET_CATEGORY_LIMITS}
+    for entry in daily:
+        expected_keys = {"reserved_at_utc", "source", "category", "package_id", "reservation_id"}
+        if not isinstance(entry, dict) or set(entry) != expected_keys:
+            raise ValueError("NVIDIA daily request entry is invalid")
+        stamp = _parse_aware_timestamp(entry.get("reserved_at_utc"), "NVIDIA daily request timestamp")
+        if previous is not None and stamp < previous:
+            raise ValueError("NVIDIA daily request history is not chronological")
+        previous = stamp
+        if not isinstance(entry.get("source"), str) or not entry["source"] or len(entry["source"]) > 80:
+            raise ValueError("NVIDIA daily request source is invalid")
+        category = entry.get("category")
+        if category not in NVIDIA_BUDGET_CATEGORY_LIMITS:
+            raise ValueError("NVIDIA daily request category is invalid")
+        package_id = entry.get("package_id")
+        reservation_id = entry.get("reservation_id")
+        if not isinstance(package_id, str) or not package_id or len(package_id) > 160:
+            raise ValueError("NVIDIA request package identifier is invalid")
+        if not isinstance(reservation_id, str) or not reservation_id or len(reservation_id) > 100:
+            raise ValueError("NVIDIA request reservation identifier is invalid")
+        if reservation_id in reservation_ids:
+            raise ValueError("NVIDIA reservation identifier is duplicated")
+        reservation_ids.add(reservation_id)
+        category_counts[category] += 1
+    # Historical migration may legitimately discover that the old system used
+    # more than the new budget. Preserve every such reservation and let the
+    # reservation function block new calls until the rolling window recovers.
+
+    ids = value.get("diagnostic_run_ids")
+    if not isinstance(ids, list) or len(ids) > MAX_DIAGNOSTIC_RUN_IDS:
         raise ValueError("diagnostic run-id history is invalid")
-    seen_diagnostic_run_ids = set()
-    for run_id in diagnostic_run_ids:
+    seen = set()
+    for run_id in ids:
         if (
-            not isinstance(run_id, str)
-            or not run_id.isascii()
-            or not run_id.isdigit()
-            or len(run_id) > 32
-            or str(int(run_id)) != run_id
-            or int(run_id) < 1
-            or run_id in seen_diagnostic_run_ids
+            not isinstance(run_id, str) or not run_id.isascii() or not run_id.isdigit()
+            or len(run_id) > 32 or str(int(run_id)) != run_id or int(run_id) < 1
+            or run_id in seen
         ):
             raise ValueError("diagnostic run-id history contains an invalid or duplicate ID")
-        seen_diagnostic_run_ids.add(run_id)
-    updated = value.get("updated_at_utc")
-    if updated is not None:
-        _parse_aware_timestamp(updated, "NVIDIA rate-limit updated_at_utc")
+        seen.add(run_id)
+    if value.get("updated_at_utc") is not None:
+        _parse_aware_timestamp(value["updated_at_utc"], "NVIDIA rate-limit updated_at_utc")
     return value
 
 
-def reserve_rate_limit_slot(previous, source, now=None, *, diagnostic_run_id=None):
+def reserve_rate_limit_slot(
+    previous,
+    source,
+    now=None,
+    *,
+    diagnostic_run_id=None,
+    budget_category=None,
+    package_id=None,
+):
     previous = validate_rate_limit_state(previous)
+    if previous.get("schema_version") != 2:
+        raise ValueError("legacy NVIDIA budget history must be reconstructed before reservation")
     source = " ".join(str(source).split())[:80]
     if not source:
         raise ValueError("NVIDIA request source is required")
+    category = budget_category_for_source(source, budget_category)
     diagnostic_run_ids = list(previous.get("diagnostic_run_ids", []))
     if diagnostic_run_id is not None:
         if (
-            not isinstance(diagnostic_run_id, str)
-            or not diagnostic_run_id.isascii()
-            or not diagnostic_run_id.isdigit()
-            or len(diagnostic_run_id) > 32
-            or str(int(diagnostic_run_id)) != diagnostic_run_id
-            or int(diagnostic_run_id) < 1
+            not isinstance(diagnostic_run_id, str) or not diagnostic_run_id.isascii()
+            or not diagnostic_run_id.isdigit() or len(diagnostic_run_id) > 32
+            or str(int(diagnostic_run_id)) != diagnostic_run_id or int(diagnostic_run_id) < 1
         ):
             raise ValueError("diagnostic run ID is invalid")
         if diagnostic_run_id in diagnostic_run_ids:
             raise ValueError("this diagnostic workflow run has already reserved its one request")
         if len(diagnostic_run_ids) >= MAX_DIAGNOSTIC_RUN_IDS:
             raise ValueError("diagnostic one-shot history is full; provider request blocked")
+
     now = now or datetime.now(timezone.utc)
     if not isinstance(now, datetime) or now.tzinfo is None or now.utcoffset() is None:
         raise ValueError("NVIDIA rate-limit clock must be timezone-aware")
     now = now.astimezone(timezone.utc)
-
-    # The timestamp is intentionally recorded 30 seconds ahead of the guard's
-    # clock. The final Git push has a 30-second timeout; this margin prevents a
-    # slow successful reservation push from making the record earlier than the
-    # outbound NVIDIA request it protects.
     effective_now = now + timedelta(seconds=RATE_LIMIT_RESERVATION_SAFETY_SECONDS)
-    cutoff = effective_now - timedelta(seconds=NVIDIA_RATE_WINDOW_SECONDS)
+    minute_cutoff = effective_now - timedelta(seconds=NVIDIA_RATE_WINDOW_SECONDS)
+    day_cutoff = effective_now - timedelta(seconds=NVIDIA_DAILY_WINDOW_SECONDS)
+
     active = []
     for entry in previous["requests"]:
-        stamp = _parse_aware_timestamp(
-            entry["reserved_at_utc"],
-            "NVIDIA rate-limit history timestamp",
-        )
-        if stamp >= cutoff:
+        stamp = _parse_aware_timestamp(entry["reserved_at_utc"], "NVIDIA request timestamp")
+        if stamp >= minute_cutoff:
             active.append(entry)
-
     if len(active) >= NVIDIA_REQUESTS_PER_MINUTE:
-        oldest = _parse_aware_timestamp(
-            active[0]["reserved_at_utc"],
-            "NVIDIA rate-limit history timestamp",
-        )
+        raise ValueError("the immutable 40-requests-per-minute hard limit is exhausted")
+    if len(active) >= NVIDIA_NORMAL_REQUESTS_PER_MINUTE:
+        oldest = _parse_aware_timestamp(active[0]["reserved_at_utc"], "NVIDIA request timestamp")
         release_at = oldest + timedelta(seconds=NVIDIA_RATE_WINDOW_SECONDS + 1)
         wait_seconds = max(1, math.ceil((release_at - effective_now).total_seconds()))
         return None, wait_seconds
 
-    active.append({
+    daily = [
+        dict(entry) for entry in previous["daily_requests"]
+        if _parse_aware_timestamp(entry["reserved_at_utc"], "NVIDIA daily request timestamp") >= day_cutoff
+    ]
+    if len(daily) >= NVIDIA_DAILY_REQUEST_BUDGET:
+        release_at = _parse_aware_timestamp(daily[0]["reserved_at_utc"], "NVIDIA daily request timestamp") + timedelta(seconds=NVIDIA_DAILY_WINDOW_SECONDS + 1)
+        raise ValueError(
+            "shared rolling 24-hour NVIDIA budget (" + str(NVIDIA_DAILY_REQUEST_BUDGET) + ") is exhausted; next slot is after "
+            + release_at.isoformat()
+        )
+    category_count = sum(1 for item in daily if item["category"] == category)
+    category_limit = NVIDIA_BUDGET_CATEGORY_LIMITS[category]
+    if category_count >= category_limit:
+        matching = [item for item in daily if item["category"] == category]
+        release_at = _parse_aware_timestamp(matching[0]["reserved_at_utc"], "NVIDIA category timestamp") + timedelta(seconds=NVIDIA_DAILY_WINDOW_SECONDS + 1)
+        raise ValueError(
+            "NVIDIA daily allocation for " + category + " (" + str(category_limit)
+            + ") is exhausted; next slot is after " + release_at.isoformat()
+        )
+
+    if package_id is None:
+        run_id = os.environ.get("GITHUB_RUN_ID", "").strip()
+        run_attempt = os.environ.get("GITHUB_RUN_ATTEMPT", "1").strip()
+        package_id = (run_id + ":" + run_attempt) if run_id else ("local:" + str(os.getpid()))
+    if not isinstance(package_id, str) or not package_id or len(package_id) > 160:
+        raise ValueError("NVIDIA job-package identity is invalid")
+    if sum(1 for item in daily if item["package_id"] == package_id) >= NVIDIA_MAX_REQUESTS_PER_PACKAGE:
+        raise ValueError("NVIDIA job package has reached its four-request maximum")
+
+    reservation = {
         "reserved_at_utc": effective_now.isoformat(),
         "source": source,
-    })
-    state = {
-        "schema_version": 1,
+        "category": category,
+        "package_id": package_id,
+        "reservation_id": uuid.uuid4().hex,
+    }
+    daily.append(reservation)
+    active.append({"reserved_at_utc": effective_now.isoformat(), "source": source})
+    next_state = {
+        "schema_version": 2,
         "window_seconds": NVIDIA_RATE_WINDOW_SECONDS,
         "max_requests": NVIDIA_REQUESTS_PER_MINUTE,
+        "normal_max_requests": NVIDIA_NORMAL_REQUESTS_PER_MINUTE,
+        "daily_window_seconds": NVIDIA_DAILY_WINDOW_SECONDS,
+        "daily_max_requests": NVIDIA_DAILY_REQUEST_BUDGET,
+        "category_limits": dict(NVIDIA_BUDGET_CATEGORY_LIMITS),
+        "package_max_requests": NVIDIA_MAX_REQUESTS_PER_PACKAGE,
         "requests": active,
+        "daily_requests": daily,
         "diagnostic_run_ids": diagnostic_run_ids + ([diagnostic_run_id] if diagnostic_run_id is not None else []),
         "updated_at_utc": now.isoformat(),
     }
-    return validate_rate_limit_state(state), 0
+    return validate_rate_limit_state(next_state), 0
 
 
+def migrate_legacy_rate_limit_state(previous, reservation_history, now=None):
+    """Build a 24-hour ledger from append-only reservation commits; never zero-fill unknown history."""
+    previous = validate_rate_limit_state(previous)
+    if previous.get("schema_version") != 1:
+        return validate_rate_limit_state(previous)
+    now = now or datetime.now(timezone.utc)
+    if not isinstance(now, datetime) or now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("NVIDIA migration clock must be timezone-aware")
+    cutoff = now.astimezone(timezone.utc) - timedelta(seconds=NVIDIA_DAILY_WINDOW_SECONDS)
+    if not isinstance(reservation_history, list):
+        raise ValueError("legacy NVIDIA reservation history is unavailable")
+    daily = []
+    seen = set()
+    for item in reservation_history:
+        if not isinstance(item, dict) or set(item) != {"commit_sha", "reserved_at_utc", "source"}:
+            raise ValueError("legacy NVIDIA reservation history entry is malformed")
+        stamp = _parse_aware_timestamp(item["reserved_at_utc"], "legacy reservation timestamp")
+        if stamp < cutoff:
+            continue
+        commit_sha = item["commit_sha"]
+        source = item["source"]
+        if not isinstance(commit_sha, str) or len(commit_sha) != 40 or commit_sha in seen:
+            raise ValueError("legacy NVIDIA reservation commit ID is invalid or duplicated")
+        seen.add(commit_sha)
+        category = budget_category_for_source(source)
+        daily.append({
+            "reserved_at_utc": stamp.isoformat(),
+            "source": source,
+            "category": category,
+            "package_id": "legacy:" + commit_sha,
+            "reservation_id": commit_sha,
+        })
+    daily.sort(key=lambda entry: _parse_aware_timestamp(entry["reserved_at_utc"], "legacy reservation timestamp"))
+    current_minute = [
+        item for item in previous["requests"]
+        if _parse_aware_timestamp(item["reserved_at_utc"], "legacy current minute timestamp") >= cutoff
+    ]
+    for minute_item in current_minute:
+        if not any(
+            item["source"] == minute_item["source"]
+            and item["reserved_at_utc"] == _parse_aware_timestamp(minute_item["reserved_at_utc"], "legacy current minute timestamp").isoformat()
+            for item in daily
+        ):
+            raise ValueError("legacy NVIDIA reservation history is incomplete; provider requests blocked")
+    updated = previous.get("updated_at_utc")
+    if updated is not None and _parse_aware_timestamp(updated, "legacy ledger update timestamp") >= cutoff:
+        updated_stamp = _parse_aware_timestamp(updated, "legacy ledger update timestamp")
+        if not any(
+            abs(( _parse_aware_timestamp(item["reserved_at_utc"], "legacy reservation timestamp") - updated_stamp).total_seconds()) <= 120
+            for item in daily
+        ):
+            raise ValueError("legacy NVIDIA reservation history is incomplete; provider requests blocked")
+    state = initial_rate_limit_state()
+    state["requests"] = list(previous["requests"])
+    state["daily_requests"] = daily
+    state["diagnostic_run_ids"] = list(previous.get("diagnostic_run_ids", []))
+    state["updated_at_utc"] = now.astimezone(timezone.utc).isoformat()
+    return validate_rate_limit_state(state)
 
 def _run_git(arguments, *, cwd=None):
     try:
@@ -273,11 +546,18 @@ def _run_git(arguments, *, cwd=None):
     return completed.stdout
 
 
-def _fetch_remote_branch(branch):
+def _fetch_remote_branch(branch, *, full_history=False):
     if not isinstance(branch, str) or not branch or "/" in branch or ".." in branch:
         raise RuntimeError("Invalid GENERAL safety-state branch; NVIDIA request blocked.")
     refspec = "+refs/heads/" + branch + ":refs/remotes/origin/" + branch
-    _run_git(["fetch", "--no-tags", "--depth=1", "origin", refspec])
+    if not full_history:
+        _run_git(["fetch", "--no-tags", "--depth=1", "origin", refspec])
+        return
+    shallow = _run_git(["rev-parse", "--is-shallow-repository"]).strip() == "true"
+    if shallow:
+        _run_git(["fetch", "--unshallow", "--no-tags", "origin", refspec])
+    else:
+        _run_git(["fetch", "--no-tags", "origin", refspec])
 
 
 def _cleanup_rate_limit_worktree():
@@ -571,13 +851,44 @@ def _ensure_rate_limit_worktree():
     return worktree
 
 
+def _reconstruct_legacy_reservations(worktree, now):
+    cutoff = now.astimezone(timezone.utc) - timedelta(seconds=NVIDIA_DAILY_WINDOW_SECONDS)
+    since = (cutoff - timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    log = _run_git(
+        ["log", "--since=" + since, "--format=%H%x09%s", "--", RATE_LIMIT_PATH],
+        cwd=worktree,
+    )
+    history = []
+    for line in log.splitlines():
+        parts = line.split("\t", 1)
+        if len(parts) != 2 or parts[1] != "chore: reserve shared NVIDIA request slot":
+            continue
+        commit_sha = parts[0]
+        if len(commit_sha) != 40:
+            raise RuntimeError("Legacy NVIDIA rate-limit history has an invalid commit; provider request blocked.")
+        try:
+            snapshot = json.loads(_run_git(["show", commit_sha + ":" + RATE_LIMIT_PATH], cwd=worktree))
+            requests = snapshot.get("requests") if isinstance(snapshot, dict) else None
+            latest = requests[-1] if isinstance(requests, list) and requests else None
+        except (ValueError, IndexError):
+            raise RuntimeError("Legacy NVIDIA reservation commit cannot be reconstructed; provider request blocked.") from None
+        if not isinstance(latest, dict) or set(latest) != {"reserved_at_utc", "source"}:
+            raise RuntimeError("Legacy NVIDIA reservation commit is malformed; provider request blocked.")
+        stamp = _parse_aware_timestamp(latest.get("reserved_at_utc"), "legacy reservation timestamp")
+        if stamp >= cutoff:
+            history.append({
+                "commit_sha": commit_sha,
+                "reserved_at_utc": stamp.isoformat(),
+                "source": latest["source"],
+            })
+    return history
+
+
 def read_remote_rate_limit():
     worktree = _ensure_rate_limit_worktree()
     path = worktree / RATE_LIMIT_PATH
     try:
-        state = validate_rate_limit_state(
-            json.loads(path.read_text(encoding="utf-8"))
-        )
+        state = validate_rate_limit_state(json.loads(path.read_text(encoding="utf-8")))
     except (OSError, ValueError, json.JSONDecodeError):
         raise RuntimeError(
             "shared NVIDIA rate-limit ledger is missing or malformed; API use blocked"
@@ -585,8 +896,25 @@ def read_remote_rate_limit():
     head = _run_git(["rev-parse", "HEAD"], cwd=worktree).strip()
     if not head:
         raise RuntimeError("shared NVIDIA rate-limit branch head is unreadable; API use blocked")
+    if state.get("schema_version") == 1:
+        try:
+            # Only the one-time legacy migration needs full commit history.
+            # Normal v2 reservations use a shallow fetch of the current head.
+            _fetch_remote_branch(RATE_LIMIT_BRANCH, full_history=True)
+            remote_ref = "refs/remotes/origin/" + RATE_LIMIT_BRANCH
+            _run_git(["reset", "--hard", remote_ref], cwd=worktree)
+            state = validate_rate_limit_state(json.loads(path.read_text(encoding="utf-8")))
+            head = _run_git(["rev-parse", "HEAD"], cwd=worktree).strip()
+            if state.get("schema_version") != 1 or not head:
+                raise RuntimeError("legacy state changed unexpectedly during migration")
+            history = _reconstruct_legacy_reservations(worktree, datetime.now(timezone.utc))
+            state = migrate_legacy_rate_limit_state(state, history)
+        except Exception as error:
+            raise RuntimeError(
+                "Legacy 24-hour NVIDIA usage could not be verified; provider request blocked. "
+                + str(error)
+            ) from None
     return state, head
-
 
 def write_remote_rate_limit(state, sha):
     worktree = _ensure_rate_limit_worktree()
@@ -625,7 +953,7 @@ def write_remote_rate_limit(state, sha):
     return new_head
 
 
-def reserve_nvidia_request(source, *, diagnostic_exception=False, single_request_exception=False):
+def reserve_nvidia_request(source, *, diagnostic_exception=False, single_request_exception=False, budget_category=None):
     """Persist one shared request slot with narrowly verified one-request modes."""
     source = " ".join(str(source).split())[:80]
     if not source:
@@ -663,15 +991,23 @@ def reserve_nvidia_request(source, *, diagnostic_exception=False, single_request
             )
 
         previous, sha = read_remote_rate_limit()
-        next_state, wait_seconds = reserve_rate_limit_slot(
-            previous,
-            source,
-            diagnostic_run_id=diagnostic_run_id,
-        )
+        package_run = os.environ.get("GITHUB_RUN_ID", "").strip()
+        package_attempt = os.environ.get("GITHUB_RUN_ATTEMPT", "1").strip()
+        package_id = (package_run + ":" + package_attempt) if package_run else ("local:" + str(os.getpid()))
+        try:
+            next_state, wait_seconds = reserve_rate_limit_slot(
+                previous,
+                source,
+                diagnostic_run_id=diagnostic_run_id,
+                budget_category=budget_category,
+                package_id=package_id,
+            )
+        except ValueError as error:
+            raise RuntimeError("NVIDIA shared budget blocked this request: " + str(error)) from None
         if next_state is None:
             print(
-                "GENERAL NVIDIA RATE LIMIT: 40 requests are already reserved in the "
-                "rolling 60-second window; waiting " + str(wait_seconds) + " seconds."
+                "GENERAL NVIDIA RATE LIMIT: normal 30-requests-per-minute operating ceiling reached; "
+                "the immutable hard ceiling remains 40. Waiting " + str(wait_seconds) + " seconds."
             )
             time.sleep(wait_seconds)
             continue
@@ -685,8 +1021,10 @@ def reserve_nvidia_request(source, *, diagnostic_exception=False, single_request
             ) from None
 
         print(
-            "GENERAL NVIDIA RATE LIMIT: reservation committed; "
-            + str(len(next_state["requests"])) + "/40 slots in the rolling 60-second window. "
+            "GENERAL NVIDIA BUDGET: reservation committed; "
+            + str(len(next_state["requests"])) + "/30 normal slots (40 hard) in 60 seconds; "
+            + str(len(next_state["daily_requests"])) + "/" + str(NVIDIA_DAILY_REQUEST_BUDGET) + " shared slots in 24 hours; "
+            + "category=" + budget_category_for_source(source, budget_category) + ". "
             + "State commit: " + commit_sha
         )
         return next_state["requests"][-1]
