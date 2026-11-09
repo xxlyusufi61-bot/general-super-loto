@@ -509,9 +509,9 @@ def empty_memory() -> dict[str, Any]:
 def _validate_candidate(candidate: Any) -> dict[str, Any]:
     keys = {
         "hypothesis_id", "family", "template_id", "proposal",
-        "execution_spec", "specification_sha256", "synthetic_tests",
-        "forward_walk_forward", "time_ordered_cross_validation",
-        "reverse_retrospective_only",
+        "execution_spec", "specification_sha256", "training_signal",
+        "synthetic_tests", "forward_walk_forward",
+        "time_ordered_cross_validation", "reverse_retrospective_only",
     }
     if not isinstance(candidate, dict) or set(candidate) != keys:
         raise OfflineResearchError("Stored offline hypothesis has invalid fields.")
@@ -540,6 +540,24 @@ def _validate_candidate(candidate: Any) -> dict[str, Any]:
         raise OfflineResearchError("Stored proposal and execution specification do not match.")
     if candidate["specification_sha256"] != _sha(_canonical(spec)):
         raise OfflineResearchError("Stored specification hash is invalid.")
+    training_signal = candidate["training_signal"]
+    if (
+        not isinstance(training_signal, dict)
+        or set(training_signal) != {
+            "distinct_score_values", "score_range", "training_draw_count",
+            "selection_source", "validation_data_used", "target_data_used",
+        }
+        or type(training_signal.get("distinct_score_values")) is not int
+        or not 2 <= training_signal["distinct_score_values"] <= 60
+        or type(training_signal.get("score_range")) is not int
+        or training_signal["score_range"] <= 0
+        or type(training_signal.get("training_draw_count")) is not int
+        or training_signal["training_draw_count"] < MIN_TRAIN_DRAWS
+        or training_signal.get("selection_source") != "training_prefix_only"
+        or training_signal.get("validation_data_used") is not False
+        or training_signal.get("target_data_used") is not False
+    ):
+        raise OfflineResearchError("Stored training-only discovery signal is invalid.")
     synthetic = candidate["synthetic_tests"]
     if (
         not isinstance(synthetic, dict)
@@ -624,6 +642,8 @@ def _validate_entry(entry: Any, expected_id: int) -> dict[str, Any]:
     seen = set()
     for candidate in entry["candidates"]:
         _validate_candidate(candidate)
+        if candidate["training_signal"]["training_draw_count"] != discovery["draw_count"]:
+            raise OfflineResearchError("Candidate training signal does not match the entry's discovery prefix.")
         if candidate["hypothesis_id"] in seen:
             raise OfflineResearchError("Offline memory contains duplicate hypothesis identifiers.")
         seen.add(candidate["hypothesis_id"])
@@ -745,6 +765,7 @@ def memory_context(
                     "family": item["family"],
                     "proposal": item["proposal"],
                     "execution_spec": item["execution_spec"],
+                    "training_signal": item["training_signal"],
                     "forward_walk_forward": item["forward_walk_forward"],
                     "time_ordered_cross_validation": item["time_ordered_cross_validation"],
                     "reverse_retrospective_only": item["reverse_retrospective_only"],
