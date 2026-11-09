@@ -280,7 +280,7 @@ def build_messages(
         "targets, model-authored formula prose, model-selected evaluation protocol fields, or any claim of validation. "
         "The coordinator assigns the four mandatory evaluation protocols and all mathematical explanation fields "
         "locally after validating the formal DSL object. Proposed family names are descriptive only and never change "
-        "the method registry. The research_rationale field is commentary only and cannot override the formal definition.\\n"
+        "the method registry. The research_rationale field is commentary only and cannot override the formal definition.\n"
         "The formal_execution_spec field is the sole authoritative mathematical definition. It must be either null "
         "(if the hypothesis cannot be represented faithfully by the current safe DSL) or a complete schema_version 1 "
         "execution_spec object. The coordinator derives hypothesis, exact_definition, inputs, output_rule, parameter "
