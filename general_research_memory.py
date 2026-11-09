@@ -721,8 +721,22 @@ def load_memory(path: str | Path = MEMORY_PATH) -> dict[str, Any]:
     target = Path(path)
     if not target.exists():
         return empty_memory()
+    def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ResearchMemoryError("Research-memory JSON contains a duplicate object key.")
+            result[key] = value
+        return result
+
     try:
-        payload = json.loads(target.read_text(encoding="utf-8"))
+        payload = json.loads(
+            target.read_text(encoding="utf-8"),
+            object_pairs_hook=reject_duplicate_keys,
+            parse_constant=lambda value: (_ for _ in ()).throw(
+                ResearchMemoryError("Research-memory JSON contains a non-finite number.")
+            ),
+        )
     except (OSError, UnicodeError, json.JSONDecodeError):
         raise ResearchMemoryError("Research-memory file could not be read as valid UTF-8 JSON.") from None
     legacy_keys = {"schema_version", "project", "research_epoch", "purpose", "entries"}
