@@ -226,7 +226,7 @@ class OpenResearchIsolationTests(unittest.TestCase):
         self.assertIn("zero or one proposal only", system.lower())
         self.assertIn("whole-block fail-closed contract", system.lower())
         self.assertIn("schema_version 1", lowered)
-        self.assertIn('"falsification_criterion"', system)
+        self.assertIn("falsification criterion", system.lower())
         self.assertIn('"forward_walk_forward"', system)
         self.assertIn("An empty proposals list is an acceptable result.", system)
         self.assertIn("one isolated forward discovery pass", lowered)

@@ -284,9 +284,9 @@ def build_messages(
         "The formal_execution_spec field is the sole authoritative mathematical definition. It must be either null "
         "(if the hypothesis cannot be represented faithfully by the current safe DSL) or a complete schema_version 1 "
         "execution_spec object. The coordinator derives hypothesis, exact_definition, inputs, output_rule, parameter "
-        "policy, selection policy, and falsification criterion from the validated AST and project governance. "
+        "policy, selection policy, and falsification criterion from the validated AST and project governance.\n"
         "The separate execution-specification block MUST be identical to this formal object for the same hypothesis_id. "
-        "Do not approximate an unrepresentable hypothesis with a different DSL expression.\\n"
+        "Do not approximate an unrepresentable hypothesis with a different DSL expression.\n"
         "Do not use sealed validation rows, validation outcomes, or post-target records to define or order the proposal.\n"
         "Also include exactly one HYPOTHESIS_EXECUTION_SPECS_JSON block for this direction only. "
         "Provide zero or one matching execution specification for the first proposal in this isolated pass, "
@@ -621,12 +621,12 @@ def parse_directional_result(
         allowed_hypothesis_ids=set(original_ids),
     )
     if execution["specifications"]:
-        proposals_by_id = {
-            item["hypothesis_id"]: item for item in proposals["proposals"]
+        proposals_by_source_id = {
+            item.get("source_hypothesis_id"): item for item in proposals["proposals"]
         }
         if any(
             not execution_spec_matches_proposal(
-                proposals_by_id.get(item["hypothesis_id"], {}),
+                proposals_by_source_id.get(item["hypothesis_id"], {}),
                 item["execution_spec"],
             )
             for item in execution["specifications"]
