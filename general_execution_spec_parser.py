@@ -9,7 +9,8 @@ import json
 import re
 from typing import Any
 
-from general_hypothesis_execution import (
+from general_execution_spec_dispatch import (
+    execution_spec_version,
     run_synthetic_contract_tests,
     validate_execution_spec,
 )
@@ -124,6 +125,7 @@ def parse_execution_spec_block(
             validated.append({
                 "hypothesis_id": hypothesis_id,
                 "execution_spec": spec,
+                "dsl_version": execution_spec_version(spec),
                 "dsl_validated": True,
                 "synthetic_tests_passed": synthetic_result["status"] == "PASS",
                 "synthetic_test_summary": synthetic_result,
