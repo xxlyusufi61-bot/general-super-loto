@@ -406,5 +406,134 @@ class AutonomousResearchStateTests(unittest.TestCase):
                 auto.read_global_lock(path)
 
 
+
+
+    def test_legacy_state_schema_is_upgraded_in_memory_without_losing_history(self):
+        state = auto.initial_state()
+        state.pop("target_queue")
+        state["schema_version"] = 1
+        state["attempts"].append({
+            "attempt_id": "e" * 64,
+            "target_date": "2026-10-29",
+            "archive_sha256": "f" * 64,
+            "archive_record_count": 978,
+            "claimed_at_utc": NOW.isoformat(),
+            "github_run_id": "98765",
+        })
+        upgraded = auto.validate_state(state)
+        self.assertEqual(upgraded["schema_version"], 2)
+        self.assertEqual(upgraded["target_queue"], auto.target_queue.initial_queue())
+        self.assertEqual(upgraded["attempts"][0]["attempt_id"], "e" * 64)
+
+    def test_prepare_requires_the_persisted_fifo_head_snapshot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root / "archive.json"
+            ledger = root / "ledger.json"
+            lock = root / "lock.json"
+            rows = synthetic_rows(90)
+            raw = auto.target_queue._snapshot_bytes(rows)
+            archive.write_bytes(raw)
+            ledger.write_text(
+                json.dumps({"schema_version": 1, "purpose": "test", "entries": []}),
+                encoding="utf-8",
+            )
+            lock.write_text(json.dumps(initial_lock_state()), encoding="utf-8")
+            state = active_state()
+            item = auto.target_queue._make_item(
+                rows, source_archive_sha256="a" * 64,
+                enqueued_at_utc=NOW.isoformat(),
+            )
+            state["target_queue"] = {
+                "schema_version": 1,
+                "observed_through_date": rows[-1]["date"],
+                "items": [item],
+                "completed": [],
+            }
+            plan = auto.prepare_cycle(
+                state, archive_path=archive, ledger_path=ledger,
+                global_lock_path=lock, now=NOW,
+            )
+            self.assertTrue(plan["eligible"])
+            self.assertEqual(plan["target_date"], rows[-1]["date"])
+
+            later_rows = rows + synthetic_rows(
+                1, start=(date.fromisoformat(rows[-1]["date"]) + timedelta(days=2)).isoformat()
+            )
+            archive.write_bytes(auto.target_queue._snapshot_bytes(later_rows))
+            with self.assertRaisesRegex(auto.AutonomousResearchError, "immutable FIFO head"):
+                auto.prepare_cycle(
+                    state, archive_path=archive, ledger_path=ledger,
+                    global_lock_path=lock, now=NOW,
+                )
+
+    def test_terminal_scheduler_outcome_releases_only_the_matching_fifo_head(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root / "archive.json"
+            ledger = root / "ledger.json"
+            lock = root / "lock.json"
+            rows = synthetic_rows(90)
+            archive.write_bytes(auto.target_queue._snapshot_bytes(rows))
+            ledger.write_text(
+                json.dumps({"schema_version": 1, "purpose": "test", "entries": []}),
+                encoding="utf-8",
+            )
+            lock.write_text(json.dumps(initial_lock_state()), encoding="utf-8")
+            state = active_state()
+            item = auto.target_queue._make_item(
+                rows, source_archive_sha256="b" * 64,
+                enqueued_at_utc=NOW.isoformat(),
+            )
+            state["target_queue"] = {
+                "schema_version": 1,
+                "observed_through_date": rows[-1]["date"],
+                "items": [item],
+                "completed": [],
+            }
+            plan = auto.prepare_cycle(
+                state, archive_path=archive, ledger_path=ledger,
+                global_lock_path=lock, now=NOW,
+            )
+            attempt = auto.claim_attempt(state, plan, github_run_id="98766", now=NOW)
+            auto.record_outcome(
+                state, attempt["attempt_id"], outcome="SUCCEEDED",
+                reason_code="EVALUATION_COMPLETED", now=NOW,
+            )
+            self.assertEqual(state["target_queue"]["items"], [])
+            self.assertEqual(len(state["target_queue"]["completed"]), 1)
+            self.assertEqual(
+                state["target_queue"]["completed"][0]["target_date"], rows[-1]["date"]
+            )
+
+    def test_no_send_failure_keeps_fifo_head_for_safe_same_target_retry(self):
+        rows = synthetic_rows(90)
+        item = auto.target_queue._make_item(
+            rows, source_archive_sha256="c" * 64,
+            enqueued_at_utc=NOW.isoformat(),
+        )
+        state = active_state()
+        state["target_queue"] = {
+            "schema_version": 1,
+            "observed_through_date": rows[-1]["date"],
+            "items": [item],
+            "completed": [],
+        }
+        state["attempts"].append({
+            "attempt_id": "d" * 64,
+            "target_date": rows[-1]["date"],
+            "archive_sha256": item["archive_sha256"],
+            "archive_record_count": len(rows),
+            "claimed_at_utc": NOW.isoformat(),
+            "github_run_id": "98767",
+        })
+        auto.record_outcome(
+            state, "d" * 64, outcome="FAILED",
+            reason_code="NO_PROVIDER_REQUEST_SENT", now=NOW,
+        )
+        self.assertEqual(len(state["target_queue"]["items"]), 1)
+        self.assertEqual(state["target_queue"]["completed"], [])
+
+
 if __name__ == "__main__":
     unittest.main()
