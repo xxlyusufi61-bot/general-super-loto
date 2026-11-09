@@ -25,9 +25,21 @@ NVIDIA_REQUESTS_PER_MINUTE = 40  # immutable hard ceiling
 NVIDIA_NORMAL_REQUESTS_PER_MINUTE = 30
 NVIDIA_RATE_WINDOW_SECONDS = 60
 NVIDIA_DAILY_WINDOW_SECONDS = 86400
-NVIDIA_DAILY_REQUEST_BUDGET = 72
+NVIDIA_DAILY_REQUEST_BUDGET = 200
 NVIDIA_MAX_REQUESTS_PER_PACKAGE = 4
 NVIDIA_BUDGET_CATEGORY_LIMITS = {
+    "forward_discovery": 100,
+    "forward_critique": 30,
+    "reverse_diagnostic": 20,
+    "between_draws": 30,
+    "retry_reserve": 20,
+}
+# The shared state branch currently stores schema-v2 ledgers using this exact
+# former budget. Accept it only as a known predecessor, normalize it in memory,
+# and preserve every reservation; the next authorized reservation persists v2
+# with the new limits. No zero-fill or history rewrite is performed.
+LEGACY_NVIDIA_DAILY_REQUEST_BUDGET = 72
+LEGACY_NVIDIA_BUDGET_CATEGORY_LIMITS = {
     "forward_discovery": 40,
     "forward_critique": 12,
     "reverse_diagnostic": 8,
@@ -256,14 +268,34 @@ def validate_rate_limit_state(value):
         ("max_requests", NVIDIA_REQUESTS_PER_MINUTE),
         ("normal_max_requests", NVIDIA_NORMAL_REQUESTS_PER_MINUTE),
         ("daily_window_seconds", NVIDIA_DAILY_WINDOW_SECONDS),
-        ("daily_max_requests", NVIDIA_DAILY_REQUEST_BUDGET),
         ("package_max_requests", NVIDIA_MAX_REQUESTS_PER_PACKAGE),
     )
     for key, expected in fixed:
         if type(value.get(key)) is not int or value[key] != expected:
             raise ValueError("NVIDIA budget constant was changed: " + key)
-    if value.get("category_limits") != NVIDIA_BUDGET_CATEGORY_LIMITS:
-        raise ValueError("NVIDIA daily category allocations were changed or are invalid")
+
+    stored_daily_budget = value.get("daily_max_requests")
+    stored_category_limits = value.get("category_limits")
+    if type(stored_daily_budget) is not int:
+        raise ValueError("NVIDIA daily budget constant has an invalid type")
+    is_current_budget = (
+        stored_daily_budget == NVIDIA_DAILY_REQUEST_BUDGET
+        and stored_category_limits == NVIDIA_BUDGET_CATEGORY_LIMITS
+    )
+    is_known_legacy_budget = (
+        stored_daily_budget == LEGACY_NVIDIA_DAILY_REQUEST_BUDGET
+        and stored_category_limits == LEGACY_NVIDIA_BUDGET_CATEGORY_LIMITS
+    )
+    if not (is_current_budget or is_known_legacy_budget):
+        raise ValueError("NVIDIA daily category allocations or budget are unknown")
+
+    # Upgrade only the in-memory configuration. Reservation records are
+    # validated and retained unchanged; persistence occurs only with the next
+    # separately authorized reservation.
+    if is_known_legacy_budget:
+        value = dict(value)
+        value["daily_max_requests"] = NVIDIA_DAILY_REQUEST_BUDGET
+        value["category_limits"] = dict(NVIDIA_BUDGET_CATEGORY_LIMITS)
 
     requests = value.get("requests")
     if not isinstance(requests, list) or len(requests) > NVIDIA_REQUESTS_PER_MINUTE:
@@ -387,7 +419,7 @@ def reserve_rate_limit_slot(
     if len(daily) >= NVIDIA_DAILY_REQUEST_BUDGET:
         release_at = _parse_aware_timestamp(daily[0]["reserved_at_utc"], "NVIDIA daily request timestamp") + timedelta(seconds=NVIDIA_DAILY_WINDOW_SECONDS + 1)
         raise ValueError(
-            "shared rolling 24-hour NVIDIA budget (72) is exhausted; next slot is after "
+            "shared rolling 24-hour NVIDIA budget (" + str(NVIDIA_DAILY_REQUEST_BUDGET) + ") is exhausted; next slot is after "
             + release_at.isoformat()
         )
     category_count = sum(1 for item in daily if item["category"] == category)
@@ -991,7 +1023,7 @@ def reserve_nvidia_request(source, *, diagnostic_exception=False, single_request
         print(
             "GENERAL NVIDIA BUDGET: reservation committed; "
             + str(len(next_state["requests"])) + "/30 normal slots (40 hard) in 60 seconds; "
-            + str(len(next_state["daily_requests"])) + "/72 shared slots in 24 hours; "
+            + str(len(next_state["daily_requests"])) + "/" + str(NVIDIA_DAILY_REQUEST_BUDGET) + " shared slots in 24 hours; "
             + "category=" + budget_category_for_source(source, budget_category) + ". "
             + "State commit: " + commit_sha
         )
