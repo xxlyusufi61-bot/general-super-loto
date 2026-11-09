@@ -523,7 +523,7 @@ try:
         captured_request["payload"] = json.loads(request.data.decode("utf-8"))
         return _FakeResponse(final_and_reasoning)
 
-    with patch("general_core.reserve_nvidia_request"), patch(
+    with patch("general_core.reserve_nvidia_request") as reserve_call, patch(
         "general_core.urllib.request.urlopen",
         side_effect=capture_final_request
     ):
@@ -534,6 +534,14 @@ try:
     )
     request_payload = captured_request["payload"]
     template_kwargs = request_payload.get("chat_template_kwargs", {})
+    regression_check(
+        request_payload.get("max_tokens") == 8192,
+        "GENERAL Core respects the shared 8192-token response ceiling"
+    )
+    regression_check(
+        reserve_call.call_args == (("general-core",), {}),
+        "GENERAL Core uses the shared provider reservation guard"
+    )
     regression_check(
         request_payload.get("reasoning_effort") == "low",
         "GLM reasoning budget is explicitly reduced to leave room for final content"

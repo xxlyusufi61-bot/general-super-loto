@@ -101,11 +101,42 @@ def _copy_row(row: dict[str, Any]) -> dict[str, Any]:
     return {"date": row["date"], "numbers": list(row["numbers"])}
 
 
+def _offline_development_consumption(
+    memory_path: str | Path = "general_research_memory.json",
+) -> tuple[list[str], str]:
+    """Load validated offline-development dates and their immutable snapshot digest."""
+    path = Path(memory_path)
+    if not path.exists():
+        dates: list[str] = []
+    else:
+        try:
+            # Import lazily to avoid a module cycle: the offline runner itself
+            # imports this sealed evaluator, while the combined memory loader
+            # validates its offline namespace through that runner's validator.
+            from general_research_memory import load_memory
+            memory = load_memory(path)
+            offline = memory["offline_research"]
+            windows = offline["consumed_development_windows"]
+            dates = sorted({
+                day
+                for window in windows
+                for day in window["dates"]
+            })
+        except Exception as exc:
+            raise SealedEvaluationError(
+                "Offline development-consumption memory is invalid; sealed research fails closed ("
+                + type(exc).__name__ + ")."
+            ) from None
+    digest = _sha256_bytes(_canonical_json(dates))
+    return dates, digest
+
+
 def split_archive(
     rows: list[dict[str, Any]],
     *,
     archive_sha256: str = "",
     used_validation_dates: set[str] | None = None,
+    offline_memory_path: str | Path = "general_research_memory.json",
 ) -> dict[str, Any]:
     """Create fresh disjoint discovery and directional holdouts, per regime.
 
@@ -143,11 +174,20 @@ def split_archive(
         raise SealedEvaluationError("Target/future row leaked into the pre-target partition.")
 
     if used_validation_dates is None:
-        used_dates: set[str] = set()
+        sealed_used_dates: set[str] = set()
     elif isinstance(used_validation_dates, (set, list, tuple)):
-        used_dates = set(used_validation_dates)
+        sealed_used_dates = set(used_validation_dates)
     else:
         raise SealedEvaluationError("Previously consumed validation dates must be a set/list/tuple.")
+    offline_used_list, offline_memory_sha256 = _offline_development_consumption(
+        offline_memory_path
+    )
+    offline_used_dates = set(offline_used_list)
+    if sealed_used_dates.intersection(offline_used_dates):
+        raise SealedEvaluationError(
+            "Offline development dates overlap sealed holdout dates; research fails closed."
+        )
+    used_dates = sealed_used_dates | offline_used_dates
     for value in used_dates:
         if not isinstance(value, str):
             raise SealedEvaluationError("Previously consumed validation date is not text.")
@@ -250,6 +290,8 @@ def split_archive(
         "archive_record_count": len(rows),
         "pre_target_draw_count": len(pre_target),
         "previously_consumed_validation_draw_count": len(used_dates),
+        "previously_consumed_offline_development_draw_count": len(offline_used_dates),
+        "offline_development_memory_sha256": offline_memory_sha256,
         "target_numbers_exposed": False,
         "target_in_discovery": False,
         "target_in_validation": False,
@@ -363,6 +405,8 @@ def public_plan(split: dict[str, Any]) -> dict[str, Any]:
             "schema_version", "orchestrator_version", "engine_version",
             "target_date", "archive_sha256", "archive_record_count",
             "pre_target_draw_count", "previously_consumed_validation_draw_count",
+            "previously_consumed_offline_development_draw_count",
+            "offline_development_memory_sha256",
             "target_numbers_exposed", "target_in_discovery", "target_in_validation",
             "discovery_count",
         )
@@ -385,6 +429,8 @@ def get_used_validation_dates(ledger: dict[str, Any]) -> set[str]:
 def preflight(
     archive_path: str | Path,
     ledger_path: str | Path,
+    *,
+    offline_memory_path: str | Path = "general_research_memory.json",
 ) -> dict[str, Any]:
     """Fail before any hosted-model request if no fresh validation interval exists."""
     archive = load_archive(archive_path)
@@ -394,6 +440,7 @@ def preflight(
         archive["rows"],
         archive_sha256=archive["archive_sha256"],
         used_validation_dates=used_dates,
+        offline_memory_path=offline_memory_path,
     )
     r60 = split["regimes"]["R60"]
     validation_dates = [row["date"] for row in r60["validation_rows"]]
@@ -422,7 +469,10 @@ def preflight(
         "status": "READY",
         "ledger_entry_count": len(ledger["entries"]),
         "validation_dates_previously_consumed": False,
-        "previously_consumed_validation_draw_count": len(used_dates),
+        "previously_consumed_sealed_validation_draw_count": len(used_dates),
+        "previously_consumed_validation_draw_count": split["previously_consumed_validation_draw_count"],
+        "previously_consumed_offline_development_draw_count": split["previously_consumed_offline_development_draw_count"],
+        "offline_development_memory_sha256": split["offline_development_memory_sha256"],
         "forward_validation_dates": validation_dates,
         "reverse_validation_dates": reverse_validation_dates,
         "hosted_model_request_performed": False,
@@ -539,6 +589,7 @@ def create_claim(
     specs_path: str | Path,
     *,
     snapshot_directory: str | Path = SNAPSHOT_DIRECTORY,
+    offline_memory_path: str | Path = "general_research_memory.json",
 ) -> dict[str, Any]:
     """Claim one fresh interval; call this before running a real-archive score."""
     candidate = _select_one_frozen_candidate(proposals_path, specs_path)
@@ -556,6 +607,7 @@ def create_claim(
         archive["rows"],
         archive_sha256=archive["archive_sha256"],
         used_validation_dates=used_dates,
+        offline_memory_path=offline_memory_path,
     )
     r60 = split["regimes"]["R60"]
     validation = r60["validation_rows"]
@@ -585,6 +637,8 @@ def create_claim(
         "validation_dates": validation_dates,
         "reverse_validation_dates": reverse_validation_dates,
         "previously_consumed_validation_dates": sorted(used_dates),
+        "previously_consumed_offline_development_draw_count": split["previously_consumed_offline_development_draw_count"],
+        "offline_development_memory_sha256": split["offline_development_memory_sha256"],
         "hypothesis_id": candidate["hypothesis_id"],
         "spec_sha256": candidate["spec_sha256"],
         "reverse_hypothesis_id": candidate["reverse_hypothesis_id"],
@@ -614,6 +668,8 @@ def create_claim(
         "archive_sha256": archive["archive_sha256"],
         "archive_record_count": archive["record_count"],
         "previously_consumed_validation_dates": sorted(used_dates),
+        "previously_consumed_offline_development_draw_count": split["previously_consumed_offline_development_draw_count"],
+        "offline_development_memory_sha256": split["offline_development_memory_sha256"],
         "archive_snapshot_path": str(snapshot_path).replace("\\", "/"),
         "hypothesis_id": candidate["hypothesis_id"],
         "spec_sha256": candidate["spec_sha256"],
@@ -651,6 +707,8 @@ def create_claim(
         "validation_start_date": validation[0]["date"],
         "validation_end_date": validation[-1]["date"],
         "validation_draw_count": len(validation),
+        "previously_consumed_offline_development_draw_count": split["previously_consumed_offline_development_draw_count"],
+        "offline_development_memory_sha256": split["offline_development_memory_sha256"],
         "reverse_validation_start_date": reverse_validation[0]["date"],
         "reverse_validation_end_date": reverse_validation[-1]["date"],
         "reverse_validation_draw_count": len(reverse_validation),
@@ -976,6 +1034,7 @@ def evaluate_claim(
     specs_path: str | Path,
     *,
     output_path: str | Path,
+    offline_memory_path: str | Path = "general_research_memory.json",
 ) -> dict[str, Any]:
     """Evaluate one already-persisted claim against its immutable archive snapshot."""
     ledger = load_ledger(ledger_path)
@@ -1005,12 +1064,33 @@ def evaluate_claim(
         archive["rows"],
         archive_sha256=archive["archive_sha256"],
         used_validation_dates=set(recorded_prior_dates),
+        offline_memory_path=offline_memory_path,
     )
     if split["target_date"] != entry["target_date"]:
         raise SealedEvaluationError("Snapshot target cutoff does not match the ledger.")
     r60 = split["regimes"]["R60"]
     validation_dates = [row["date"] for row in r60["validation_rows"]]
     reverse_validation_dates = [row["date"] for row in r60["reverse_validation_rows"]]
+    if (
+        "offline_development_memory_sha256" not in entry
+        or "previously_consumed_offline_development_draw_count" not in entry
+    ):
+        empty_offline_sha256 = _sha256_bytes(_canonical_json([]))
+        if (
+            split["previously_consumed_offline_development_draw_count"] != 0
+            or split["offline_development_memory_sha256"] != empty_offline_sha256
+        ):
+            raise SealedEvaluationError(
+                "Legacy claim has no offline-consumption snapshot; current offline memory is not empty."
+            )
+    elif (
+        entry["offline_development_memory_sha256"] != split["offline_development_memory_sha256"]
+        or entry["previously_consumed_offline_development_draw_count"]
+        != split["previously_consumed_offline_development_draw_count"]
+    ):
+        raise SealedEvaluationError(
+            "Offline development-consumption memory changed after the sealed claim."
+        )
     if validation_dates != entry["validation_dates"]:
         raise SealedEvaluationError("Snapshot forward validation dates do not match the sealed claim.")
     if reverse_validation_dates != entry.get("reverse_validation_dates"):

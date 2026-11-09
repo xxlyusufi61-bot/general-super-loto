@@ -352,6 +352,51 @@ class SealedEvaluationTests(unittest.TestCase):
         selected = sealed._select_one_frozen_candidate(proposal_path, specs_path)
         self.assertIsNone(selected)
 
+    def test_corrupt_offline_consumption_memory_fails_closed_before_partition(self):
+        offline_memory = self.root / "offline-memory.json"
+        offline_memory.write_text("{invalid", encoding="utf-8")
+        with self.assertRaises(sealed.SealedEvaluationError):
+            sealed.split_archive(
+                self.rows,
+                offline_memory_path=offline_memory,
+            )
+
+    def test_sealed_claim_pins_offline_memory_and_rejects_post_claim_change(self):
+        proposals, specs = write_candidate_documents(self.root)
+        offline_memory = self.root / "offline-memory.json"
+        claim = sealed.create_claim(
+            self.archive_path,
+            self.ledger_path,
+            proposals,
+            specs,
+            snapshot_directory=self.snapshot_directory,
+            offline_memory_path=offline_memory,
+        )
+        self.assertTrue(claim["claim_created"])
+        self.assertEqual(claim["previously_consumed_offline_development_draw_count"], 0)
+        self.assertEqual(
+            claim["offline_development_memory_sha256"],
+            sealed._sha256_bytes(sealed._canonical_json([])),
+        )
+        ledger = sealed.load_ledger(self.ledger_path)
+        self.assertEqual(
+            ledger["entries"][0]["offline_development_memory_sha256"],
+            claim["offline_development_memory_sha256"],
+        )
+        # A malformed or changed offline namespace after the claim is not
+        # treated as empty memory and cannot silently alter the sealed split.
+        offline_memory.write_text('{"schema_version":3,"offline_research":"changed"}', encoding="utf-8")
+        with self.assertRaises(sealed.SealedEvaluationError):
+            sealed.evaluate_claim(
+                claim["claim_id"],
+                self.ledger_path,
+                proposals,
+                specs,
+                output_path=self.root / "evaluation.json",
+                offline_memory_path=offline_memory,
+            )
+
+
     def test_candidate_cannot_change_after_claim(self):
         proposals, specs = write_candidate_documents(self.root)
         claim = sealed.create_claim(

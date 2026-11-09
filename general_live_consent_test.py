@@ -12,7 +12,7 @@ from general_live_consent import (
 
 
 EXPECTED_CONFIRMATION_PHRASE = (
-    "I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_2_NVIDIA_REQUESTS"
+    "I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_4_NVIDIA_REQUESTS"
 )
 EXPECTED_COORDINATOR_PHRASE = (
     "I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_3_NVIDIA_REQUESTS"
@@ -51,7 +51,7 @@ class LiveNvidiaConsentTests(unittest.TestCase):
         self.assertFalse(has_explicit_single_request_consent(" " + SINGLE_REQUEST_CONFIRMATION_PHRASE))
         self.assertFalse(has_explicit_live_consent(SINGLE_REQUEST_CONFIRMATION_PHRASE))
 
-    def test_standard_live_workflows_use_the_two_request_phrase(self):
+    def test_standard_live_workflows_use_the_four_request_package_phrase(self):
         root = Path(__file__).resolve().parent
         for relative_path in LIVE_WORKFLOW_PATHS:
             with self.subTest(workflow=relative_path):

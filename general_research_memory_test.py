@@ -1301,5 +1301,31 @@ class AutonomousResearchMemoryIntegrationTests(unittest.TestCase):
 
 
 
+    def test_schema_v2_memory_reads_as_schema_v3_without_mutating_the_file(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "research-memory.json"
+            legacy = memory.empty_memory()
+            legacy.pop("offline_research")
+            legacy["schema_version"] = 2
+            original = json.dumps(legacy, ensure_ascii=False, indent=2) + "\n"
+            path.write_text(original, encoding="utf-8")
+            loaded = memory.load_memory(path)
+            self.assertEqual(loaded["schema_version"], 3)
+            self.assertEqual(loaded["offline_research"]["entries"], [])
+            self.assertEqual(path.read_text(encoding="utf-8"), original)
+
+    def test_combined_research_memory_rejects_duplicate_root_keys(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "research-memory.json"
+            path.write_text(
+                '{"schema_version":2,"schema_version":2,"project":"GENERAL Super Loto",'
+                '"research_epoch":"general-open-research-memory-v2","purpose":"x","entries":[]}',
+                encoding="utf-8",
+            )
+            with self.assertRaises(memory.ResearchMemoryError):
+                memory.load_memory(path)
+
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

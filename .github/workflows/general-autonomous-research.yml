@@ -132,7 +132,7 @@ jobs:
     if: ${{ github.event_name == 'schedule' }}
     needs: archive-refresh
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     permissions:
       contents: write
     steps:
@@ -156,6 +156,72 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: python3 general_automation_state_integrity_audit.py
+      - name: Capture every unseen canonical draw in the durable FIFO
+        id: queue_capture
+        run: |
+          python3 general_autonomous_research.py queue-capture \
+            --archive super_loto_archive.json \
+            --github-output "$GITHUB_OUTPUT"
+          cat "$GITHUB_OUTPUT"
+      - name: Persist FIFO snapshots without changing protected archive or ledger objects
+        id: persist_queue
+        if: ${{ steps.queue_capture.outputs.changed == 'true' }}
+        uses: ./.github/actions/publish-automation-state
+        with:
+          token: ${{ github.token }}
+          expected_generation: ${{ steps.state_bootstrap.outputs.generation }}
+          objects: autonomous_research_state
+          message: "Append newly observed draw snapshots to autonomous FIFO"
+
+      - name: Materialize oldest FIFO snapshot for offline mathematical research
+        id: offline_materialize
+        if: ${{ steps.queue_capture.outputs.has_pending == 'true' }}
+        run: |
+          python3 general_autonomous_research.py queue-materialize \
+            --output super_loto_archive.json
+      - name: Run bounded offline hypothesis discovery and evaluation
+        id: offline_discovery
+        if: ${{ steps.queue_capture.outputs.has_pending == 'true' }}
+        continue-on-error: true
+        run: |
+          python3 general_offline_hypothesis_discovery.py run \
+            --archive super_loto_archive.json \
+            --sealed-ledger general_evaluation_ledger.json \
+            --memory general_research_memory.json \
+            --report general_offline_research_report.json \
+            --github-output "$GITHUB_OUTPUT"
+          cat "$GITHUB_OUTPUT"
+      - name: Persist offline GENERAL learning through the existing state store
+        id: persist_offline_memory
+        if: ${{ steps.offline_discovery.outcome == 'success' && steps.offline_discovery.outputs.offline_status == 'COMPLETED_EXPLORATORY_ONLY' && steps.offline_discovery.outputs.offline_memory_entries_added == '1' }}
+        uses: ./.github/actions/publish-automation-state
+        with:
+          token: ${{ github.token }}
+          expected_generation: ${{ steps.persist_queue.outputs.generation || steps.state_bootstrap.outputs.generation }}
+          objects: research_memory
+          message: "Append validated offline GENERAL learning to research_memory state object"
+      - name: Send offline hypothesis and evaluation summary to Telegram
+        if: ${{ steps.persist_offline_memory.outcome == 'success' && steps.persist_offline_memory.outputs.generation != '' }}
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python3 telegram_report.py \
+            --title "GENERAL çevrimdışı matematiksel keşif" \
+            --status success \
+            --branch general-automation-state \
+            --run-url "https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --kind offline \
+            --report-log general_offline_research_report.json
+      - name: Upload offline research report
+        if: ${{ always() && steps.offline_discovery.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: general-offline-research-${{ github.run_id }}
+          path: |
+            general_offline_research_report.json
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Check explicit authorization and local global-lock state
         id: status
         run: |
@@ -172,9 +238,15 @@ jobs:
         run: |
           python3 general_nvidia_guard.py check
           echo "GENERAL_NVIDIA_GUARD_PASSED=1" >> "$GITHUB_ENV"
+      - name: Materialize only the oldest queued target snapshot
+        if: ${{ steps.status.outputs.authorized == 'true' && steps.status.outputs.lock_clear == 'true' && steps.queue_capture.outputs.has_pending == 'true' }}
+        run: |
+          python3 general_autonomous_research.py queue-materialize \
+            --output super_loto_archive.json
+
       - name: Prepare one cycle only for a new target and fresh sealed windows
         id: prepare
-        if: ${{ steps.status.outputs.authorized == 'true' && steps.status.outputs.lock_clear == 'true' }}
+        if: ${{ steps.status.outputs.authorized == 'true' && steps.status.outputs.lock_clear == 'true' && steps.queue_capture.outputs.has_pending == 'true' }}
         run: |
           python3 general_autonomous_research.py prepare \
             --archive super_loto_archive.json \
@@ -197,7 +269,7 @@ jobs:
         uses: ./.github/actions/publish-automation-state
         with:
           token: ${{ github.token }}
-          expected_generation: ${{ steps.state_bootstrap.outputs.generation }}
+          expected_generation: ${{ steps.persist_offline_memory.outputs.generation || steps.persist_queue.outputs.generation || steps.state_bootstrap.outputs.generation }}
           objects: autonomous_research_state
           message: "Reserve autonomous research target"
       - name: Run independent forward and reverse NVIDIA discovery
@@ -209,10 +281,11 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           GENERAL_DEFAULT_BRANCH: main
           TASK_TEXT: "Explore the validated pre-target 6-of-60 archive from scratch. Propose independently testable hypotheses for the forward and reverse directions. Do not request, infer, or report winning-number predictions."
-          GENERAL_CONFIRM_LIVE_CALLS: "I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_2_NVIDIA_REQUESTS"
+          GENERAL_CONFIRM_LIVE_CALLS: "I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_4_NVIDIA_REQUESTS"
           GENERAL_ALLOW_NVIDIA_CALL: "true"
           GENERAL_NVIDIA_FREE_USAGE_VERIFIED: "true"
           GENERAL_NVIDIA_GUARD_PASSED: "1"
+          GENERAL_NVIDIA_RESEARCH_RETRY_MODE: ${{ steps.prepare.outputs.retryable == 'true' && 'true' || 'false' }}
         run: python3 general_open_research.py
       - name: Activate global lock after an incomplete provider request
         if: ${{ failure() && steps.research.outcome == 'failure' }}
@@ -223,10 +296,16 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          if [ -f /tmp/general_nvidia_api_attempted ] && [ ! -f /tmp/general_nvidia_api_succeeded ]; then
-            python3 general_nvidia_guard.py lock --reason "Autonomous NVIDIA request failed or its response could not be validated; no automatic retry is allowed."
+          incomplete_request=false
+          for request_label in forward reverse forward_critique between_draws unlabelled; do
+            if [ -f "/tmp/general_nvidia_api_attempted_${request_label}" ] && [ ! -f "/tmp/general_nvidia_api_succeeded_${request_label}" ]; then
+              incomplete_request=true
+            fi
+          done
+          if [ "$incomplete_request" = "true" ]; then
+            python3 general_nvidia_guard.py lock --reason "Autonomous NVIDIA request delivery or response validation is uncertain; global safety pause is required. No automatic retry is allowed."
           else
-            echo "No incomplete NVIDIA request detected; global lock unchanged."
+            echo "No uncertain provider delivery detected; global lock unchanged."
           fi
       - name: Create the frozen sealed evaluation claim
         id: sealed_claim
@@ -304,10 +383,27 @@ jobs:
         env:
           ATTEMPT_ID: ${{ steps.attempt_reservation.outputs.attempt_id }}
         run: |
+          incomplete_request=false
+          any_request=false
+          for request_label in forward reverse forward_critique between_draws unlabelled; do
+            if [ -f "/tmp/general_nvidia_api_attempted_${request_label}" ]; then
+              any_request=true
+              if [ ! -f "/tmp/general_nvidia_api_succeeded_${request_label}" ]; then
+                incomplete_request=true
+              fi
+            fi
+          done
+          if [ "$incomplete_request" = "true" ]; then
+            reason_code="PROVIDER_DELIVERY_UNCERTAIN"
+          elif [ "$any_request" = "true" ]; then
+            reason_code="WORKFLOW_FAILED"
+          else
+            reason_code="NO_PROVIDER_REQUEST_SENT"
+          fi
           python3 general_autonomous_research.py finish \
             --attempt-id "$ATTEMPT_ID" \
             --outcome FAILED \
-            --reason-code WORKFLOW_FAILED
+            --reason-code "$reason_code"
       - name: Append sanitized GENERAL research memory
         if: ${{ always() && steps.attempt_reservation.outputs.attempt_id != '' }}
         env:

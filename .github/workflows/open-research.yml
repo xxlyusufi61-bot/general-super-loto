@@ -30,13 +30,21 @@ name: GENERAL Blank-Slate Research
       - "docs/safe-hypothesis-execution.md"
       - "general_research_memory.py"
       - "general_research_memory_test.py"
+      - "general_offline_hypothesis_discovery.py"
+      - "general_offline_hypothesis_discovery_test.py"
+      - "docs/general-offline-hypothesis-discovery.md"
       - "general_research_memory.json"
       - "docs/general-research-memory.md"
       - ".github/workflows/open-research.yml"
       - ".github/workflows/general-autonomous-research.yml"
+      - "general_autonomous_research.py"
+      - "general_autonomous_research_test.py"
+      - "general_target_queue.py"
+      - "general_target_queue_test.py"
   pull_request:
     branches:
       - main
+      - fix/research-contract-memory-dsl-20261109
     paths:
       - "general_open_research.py"
       - "requirements.txt"
@@ -62,6 +70,9 @@ name: GENERAL Blank-Slate Research
       - "docs/safe-hypothesis-execution.md"
       - "general_research_memory.py"
       - "general_research_memory_test.py"
+      - "general_offline_hypothesis_discovery.py"
+      - "general_offline_hypothesis_discovery_test.py"
+      - "docs/general-offline-hypothesis-discovery.md"
       - "general_research_memory.json"
       - "docs/general-research-memory.md"
       - ".github/workflows/open-research.yml"
@@ -74,7 +85,7 @@ name: GENERAL Blank-Slate Research
         type: string
         default: "Explore the pre-target archive from scratch and propose testable hypotheses."
       confirm_live_calls:
-        description: "Leave NO to block all live calls. The exact free-only phrase authorizes at most two directional NVIDIA requests for this operation; use it only after verifying there is no paid-charge risk."
+        description: "Leave NO to block all live calls. The exact free-only phrase authorizes at most four NVIDIA requests in this job package; use it only after verifying there is no paid-charge risk."
         required: true
         type: string
         default: "NO"
@@ -106,14 +117,14 @@ jobs:
         run: python -m pip install --disable-pip-version-check --no-input -r requirements.txt
       - name: Compile and test blank-slate runner
         run: |
-          python3 -m py_compile general_open_research.py general_open_research_test.py general_hypothesis_proposals.py general_hypothesis_proposals_test.py general_hypothesis_execution.py general_hypothesis_execution_test.py general_bidirectional_evaluation.py general_bidirectional_evaluation_test.py general_execution_spec_parser.py general_execution_spec_parser_test.py general_sealed_evaluation.py general_sealed_evaluation_test.py general_source_context.py general_source_context_test.py general_research_memory.py general_research_memory_test.py general_single_request_token_test.py general_single_request_token_test_test.py
-          python3 -m unittest -v general_live_consent_test general_hypothesis_proposals_test general_open_research_test general_single_request_token_test_test general_hypothesis_execution_test general_bidirectional_evaluation_test general_execution_spec_parser_test general_sealed_evaluation_test general_source_context_test general_research_memory_test
+          python3 -m py_compile general_autonomous_research.py general_autonomous_research_test.py general_target_queue.py general_target_queue_test.py general_open_research.py general_open_research_test.py general_hypothesis_proposals.py general_hypothesis_proposals_test.py general_hypothesis_execution.py general_hypothesis_execution_test.py general_bidirectional_evaluation.py general_bidirectional_evaluation_test.py general_execution_spec_parser.py general_execution_spec_parser_test.py general_sealed_evaluation.py general_sealed_evaluation_test.py general_source_context.py general_source_context_test.py general_research_memory.py general_research_memory_test.py general_offline_hypothesis_discovery.py general_offline_hypothesis_discovery_test.py general_single_request_token_test.py general_single_request_token_test_test.py
+          python3 -m unittest -v general_live_consent_test general_hypothesis_proposals_test general_open_research_test general_target_queue_test general_autonomous_research_test general_single_request_token_test_test general_hypothesis_execution_test general_bidirectional_evaluation_test general_execution_spec_parser_test general_sealed_evaluation_test general_source_context_test general_research_memory_test general_offline_hypothesis_discovery_test
 
   research:
-    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.confirm_live_calls == 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_2_NVIDIA_REQUESTS' && inputs.confirm_free_usage_verified == true }}
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.confirm_live_calls == 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_4_NVIDIA_REQUESTS' && inputs.confirm_free_usage_verified == true }}
     needs: test
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 60
     permissions:
       contents: write
       issues: write
@@ -238,10 +249,16 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          if [ -f /tmp/general_nvidia_api_attempted ] && [ ! -f /tmp/general_nvidia_api_succeeded ]; then
-            python3 general_nvidia_guard.py lock --reason "GENERAL blank-slate NVIDIA request failed or its response could not be validated; global safety pause is required because quota, authorization, billing/limit, or service state is uncertain."
+          incomplete_request=false
+          for request_label in forward reverse forward_critique between_draws unlabelled; do
+            if [ -f "/tmp/general_nvidia_api_attempted_${request_label}" ] && [ ! -f "/tmp/general_nvidia_api_succeeded_${request_label}" ]; then
+              incomplete_request=true
+            fi
+          done
+          if [ "$incomplete_request" = "true" ]; then
+            python3 general_nvidia_guard.py lock --reason "GENERAL blank-slate NVIDIA request delivery or validation is uncertain; global safety pause is required. No automatic retry is permitted."
           else
-            echo "No incomplete NVIDIA request detected; global lock unchanged."
+            echo "No incomplete provider request detected; global lock unchanged."
           fi
       - name: Submit a structured rule-change request for Telegram approval if proposed
         if: ${{ success() }}

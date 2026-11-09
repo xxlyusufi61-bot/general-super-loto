@@ -1,8 +1,11 @@
 """GitHub Actions test ve araştırma raporlarını Türkçe olarak Telegram'a gönderir."""
 import argparse
+import hashlib
 import json
 import math
 import os
+import re
+import time
 import urllib.parse
 import urllib.request
 from datetime import date
@@ -252,6 +255,249 @@ def format_research_messages(report, run_url="", branch="main", title="Otonom Ar
     return ["\n".join(forward_lines)[:3800], "\n".join(reverse_lines)[:3800]]
 
 
+
+OFFLINE_TEMPLATE_FAMILIES = {
+    "abc_persistent_membership": "A→B→C",
+    "abc_disappearing_membership": "A→B→C",
+    "abc_new_persistent_membership": "A→B→C",
+    "abc_reappearance_membership": "A→B→C",
+    "at_exact_historical_frequency": "A→T",
+    "at_same_parity": "A→T",
+    "at_same_final_digit": "A→T",
+    "at_recent_exact_frequency_5": "A→T",
+    "at_recent_exact_frequency_10": "A→T",
+    "at_recent_exact_frequency_20": "A→T",
+    "at_neighbourhood_radius_1": "A→T",
+    "at_neighbourhood_radius_2": "A→T",
+    "mod5_same_residue_frequency": "MOD5→T",
+    "mod5_recent_same_residue_frequency_5": "MOD5→T",
+    "mod5_recent_same_residue_frequency_10": "MOD5→T",
+    "mod5_recent_same_residue_frequency_20": "MOD5→T",
+}
+
+
+def _offline_metric(value, field):
+    return _safe_number(value, field)
+
+
+def _validate_offline_candidate(candidate, training_count, development_count):
+    from general_hypothesis_execution import validate_execution_spec
+    from general_hypothesis_proposals import _render_expression, execution_spec_matches_proposal
+
+    required = {
+        "hypothesis_id", "family", "template_id", "proposal",
+        "execution_spec", "specification_sha256", "training_signal",
+        "synthetic_tests", "forward_walk_forward",
+        "time_ordered_cross_validation", "reverse_retrospective_only",
+    }
+    if not isinstance(candidate, dict) or set(candidate) != required:
+        raise ValueError("Offline candidate fields do not match the safe report schema.")
+    hypothesis_id = candidate.get("hypothesis_id")
+    if not isinstance(hypothesis_id, str) or not re.fullmatch(r"HYP-[0-9]{3}", hypothesis_id):
+        raise ValueError("Offline hypothesis identifier is invalid.")
+    family = candidate.get("family")
+    template_id = candidate.get("template_id")
+    if (
+        template_id not in OFFLINE_TEMPLATE_FAMILIES
+        or OFFLINE_TEMPLATE_FAMILIES[template_id] != family
+    ):
+        raise ValueError("Offline hypothesis family/template pairing is invalid.")
+
+    spec = validate_execution_spec(candidate["execution_spec"])
+    encoded = json.dumps(
+        spec, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
+    ).encode("utf-8")
+    spec_hash = hashlib.sha256(encoded).hexdigest()
+    if candidate["specification_sha256"] != spec_hash:
+        raise ValueError("Offline hypothesis specification hash is invalid.")
+
+    proposal = candidate["proposal"]
+    if (
+        not isinstance(proposal, dict)
+        or proposal.get("hypothesis_id") != hypothesis_id
+        or proposal.get("proposed_family") != family
+        or proposal.get("discovery_direction") != "forward"
+        or proposal.get("status") != "PROPOSAL_ONLY"
+        or proposal.get("execution_ready") is not False
+        or proposal.get("registry_write_allowed") is not False
+        or not execution_spec_matches_proposal(proposal, spec)
+    ):
+        raise ValueError("Offline proposal does not match the non-executable DSL candidate.")
+    expected_definition = (
+        "Formal DSL definition: score(candidate) = "
+        + _render_expression(spec["score_expression"]) + "."
+    )
+    if proposal.get("exact_definition") != expected_definition:
+        raise ValueError("Offline proposal definition is not the canonical rendered DSL expression.")
+
+    training = candidate["training_signal"]
+    if (
+        not isinstance(training, dict)
+        or set(training) != {
+            "distinct_score_values", "score_range", "training_draw_count",
+            "selection_source", "validation_data_used", "target_data_used",
+        }
+        or type(training.get("distinct_score_values")) is not int
+        or not 2 <= training["distinct_score_values"] <= 60
+        or type(training.get("score_range")) is not int
+        or training["score_range"] <= 0
+        or training.get("training_draw_count") != training_count
+        or training.get("selection_source") != "training_prefix_only"
+        or training.get("validation_data_used") is not False
+        or training.get("target_data_used") is not False
+    ):
+        raise ValueError("Offline training-only discovery signal is invalid.")
+
+    synthetic = candidate["synthetic_tests"]
+    if (
+        not isinstance(synthetic, dict)
+        or synthetic.get("status") != "PASS"
+        or synthetic.get("target_values_used") is not False
+        or synthetic.get("real_archive_used") is not False
+    ):
+        raise ValueError("Offline deterministic DSL test evidence is invalid.")
+
+    forward = candidate["forward_walk_forward"]
+    cv = candidate["time_ordered_cross_validation"]
+    reverse = candidate["reverse_retrospective_only"]
+    if (
+        not isinstance(forward, dict)
+        or forward.get("predictive_claim") is not False
+        or forward.get("validation_draw_count") != development_count
+        or not isinstance(cv, dict)
+        or cv.get("predictive_claim") is not False
+        or cv.get("validation_draw_count") != development_count
+        or cv.get("folds") != 5
+        or not isinstance(reverse, dict)
+        or reverse.get("status") != "EVALUATED_RETROSPECTIVE_ONLY"
+        or reverse.get("predictive_evidence") is not False
+    ):
+        raise ValueError("Offline evaluation protocol/safety metadata is invalid.")
+
+    forward_mean = _offline_metric(forward.get("mean_hits_out_of_6"), "forward walk-forward mean")
+    forward_baseline = _offline_metric(
+        forward.get("uniform_random_expected_hits_out_of_6"), "forward random baseline"
+    )
+    cv_mean = _offline_metric(cv.get("mean_hits_out_of_6"), "time-ordered CV mean")
+    cv_baseline = _offline_metric(
+        cv.get("uniform_random_expected_hits_out_of_6"), "CV random baseline"
+    )
+    reverse_mean = _offline_metric(reverse.get("mean_hits_out_of_6"), "reverse retrospective mean")
+    reverse_baseline = _offline_metric(
+        reverse.get("uniform_random_expected_hits_out_of_6"), "reverse random baseline"
+    )
+    if any(abs(value - 0.6) > 1e-6 for value in (
+        forward_baseline, cv_baseline, reverse_baseline
+    )):
+        raise ValueError("Offline 6-of-60 baseline must equal 0.600/6.")
+
+    expression = expected_definition[
+        len("Formal DSL definition: score(candidate) = "):-1
+    ]
+    return {
+        "hypothesis_id": hypothesis_id,
+        "family": family,
+        "template_id": template_id,
+        "expression": expression,
+        "distinct_score_values": training["distinct_score_values"],
+        "score_range": training["score_range"],
+        "forward_mean": forward_mean,
+        "cv_mean": cv_mean,
+        "reverse_mean": reverse_mean,
+    }
+
+
+def format_offline_research_messages(report, run_url="", branch="general-automation-state", title="Çevrimdışı matematiksel keşif"):
+    """Format offline GENERAL discoveries without exposing draw or predicted-number values."""
+    if not isinstance(report, dict) or report.get("status") != "COMPLETED_EXPLORATORY_ONLY":
+        raise ValueError("A completed offline exploratory report is required.")
+    for key in (
+        "target_numbers_exposed", "target_or_future_rows_used",
+        "sealed_holdout_used", "method_registry_modified",
+        "automatic_candidate_selection",
+    ):
+        if report.get(key) is not False:
+            raise ValueError("Offline report failed the " + key + " safety check.")
+    if report.get("candidate_selection") != "NONE":
+        raise ValueError("Offline report must not select a winning candidate.")
+    target_date = report.get("target_date")
+    try:
+        target_day = date.fromisoformat(target_date)
+    except (TypeError, ValueError):
+        raise ValueError("Offline isolated target date is invalid.") from None
+    if target_day.isoformat() != target_date:
+        raise ValueError("Offline isolated target date is not canonical.")
+
+    training_count = report.get("training_draw_count")
+    development_count = report.get("development_draw_count")
+    candidates = report.get("candidates")
+    if (
+        type(training_count) is not int or training_count < 40
+        or type(development_count) is not int or development_count < 5
+        or not isinstance(candidates, list)
+        or not 1 <= len(candidates) <= 16
+        or report.get("candidate_count") != len(candidates)
+        or report.get("development_interval_is_confirmatory") is not False
+    ):
+        raise ValueError("Offline training/development counts or candidate list are invalid.")
+    checked = [
+        _validate_offline_candidate(item, training_count, development_count)
+        for item in candidates
+    ]
+    ids = [item["hypothesis_id"] for item in checked]
+    if len(ids) != len(set(ids)):
+        raise ValueError("Offline report contains duplicate hypothesis identifiers.")
+
+    common = [
+        f"Hedef tarihi: {target_date} (çekiliş sayıları gizli)",
+        f"Eğitim: {training_count} çekiliş | geliştirme: {development_count} yeni çekiliş",
+        "Aday tanımları yalnızca eğitim ön ekiyle üretildi ve puan çeşitliliği açısından tarandı.",
+        "İleri değerlendirme: walk-forward + 5 katlı zaman sıralı CV.",
+        "Ters değerlendirme: yalnızca retrospektif stres testi; tahmin kanıtı değildir.",
+        "Rastgele 6/60 referansı: 0.600/6.",
+        "Otomatik kazanan/formül seçimi: YOK | Method registry değişikliği: YOK.",
+        "Geliştirme aralığı keşif amaçlı tüketilmiştir; bağımsız doğrulama değildir.",
+    ]
+    link = f"GitHub Actions: {run_url}" if run_url else ""
+    messages = [
+        f"✅ GENERAL — ÇEVRİMDIŞI MATEMATİKSEL KEŞİF | {title}\n"
+        + "\n".join(common)
+        + f"\nGeçerli aday: {len(checked)} | Hedef izolasyonu: BAŞARILI"
+        + (f"\nDal: {branch}" if branch else "")
+        + (f"\n{link}" if link else "")
+    ]
+    for family in ("A→B→C", "A→T", "MOD5→T"):
+        family_candidates = [item for item in checked if item["family"] == family]
+        if not family_candidates:
+            continue
+        lines = [f"GENERAL — {family} | {len(family_candidates)} eğitim-temelli aday"]
+        for item in family_candidates:
+            lines.extend([
+                f"{item['hypothesis_id']} · {item['template_id']}",
+                "DSL: " + item["expression"],
+                (
+                    f"Eğitim sinyali: {item['distinct_score_values']} farklı skor "
+                    f"(aralık {item['score_range']})"
+                ),
+                (
+                    f"İleri walk-forward: {item['forward_mean']:.3f}/6 | "
+                    f"5-kat CV: {item['cv_mean']:.3f}/6 | "
+                    f"Ters retrospektif: {item['reverse_mean']:.3f}/6"
+                ),
+            ])
+        lines.append("Bulgular deneysel özettir; formül onayı veya tahmin garantisi değildir.")
+        if branch:
+            lines.append("Dal: " + branch)
+        if link:
+            lines.append(link)
+        message = "\n".join(lines)
+        if len(message) > 3800:
+            raise ValueError("Offline family report exceeds the Telegram safe message limit.")
+        messages.append(message)
+    return [message[:3800] for message in messages]
+
+
+
 def format_message(title, status, run_url, branch, kind="status", report=None):
     basarili = status.lower() == "success"
     lines = [
@@ -355,7 +601,7 @@ def main():
     parser.add_argument("--status", required=True)
     parser.add_argument("--run-url", default="")
     parser.add_argument("--branch", default="")
-    parser.add_argument("--kind", choices=["status", "candidates", "walkforward", "research"], default="status")
+    parser.add_argument("--kind", choices=["status", "candidates", "walkforward", "research", "offline"], default="status")
     parser.add_argument("--report-log")
     args = parser.parse_args()
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
@@ -363,14 +609,18 @@ def main():
     if not token or not chat_id or not chat_id.lstrip("-").isdigit():
         raise SystemExit("Telegram raporu gönderilemedi: gerekli secret eksik veya geçersiz.")
     report = read_report(args.report_log)
-    if args.status.lower() == "success" and args.kind in ("candidates", "walkforward", "research") and report is None:
+    if args.status.lower() == "success" and args.kind in ("candidates", "walkforward", "research", "offline") and report is None:
         raise SystemExit("Telegram raporu gönderilemedi: toplu değerlendirme raporu okunamadı.")
     if args.kind == "research" and args.status.lower() == "success":
         messages = format_research_messages(report, args.run_url, args.branch, args.title)
+    elif args.kind == "offline" and args.status.lower() == "success":
+        messages = format_offline_research_messages(report, args.run_url, args.branch, args.title)
     else:
         messages = [format_message(args.title, args.status, args.run_url, args.branch, args.kind, report)]
-    for message in messages:
+    for index, message in enumerate(messages):
         _send_message(token, chat_id, message)
+        if args.kind == "offline" and index + 1 < len(messages):
+            time.sleep(1.1)
     print("TELEGRAM RAPOR TESLİMİ: BAŞARILI (" + str(len(messages)) + " mesaj)")
 
 

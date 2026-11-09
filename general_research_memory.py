@@ -1,10 +1,10 @@
-"""Append-only, direction-isolated memory for GENERAL's own blank-slate research.
+"""Append-only GENERAL research memory with sealed and offline namespaces.
 
-This module deliberately never imports general_memory.json, legacy formula files,
-or archive rows into model context. It stores validated GENERAL-origin hypotheses,
-safe execution specifications, safe aggregate evaluation feedback, sanitized full
-report narratives, and sanitized failure metadata. Consumed holdout rows are never
-copied into this memory.
+The sealed directional writer retains its claim/ledger binding and cannot modify
+the isolated offline_research namespace. The offline symbolic runner may append
+only to that namespace through this module and the existing generation-guarded
+research_memory state object. Neither path imports legacy formulas or raw archive
+rows into model context, and consumed draw rows are never copied into memory.
 """
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ from general_execution_spec_parser import parse_execution_spec_block
 from general_hypothesis_execution import validate_execution_spec
 
 VERSION = "0.2.0"
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 PROJECT = "GENERAL Super Loto"
 RESEARCH_EPOCH = "general-open-research-memory-v2"
 RESEARCH_SCOPE_START = date(2020, 8, 2)
@@ -442,6 +442,9 @@ def _reserved_validation_dates(plan: dict[str, Any]) -> set[str]:
 
 
 def empty_memory() -> dict[str, Any]:
+    # Offline symbolic learning is a separate append-only namespace within the
+    # existing research_memory state object. It is not a fifth state-store object.
+    from general_offline_hypothesis_discovery import empty_memory as empty_offline_memory
     return {
         "schema_version": SCHEMA_VERSION,
         "project": PROJECT,
@@ -453,6 +456,7 @@ def empty_memory() -> dict[str, Any]:
             "consumed holdout rows/dates, target values, or predicted number values are permitted."
         ),
         "entries": [],
+        "offline_research": empty_offline_memory(),
     }
 
 
@@ -743,13 +747,38 @@ def load_memory(path: str | Path = MEMORY_PATH) -> dict[str, Any]:
     target = Path(path)
     if not target.exists():
         return empty_memory()
+    def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ResearchMemoryError("Research-memory JSON contains a duplicate object key.")
+            result[key] = value
+        return result
+
     try:
-        payload = json.loads(target.read_text(encoding="utf-8"))
+        payload = json.loads(
+            target.read_text(encoding="utf-8"),
+            object_pairs_hook=reject_duplicate_keys,
+            parse_constant=lambda value: (_ for _ in ()).throw(
+                ResearchMemoryError("Research-memory JSON contains a non-finite number.")
+            ),
+        )
     except (OSError, UnicodeError, json.JSONDecodeError):
         raise ResearchMemoryError("Research-memory file could not be read as valid UTF-8 JSON.") from None
+    legacy_keys = {"schema_version", "project", "research_epoch", "purpose", "entries"}
+    current_keys = legacy_keys | {"offline_research"}
+    if not isinstance(payload, dict):
+        raise ResearchMemoryError("Research-memory file has an invalid schema; failing closed.")
+    # Existing schema-v2 state is upgraded in memory only. The next legitimate
+    # append through the established research_memory state object persists v3.
+    if payload.get("schema_version") == 2 and set(payload) == legacy_keys:
+        payload = dict(payload)
+        payload["schema_version"] = SCHEMA_VERSION
+        from general_offline_hypothesis_discovery import empty_memory as empty_offline_memory
+        payload["offline_research"] = empty_offline_memory()
     if (
-        not isinstance(payload, dict)
-        or set(payload) != {"schema_version", "project", "research_epoch", "purpose", "entries"}
+        set(payload) != current_keys
+        or type(payload.get("schema_version")) is not int
         or payload.get("schema_version") != SCHEMA_VERSION
         or payload.get("project") != PROJECT
         or payload.get("research_epoch") != RESEARCH_EPOCH
@@ -758,6 +787,14 @@ def load_memory(path: str | Path = MEMORY_PATH) -> dict[str, Any]:
         or len(payload["entries"]) > MAX_ENTRIES
     ):
         raise ResearchMemoryError("Research-memory file has an invalid schema; failing closed.")
+    from general_offline_hypothesis_discovery import validate_memory_document
+    try:
+        validate_memory_document(payload["offline_research"])
+    except Exception as exc:
+        raise ResearchMemoryError(
+            "Offline research-memory namespace failed its independent validator: "
+            + type(exc).__name__
+        ) from None
     seen_cycles: set[str] = set()
     previous_target: date | None = None
     for index, entry in enumerate(payload["entries"], start=1):
@@ -770,6 +807,45 @@ def load_memory(path: str | Path = MEMORY_PATH) -> dict[str, Any]:
             raise ResearchMemoryError("Research-memory entries must remain chronological.")
         previous_target = current_target
     return payload
+
+
+def append_offline_research_memory(
+    updated_offline: dict[str, Any],
+    *,
+    path: str | Path = MEMORY_PATH,
+) -> dict[str, Any]:
+    """Append one validated offline cycle inside the existing research_memory state object."""
+    from general_offline_hypothesis_discovery import validate_memory_document
+    current = load_memory(path)
+    old_offline = current["offline_research"]
+    checked_offline = validate_memory_document(updated_offline)
+    old_entries = old_offline["entries"]
+    old_windows = old_offline["consumed_development_windows"]
+    if (
+        checked_offline["entries"][:len(old_entries)] != old_entries
+        or checked_offline["consumed_development_windows"][:len(old_windows)] != old_windows
+        or len(checked_offline["entries"]) != len(old_entries) + 1
+        or len(checked_offline["consumed_development_windows"]) != len(old_windows) + 1
+    ):
+        raise ResearchMemoryError("Offline learning must append exactly one new cycle without changing its prefix.")
+    updated = dict(current)
+    updated["offline_research"] = checked_offline
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(target.name + ".tmp")
+    temporary.write_text(
+        json.dumps(updated, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
+    verified = load_memory(temporary)
+    if verified != updated:
+        raise ResearchMemoryError("Combined research-memory append failed read-back validation.")
+    temporary.replace(target)
+    return {
+        "status": "APPENDED",
+        "offline_entries": len(checked_offline["entries"]),
+        "sealed_entries_unchanged": True,
+    }
 
 
 def _parse_learning_notes(report: str) -> dict[str, list[str]]:
@@ -1324,8 +1400,12 @@ def record_cycle(
 def _write_memory(memory: dict[str, Any], path: str | Path) -> None:
     target = Path(path)
     checked = load_memory(target)
-    if memory.keys() != checked.keys() or memory["entries"][:len(checked["entries"])] != checked["entries"]:
-        raise ResearchMemoryError("Memory update is not append-only; existing entries changed.")
+    if (
+        memory.keys() != checked.keys()
+        or memory["entries"][:len(checked["entries"])] != checked["entries"]
+        or memory["offline_research"] != checked["offline_research"]
+    ):
+        raise ResearchMemoryError("Memory update is not append-only; sealed entries or the offline namespace changed.")
     if len(memory["entries"]) < len(checked["entries"]):
         raise ResearchMemoryError("Memory entries cannot be deleted.")
     # The persisted prefix was already validated by load_memory above and is
@@ -1394,7 +1474,7 @@ def direction_context(
     memory_path: str | Path = MEMORY_PATH,
     limit: int = MAX_CONTEXT_ENTRIES,
 ) -> list[dict[str, Any]]:
-    """Return bounded same-direction GENERAL history from prior runs no later than this target."""
+    """Return bounded same-direction GENERAL history and forward-only offline learning."""
     if direction not in {"forward", "reverse"}:
         raise ResearchMemoryError("Direction must be forward or reverse.")
     try:
@@ -1403,14 +1483,96 @@ def direction_context(
         raise ResearchMemoryError("Current target date is invalid.") from None
     if current_target.isoformat() != target_date:
         raise ResearchMemoryError("Current target date is not canonical.")
+    if type(limit) is not int or not 1 <= limit <= MAX_CONTEXT_ENTRIES:
+        raise ResearchMemoryError("Research-memory context limit is invalid.")
     memory = load_memory(memory_path)
+    now = datetime.now(timezone.utc)
+    context = []
+
+    # The offline symbolic namespace is forward-only. It is deliberately kept
+    # out of reverse prompts to preserve directional separation. Only one most
+    # recent prior offline cycle is included to bound the prompt payload.
+    if direction == "forward":
+        for offline_entry in reversed(memory["offline_research"]["entries"]):
+            if date.fromisoformat(offline_entry["target_date"]) > current_target:
+                continue
+            if _validate_timestamp(offline_entry["created_at_utc"]) >= now:
+                continue
+            candidate_summaries = []
+            for candidate in offline_entry["candidates"]:
+                candidate_summaries.append({
+                    "hypothesis_id": candidate["hypothesis_id"],
+                    "family": candidate["family"],
+                    "template_id": candidate["template_id"],
+                    "formal_definition": candidate["proposal"]["exact_definition"],
+                    "specification_sha256": candidate["specification_sha256"],
+                    "training_signal": candidate["training_signal"],
+                    "forward_walk_forward": candidate["forward_walk_forward"],
+                    "time_ordered_cross_validation": candidate["time_ordered_cross_validation"],
+                    "reverse_retrospective_only": candidate["reverse_retrospective_only"],
+                })
+            offline_context = {
+                "prior_target_date": offline_entry["target_date"],
+                "prior_recorded_at_utc": offline_entry["created_at_utc"],
+                "source": "GENERAL/offline-symbolic-discovery",
+                "direction": "forward",
+                "status": "EXPLORATORY_ONLY",
+                "candidate_selection": "NONE",
+                "automatic_candidate_selection": False,
+                "candidates_in_memory": len(candidate_summaries),
+                "candidates_in_context": 0,
+                "candidate_context_truncated": False,
+                "candidates": [],
+                "development_window": {
+                    "draw_count": offline_entry["development_window"]["draw_count"],
+                    "window_sha256": offline_entry["development_window"]["window_sha256"],
+                    "dates_stored": False,
+                    "consumed_for_exploratory_feedback": True,
+                },
+                "interpretation": (
+                    "Bounded offline GENERAL discovery feedback only. These definitions and aggregate "
+                    "metrics are unverified development history, not approved formulas, candidate rankings, "
+                    "or independent confirmation. Reuse of the development interval is forbidden. "
+                    "Candidate definitions are included in original discovery order only as prompt space permits; "
+                    "no candidate was selected by validation or performance score."
+                ),
+                "holdout_reuse": (
+                    "FORBIDDEN; this consumed offline development interval is historical feedback only."
+                ),
+            }
+            # Preserve original generation order. Never sort or truncate by
+            # validation/CV/reverse performance; only a size-bound prefix may
+            # enter the prompt.
+            while candidate_summaries:
+                offline_context["candidates"] = list(candidate_summaries)
+                offline_context["candidates_in_context"] = len(candidate_summaries)
+                offline_context["candidate_context_truncated"] = (
+                    len(candidate_summaries) < len(offline_entry["candidates"])
+                )
+                if len(_canonical(context + [offline_context])) <= MAX_CONTEXT_CHARS:
+                    break
+                candidate_summaries.pop()
+            if not candidate_summaries:
+                offline_context["candidates"] = []
+                offline_context["candidates_in_context"] = 0
+                offline_context["candidate_context_truncated"] = bool(offline_entry["candidates"])
+            _reject_number_values(offline_context, "Offline directional context")
+            if len(_canonical(context + [offline_context])) <= MAX_CONTEXT_CHARS:
+                context.append(offline_context)
+            else:
+                # The provenance/consumption summary itself must fit. If it
+                # cannot, stop rather than silently discarding this safety fact.
+                raise ResearchMemoryError(
+                    "Offline development provenance exceeds the bounded forward context."
+                )
+            break
+
     entries = [
         item for item in memory["entries"]
         if item["direction"] == direction
         and date.fromisoformat(item["target_date"]) <= current_target
-        and _validate_timestamp(item["created_at_utc"]) < datetime.now(timezone.utc)
+        and _validate_timestamp(item["created_at_utc"]) < now
     ]
-    context = []
     for entry in reversed(entries):
         compact = {
             "prior_target_date": entry["target_date"],
@@ -1436,10 +1598,10 @@ def direction_context(
             "direction": direction,
         }
         _reject_number_values(compact, "Directional context")
-        candidate = context + [compact]
-        if len(candidate) > limit or len(_canonical(candidate)) > MAX_CONTEXT_CHARS:
+        candidate_context = context + [compact]
+        if len(candidate_context) > limit or len(_canonical(candidate_context)) > MAX_CONTEXT_CHARS:
             continue
-        context = candidate
+        context = candidate_context
     return context
 
 

@@ -150,6 +150,33 @@ class HypothesisProposalContractTests(unittest.TestCase):
             candidate(formal_execution_spec=None), execution_spec()
         ))
 
+    def test_consecutive_triple_variables_render_in_the_formal_definition(self):
+        spec = {
+            "schema_version": 1,
+            "score_expression": {
+                "op": "aggregate_history_triples",
+                "aggregate": "count",
+                "expression": {
+                    "op": "and",
+                    "left": {"op": "var", "name": "a_contains_candidate"},
+                    "right": {
+                        "op": "and",
+                        "left": {"op": "var", "name": "b_contains_candidate"},
+                        "right": {"op": "var", "name": "c_contains_candidate"},
+                    },
+                },
+            },
+        }
+        result = parse_hypothesis_proposals(
+            wrapped([candidate(formal_execution_spec=spec)])
+        )
+        self.assertEqual(result["status"], "VALID_PROPOSALS")
+        exact = result["proposals"][0]["exact_definition"]
+        self.assertIn("AGGREGATE_HISTORY_TRIPLES", exact)
+        self.assertIn("candidate_present_in_A", exact)
+        self.assertIn("candidate_present_in_B", exact)
+        self.assertIn("candidate_present_in_C", exact)
+
     def test_family_remains_free_text_and_is_not_a_registry_write(self):
         item = candidate(proposed_family="novel and not in the method registry")
         result = parse_hypothesis_proposals(wrapped([item]))

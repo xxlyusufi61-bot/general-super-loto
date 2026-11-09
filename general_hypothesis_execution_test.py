@@ -497,5 +497,76 @@ class SafeHypothesisExecutionTests(unittest.TestCase):
         self.assertEqual(json.dumps([discovery, validation], sort_keys=True), before)
 
 
+
+    def test_consecutive_triple_aggregate_scores_only_adjacent_archive_rows(self):
+        expression = {
+            "op": "and",
+            "left": {"op": "var", "name": "a_contains_candidate"},
+            "right": {
+                "op": "and",
+                "left": {"op": "var", "name": "b_contains_candidate"},
+                "right": {"op": "var", "name": "c_contains_candidate"},
+            },
+        }
+        spec = {
+            "schema_version": 1,
+            "score_expression": {
+                "op": "aggregate_history_triples",
+                "aggregate": "count",
+                "expression": expression,
+            },
+        }
+        consecutive = [
+            {"date": "2024-01-01", "numbers": [1, 2, 3, 4, 5, 6], "sequence_index": 10},
+            {"date": "2024-01-03", "numbers": [1, 7, 8, 9, 10, 11], "sequence_index": 11},
+            {"date": "2024-01-05", "numbers": [1, 12, 13, 14, 15, 16], "sequence_index": 12},
+        ]
+        gapped = [dict(row) for row in consecutive]
+        gapped[2]["sequence_index"] = 13
+        adjacent_score = next(
+            item["score"] for item in engine.rank_candidates(
+                consecutive, cutoff_date="2024-01-06", number_pool_size=60,
+                execution_spec=spec,
+            ) if item["number"] == 1
+        )
+        gapped_score = next(
+            item["score"] for item in engine.rank_candidates(
+                gapped, cutoff_date="2024-01-06", number_pool_size=60,
+                execution_spec=spec,
+            ) if item["number"] == 1
+        )
+        self.assertEqual(adjacent_score, 1)
+        self.assertEqual(gapped_score, 0)
+
+    def test_sequence_indices_must_be_strictly_increasing_and_complete(self):
+        rows = [
+            {"date": "2024-01-01", "numbers": [1, 2, 3, 4, 5, 6], "sequence_index": 1},
+            {"date": "2024-01-02", "numbers": [1, 7, 8, 9, 10, 11]},
+        ]
+        with self.assertRaises(ValueError):
+            engine.rank_candidates(
+                rows, cutoff_date="2024-01-03", number_pool_size=60,
+                execution_spec=count_candidate_matches_spec(),
+            )
+        rows[1]["sequence_index"] = 1
+        with self.assertRaises(ValueError):
+            engine.rank_candidates(
+                rows, cutoff_date="2024-01-03", number_pool_size=60,
+                execution_spec=count_candidate_matches_spec(),
+            )
+
+    def test_triple_presence_variables_are_restricted_to_triple_aggregate(self):
+        unsafe = {
+            "schema_version": 1,
+            "score_expression": {
+                "op": "aggregate_history_numbers",
+                "aggregate": "count",
+                "expression": {"op": "var", "name": "a_contains_candidate"},
+            },
+        }
+        with self.assertRaises(ValueError):
+            engine.validate_execution_spec(unsafe)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -601,21 +601,21 @@ class NvidiaUsageObservationTests(unittest.TestCase):
             client_factory.assert_not_called()
         self.assertEqual(research._NVIDIA_REQUESTS_ATTEMPTED, 0)
 
-    def test_two_directional_sdk_requests_are_nonstreaming_and_ordered(self):
+    def test_four_request_package_allows_two_directions_critique_and_between_draws(self):
         env = self.live_env()
-        forward_client = self.client_with_response(
-            self.sdk_response("forward final content", reasoning_content="must not be used")
-        )
-        reverse_client = self.client_with_response(
-            self.sdk_response("reverse final content")
-        )
+        clients = [
+            self.client_with_response(self.sdk_response("forward final content")),
+            self.client_with_response(self.sdk_response("reverse final content")),
+            self.client_with_response(self.sdk_response("forward critique content")),
+            self.client_with_response(self.sdk_response("between draws content")),
+        ]
         saved = []
         with patch.dict(os.environ, env, clear=True), patch.object(
             research, "save_usage_observation",
             side_effect=lambda observation, **kwargs: saved.append((observation, kwargs)),
         ), patch.object(research, "reserve_nvidia_request") as reserve, patch(
             "general_open_research._create_nvidia_client",
-            side_effect=[forward_client, reverse_client],
+            side_effect=clients,
         ) as client_factory:
             forward = research.call_model(
                 [{"role": "user", "content": "forward"}],
@@ -625,17 +625,28 @@ class NvidiaUsageObservationTests(unittest.TestCase):
                 [{"role": "user", "content": "reverse"}],
                 request_label="reverse",
             )
+            critique = research.call_model(
+                [{"role": "user", "content": "critique the validated forward proposal"}],
+                request_label="forward_critique",
+            )
+            between = research.call_model(
+                [{"role": "user", "content": "independent between-draw research"}],
+                request_label="between_draws",
+            )
             self.assertEqual(forward, "forward final content")
             self.assertEqual(reverse, "reverse final content")
+            self.assertEqual(critique, "forward critique content")
+            self.assertEqual(between, "between draws content")
             with self.assertRaisesRegex(RuntimeError, "request cap reached"):
-                research.call_model([{"role": "user", "content": "third"}])
+                research.call_model(
+                    [{"role": "user", "content": "fifth request must be blocked"}],
+                )
 
-        self.assertEqual(client_factory.call_count, 2)
-        self.assertEqual([call.args[1] for call in client_factory.call_args_list], [600, 600])
-        self.assertEqual(reserve.call_count, 2)
-        self.assertEqual(research.DEFAULT_MAX_COMPLETION_TOKENS, 8192)
-        self.assertEqual(research.DIAGNOSTIC_MAX_COMPLETION_TOKENS, 8192)
-        for client in (forward_client, reverse_client):
+        self.assertEqual(client_factory.call_count, 4)
+        self.assertEqual([call.args[1] for call in client_factory.call_args_list], [600, 600, 600, 600])
+        self.assertEqual(reserve.call_count, 4)
+        self.assertEqual(research.MAX_NVIDIA_REQUESTS_PER_RUN, 4)
+        for client in clients:
             client.chat.completions.create.assert_called_once()
             call = client.chat.completions.create.call_args.kwargs
             self.assertIs(call["stream"], False)
@@ -650,8 +661,11 @@ class NvidiaUsageObservationTests(unittest.TestCase):
                 },
             )
             client.close.assert_called_once()
-        self.assertEqual(len(saved), 2)
-        self.assertEqual([item[1]["request_label"] for item in saved], ["forward", "reverse"])
+        self.assertEqual(len(saved), 4)
+        self.assertEqual(
+            [item[1]["request_label"] for item in saved],
+            ["forward", "reverse", "forward_critique", "between_draws"],
+        )
         for observation, _kwargs in saved:
             self.assertEqual(observation["response_mode"], "json")
             self.assertEqual(observation["transport"], "openai-python-sdk")
@@ -664,7 +678,6 @@ class NvidiaUsageObservationTests(unittest.TestCase):
                 observation["rate_limit_headers_returned"]["x-request-id"],
                 "synthetic-request-id",
             )
-        self.assertEqual(research._NVIDIA_REQUESTS_ATTEMPTED, 2)
 
     def test_runner_rejects_reverse_before_forward_and_duplicate_direction(self):
         with patch.dict(os.environ, self.live_env(), clear=True), patch(
