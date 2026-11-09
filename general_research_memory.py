@@ -1379,7 +1379,7 @@ def _write_memory(memory: dict[str, Any], path: str | Path) -> None:
         or memory["entries"][:len(checked["entries"])] != checked["entries"]
         or memory["offline_research"] != checked["offline_research"]
     ):
-        raise ResearchMemoryError("Sealed-memory update changed an existing prefix or the offline namespace.")
+        raise ResearchMemoryError("Memory update is not append-only; sealed entries or the offline namespace changed.")
     if len(memory["entries"]) < len(checked["entries"]):
         raise ResearchMemoryError("Memory entries cannot be deleted.")
     # The persisted prefix was already validated by load_memory above and is
