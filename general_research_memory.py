@@ -24,7 +24,7 @@ from general_hypothesis_proposals import (
     parse_hypothesis_proposals,
 )
 from general_execution_spec_parser import parse_execution_spec_block
-from general_hypothesis_execution import validate_execution_spec
+from general_execution_spec_dispatch import validate_execution_spec
 
 VERSION = "0.2.0"
 SCHEMA_VERSION = 3
@@ -179,6 +179,13 @@ CANDIDATE_VALUE_BEFORE_CUE = re.compile(
     + r"(?:[\s,:#=]+" + CANDIDATE_CONNECTOR + r"){0,3}"
     + r"[\s:#=]+\b" + CANDIDATE_CUE + r"\b"
 )
+EXPLICIT_NUMBER_LIST_LABEL = re.compile(
+    r"(?ix)\\b(?:numbers?|values?|number|value|"
+    r"sayı(?:lar|ları|sı)?|sayi(?:lar|lari|si)?|"
+    r"numara(?:lar|ları|sı)?|değer(?:ler|leri|i)?|deger(?:ler|leri|i)?)"
+    r"\\s*(?::|=|#|\\bare\\b|\\bis\\b|\\binclude\\b|\\bincludes\\b)"
+    r"\\s*[\\[(]?\\s*" + NUMBER_VALUE_TOKEN + r"\\b"
+)
 
 
 ALLOWED_STATUSES = {
@@ -248,6 +255,7 @@ def _contains_candidate_value_reference(value: Any) -> bool:
         return (
             CANDIDATE_VALUE_AFTER_CUE.search(value) is not None
             or CANDIDATE_VALUE_BEFORE_CUE.search(value) is not None
+            or EXPLICIT_NUMBER_LIST_LABEL.search(value) is not None
         )
     if isinstance(value, list):
         return any(_contains_candidate_value_reference(item) for item in value)
