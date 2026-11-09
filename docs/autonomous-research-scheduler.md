@@ -145,9 +145,11 @@ rather than being approximated.
 
 The between-draw allocation is a 30-request rolling-budget category shared by
 GENERAL and its agents. It is a ceiling, not a requirement to spend the allocation.
-Offline candidate tests do not consume NVIDIA requests. The autonomous offline
-task runner remains a separate outstanding feature; a quota category alone does
-not make offline research run automatically.
+The bounded offline symbolic task runner is now wired to the scheduled FIFO cycle.
+It runs before the hosted-research authorization/global-lock gate, makes no provider
+request, and consumes no NVIDIA reservation. See
+docs/general-offline-hypothesis-discovery.md for its candidate grammar, data split,
+evaluation contract, and separate append-only memory.
 
 The scheduler state schema v2 contains a bounded durable FIFO. On each scheduled
 archive refresh, the capture step appends every newly observed canonical draw
@@ -206,7 +208,12 @@ a terminal SUCCEEDED, NO_ELIGIBLE_CANDIDATE, or FAILED outcome. A valid empty
 hypothesis response is a terminal scientific NO_ELIGIBLE_CANDIDATE. A sent or
 uncertain provider request remains blocked for manual recovery.
 
-The autonomous offline task runner is not included in this FIFO step. Until that
-separate feature is implemented, offline evaluation remains available only
-through the existing explicitly invoked, leakage-free test and sealed-evaluation
-paths. No NVIDIA calls are made merely to fill the between-draw allocation.
+Before checking hosted-research authorization, the scheduled cycle
+materializes only the current FIFO head in the job workspace and runs the
+bounded offline symbolic discovery/evaluation task. A successful exploratory
+cycle appends only to general_offline_research_memory.json, sends its number-safe
+report through Telegram, and uploads a short-lived report artifact. The existing
+sealed directional memory and evaluation ledger remain separate and unchanged by
+this runner. A waiting or failed offline cycle does not consume the FIFO target,
+modify protected state, clear a lock, or create a provider request. No NVIDIA calls
+are made merely to fill the between-draw allocation.
