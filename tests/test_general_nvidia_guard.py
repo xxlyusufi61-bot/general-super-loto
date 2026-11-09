@@ -537,6 +537,12 @@ class GlobalNvidiaLockTests(unittest.TestCase):
         }
         old_ledger["daily_requests"] = [reservation]
 
+        tampered_legacy = dict(old_ledger)
+        tampered_legacy["category_limits"] = dict(old_ledger["category_limits"])
+        tampered_legacy["category_limits"]["retry_reserve"] = 5
+        with self.assertRaisesRegex(ValueError, "daily category allocations or budget are unknown"):
+            validate_rate_limit_state(tampered_legacy)
+
         normalized = validate_rate_limit_state(old_ledger)
         self.assertEqual(normalized["daily_max_requests"], 200)
         self.assertEqual(normalized["category_limits"], NVIDIA_BUDGET_CATEGORY_LIMITS)
