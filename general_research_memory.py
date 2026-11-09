@@ -183,7 +183,7 @@ EXPLICIT_NUMBER_LIST_LABEL = re.compile(
     r"(?ix)\b(?:numbers?|values?|number|value|"
     r"sayı(?:lar|ları|sı)?|sayi(?:lar|lari|si)?|"
     r"numara(?:lar|ları|sı)?|değer(?:ler|leri|i)?|deger(?:ler|leri|i)?)"
-    r"\s*(?::|=|#|\bare\b|\bis\b|\binclude\b|\bincludes\b)"
+    r"\s*(?::|=|\\#|\bare\b|\bis\b|\binclude\b|\bincludes\b)"
     r"\s*[\[(]?\s*" + NUMBER_VALUE_TOKEN + r"\b"
 )
 
