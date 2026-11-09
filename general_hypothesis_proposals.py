@@ -92,6 +92,9 @@ def _render_expression(node: dict[str, Any]) -> str:
             "candidate": "candidate_value",
             "value": "historical_draw_value",
             "draw_age": "directional_draw_age",
+            "a_contains_candidate": "candidate_present_in_A",
+            "b_contains_candidate": "candidate_present_in_B",
+            "c_contains_candidate": "candidate_present_in_C",
         }[node["name"]]
     if op in {"aggregate_history_numbers", "aggregate_history_triples"}:
         aggregate_name = (
