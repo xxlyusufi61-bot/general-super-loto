@@ -611,11 +611,8 @@ def _validate_entry(entry: Any, expected_id: int) -> dict[str, Any]:
     return entry
 
 
-def load_memory(path: str | Path) -> dict[str, Any]:
-    target = Path(path)
-    if not target.exists():
-        return empty_memory()
-    payload = _read_json(target, "Offline research memory")
+def validate_memory_document(payload: Any) -> dict[str, Any]:
+    """Validate the offline namespace embedded in the canonical memory object."""
     if (
         not isinstance(payload, dict)
         or set(payload) != {"schema_version", "purpose", "entries", "consumed_development_windows"}
@@ -680,6 +677,12 @@ def load_memory(path: str | Path) -> dict[str, Any]:
         if entry["cycle_id"] != expected_cycle_id:
             raise OfflineResearchError("Offline memory cycle provenance hash is invalid.")
     return payload
+
+
+def load_memory(path: str | Path) -> dict[str, Any]:
+    from general_research_memory import load_memory as load_combined_memory
+    combined = load_combined_memory(path)
+    return validate_memory_document(combined["offline_research"])
 
 
 def memory_context(
@@ -897,18 +900,13 @@ def run_cycle(
         "entries": memory["entries"] + [entry],
         "consumed_development_windows": memory["consumed_development_windows"] + [consumption],
     }
-    # Validate the complete proposed append before the single atomic replacement.
-    parent = Path(memory_path).parent
-    parent.mkdir(parents=True, exist_ok=True)
-    temp = Path(memory_path).with_name(Path(memory_path).name + ".tmp")
-    temp.write_text(
-        json.dumps(updated, ensure_ascii=False, sort_keys=True, indent=2, allow_nan=False) + "\n",
-        encoding="utf-8",
-    )
-    checked = load_memory(temp)
-    if checked != updated:
-        raise OfflineResearchError("Offline memory append failed its read-back validation.")
-    temp.replace(memory_path)
+    # Append into the existing research_memory state object. The established
+    # state-store writer publishes this same canonical object; no fifth object,
+    # extra branch, or direct main-branch data push is introduced.
+    from general_research_memory import append_offline_research_memory
+    append_result = append_offline_research_memory(updated, path=memory_path)
+    if append_result.get("status") != "APPENDED":
+        raise OfflineResearchError("Offline memory append did not complete.")
 
     report = {
         "schema_version": 1,
