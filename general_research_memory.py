@@ -1,10 +1,10 @@
-"""Append-only, direction-isolated memory for GENERAL's own blank-slate research.
+"""Append-only GENERAL research memory with sealed and offline namespaces.
 
-This module deliberately never imports general_memory.json, legacy formula files,
-or archive rows into model context. It stores validated GENERAL-origin hypotheses,
-safe execution specifications, safe aggregate evaluation feedback, sanitized full
-report narratives, and sanitized failure metadata. Consumed holdout rows are never
-copied into this memory.
+The sealed directional writer retains its claim/ledger binding and cannot modify
+the isolated offline_research namespace. The offline symbolic runner may append
+only to that namespace through this module and the existing generation-guarded
+research_memory state object. Neither path imports legacy formulas or raw archive
+rows into model context, and consumed draw rows are never copied into memory.
 """
 from __future__ import annotations
 
