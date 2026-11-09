@@ -952,7 +952,7 @@ def main(argv: list[str] | None = None) -> int:
     run = sub.add_parser("run")
     run.add_argument("--archive", type=Path, default=Path("super_loto_archive.json"))
     run.add_argument("--sealed-ledger", type=Path, default=Path("general_evaluation_ledger.json"))
-    run.add_argument("--memory", type=Path, default=Path("general_offline_research_memory.json"))
+    run.add_argument("--memory", type=Path, default=Path("general_research_memory.json"))
     run.add_argument("--report", type=Path, default=Path("general_offline_research_report.json"))
     run.add_argument("--github-output")
     args = parser.parse_args(argv)
