@@ -19,23 +19,16 @@ def _hash_entry(entry):
 
 
 def sample_entry(direction="forward", entry_id=1, target="2026-10-20", status="HYPOTHESES_CAPTURED"):
-    proposal = {
+    raw_proposal = {
         "hypothesis_id": "HYP-001" if direction == "forward" else "HYP-501",
         "discovery_direction": direction,
         "proposed_family": "bounded transition hypothesis",
-        "hypothesis": "Earlier-state counts may rank later values.",
-        "exact_definition": "Count previous occurrences before each chronological cutoff.",
-        "inputs": "Strictly earlier R60 history only.",
-        "output_rule": "Rank candidates by descending count with a fixed tie-break.",
-        "parameter_policy": "No fitted thresholds.",
-        "selection_policy": "Select only on the direction's discovery interval.",
-        "falsification_criterion": "Reject if forward performance does not exceed the null baseline.",
+        "research_rationale": "A simple historical relation is worth testing against chronological null baselines.",
         "known_risks": ["Multiple testing and nonstationarity."],
-        "evaluation_protocols": [
-            "forward_walk_forward", "reverse_retrospective_stress_test",
-            "time_ordered_cross_validation", "uniform_random_6_of_N",
-        ],
+        "formal_execution_spec": None,
     }
+    validated_proposal = memory._validate_proposal(raw_proposal)
+    proposal = {key: validated_proposal[key] for key in memory.PROPOSAL_KEYS}
     entry = {
         "entry_id": entry_id,
         "cycle_id": hashlib.sha256(f"cycle-{entry_id}-{direction}".encode()).hexdigest(),
@@ -58,14 +51,23 @@ def sample_entry(direction="forward", entry_id=1, target="2026-10-20", status="H
         "execution_spec_status": "VALID_EMPTY",
         "execution_spec": None,
         "execution_spec_sha256": None,
-        "learning_notes": {"observations": ["The candidate is simple and reproducible."], "failed_approaches": [], "next_tests": ["Compare against a uniform random baseline."]},
+        "learning_notes": {
+            "observations": ["The candidate is simple and reproducible."],
+            "failed_approaches": [],
+            "next_tests": ["Compare against a uniform random baseline."],
+        },
         "evaluation_feedback": None,
         "failure": None,
-        "discovery_window": {"start_date": "2026-09-01", "end_date": "2026-10-01", "draw_count": 20, "holdout_dates_copied": False, "archive_rows_copied": False},
+        "discovery_window": {
+            "start_date": "2026-09-01",
+            "end_date": "2026-10-01",
+            "draw_count": 20,
+            "holdout_dates_copied": False,
+            "archive_rows_copied": False,
+        },
     }
     entry["content_sha256"] = _hash_entry(entry)
     return entry
-
 
 class ResearchMemoryValidationTests(unittest.TestCase):
     def test_empty_memory_is_fresh_and_has_no_legacy_import(self):
@@ -231,6 +233,93 @@ class ResearchMemoryValidationTests(unittest.TestCase):
         )
         self.assertIsNone(sanitized)
         self.assertEqual(status, "OMITTED_NUMERIC_CONTENT")
+
+    def test_benign_mathematical_class_sizes_are_not_misclassified_as_predictions(self):
+        safe_values = (
+            "MOD5 residue classes each contain 12 numbers, giving a uniformity baseline.",
+            "Each of the five residue classes contains twelve numbers.",
+            "The expected count is 1.2 numbers per draw for each class.",
+            "The 12-number class size is a combinatorial property, not a prediction.",
+            "Twelve values belong to each residue class in the 1-to-60 pool.",
+        )
+        for value in safe_values:
+            with self.subTest(value=value):
+                memory._reject_candidate_value_references({"observations": [value]}, "Safe note")
+
+    def test_single_drawn_number_values_are_rejected_without_blocking_math_counts(self):
+        unsafe_values = (
+            "Drawn number: 17.",
+            "17 was drawn.",
+            "17 has been drawn.",
+            "The drawn number was 17.",
+            "Çekilen sayı: 17.",
+            "Çekilen sayı on yedi.",
+            "17 çekildi.",
+            "17 numarası çekildi.",
+        )
+        for value in unsafe_values:
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(
+                    memory.ResearchMemoryError, "candidate/predicted number value"
+                ):
+                    memory._reject_candidate_value_references(value, "Unsafe drawn value")
+
+        safe_values = (
+            "Each MOD5 class contains 12 numbers.",
+            "17 observations were drawn from a synthetic sample.",
+            "The experiment drew 17 observations from a synthetic distribution.",
+            "Each residue class contains twelve values.",
+        )
+        for value in safe_values:
+            with self.subTest(value=value):
+                memory._reject_candidate_value_references(value, "Safe mathematical note")
+
+        for value in ("17 was drawn.", "Çekilen sayı: 17.", "17 çekildi."):
+            payload = {
+                "schema_version": 1,
+                "observations": [value],
+                "failed_approaches": [],
+                "next_tests": [],
+            }
+            report = (
+                memory.LESSONS_START
+                + json.dumps(payload, ensure_ascii=False)
+                + memory.LESSONS_END
+            )
+            with self.subTest(learning_note=value):
+                with self.assertRaisesRegex(
+                    memory.ResearchMemoryError, "candidate/predicted number value"
+                ):
+                    memory._parse_learning_notes(report)
+
+            entry = sample_entry()
+            entry["learning_notes"]["observations"] = [value]
+            entry["content_sha256"] = _hash_entry(entry)
+            with self.subTest(stored_learning_note=value):
+                with self.assertRaisesRegex(
+                    memory.ResearchMemoryError, "candidate/predicted number value"
+                ):
+                    memory._validate_entry(entry, 1)
+
+    def test_candidate_value_and_partial_ranking_phrases_remain_blocked(self):
+        unsafe_values = (
+            "Candidate number: 17.",
+            "Predicted value 22.",
+            "Top-ranked numbers: 17 and 22.",
+            "17 is the highest-ranked candidate.",
+            "The candidate is 17 and remains unverified.",
+            "Aday sayısı: on iki.",
+            "Aday değer on yedi olarak seçildi.",
+            "Tahmin edilen sayı on yedi.",
+            "Kazanan değer: yirmi dört.",
+            "On yedi aday olarak belirlendi.",
+        )
+        for value in unsafe_values:
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(
+                    memory.ResearchMemoryError, "candidate/predicted number value"
+                ):
+                    memory._reject_candidate_value_references(value, "Unsafe note")
 
     def test_structured_candidate_values_and_partial_rankings_are_rejected(self):
         unsafe_values = (
@@ -410,16 +499,7 @@ class DirectionalMemoryContextTests(unittest.TestCase):
 
     def test_large_memory_entry_is_compacted_without_discarding_all_feedback(self):
         entry = sample_entry("forward", 1, "2026-11-04")
-        for index in range(2, 6):
-            proposal = copy.deepcopy(entry["proposals"][0])
-            proposal["hypothesis_id"] = f"HYP-{index:03d}"
-            for key in (
-                "proposed_family", "hypothesis", "exact_definition", "inputs",
-                "output_rule", "parameter_policy", "selection_policy",
-                "falsification_criterion",
-            ):
-                proposal[key] = "x" * 1800
-            entry["proposals"].append(proposal)
+        entry["proposals"][0]["proposed_family"] = "A" * 1800
         entry["learning_notes"] = {
             "observations": ["An observation with enough detail. " * 15],
             "failed_approaches": ["A failed approach with enough detail. " * 15],
@@ -433,11 +513,11 @@ class DirectionalMemoryContextTests(unittest.TestCase):
             write_json(path, value)
             context = memory.direction_context("forward", "2026-11-04", memory_path=path)
         self.assertEqual(len(context), 1)
-        self.assertEqual(context[0]["proposals_in_memory"], 5)
-        self.assertEqual(len(context[0]["hypotheses"]), 2)
-        self.assertLessEqual(len(context[0]["hypotheses"][1]["exact_definition"]), 850)
-        self.assertIn("exact_definition", context[0]["hypotheses"][1]["truncated_fields"])
-        self.assertIn("[TRUNCATED]", context[0]["hypotheses"][1]["exact_definition"])
+        self.assertEqual(context[0]["proposals_in_memory"], 1)
+        self.assertEqual(len(context[0]["hypotheses"]), 1)
+        self.assertLessEqual(len(context[0]["hypotheses"][0]["proposed_family"]), 180)
+        self.assertIn("proposed_family", context[0]["hypotheses"][0]["truncated_fields"])
+        self.assertIn("[TRUNCATED]", context[0]["hypotheses"][0]["proposed_family"])
         self.assertLessEqual(len(memory._canonical(context)), memory.MAX_CONTEXT_CHARS)
 
     def test_direction_context_refuses_invalid_direction(self):
@@ -460,6 +540,15 @@ class DirectionalMemoryContextTests(unittest.TestCase):
         bad = report.replace("A fixed tie-break improves reproducibility.", "Prediction: 3, 9, 15, 24, 36, 50")
         with self.assertRaisesRegex(memory.ResearchMemoryError, "six-number value set"):
             memory._parse_learning_notes(bad)
+        benign = report.replace(
+            "A fixed tie-break improves reproducibility.",
+            "MOD5 residue classes each contain 12 numbers.",
+        )
+        parsed_benign = memory._parse_learning_notes(benign)
+        self.assertEqual(
+            parsed_benign["observations"],
+            ["MOD5 residue classes each contain 12 numbers."],
+        )
         partial = report.replace(
             "A fixed tie-break improves reproducibility.",
             "The candidate is 17 and remains unverified.",
@@ -472,23 +561,6 @@ class DirectionalMemoryContextTests(unittest.TestCase):
 
 def directional_report(direction):
     source_id = "HYP-001"
-    proposal = {
-        "hypothesis_id": source_id,
-        "discovery_direction": direction,
-        "proposed_family": "bounded transition hypothesis",
-        "hypothesis": "Earlier-state counts may rank later values.",
-        "exact_definition": "Count previous occurrences before each chronological cutoff.",
-        "inputs": "Strictly earlier R60 history only.",
-        "output_rule": "Rank candidates by descending count with a fixed tie-break.",
-        "parameter_policy": "No fitted thresholds.",
-        "selection_policy": "Select only on the direction's discovery interval.",
-        "falsification_criterion": "Reject if the result does not exceed a uniform random baseline.",
-        "known_risks": ["Multiple testing and nonstationarity."],
-        "evaluation_protocols": [
-            "forward_walk_forward", "reverse_retrospective_stress_test",
-            "time_ordered_cross_validation", "uniform_random_6_of_N",
-        ],
-    }
     spec = {
         "schema_version": 1,
         "score_expression": {
@@ -501,10 +573,18 @@ def directional_report(direction):
             },
         },
     }
+    proposal = {
+        "hypothesis_id": source_id,
+        "discovery_direction": direction,
+        "proposed_family": "bounded transition hypothesis",
+        "research_rationale": "A simple count baseline is being tested against a chronological null.",
+        "known_risks": ["Multiple testing and nonstationarity."],
+        "formal_execution_spec": spec,
+    }
     return (
-        "Complete narrative report for " + direction + " direction.\\n\\n"
+        "Complete narrative report for " + direction + " direction.\n\n"
         "<HYPOTHESIS_PROPOSALS_JSON>"
-        + json.dumps({"schema_version": 2, "proposals": [proposal]})
+        + json.dumps({"schema_version": 3, "proposals": [proposal]})
         + "</HYPOTHESIS_PROPOSALS_JSON>"
         + "<HYPOTHESIS_EXECUTION_SPECS_JSON>"
         + json.dumps({"schema_version": 1, "specifications": [{"hypothesis_id": source_id, "execution_spec": spec}]})
@@ -513,12 +593,11 @@ def directional_report(direction):
         + json.dumps({
             "schema_version": 1,
             "observations": ["The fixed definition is reproducible."],
-            "failed_approaches": ["A moving threshold was not stable."],
+            "failed_approaches": ["A moving threshold was not reproducible."],
             "next_tests": ["Compare the candidate against a null baseline."],
         })
         + memory.LESSONS_END
     )
-
 
 def write_json(path, value):
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

@@ -18,26 +18,7 @@ from general_live_consent import (
 )
 
 
-def make_directional_report(direction):
-    proposal = {
-        "hypothesis_id": "HYP-001",
-        "discovery_direction": direction,
-        "proposed_family": "generic count baseline",
-        "hypothesis": "prior counts rank future items",
-        "exact_definition": "count all prior appearances",
-        "inputs": "historical numbers before target",
-        "output_rule": "rank by count descending",
-        "parameter_policy": "use fixed constants only",
-        "selection_policy": "select on discovery rows only",
-        "falsification_criterion": "reject if no stable effect",
-        "known_risks": ["multiple testing risk"],
-        "evaluation_protocols": [
-            "forward_walk_forward",
-            "reverse_retrospective_stress_test",
-            "time_ordered_cross_validation",
-            "uniform_random_6_of_N",
-        ],
-    }
+def make_directional_report(direction, *, alter_spec=False):
     spec = {
         "schema_version": 1,
         "score_expression": {
@@ -50,7 +31,18 @@ def make_directional_report(direction):
             },
         },
     }
-    proposals = {"schema_version": 2, "proposals": [proposal]}
+    proposal_formal_spec = json.loads(json.dumps(spec))
+    if alter_spec:
+        spec["score_expression"]["expression"]["right"]["name"] = "draw_age"
+    proposal = {
+        "hypothesis_id": "HYP-001",
+        "discovery_direction": direction,
+        "proposed_family": "generic count baseline",
+        "research_rationale": "Historical counts may be a useful baseline to challenge against a null model.",
+        "known_risks": ["multiple testing risk"],
+        "formal_execution_spec": proposal_formal_spec,
+    }
+    proposals = {"schema_version": 3, "proposals": [proposal]}
     specs = {"schema_version": 1, "specifications": [{"hypothesis_id": "HYP-001", "execution_spec": spec}]}
     return (
         "<HYPOTHESIS_PROPOSALS_JSON>\n"
@@ -68,7 +60,6 @@ def make_directional_report(direction):
         })
         + research.LESSONS_END
     )
-
 
 def make_fake_connection(response=None):
     connection = MagicMock()
@@ -225,11 +216,20 @@ class OpenResearchIsolationTests(unittest.TestCase):
         lowered = system.lower()
         self.assertIn("<HYPOTHESIS_PROPOSALS_JSON>", system)
         self.assertIn("</HYPOTHESIS_PROPOSALS_JSON>", system)
-        self.assertIn('"schema_version":2', system)
+        self.assertIn('"schema_version":3', system)
+        self.assertIn('"formal_execution_spec":null', system)
+        self.assertIn("coordinator assigns the four mandatory evaluation protocols", system.lower())
+        self.assertIn("all mathematical explanation fields", system.lower())
+        self.assertIn('"research_rationale"', system)
+        self.assertNotIn('"evaluation_protocols"', system)
+        self.assertNotIn('"exact_definition"', system)
+        self.assertIn("zero or one proposal only", system.lower())
+        self.assertIn("whole-block fail-closed contract", system.lower())
         self.assertIn("schema_version 1", lowered)
-        self.assertIn('"falsification_criterion"', system)
-        self.assertIn('"forward_walk_forward"', system)
-        self.assertIn("An empty proposals list is an acceptable result.", system)
+        self.assertIn("falsification criterion", system.lower())
+        self.assertNotIn('"forward_walk_forward"', system)
+        self.assertIn("four mandatory evaluation protocols", system.lower())
+        self.assertIn("or return an empty list", system)
         self.assertIn("one isolated forward discovery pass", lowered)
         self.assertIn('"discovery_direction":"forward"', system)
         self.assertNotIn('"discovery_direction":"forward|reverse|both"', system)
@@ -309,6 +309,25 @@ class OpenResearchIsolationTests(unittest.TestCase):
         self.assertEqual([item["hypothesis_id"] for item in specs["specifications"]], ["HYP-001", "HYP-501"])
         self.assertEqual(specs["specifications"][0]["source_hypothesis_id"], "HYP-001")
         self.assertEqual(specs["specifications"][1]["source_hypothesis_id"], "HYP-001")
+
+    def test_directional_execution_spec_must_match_authoritative_formal_definition(self):
+        result = research.parse_directional_result(
+            make_directional_report("forward", alter_spec=True), "forward"
+        )
+        self.assertEqual(result["proposal_document"]["status"], "VALID_PROPOSALS")
+        self.assertEqual(result["execution_spec_document"]["status"], "REJECTED")
+        self.assertEqual(result["execution_spec_document"]["specifications"], [])
+        self.assertIn(
+            "exactly match the proposal's formal mathematical definition",
+            result["execution_spec_document"]["rejection_reasons"][0],
+        )
+        proposals, specs = research.combine_directional_results(
+            result,
+            research.parse_directional_result(make_directional_report("reverse"), "reverse"),
+        )
+        self.assertEqual(proposals["status"], "VALID_PROPOSALS")
+        self.assertEqual(specs["status"], "INCOMPLETE_DIRECTIONAL_SPECS")
+        self.assertFalse(specs["dsl_validated"])
 
     def test_direction_mismatch_is_rejected_fail_closed(self):
         result = research.parse_directional_result(make_directional_report("reverse"), "forward")

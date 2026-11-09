@@ -20,6 +20,7 @@ from typing import Any
 from general_hypothesis_proposals import (
     PROPOSAL_KEYS,
     _validate_proposal,
+    execution_spec_matches_proposal,
     parse_hypothesis_proposals,
 )
 from general_execution_spec_parser import parse_execution_spec_block
@@ -146,17 +147,27 @@ DRAW_SET_WORD_TEXT = re.compile(
     r"(?ix)(?<![\w.])" + NUMBER_VALUE_TOKEN
     + r"(?:(?:\s*[,;|/]\s*|\s+(?:and|ve)\s+)" + NUMBER_VALUE_TOKEN + r"){5}(?![\w])"
 )
+# Generic nouns such as "numbers" and "values" are deliberately not candidate
+# cues by themselves. "Each MOD5 class contains 12 numbers" is a class-size
+# statement, not a predicted or ranked lottery value.
 CANDIDATE_CUE = (
-    r"(?:candidate(?:s)?|prediction(?:s)?|predicted|winning|drawn|"
-    r"rank(?:ed|ing)?|top(?:[- ]ranked)?|highest(?:[- ]ranked)?|best|first|number(?:s)?|value(?:s)?|winner|winning|"
-    r"aday(?:lar|ı|ın|ları)?|tahmin(?:i|ler|\s+edilen)?|kazanan(?:ı|lar|ları)?|çıkan|cikan|"
-    r"sayı(?:lar|ları|sı)?|sayi(?:lar|lari|si)?|numara(?:lar|ları|sı)?|numara(?:lar|lari|si)?|"
-    r"değer(?:ler|leri|i)?|deger(?:ler|leri|i)?|sıralama|siralama)"
+    r"(?:candidate(?:s)?|prediction(?:s)?|predicted|winning|"
+    r"rank(?:ed|ing)?|top(?:[- ]ranked)?|highest(?:[- ]ranked)?|best|first|"
+    r"winner|selected|chosen|"
+    r"aday(?:lar|ı|ın|ları)?(?:\s+(?:sayı(?:lar|ları|sı)?|sayi(?:lar|lari|si)?|"
+    r"numara(?:lar|ları|sı)?|değer(?:ler|leri|i)?|deger(?:ler|leri|i)?))?|"
+    r"tahmin(?:i|ler)?(?:\s+edilen)?(?:\s+(?:sayı(?:lar|ları|sı)?|sayi(?:lar|lari|si)?|"
+    r"numara(?:lar|ları|sı)?|değer(?:ler|leri|i)?|deger(?:ler|leri|i)?))?|"
+    r"kazanan(?:ı|lar|ları)?(?:\s+(?:sayı(?:lar|ları|sı)?|sayi(?:lar|lari|si)?|"
+    r"numara(?:lar|ları|sı)?|değer(?:ler|leri|i)?|deger(?:ler|leri|i)?))?|"
+    r"çıkan\s+(?:sayı|numara)|cikan\s+(?:sayi|numara)|"
+    r"sıralama|siralama)"
 )
 CANDIDATE_CONNECTOR = (
     r"(?:the|number|numbers|value|values|no\.?|is|are|was|were|of|at|"
-    r"include|includes|list|set|output|result|pick|picks|first|"
-    r"birinci|seçilen|secilen|olarak|edilen|değeri|degeri|numarası|numarasi)"
+    r"include|includes|list|set|output|result|pick|picks|first|remains|only|a|an|"
+    r"birinci|seçilen|secilen|olarak|edilen|değeri|degeri|numarası|numarasi|"
+    r"sayı|sayıları|sayi|sayilari|numara|numaralar|değer|değerleri|deger|degerleri)"
 )
 CANDIDATE_VALUE_AFTER_CUE = re.compile(
     r"(?ix)\b" + CANDIDATE_CUE
@@ -167,6 +178,28 @@ CANDIDATE_VALUE_BEFORE_CUE = re.compile(
     r"(?ix)\b" + NUMBER_VALUE_TOKEN
     + r"(?:[\s,:#=]+" + CANDIDATE_CONNECTOR + r"){0,3}"
     + r"[\s:#=]+\b" + CANDIDATE_CUE + r"\b"
+)
+
+
+DRAWN_NUMBER_AFTER_LABEL = re.compile(
+    r"(?ix)(?<![\w.])(?:the\s+)?(?:drawn|picked)\s+(?:lottery\s+)?"
+    r"(?:number|value)\s*(?::|=|\#)?\s*(?:(?:is|was|equals?)\s+)?"
+    + NUMBER_VALUE_TOKEN + r"\b"
+)
+DRAWN_NUMBER_BEFORE_VERB = re.compile(
+    r"(?ix)(?<![\w.])" + NUMBER_VALUE_TOKEN
+    + r"(?:\s+(?:was|has\s+been|is))?\s+(?:drawn|picked)\b"
+)
+DRAWN_NUMBER_TURKISH_AFTER_LABEL = re.compile(
+    r"(?ix)(?<![\w.])(?:çekilen|cekilen|çekilmiş|cekilmis|"
+    r"çekilişte\s+çıkan|cekiliste\s+cikan)\s+"
+    r"(?:sayı|sayi|numara)(?:sı|si)?\s*(?::|=|\#)?\s*"
+    + NUMBER_VALUE_TOKEN + r"\b"
+)
+DRAWN_NUMBER_TURKISH_BEFORE_VERB = re.compile(
+    r"(?ix)(?<![\w.])" + NUMBER_VALUE_TOKEN
+    + r"(?:\s+(?:numarası|numarasi|sayısı|sayisi))?\s+"
+    r"(?:çekildi|cekildi|çekilmiştir|cekilmistir|çekilmiş|cekilmis)\b"
 )
 
 
@@ -237,6 +270,10 @@ def _contains_candidate_value_reference(value: Any) -> bool:
         return (
             CANDIDATE_VALUE_AFTER_CUE.search(value) is not None
             or CANDIDATE_VALUE_BEFORE_CUE.search(value) is not None
+            or DRAWN_NUMBER_AFTER_LABEL.search(value) is not None
+            or DRAWN_NUMBER_BEFORE_VERB.search(value) is not None
+            or DRAWN_NUMBER_TURKISH_AFTER_LABEL.search(value) is not None
+            or DRAWN_NUMBER_TURKISH_BEFORE_VERB.search(value) is not None
         )
     if isinstance(value, list):
         return any(_contains_candidate_value_reference(item) for item in value)
@@ -512,8 +549,8 @@ def _validate_entry(entry: Any, expected_id: int) -> dict[str, Any]:
         "REJECTED_DIRECTION_MISMATCH", "NOT_RUN",
     }:
         raise ResearchMemoryError("Proposal status is invalid.")
-    if not isinstance(entry["proposals"], list) or len(entry["proposals"]) > 5:
-        raise ResearchMemoryError("Stored proposal list is invalid.")
+    if not isinstance(entry["proposals"], list) or len(entry["proposals"]) > 1:
+        raise ResearchMemoryError("Stored proposal list must contain at most one atomic directional proposal.")
     seen_proposals = set()
     for proposal in entry["proposals"]:
         if not isinstance(proposal, dict) or set(proposal) != PROPOSAL_KEYS:
@@ -531,14 +568,14 @@ def _validate_entry(entry: Any, expected_id: int) -> dict[str, Any]:
         seen_proposals.add(proposal_id)
         if proposal.get("discovery_direction") != entry["direction"]:
             raise ResearchMemoryError("A directional memory entry contains another direction's proposal.")
+        _reject_number_values(proposal, "Stored proposal")
+        _reject_candidate_value_references(proposal, "Stored proposal")
         try:
-            checked_proposal = _validate_proposal(proposal)
+            checked_proposal = _validate_proposal(proposal, canonical=True)
         except (TypeError, ValueError):
             raise ResearchMemoryError("Stored proposal failed the canonical proposal validator.") from None
         if {key: checked_proposal[key] for key in PROPOSAL_KEYS} != proposal:
             raise ResearchMemoryError("Stored proposal is not in canonical validated form.")
-        _reject_number_values(proposal, "Stored proposal")
-        _reject_candidate_value_references(proposal, "Stored proposal")
     if entry["execution_spec_status"] not in {
         "VALIDATED_SPECS", "VALID_EMPTY", "MISSING_BLOCK", "REJECTED", "NOT_RUN",
     }:
@@ -554,6 +591,15 @@ def _validate_entry(entry: Any, expected_id: int) -> dict[str, Any]:
             raise ResearchMemoryError("Stored execution specification failed the canonical DSL validator.") from None
         if checked_spec != entry["execution_spec"]:
             raise ResearchMemoryError("Stored execution specification is not canonical.")
+        if (
+            not entry["proposals"]
+            or not execution_spec_matches_proposal(
+                entry["proposals"][0], checked_spec
+            )
+        ):
+            raise ResearchMemoryError(
+                "Stored execution specification does not match the proposal's formal mathematical definition."
+            )
         if entry["execution_spec_sha256"] != _sha(_canonical(entry["execution_spec"])):
             raise ResearchMemoryError("Stored execution-spec hash does not match its definition.")
     elif entry["execution_spec_sha256"] is not None:
@@ -949,6 +995,22 @@ def _direction_artifacts(
         specs["status"] = "REJECTED"
         specs["specifications"] = []
         specs["rejection_reasons"] = ["Execution specification is not attached to this direction's proposal."]
+    if specs["specifications"]:
+        proposals_by_id = {
+            item["hypothesis_id"]: item for item in proposals["proposals"]
+        }
+        if any(
+            not execution_spec_matches_proposal(
+                proposals_by_id.get(item["hypothesis_id"], {}),
+                item["execution_spec"],
+            )
+            for item in specs["specifications"]
+        ):
+            specs["status"] = "REJECTED"
+            specs["specifications"] = []
+            specs["rejection_reasons"] = [
+                "Execution specification does not exactly match the proposal's formal mathematical definition."
+            ]
     if specs["status"] == "VALIDATED_SPECS" and (
         not proposals["proposals"]
         or len(specs["specifications"]) != 1
