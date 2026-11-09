@@ -191,20 +191,17 @@ jobs:
             --report general_offline_research_report.json \
             --github-output "$GITHUB_OUTPUT"
           cat "$GITHUB_OUTPUT"
-      - name: Persist only a validated offline GENERAL memory append
+      - name: Persist offline GENERAL learning through the existing state store
         id: persist_offline_memory
         if: ${{ steps.offline_discovery.outcome == 'success' && steps.offline_discovery.outputs.offline_status == 'COMPLETED_EXPLORATORY_ONLY' && steps.offline_discovery.outputs.offline_memory_entries_added == '1' }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add general_offline_research_memory.json
-          if ! git diff --cached --quiet; then
-            git commit -m "Append validated offline GENERAL research memory"
-            git push origin HEAD:main
-          fi
-          echo "memory_persisted=true" >> "$GITHUB_OUTPUT"
+        uses: ./.github/actions/publish-automation-state
+        with:
+          token: ${{ github.token }}
+          expected_generation: ${{ steps.persist_queue.outputs.generation || steps.state_bootstrap.outputs.generation }}
+          objects: research_memory
+          message: "Append validated offline GENERAL learning to research_memory state object"
       - name: Send offline hypothesis and evaluation summary to Telegram
-        if: ${{ steps.persist_offline_memory.outputs.memory_persisted == 'true' }}
+        if: ${{ steps.persist_offline_memory.outcome == 'success' && steps.persist_offline_memory.outputs.generation != '' }}
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -212,7 +209,7 @@ jobs:
           python3 telegram_report.py \
             --title "GENERAL çevrimdışı matematiksel keşif" \
             --status success \
-            --branch main \
+            --branch general-automation-state \
             --run-url "https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
             --kind research \
             --report-log general_offline_research_report.json
@@ -272,7 +269,7 @@ jobs:
         uses: ./.github/actions/publish-automation-state
         with:
           token: ${{ github.token }}
-          expected_generation: ${{ steps.persist_queue.outputs.generation || steps.state_bootstrap.outputs.generation }}
+          expected_generation: ${{ steps.persist_offline_memory.outputs.generation || steps.persist_queue.outputs.generation || steps.state_bootstrap.outputs.generation }}
           objects: autonomous_research_state
           message: "Reserve autonomous research target"
       - name: Run independent forward and reverse NVIDIA discovery
