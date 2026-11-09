@@ -269,11 +269,11 @@ def build_messages(
         "a mixed list of valid and invalid proposals to interfere with each other.\n"
         "<HYPOTHESIS_PROPOSALS_JSON>\n"
         "{\"schema_version\":3,\"proposals\":[{"
-        "\"hypothesis_id\":\"HYP-001\",
-        f"\"discovery_direction\":\"{direction}\",
-        "\"proposed_family\":\"free descriptive label; not a registry status\",
-        "\"research_rationale\":\"discovery-only rationale; not a formula definition or execution instruction\",
-        "\"known_risks\":[\"overfitting risk\"],
+        "\"hypothesis_id\":\"HYP-001\","
+        f"\"discovery_direction\":\"{direction}\","
+        "\"proposed_family\":\"free descriptive label; not a registry status\","
+        "\"research_rationale\":\"discovery-only rationale; not a formula definition or execution instruction\","
+        "\"known_risks\":[\"overfitting risk\"],"
         "\"formal_execution_spec\":null}]}\n"
         "</HYPOTHESIS_PROPOSALS_JSON>\n"
         "Use exactly the schema keys shown; do not add prediction numbers, source code, weights chosen from hidden "
