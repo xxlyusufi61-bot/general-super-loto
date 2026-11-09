@@ -933,7 +933,7 @@ def call_model(
                 "Normal-mode one-request cap reached; no additional provider request was sent."
             )
         raise RuntimeError(
-            "Autonomous research job-package cap reached (4 total); no additional provider request was sent."
+            "Autonomous research request cap reached (4 per job package); no additional provider request was sent."
         )
     request_key = request_label or "unlabelled"
     if request_key in _NVIDIA_REQUEST_LABELS_ATTEMPTED:
