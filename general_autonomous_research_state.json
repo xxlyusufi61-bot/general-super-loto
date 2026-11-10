@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "project": "GENERAL Super Loto",
   "authorization": {
     "enabled": true,
@@ -55,5 +55,11 @@
       "recorded_at_utc": "2026-11-08T19:12:56.538516+00:00",
       "reason_code": "NO_FROZEN_DIRECTIONAL_CANDIDATE"
     }
-  ]
+  ],
+  "target_queue": {
+    "schema_version": 1,
+    "observed_through_date": "2026-11-08",
+    "items": [],
+    "completed": []
+  }
 }
