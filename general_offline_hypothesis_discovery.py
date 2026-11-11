@@ -32,7 +32,12 @@ MEMORY_SCHEMA_VERSION = 1
 MIN_TRAIN_DRAWS = engine.DEFAULT_MIN_TRAIN_DRAWS
 DEVELOPMENT_WINDOW_DRAWS = 10
 CV_FOLDS = 5
-MAX_CANDIDATES = 16
+# The current deterministic search grammar remains capped at sixteen templates.
+# Storage accepts a larger future candidate catalogue without changing today's
+# discovery grammar or automatically expanding the search space.
+MAX_GENERATED_CANDIDATES = 16
+MAX_STORED_CANDIDATES = 1024
+MAX_CANDIDATES = MAX_GENERATED_CANDIDATES  # compatibility alias for existing callers/tests
 MAX_MEMORY_ENTRIES = 10000
 SOURCE = "GENERAL/offline-symbolic-discovery"
 PURPOSE = (
@@ -240,7 +245,7 @@ def _candidate_templates() -> list[tuple[str, str, str, dict[str, Any]]]:
                 same_mod5, _binary("lte", draw_age, _const(window - 1))
             ))),
         ))
-    if len(templates) > MAX_CANDIDATES:
+    if len(templates) > MAX_GENERATED_CANDIDATES:
         raise OfflineResearchError("The bounded symbolic candidate catalogue exceeded its hard limit.")
     return templates
 
@@ -661,7 +666,7 @@ def _validate_entry(entry: Any, expected_id: int) -> dict[str, Any]:
         or development["dates_stored"] is not False
     ):
         raise OfflineResearchError("Offline development-window metadata is invalid.")
-    if not isinstance(entry["candidates"], list) or not 1 <= len(entry["candidates"]) <= MAX_CANDIDATES:
+    if not isinstance(entry["candidates"], list) or not 1 <= len(entry["candidates"]) <= MAX_STORED_CANDIDATES:
         raise OfflineResearchError("Offline candidate list is invalid.")
     seen = set()
     for candidate in entry["candidates"]:
