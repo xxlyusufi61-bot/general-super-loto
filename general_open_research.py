@@ -51,6 +51,10 @@ API_URL = API_BASE_URL + "/chat/completions"
 OPENAI_SDK_VERSION = "3.45.0"
 DOCUMENTATION_REVIEW_DATE = "2026-10-25"
 
+# The NVIDIA model card documents a 1,048,576-token context window. A UTF-8
+# byte ceiling is deliberately more conservative than tokenizer estimation;
+# this leaves room for message framing, provider templates, and completion.
+MAX_PROMPT_MESSAGE_BYTES = 900_000
 MAX_NVIDIA_REQUESTS_PER_RUN = 4
 DEFAULT_MAX_COMPLETION_TOKENS = 8192
 DIAGNOSTIC_MAX_COMPLETION_TOKENS = 8192
@@ -403,10 +407,19 @@ def build_messages(
         "target_numbers_included": False,
         "post_target_records_included": False,
     }
-    return [
+    messages = [
         {"role": "system", "content": system},
         {"role": "user", "content": json.dumps(user, ensure_ascii=False, separators=(",", ":"))},
     ]
+    serialized_message_bytes = len(
+        json.dumps(messages, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    )
+    if serialized_message_bytes > MAX_PROMPT_MESSAGE_BYTES:
+        raise ValueError(
+            "Complete NVIDIA prompt exceeds the conservative context byte budget; "
+            "no provider reservation or request was made."
+        )
+    return messages
 
 
 def filter_usage_headers(headers: Mapping[str, Any] | None) -> dict[str, str]:
