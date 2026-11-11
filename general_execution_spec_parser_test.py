@@ -164,6 +164,14 @@ class ExecutionSpecParserTests(unittest.TestCase):
         self.assertEqual(result["status"], "REJECTED")
         self.assertIn("exceeds the size limit", result["rejection_reasons"][0])
 
+    def test_hypothesis_ids_extend_beyond_999(self):
+        result = parse_execution_spec_block(
+            wrapped([specification("HYP-1000")]),
+            allowed_hypothesis_ids={"HYP-1000"},
+        )
+        self.assertEqual(result["status"], "VALIDATED_SPECS")
+        self.assertEqual(result["specifications"][0]["hypothesis_id"], "HYP-1000")
+
     def test_unknown_or_unmatched_hypothesis_id_is_rejected(self):
         result = parse_execution_spec_block(
             wrapped([specification("HYP-002")]),

@@ -51,6 +51,10 @@ API_URL = API_BASE_URL + "/chat/completions"
 OPENAI_SDK_VERSION = "3.45.0"
 DOCUMENTATION_REVIEW_DATE = "2026-10-25"
 
+# The NVIDIA model card documents a 1,048,576-token context window. A UTF-8
+# byte ceiling is deliberately more conservative than tokenizer estimation;
+# this leaves room for message framing, provider templates, and completion.
+MAX_PROMPT_MESSAGE_BYTES = 900_000
 MAX_NVIDIA_REQUESTS_PER_RUN = 4
 DEFAULT_MAX_COMPLETION_TOKENS = 8192
 DIAGNOSTIC_MAX_COMPLETION_TOKENS = 8192
@@ -334,6 +338,41 @@ def build_messages(
         raise ValueError("Prior research memory must be a list.")
     if any(not isinstance(item, dict) or item.get("direction") != direction for item in prior_memory):
         raise ValueError("Prior memory contains another direction or an invalid record.")
+    for item in prior_memory:
+        if item.get("source") == "GENERAL/offline-symbolic-discovery":
+            candidates = item.get("candidates")
+            required_candidate_keys = {
+                "hypothesis_id", "family", "template_id", "proposal",
+                "execution_spec", "specification_sha256", "training_signal",
+                "synthetic_tests", "forward_walk_forward",
+                "time_ordered_cross_validation", "reverse_retrospective_only",
+            }
+            candidate_ids = []
+            candidate_records_valid = isinstance(candidates, list) and bool(candidates)
+            if candidate_records_valid:
+                for candidate in candidates:
+                    if not isinstance(candidate, dict) or set(candidate) != required_candidate_keys:
+                        candidate_records_valid = False
+                        break
+                    candidate_id = candidate.get("hypothesis_id")
+                    if not isinstance(candidate_id, str) or not candidate_id:
+                        candidate_records_valid = False
+                        break
+                    candidate_ids.append(candidate_id)
+            if (
+                item.get("candidate_transfer_mode") != "FULL_VALIDATED_RECORDS"
+                or not candidate_records_valid
+                or len(candidate_ids) != len(set(candidate_ids))
+                or type(item.get("candidates_in_memory")) is not int
+                or type(item.get("candidates_in_context")) is not int
+                or item["candidates_in_memory"] != len(candidates)
+                or item["candidates_in_context"] != len(candidates)
+                or item.get("candidate_context_truncated") is not False
+            ):
+                raise ValueError(
+                    "Offline candidate context is incomplete or contains a partial/duplicate record; "
+                    "no candidate set was sent."
+                )
     if prior_memory:
         system += (
             "\nPRIOR GENERAL-INTERNAL RESEARCH MEMORY POLICY (SAME DIRECTION ONLY):\n"
@@ -344,7 +383,10 @@ def build_messages(
             "repeating failed approaches, and explain meaningful improvements or deliberate retests. "
             "Use aggregate outcomes only as historical development feedback. Records sourced from "
             "GENERAL/offline-symbolic-discovery are bounded local DSL explorations, not approved or verified "
-            "formulas; their consumed development metrics are historical context only. Current proposals and the "
+            "formulas; their consumed development metrics are historical context only. In that record, the "
+            "each candidate is a complete validated record. Preserve its proposal, exact DSL AST, "
+            "specification hash, training signal, synthetic-test metadata, and all forward/CV/reverse "
+            "metrics. Candidates remain in original generation order and do not imply ranking or automatic selection. Current proposals and the "
             "frozen candidate must still be ordered using only this run's discovery data; never rank a "
             "candidate using prior holdout scores. Verify claims against only this direction's permitted "
             "discovery data. Never reuse consumed holdout dates or describe consumed feedback as fresh "
@@ -401,10 +443,19 @@ def build_messages(
         "target_numbers_included": False,
         "post_target_records_included": False,
     }
-    return [
+    messages = [
         {"role": "system", "content": system},
         {"role": "user", "content": json.dumps(user, ensure_ascii=False, separators=(",", ":"))},
     ]
+    serialized_message_bytes = len(
+        json.dumps(messages, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    )
+    if serialized_message_bytes > MAX_PROMPT_MESSAGE_BYTES:
+        raise ValueError(
+            "Complete NVIDIA prompt exceeds the conservative context byte budget; "
+            "no provider reservation or request was made."
+        )
+    return messages
 
 
 def filter_usage_headers(headers: Mapping[str, Any] | None) -> dict[str, str]:

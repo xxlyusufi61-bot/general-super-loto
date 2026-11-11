@@ -112,9 +112,11 @@ def parse_execution_spec_block(
             hypothesis_id = item.get("hypothesis_id")
             if (
                 not isinstance(hypothesis_id, str)
-                or re.fullmatch(r"HYP-(?!000)[0-9]{3}", hypothesis_id) is None
+                or re.fullmatch(
+                    r"HYP-(?!000$)(?:[0-9]{3}|[1-9][0-9]{3,})", hypothesis_id
+                ) is None
             ):
-                raise ValueError("hypothesis_id must match HYP-001 through HYP-999.")
+                raise ValueError("hypothesis_id must use HYP-001..HYP-999 or HYP-1000+ canonical numbering.")
             if hypothesis_id in seen:
                 raise ValueError("Duplicate hypothesis_id in execution specifications.")
             if allowed_hypothesis_ids is not None and hypothesis_id not in allowed_hypothesis_ids:

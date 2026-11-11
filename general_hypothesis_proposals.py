@@ -149,8 +149,10 @@ def _validate_proposal(
     if set(value) != MODEL_PROPOSAL_KEYS:
         raise ValueError("Proposal keys do not match the exact allowed schema.")
     proposal_id = value.get("hypothesis_id")
-    if not isinstance(proposal_id, str) or re.fullmatch(r"HYP-(?!000)[0-9]{3}", proposal_id) is None:
-        raise ValueError("hypothesis_id must match HYP-001 through HYP-999.")
+    if not isinstance(proposal_id, str) or re.fullmatch(
+        r"HYP-(?!000$)(?:[0-9]{3}|[1-9][0-9]{3,})", proposal_id
+    ) is None:
+        raise ValueError("hypothesis_id must use HYP-001..HYP-999 or HYP-1000+ canonical numbering.")
     direction = value.get("discovery_direction")
     if direction not in {"forward", "reverse", "both"}:
         raise ValueError("discovery_direction must be forward, reverse, or both.")

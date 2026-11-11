@@ -50,7 +50,12 @@ LESSON_KEYS = {"observations", "failed_approaches", "next_tests"}
 MAX_LESSON_ITEMS = 6
 MAX_LESSON_CHARS = 700
 MAX_CONTEXT_ENTRIES = 6
-MAX_CONTEXT_CHARS = 18000
+# Conservative UTF-8 byte budgets. The active NVIDIA GLM-5.3-Flash endpoint
+# documents a 1,048,576-token context window; byte counts are a conservative
+# upper bound on tokenizer tokens. The final full-message guard reserves
+# additional room for request framing and the 8,192-token completion.
+MAX_CONTEXT_BYTES = 850_000
+MAX_OFFLINE_CONTEXT_BYTES = 800_000
 MAX_REPORT_CHARS = 9000
 MAX_ENTRIES = 10000
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
@@ -1475,6 +1480,9 @@ def _compact_proposal(proposal: dict[str, Any]) -> dict[str, Any]:
     return compact
 
 
+
+
+
 def direction_context(
     direction: str,
     target_date: str,
@@ -1498,28 +1506,22 @@ def direction_context(
     context = []
 
     # The offline symbolic namespace is forward-only. It is deliberately kept
-    # out of reverse prompts to preserve directional separation. Only one most
-    # recent prior offline cycle is included to bound the prompt payload.
+    # out of reverse prompts to preserve directional separation. Only the most
+    # recent eligible offline cycle is projected into the forward prompt.
     if direction == "forward":
         for offline_entry in reversed(memory["offline_research"]["entries"]):
             if date.fromisoformat(offline_entry["target_date"]) > current_target:
                 continue
             if _validate_timestamp(offline_entry["created_at_utc"]) >= now:
                 continue
-            candidate_summaries = []
-            for candidate in offline_entry["candidates"]:
-                candidate_summaries.append({
-                    "hypothesis_id": candidate["hypothesis_id"],
-                    "family": candidate["family"],
-                    "template_id": candidate["template_id"],
-                    "formal_definition": candidate["proposal"]["exact_definition"],
-                    "specification_sha256": candidate["specification_sha256"],
-                    "training_signal": candidate["training_signal"],
-                    "forward_walk_forward": candidate["forward_walk_forward"],
-                    "time_ordered_cross_validation": candidate["time_ordered_cross_validation"],
-                    "reverse_retrospective_only": candidate["reverse_retrospective_only"],
-                })
+
+            # Transfer complete validated candidate records in original generation
+            # order. Preserve proposals, full DSL ASTs, hashes, and all test metrics.
+            # If the complete payload exceeds the byte budget below, fail closed;
+            # never project, rank-select, or silently omit candidates.
+            candidate_records = offline_entry["candidates"]
             offline_context = {
+                "context_schema_version": 3,
                 "prior_target_date": offline_entry["target_date"],
                 "prior_recorded_at_utc": offline_entry["created_at_utc"],
                 "source": "GENERAL/offline-symbolic-discovery",
@@ -1527,10 +1529,11 @@ def direction_context(
                 "status": "EXPLORATORY_ONLY",
                 "candidate_selection": "NONE",
                 "automatic_candidate_selection": False,
-                "candidates_in_memory": len(candidate_summaries),
-                "candidates_in_context": 0,
+                "candidate_transfer_mode": "FULL_VALIDATED_RECORDS",
+                "candidates_in_memory": len(candidate_records),
+                "candidates_in_context": len(candidate_records),
                 "candidate_context_truncated": False,
-                "candidates": [],
+                "candidates": candidate_records,
                 "development_window": {
                     "draw_count": offline_entry["development_window"]["draw_count"],
                     "window_sha256": offline_entry["development_window"]["window_sha256"],
@@ -1538,41 +1541,29 @@ def direction_context(
                     "consumed_for_exploratory_feedback": True,
                 },
                 "interpretation": (
-                    "Bounded offline GENERAL discovery feedback only. These definitions and aggregate "
-                    "metrics are unverified development history, not approved formulas, candidate rankings, "
-                    "or independent confirmation. Reuse of the development interval is forbidden. "
-                    "Candidate definitions are included in original discovery order only as prompt space permits; "
-                    "no candidate was selected by validation or performance score."
+                    "Every candidates item is one complete validated record in original generation "
+                    "order; this order is not a ranking. Each record includes its complete proposal, "
+                    "formal definition, full execution_spec AST, specification hash, training signal, "
+                    "synthetic-test metadata, forward walk-forward metrics, time-ordered CV metrics, "
+                    "and reverse-retrospective metrics. These are exploratory history, not approved "
+                    "formulas or independent confirmation. Reuse of the development interval is forbidden."
                 ),
                 "holdout_reuse": (
                     "FORBIDDEN; this consumed offline development interval is historical feedback only."
                 ),
             }
-            # Preserve original generation order. Never sort or truncate by
-            # validation/CV/reverse performance; only a size-bound prefix may
-            # enter the prompt.
-            while candidate_summaries:
-                offline_context["candidates"] = list(candidate_summaries)
-                offline_context["candidates_in_context"] = len(candidate_summaries)
-                offline_context["candidate_context_truncated"] = (
-                    len(candidate_summaries) < len(offline_entry["candidates"])
-                )
-                if len(_canonical(context + [offline_context])) <= MAX_CONTEXT_CHARS:
-                    break
-                candidate_summaries.pop()
-            if not candidate_summaries:
-                offline_context["candidates"] = []
-                offline_context["candidates_in_context"] = 0
-                offline_context["candidate_context_truncated"] = bool(offline_entry["candidates"])
             _reject_number_values(offline_context, "Offline directional context")
-            if len(_canonical(context + [offline_context])) <= MAX_CONTEXT_CHARS:
-                context.append(offline_context)
-            else:
-                # The provenance/consumption summary itself must fit. If it
-                # cannot, stop rather than silently discarding this safety fact.
+            offline_size = len(_canonical([offline_context]))
+            if offline_size > MAX_OFFLINE_CONTEXT_BYTES:
+                raise ResearchMemoryError(
+                    "Complete offline candidate context exceeds its dedicated byte budget; "
+                    "all candidates were retained and no prompt context was emitted."
+                )
+            if offline_size > MAX_CONTEXT_BYTES:
                 raise ResearchMemoryError(
                     "Offline development provenance exceeds the bounded forward context."
                 )
+            context.append(offline_context)
             break
 
     entries = [
@@ -1607,7 +1598,7 @@ def direction_context(
         }
         _reject_number_values(compact, "Directional context")
         candidate_context = context + [compact]
-        if len(candidate_context) > limit or len(_canonical(candidate_context)) > MAX_CONTEXT_CHARS:
+        if len(candidate_context) > limit or len(_canonical(candidate_context)) > MAX_CONTEXT_BYTES:
             continue
         context = candidate_context
     return context

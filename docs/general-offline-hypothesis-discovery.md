@@ -6,7 +6,7 @@ general_offline_hypothesis_discovery.py is a bounded, deterministic symbolic-dis
 
 The scheduled autonomous workflow runs this step against only the oldest FIFO target snapshot, before the independent authorization/global-lock gate for hosted research. Materializing the snapshot changes only the job workspace. The offline runner reads the sealed evaluation ledger and does not update it, the canonical archive, the FIFO state, the NVIDIA lock, or autonomous authorization.
 
-This first implementation is not an unrestricted AI inventing arbitrary mathematics. It enumerates a bounded, versioned symbolic search grammar of up to sixteen explicit safe-DSL candidates. Broader model-assisted proposal generation remains a separate provider-authorized activity.
+This first implementation is not an unrestricted AI inventing arbitrary mathematics. Its current versioned symbolic grammar contains sixteen explicit safe-DSL templates, filtered only by the existing training-prefix score-variation test. That describes today's search space, not a storage or candidate-validation ceiling: the append-only memory accepts complete candidate lists without a fixed candidate-count limit, and proposal identifiers extend beyond HYP-999. Future grammar expansions still require the normal versioned technical review so they cannot silently alter research methodology. Broader model-assisted proposal generation remains a separate provider-authorized activity. The hosted-model response contract still accepts at most one proposal per isolated directional request; that is a separate request-protocol rule, not a candidate storage limit, and is unchanged here.
 
 ## Research families and candidate definitions
 

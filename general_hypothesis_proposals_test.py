@@ -67,6 +67,11 @@ class HypothesisProposalContractTests(unittest.TestCase):
         self.assertIs(proposal["registry_write_allowed"], False)
         self.assertIs(result["registry_modified"], False)
 
+    def test_canonical_hypothesis_ids_extend_beyond_999(self):
+        result = parse_hypothesis_proposals(wrapped([candidate(hypothesis_id="HYP-1000")]))
+        self.assertEqual(result["status"], "VALID_PROPOSALS")
+        self.assertEqual(result["proposals"][0]["hypothesis_id"], "HYP-1000")
+
     def test_empty_proposal_list_is_a_valid_no_signal_result(self):
         result = parse_hypothesis_proposals(wrapped([]))
         self.assertEqual(result["status"], "VALID_EMPTY")

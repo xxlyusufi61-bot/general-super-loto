@@ -5,11 +5,14 @@ import io
 import json
 import tempfile
 import unittest
+from unittest.mock import patch
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import general_autonomous_research as autonomous
 import general_research_memory as memory
+import general_offline_hypothesis_discovery as offline
+import random
 from general_nvidia_guard import initial_lock_state
 
 
@@ -523,7 +526,229 @@ class DirectionalMemoryContextTests(unittest.TestCase):
         self.assertLessEqual(len(context[0]["hypotheses"][0]["proposed_family"]), 180)
         self.assertIn("proposed_family", context[0]["hypotheses"][0]["truncated_fields"])
         self.assertIn("[TRUNCATED]", context[0]["hypotheses"][0]["proposed_family"])
-        self.assertLessEqual(len(memory._canonical(context)), memory.MAX_CONTEXT_CHARS)
+        self.assertLessEqual(len(memory._canonical(context)), memory.MAX_CONTEXT_BYTES)
+
+    def test_offline_context_keeps_every_candidate_and_prior_directional_history(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive_path = root / "archive.json"
+            memory_path = root / "research-memory.json"
+            report_path = root / "offline-report.json"
+            generator = random.Random(20261111)
+            start = date(2020, 8, 2)
+            archive = [
+                {
+                    "date": (start + timedelta(days=index * 3)).isoformat(),
+                    "numbers": sorted(generator.sample(range(1, 61), 6)),
+                }
+                for index in range(120)
+            ]
+            archive_path.write_text(
+                json.dumps(archive, separators=(",", ":")),
+                encoding="utf-8",
+            )
+            result = offline.run_cycle(
+                archive_path=archive_path,
+                sealed_ledger_path=root / "missing-sealed-ledger.json",
+                memory_path=memory_path,
+                report_path=report_path,
+            )
+            self.assertEqual(result["candidate_count"], len(result["candidates"]))
+
+            persisted = memory.load_memory(memory_path)
+            stored_candidates = persisted["offline_research"]["entries"][0]["candidates"]
+
+            # Future candidate-generation revisions may exceed today's 16-template
+            # grammar. The storage validator must not retain the old 16-item ceiling.
+            expanded_candidates = copy.deepcopy(stored_candidates)
+            while len(expanded_candidates) < 40:
+                candidate = copy.deepcopy(
+                    stored_candidates[len(expanded_candidates) % len(stored_candidates)]
+                )
+                new_id = f"HYP-{len(expanded_candidates) + 1:03d}"
+                candidate["hypothesis_id"] = new_id
+                candidate["proposal"]["hypothesis_id"] = new_id
+                expanded_candidates.append(candidate)
+            expanded_offline_memory = copy.deepcopy(persisted["offline_research"])
+            expanded_entry = copy.deepcopy(expanded_offline_memory["entries"][0])
+            expanded_entry["candidates"] = expanded_candidates
+            expanded_entry["content_sha256"] = offline._entry_hash(expanded_entry)
+            expanded_offline_memory["entries"][0] = expanded_entry
+            validated_expanded = offline.validate_memory_document(expanded_offline_memory)
+            self.assertEqual(len(validated_expanded["entries"][0]["candidates"]), 40)
+
+            target = result["target_date"]
+            target_day = date.fromisoformat(target)
+            prior_entries = []
+            for entry_id in (1, 2):
+                entry = sample_entry("forward", entry_id, target)
+                entry["discovery_window"]["start_date"] = (
+                    target_day - timedelta(days=60)
+                ).isoformat()
+                entry["discovery_window"]["end_date"] = (
+                    target_day - timedelta(days=3)
+                ).isoformat()
+                entry["content_sha256"] = _hash_entry(entry)
+                prior_entries.append(entry)
+            persisted["entries"] = prior_entries
+            memory_path.write_bytes(memory._canonical(persisted) + b"\n")
+            before_context = memory_path.read_bytes()
+
+            forward_context = memory.direction_context(
+                "forward", target, memory_path=memory_path
+            )
+            reverse_context = memory.direction_context(
+                "reverse", target, memory_path=memory_path
+            )
+
+            self.assertEqual(memory_path.read_bytes(), before_context)
+
+        offline_context = next(
+            item for item in forward_context
+            if item.get("source") == "GENERAL/offline-symbolic-discovery"
+        )
+        self.assertEqual(offline_context["context_schema_version"], 3)
+        self.assertEqual(
+            offline_context["candidate_transfer_mode"],
+            "FULL_VALIDATED_RECORDS",
+        )
+        self.assertIs(offline_context["candidate_context_truncated"], False)
+        self.assertEqual(
+            offline_context["candidates_in_context"],
+            len(stored_candidates),
+        )
+        self.assertEqual(
+            offline_context["candidates_in_memory"],
+            len(stored_candidates),
+        )
+        self.assertEqual(offline_context["candidates"], stored_candidates)
+        self.assertTrue(all(
+            "proposal" in candidate
+            and "execution_spec" in candidate
+            and "synthetic_tests" in candidate
+            and "forward_walk_forward" in candidate
+            and "time_ordered_cross_validation" in candidate
+            and "reverse_retrospective_only" in candidate
+            for candidate in offline_context["candidates"]
+        ))
+        self.assertLessEqual(
+            len(memory._canonical([offline_context])),
+            memory.MAX_OFFLINE_CONTEXT_BYTES,
+        )
+        self.assertLessEqual(
+            len(memory._canonical(forward_context)),
+            memory.MAX_CONTEXT_BYTES,
+        )
+        prior_forward_entries = [
+            item for item in forward_context if item.get("source") == memory.SOURCE
+        ]
+        self.assertEqual(len(prior_forward_entries), 2)
+        self.assertTrue(all(item["direction"] == "forward" for item in prior_forward_entries))
+        self.assertEqual(reverse_context, [])
+        self.assertNotIn("draw_numbers", json.dumps(forward_context))
+
+    def test_offline_context_keeps_64_candidates_without_a_sixteen_candidate_prompt_cap(self):
+        candidates = []
+        for index in range(64):
+            candidates.append({
+                "hypothesis_id": f"HYP-{index + 1:03d}",
+                "family": "scalable synthetic family",
+                "template_id": f"template-{index + 1:03d}",
+                "proposal": {"hypothesis_id": f"HYP-{index + 1:03d}", "exact_definition": f"Exact, independently specified synthetic definition {index + 1}."},
+                "execution_spec": {"schema_version": 1, "score_expression": {"op": "const", "value": index + 1}},
+                "specification_sha256": "a" * 64,
+                "training_signal": {
+                    "training_draw_count": 100,
+                    "distinct_score_values": 60,
+                    "score_range": 12,
+                    "selection_source": "training_prefix_only",
+                    "validation_data_used": False,
+                    "target_data_used": False,
+                },
+                "synthetic_tests": {
+                    "status": "PASS",
+                    "synthetic_cases": 8,
+                    "ranked_values_checked": 60,
+                    "target_values_used": False,
+                    "real_archive_used": False,
+                },
+                "forward_walk_forward": {
+                    "mean_hits_out_of_6": 0.6,
+                    "uniform_random_expected_hits_out_of_6": 0.6,
+                    "validation_draw_count": 10,
+                    "standard_error_of_mean_hits": 0.1,
+                    "predictive_claim": False,
+                },
+                "time_ordered_cross_validation": {
+                    "mean_hits_out_of_6": 0.6,
+                    "uniform_random_expected_hits_out_of_6": 0.6,
+                    "validation_draw_count": 10,
+                    "standard_error_of_mean_hits": 0.1,
+                    "folds": 5,
+                    "predictive_claim": False,
+                },
+                "reverse_retrospective_only": {
+                    "status": "RETROSPECTIVE_ONLY",
+                    "mean_hits_out_of_6": 0.6,
+                    "standard_error_of_mean_hits": 0.1,
+                    "evaluated_draw_count": 10,
+                    "uniform_random_expected_hits_out_of_6": 0.6,
+                    "predictive_evidence": False,
+                },
+            })
+        offline_entry = {
+            "target_date": "2026-11-10",
+            "created_at_utc": (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(),
+            "candidates": candidates,
+            "development_window": {
+                "draw_count": 10,
+                "window_sha256": "b" * 64,
+            },
+        }
+        synthetic_memory = {
+            "entries": [],
+            "offline_research": {"entries": [offline_entry]},
+        }
+        with patch.object(memory, "load_memory", return_value=synthetic_memory):
+            context = memory.direction_context("forward", "2026-11-11")
+        offline_context = context[0]
+        self.assertEqual(offline_context["candidates_in_memory"], 64)
+        self.assertEqual(offline_context["candidates_in_context"], 64)
+        self.assertEqual(offline_context["candidate_transfer_mode"], "FULL_VALIDATED_RECORDS")
+        self.assertFalse(offline_context["candidate_context_truncated"])
+        self.assertEqual(
+            [candidate["hypothesis_id"] for candidate in offline_context["candidates"]],
+            [f"HYP-{index + 1:03d}" for index in range(64)],
+        )
+        self.assertTrue(all("execution_spec" in candidate for candidate in offline_context["candidates"]))
+        self.assertLessEqual(
+            len(memory._canonical([offline_context])),
+            memory.MAX_OFFLINE_CONTEXT_BYTES,
+        )
+
+    def test_offline_context_over_budget_fails_closed_without_partial_candidate_list(self):
+        candidates = [{
+            "hypothesis_id": "HYP-001",
+            "family": "large synthetic family",
+            "template_id": "large-template",
+            "proposal": {"exact_definition": "x" * (memory.MAX_OFFLINE_CONTEXT_BYTES + 100)},
+            "specification_sha256": "a" * 64,
+            "training_signal": {},
+            "synthetic_tests": {},
+            "forward_walk_forward": {},
+            "time_ordered_cross_validation": {},
+            "reverse_retrospective_only": {},
+        }]
+        offline_entry = {
+            "target_date": "2026-11-10",
+            "created_at_utc": (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(),
+            "candidates": candidates,
+            "development_window": {"draw_count": 10, "window_sha256": "b" * 64},
+        }
+        synthetic_memory = {"entries": [], "offline_research": {"entries": [offline_entry]}}
+        with patch.object(memory, "load_memory", return_value=synthetic_memory):
+            with self.assertRaisesRegex(memory.ResearchMemoryError, "byte budget"):
+                memory.direction_context("forward", "2026-11-11")
 
     def test_direction_context_refuses_invalid_direction(self):
         with self.assertRaisesRegex(memory.ResearchMemoryError, "Direction"):

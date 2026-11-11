@@ -32,7 +32,8 @@ MEMORY_SCHEMA_VERSION = 1
 MIN_TRAIN_DRAWS = engine.DEFAULT_MIN_TRAIN_DRAWS
 DEVELOPMENT_WINDOW_DRAWS = 10
 CV_FOLDS = 5
-MAX_CANDIDATES = 16
+# The explicit template catalogue defines today's search grammar. Candidate
+# generation, validation, storage, and evaluation apply no count-based ceiling.
 MAX_MEMORY_ENTRIES = 10000
 SOURCE = "GENERAL/offline-symbolic-discovery"
 PURPOSE = (
@@ -240,8 +241,8 @@ def _candidate_templates() -> list[tuple[str, str, str, dict[str, Any]]]:
                 same_mod5, _binary("lte", draw_age, _const(window - 1))
             ))),
         ))
-    if len(templates) > MAX_CANDIDATES:
-        raise OfflineResearchError("The bounded symbolic candidate catalogue exceeded its hard limit.")
+    # The explicit catalogue is the grammar. Do not impose a second,
+    # count-based ceiling that could reject a future versioned catalogue.
     return templates
 
 
@@ -661,8 +662,8 @@ def _validate_entry(entry: Any, expected_id: int) -> dict[str, Any]:
         or development["dates_stored"] is not False
     ):
         raise OfflineResearchError("Offline development-window metadata is invalid.")
-    if not isinstance(entry["candidates"], list) or not 1 <= len(entry["candidates"]) <= MAX_CANDIDATES:
-        raise OfflineResearchError("Offline candidate list is invalid.")
+    if not isinstance(entry["candidates"], list) or not entry["candidates"]:
+        raise OfflineResearchError("Offline candidate list must be a non-empty list.")
     seen = set()
     for candidate in entry["candidates"]:
         _validate_candidate(candidate)

@@ -1,3 +1,4 @@
+import copy
 import hashlib
 import io
 import json
@@ -169,6 +170,27 @@ class TelegramReportTests(unittest.TestCase):
         self.assertIn("YOK", messages[0])
         self.assertNotIn("1, 2, 3, 4, 5, 6", "\n".join(messages))
         self.assertNotIn("predicted number", "\n".join(messages).lower())
+
+    def test_offline_report_accepts_more_than_16_candidates_and_paginates_without_loss(self):
+        report = self._offline_report_fixture()
+        template = report["candidates"][0]
+        candidates = []
+        for number in range(1000, 1025):
+            item = copy.deepcopy(template)
+            hypothesis_id = f"HYP-{number}"
+            item["hypothesis_id"] = hypothesis_id
+            item["proposal"]["hypothesis_id"] = hypothesis_id
+            candidates.append(item)
+        report["candidates"] = candidates
+        report["candidate_count"] = len(candidates)
+
+        messages = format_offline_research_messages(report)
+        self.assertGreater(len(messages), 2)
+        self.assertTrue(all(len(message) <= 3800 for message in messages))
+        combined = "\\n".join(messages)
+        for number in range(1000, 1025):
+            self.assertIn(f"HYP-{number}", combined)
+        self.assertNotIn("predicted number", combined.lower())
 
     def test_offline_telegram_report_rejects_target_values_and_noncanonical_candidates(self):
         report = self._offline_report_fixture()
