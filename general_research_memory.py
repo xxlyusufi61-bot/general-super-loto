@@ -56,41 +56,6 @@ MAX_CONTEXT_ENTRIES = 6
 # additional room for request framing and the 8,192-token completion.
 MAX_CONTEXT_BYTES = 850_000
 MAX_OFFLINE_CONTEXT_BYTES = 800_000
-OFFLINE_CANDIDATE_CONTEXT_FIELDS = (
-    "hypothesis_id",
-    "family",
-    "template_id",
-    "exact_definition",
-    "specification_sha256",
-    "training_draw_count",
-    "distinct_score_values",
-    "score_range",
-    "selection_source",
-    "validation_data_used",
-    "target_data_used",
-    "synthetic_status",
-    "synthetic_cases",
-    "ranked_values_checked",
-    "synthetic_target_values_used",
-    "real_archive_used",
-    "forward_mean_hits_out_of_6",
-    "forward_uniform_random_expected_hits_out_of_6",
-    "forward_validation_draw_count",
-    "forward_standard_error_of_mean_hits",
-    "forward_predictive_claim",
-    "cv_mean_hits_out_of_6",
-    "cv_uniform_random_expected_hits_out_of_6",
-    "cv_validation_draw_count",
-    "cv_standard_error_of_mean_hits",
-    "cv_folds",
-    "cv_predictive_claim",
-    "reverse_status",
-    "reverse_mean_hits_out_of_6",
-    "reverse_standard_error_of_mean_hits",
-    "reverse_evaluated_draw_count",
-    "reverse_uniform_random_expected_hits_out_of_6",
-    "reverse_predictive_evidence",
-)
 MAX_REPORT_CHARS = 9000
 MAX_ENTRIES = 10000
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
@@ -1516,49 +1481,6 @@ def _compact_proposal(proposal: dict[str, Any]) -> dict[str, Any]:
 
 
 
-def _compact_offline_candidate_context(candidate: dict[str, Any]) -> list[Any]:
-    """Project one complete stored candidate into the compact prompt row schema."""
-    proposal = candidate["proposal"]
-    training = candidate["training_signal"]
-    synthetic = candidate["synthetic_tests"]
-    forward = candidate["forward_walk_forward"]
-    cross_validation = candidate["time_ordered_cross_validation"]
-    reverse = candidate["reverse_retrospective_only"]
-    return [
-        candidate["hypothesis_id"],
-        candidate["family"],
-        candidate["template_id"],
-        proposal["exact_definition"],
-        candidate["specification_sha256"],
-        training.get("training_draw_count"),
-        training.get("distinct_score_values"),
-        training.get("score_range"),
-        training.get("selection_source"),
-        training.get("validation_data_used"),
-        training.get("target_data_used"),
-        synthetic.get("status"),
-        synthetic.get("synthetic_cases"),
-        synthetic.get("ranked_values_checked"),
-        synthetic.get("target_values_used"),
-        synthetic.get("real_archive_used"),
-        forward.get("mean_hits_out_of_6"),
-        forward.get("uniform_random_expected_hits_out_of_6"),
-        forward.get("validation_draw_count"),
-        forward.get("standard_error_of_mean_hits"),
-        forward.get("predictive_claim"),
-        cross_validation.get("mean_hits_out_of_6"),
-        cross_validation.get("uniform_random_expected_hits_out_of_6"),
-        cross_validation.get("validation_draw_count"),
-        cross_validation.get("standard_error_of_mean_hits"),
-        cross_validation.get("folds"),
-        cross_validation.get("predictive_claim"),
-        reverse.get("status"),
-        reverse.get("mean_hits_out_of_6"),
-        reverse.get("standard_error_of_mean_hits"),
-        reverse.get("evaluated_draw_count"),
-        reverse.get("uniform_random_expected_hits_out_of_6"),
-        reverse.get("predictive_evidence"),
-    ]
 
 
 def direction_context(
@@ -1593,15 +1515,13 @@ def direction_context(
             if _validate_timestamp(offline_entry["created_at_utc"]) >= now:
                 continue
 
-            # Keep every stored candidate in its original generation order.
-            # A positional row plus one shared field map removes repeated JSON
-            # keys without dropping definitions, aggregate metrics, or candidates.
-            candidate_summaries = [
-                _compact_offline_candidate_context(candidate)
-                for candidate in offline_entry["candidates"]
-            ]
+            # Transfer complete validated candidate records in original generation
+            # order. Preserve proposals, full DSL ASTs, hashes, and all test metrics.
+            # If the complete payload exceeds the byte budget below, fail closed;
+            # never project, rank-select, or silently omit candidates.
+            candidate_records = offline_entry["candidates"]
             offline_context = {
-                "context_schema_version": 2,
+                "context_schema_version": 3,
                 "prior_target_date": offline_entry["target_date"],
                 "prior_recorded_at_utc": offline_entry["created_at_utc"],
                 "source": "GENERAL/offline-symbolic-discovery",
@@ -1609,11 +1529,11 @@ def direction_context(
                 "status": "EXPLORATORY_ONLY",
                 "candidate_selection": "NONE",
                 "automatic_candidate_selection": False,
-                "candidates_in_memory": len(offline_entry["candidates"]),
-                "candidates_in_context": len(candidate_summaries),
+                "candidate_transfer_mode": "FULL_VALIDATED_RECORDS",
+                "candidates_in_memory": len(candidate_records),
+                "candidates_in_context": len(candidate_records),
                 "candidate_context_truncated": False,
-                "candidate_fields": list(OFFLINE_CANDIDATE_CONTEXT_FIELDS),
-                "candidates": candidate_summaries,
+                "candidates": candidate_records,
                 "development_window": {
                     "draw_count": offline_entry["development_window"]["draw_count"],
                     "window_sha256": offline_entry["development_window"]["window_sha256"],
@@ -1621,12 +1541,12 @@ def direction_context(
                     "consumed_for_exploratory_feedback": True,
                 },
                 "interpretation": (
-                    "Bounded offline GENERAL discovery feedback only. Decode each candidates row "
-                    "using candidate_fields. Every stored candidate is included once in original "
-                    "generation order; this order is not a ranking. Definitions and aggregate metrics "
-                    "are unverified development history, not approved formulas or independent "
-                    "confirmation. Reuse of the development interval is forbidden. Full candidate "
-                    "records and execution specifications remain in the append-only memory store."
+                    "Every candidates item is one complete validated record in original generation "
+                    "order; this order is not a ranking. Each record includes its complete proposal, "
+                    "formal definition, full execution_spec AST, specification hash, training signal, "
+                    "synthetic-test metadata, forward walk-forward metrics, time-ordered CV metrics, "
+                    "and reverse-retrospective metrics. These are exploratory history, not approved "
+                    "formulas or independent confirmation. Reuse of the development interval is forbidden."
                 ),
                 "holdout_reuse": (
                     "FORBIDDEN; this consumed offline development interval is historical feedback only."

@@ -30,7 +30,7 @@ class OfflineHypothesisDiscoveryTests(unittest.TestCase):
         ]
         candidates = offline.generate_hypotheses(training)
         self.assertGreaterEqual(len(candidates), 1)
-        self.assertLessEqual(len(candidates), offline.MAX_CANDIDATES)
+        self.assertEqual(len(candidates), len({item["hypothesis_id"] for item in candidates}))
         self.assertEqual(
             {item["family"] for item in candidates},
             {"A→B→C", "A→T", "MOD5→T"},
@@ -80,7 +80,7 @@ class OfflineHypothesisDiscoveryTests(unittest.TestCase):
             )
             self.assertEqual(result["status"], "COMPLETED_EXPLORATORY_ONLY")
             self.assertGreaterEqual(result["candidate_count"], 1)
-            self.assertLessEqual(result["candidate_count"], offline.MAX_CANDIDATES)
+            self.assertEqual(result["candidate_count"], len(result["candidates"]))
             self.assertEqual(result["candidate_selection"], "NONE")
             self.assertIs(result["automatic_candidate_selection"], False)
             self.assertFalse(result["target_numbers_exposed"])
@@ -163,22 +163,28 @@ class OfflineHypothesisDiscoveryTests(unittest.TestCase):
                 "GENERAL/offline-symbolic-discovery",
             )
             self.assertEqual(forward_prompt_memory[0]["candidate_selection"], "NONE")
-            self.assertGreater(forward_prompt_memory[0]["candidates_in_context"], 0)
-            self.assertLessEqual(
+            self.assertEqual(
+                forward_prompt_memory[0]["candidate_transfer_mode"],
+                "FULL_VALIDATED_RECORDS",
+            )
+            self.assertEqual(
                 forward_prompt_memory[0]["candidates_in_context"],
                 forward_prompt_memory[0]["candidates_in_memory"],
             )
-            template_index = forward_prompt_memory[0]["candidate_fields"].index(
-                "template_id"
+            self.assertEqual(
+                forward_prompt_memory[0]["candidates"],
+                memory["entries"][0]["candidates"],
             )
-            in_context_templates = [
-                item[template_index] for item in forward_prompt_memory[0]["candidates"]
-            ]
-            all_templates = [
-                item["template_id"] for item in memory["entries"][0]["candidates"]
-            ]
-            self.assertEqual(in_context_templates, all_templates[:len(in_context_templates)])
-            self.assertIsInstance(forward_prompt_memory[0]["candidate_context_truncated"], bool)
+            self.assertTrue(all(
+                "proposal" in item
+                and "execution_spec" in item
+                and "synthetic_tests" in item
+                and "forward_walk_forward" in item
+                and "time_ordered_cross_validation" in item
+                and "reverse_retrospective_only" in item
+                for item in forward_prompt_memory[0]["candidates"]
+            ))
+            self.assertIs(forward_prompt_memory[0]["candidate_context_truncated"], False)
             self.assertTrue(
                 forward_prompt_memory[0]["development_window"]["consumed_for_exploratory_feedback"]
             )
@@ -267,6 +273,58 @@ class OfflineHypothesisDiscoveryTests(unittest.TestCase):
             [item["execution_spec"] for item in first],
             [item["execution_spec"] for item in second],
         )
+
+
+    def test_storage_accepts_more_than_999_candidates_and_fails_closed_without_context_loss(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            archive_path = root / "archive.json"
+            memory_path = root / "research-memory.json"
+            report_path = root / "report.json"
+            archive_path.write_text(json.dumps(synthetic_archive()), encoding="utf-8")
+            result = offline.run_cycle(
+                archive_path=archive_path,
+                sealed_ledger_path=root / "missing-ledger.json",
+                memory_path=memory_path,
+                report_path=report_path,
+            )
+            self.assertEqual(result["status"], "COMPLETED_EXPLORATORY_ONLY")
+
+            combined = combined_memory.load_memory(memory_path)
+            offline_document = combined["offline_research"]
+            entry = offline_document["entries"][0]
+            template = entry["candidates"][0]
+            expanded = []
+            for number in range(1, 1006):
+                item = copy.deepcopy(template)
+                hypothesis_id = f"HYP-{number:03d}"
+                item["hypothesis_id"] = hypothesis_id
+                item["proposal"]["hypothesis_id"] = hypothesis_id
+                item["template_id"] = f"expanded-template-{number}"
+                expanded.append(item)
+            entry["candidates"] = expanded
+            entry["content_sha256"] = offline._entry_hash(entry)
+            combined["offline_research"] = offline.validate_memory_document(offline_document)
+            memory_path.write_text(
+                json.dumps(combined, ensure_ascii=False, allow_nan=False),
+                encoding="utf-8",
+            )
+
+            reloaded = offline.load_memory(memory_path)
+            self.assertEqual(len(reloaded["entries"][0]["candidates"]), 1005)
+            self.assertEqual(reloaded["entries"][0]["candidates"][-1]["hypothesis_id"], "HYP-1005")
+            with self.assertRaisesRegex(
+                combined_memory.ResearchMemoryError,
+                "exceeds its dedicated byte budget",
+            ):
+                combined_memory.direction_context(
+                    "forward", result["target_date"], memory_path=memory_path
+                )
+            # A rejected preflight cannot rewrite, shorten, or reorder persisted candidates.
+            self.assertEqual(
+                offline.load_memory(memory_path)["entries"][0]["candidates"],
+                expanded,
+            )
 
     def test_duplicate_json_keys_fail_closed(self):
         with tempfile.TemporaryDirectory() as temp:

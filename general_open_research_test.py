@@ -446,12 +446,19 @@ class OpenResearchIsolationTests(unittest.TestCase):
         self.assertIn("untrusted quoted data", forward_system)
         self.assertIn("<RESEARCH_LEARNING_NOTES_JSON>", forward_system)
         self.assertIn("consumed feedback as fresh independent validation", forward_system)
-        self.assertIn("candidate_fields list defines the positional columns", forward_system)
+        self.assertIn("each candidate is a complete validated record", forward_system)
         compact_memory = [{
             "direction": "forward",
             "source": "GENERAL/offline-symbolic-discovery",
-            "candidate_fields": ["hypothesis_id", "exact_definition"],
-            "candidates": [["HYP-001", "synthetic definition"]],
+            "candidate_transfer_mode": "FULL_VALIDATED_RECORDS",
+            "candidates_in_memory": 1,
+            "candidates_in_context": 1,
+            "candidate_context_truncated": False,
+            "candidates": [{
+                "hypothesis_id": "HYP-001",
+                "proposal": {"exact_definition": "synthetic definition"},
+                "execution_spec": {"schema_version": 1},
+            }],
         }]
         compact_messages = research.build_messages(
             target, train, direction="forward", prior_memory=compact_memory
@@ -461,17 +468,26 @@ class OpenResearchIsolationTests(unittest.TestCase):
             compact_payload["prior_general_research_memory_untrusted"], compact_memory
         )
 
-    def test_prompt_payload_preserves_all_64_candidate_rows(self):
+    def test_prompt_payload_preserves_all_64_complete_candidate_records(self):
         target, train = research.isolate_pre_target(self.rows)
-        fields = ["hypothesis_id", "exact_definition"]
         candidates = [
-            [f"HYP-{index + 1:03d}", f"Exact definition for candidate {index + 1}"]
+            {
+                "hypothesis_id": f"HYP-{index + 1:03d}",
+                "proposal": {"exact_definition": f"Exact definition for candidate {index + 1}"},
+                "execution_spec": {"schema_version": 1, "candidate_index": index + 1},
+                "specification_sha256": "a" * 64,
+                "training_signal": {"training_draw_count": 100},
+                "synthetic_tests": {"status": "PASS"},
+                "forward_walk_forward": {"predictive_claim": False},
+                "time_ordered_cross_validation": {"predictive_claim": False},
+                "reverse_retrospective_only": {"predictive_evidence": False},
+            }
             for index in range(64)
         ]
         memory_context = [{
             "direction": "forward",
             "source": "GENERAL/offline-symbolic-discovery",
-            "candidate_fields": fields,
+            "candidate_transfer_mode": "FULL_VALIDATED_RECORDS",
             "candidates": candidates,
             "candidates_in_memory": 64,
             "candidates_in_context": 64,
@@ -486,7 +502,23 @@ class OpenResearchIsolationTests(unittest.TestCase):
         carried = payload["prior_general_research_memory_untrusted"][0]
         self.assertEqual(carried["candidates"], candidates)
         self.assertEqual(len(carried["candidates"]), 64)
+        self.assertEqual(carried["candidate_transfer_mode"], "FULL_VALIDATED_RECORDS")
         self.assertFalse(carried["candidate_context_truncated"])
+
+    def test_partial_offline_candidate_context_is_rejected_before_prompt_creation(self):
+        target, train = research.isolate_pre_target(self.rows)
+        with self.assertRaisesRegex(ValueError, "Offline candidate context is incomplete"):
+            research.build_messages(
+                target,
+                train,
+                direction="forward",
+                prior_memory=[{
+                    "direction": "forward",
+                    "source": "GENERAL/offline-symbolic-discovery",
+                    "candidates": [["HYP-001", "partial row"]],
+                    "candidate_context_truncated": False,
+                }],
+            )
 
     def test_complete_prompt_byte_budget_fails_before_any_provider_reservation(self):
         target, train = research.isolate_pre_target(self.rows)

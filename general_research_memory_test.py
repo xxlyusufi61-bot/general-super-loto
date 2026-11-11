@@ -553,7 +553,7 @@ class DirectionalMemoryContextTests(unittest.TestCase):
                 memory_path=memory_path,
                 report_path=report_path,
             )
-            self.assertEqual(result["candidate_count"], offline.MAX_CANDIDATES)
+            self.assertEqual(result["candidate_count"], len(result["candidates"]))
 
             persisted = memory.load_memory(memory_path)
             stored_candidates = persisted["offline_research"]["entries"][0]["candidates"]
@@ -607,8 +607,12 @@ class DirectionalMemoryContextTests(unittest.TestCase):
             item for item in forward_context
             if item.get("source") == "GENERAL/offline-symbolic-discovery"
         )
-        self.assertEqual(offline_context["context_schema_version"], 2)
-        self.assertEqual(offline_context["candidate_context_truncated"], False)
+        self.assertEqual(offline_context["context_schema_version"], 3)
+        self.assertEqual(
+            offline_context["candidate_transfer_mode"],
+            "FULL_VALIDATED_RECORDS",
+        )
+        self.assertIs(offline_context["candidate_context_truncated"], False)
         self.assertEqual(
             offline_context["candidates_in_context"],
             len(stored_candidates),
@@ -617,15 +621,16 @@ class DirectionalMemoryContextTests(unittest.TestCase):
             offline_context["candidates_in_memory"],
             len(stored_candidates),
         )
-        hypothesis_id_index = offline_context["candidate_fields"].index("hypothesis_id")
-        self.assertEqual(
-            [row[hypothesis_id_index] for row in offline_context["candidates"]],
-            [candidate["hypothesis_id"] for candidate in stored_candidates],
-        )
-        self.assertTrue(
-            all(len(row) == len(offline_context["candidate_fields"])
-                for row in offline_context["candidates"])
-        )
+        self.assertEqual(offline_context["candidates"], stored_candidates)
+        self.assertTrue(all(
+            "proposal" in candidate
+            and "execution_spec" in candidate
+            and "synthetic_tests" in candidate
+            and "forward_walk_forward" in candidate
+            and "time_ordered_cross_validation" in candidate
+            and "reverse_retrospective_only" in candidate
+            for candidate in offline_context["candidates"]
+        ))
         self.assertLessEqual(
             len(memory._canonical([offline_context])),
             memory.MAX_OFFLINE_CONTEXT_BYTES,
@@ -649,7 +654,8 @@ class DirectionalMemoryContextTests(unittest.TestCase):
                 "hypothesis_id": f"HYP-{index + 1:03d}",
                 "family": "scalable synthetic family",
                 "template_id": f"template-{index + 1:03d}",
-                "proposal": {"exact_definition": f"Exact, independently specified synthetic definition {index + 1}."},
+                "proposal": {"hypothesis_id": f"HYP-{index + 1:03d}", "exact_definition": f"Exact, independently specified synthetic definition {index + 1}."},
+                "execution_spec": {"schema_version": 1, "score_expression": {"op": "const", "value": index + 1}},
                 "specification_sha256": "a" * 64,
                 "training_signal": {
                     "training_draw_count": 100,
@@ -708,12 +714,13 @@ class DirectionalMemoryContextTests(unittest.TestCase):
         offline_context = context[0]
         self.assertEqual(offline_context["candidates_in_memory"], 64)
         self.assertEqual(offline_context["candidates_in_context"], 64)
+        self.assertEqual(offline_context["candidate_transfer_mode"], "FULL_VALIDATED_RECORDS")
         self.assertFalse(offline_context["candidate_context_truncated"])
-        id_index = offline_context["candidate_fields"].index("hypothesis_id")
         self.assertEqual(
-            [row[id_index] for row in offline_context["candidates"]],
+            [candidate["hypothesis_id"] for candidate in offline_context["candidates"]],
             [f"HYP-{index + 1:03d}" for index in range(64)],
         )
+        self.assertTrue(all("execution_spec" in candidate for candidate in offline_context["candidates"]))
         self.assertLessEqual(
             len(memory._canonical([offline_context])),
             memory.MAX_OFFLINE_CONTEXT_BYTES,

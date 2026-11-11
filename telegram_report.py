@@ -293,7 +293,9 @@ def _validate_offline_candidate(candidate, training_count, development_count):
     if not isinstance(candidate, dict) or set(candidate) != required:
         raise ValueError("Offline candidate fields do not match the safe report schema.")
     hypothesis_id = candidate.get("hypothesis_id")
-    if not isinstance(hypothesis_id, str) or not re.fullmatch(r"HYP-[0-9]{3}", hypothesis_id):
+    if not isinstance(hypothesis_id, str) or not re.fullmatch(
+        r"HYP-(?!000$)(?:[0-9]{3}|[1-9][0-9]{3,})", hypothesis_id
+    ):
         raise ValueError("Offline hypothesis identifier is invalid.")
     family = candidate.get("family")
     template_id = candidate.get("template_id")
@@ -435,7 +437,7 @@ def format_offline_research_messages(report, run_url="", branch="general-automat
         type(training_count) is not int or training_count < 40
         or type(development_count) is not int or development_count < 5
         or not isinstance(candidates, list)
-        or not 1 <= len(candidates) <= 16
+        or not candidates
         or report.get("candidate_count") != len(candidates)
         or report.get("development_interval_is_confirmatory") is not False
     ):
@@ -459,13 +461,42 @@ def format_offline_research_messages(report, run_url="", branch="general-automat
         "Geliştirme aralığı keşif amaçlı tüketilmiştir; bağımsız doğrulama değildir.",
     ]
     link = f"GitHub Actions: {run_url}" if run_url else ""
-    messages = [
+    overview = (
         f"✅ GENERAL — ÇEVRİMDIŞI MATEMATİKSEL KEŞİF | {title}\n"
         + "\n".join(common)
         + f"\nGeçerli aday: {len(checked)} | Hedef izolasyonu: BAŞARILI"
         + (f"\nDal: {branch}" if branch else "")
         + (f"\n{link}" if link else "")
-    ]
+    )
+    if len(overview) > 3800:
+        raise ValueError("Offline overview exceeds the Telegram safe message limit.")
+    messages = [overview]
+
+    def append_bounded_messages(lines):
+        if not lines:
+            return
+        heading = lines[0]
+        if len(heading) > 3800:
+            raise ValueError("Offline report heading exceeds the Telegram safe message limit.")
+        chunks = []
+        current = [heading]
+        for line in lines[1:]:
+            if len(line) > 3800:
+                raise ValueError("A single offline report line exceeds the Telegram safe message limit.")
+            candidate_message = "\n".join(current + [line])
+            if len(candidate_message) > 3800:
+                chunks.append("\n".join(current))
+                continued_heading = heading + " (devam)"
+                current = [continued_heading, line]
+                if len("\n".join(current)) > 3800:
+                    raise ValueError("Offline report line cannot fit with its continuation heading.")
+            else:
+                current.append(line)
+        if current:
+            chunks.append("\n".join(current))
+        if any(len(message) > 3800 for message in chunks):
+            raise ValueError("Offline report pagination exceeded the Telegram safe message limit.")
+        messages.extend(chunks)
     for family in ("A→B→C", "A→T", "MOD5→T"):
         family_candidates = [item for item in checked if item["family"] == family]
         if not family_candidates:
@@ -490,11 +521,8 @@ def format_offline_research_messages(report, run_url="", branch="general-automat
             lines.append("Dal: " + branch)
         if link:
             lines.append(link)
-        message = "\n".join(lines)
-        if len(message) > 3800:
-            raise ValueError("Offline family report exceeds the Telegram safe message limit.")
-        messages.append(message)
-    return [message[:3800] for message in messages]
+        append_bounded_messages(lines)
+    return messages
 
 
 

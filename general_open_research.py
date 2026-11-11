@@ -338,6 +338,22 @@ def build_messages(
         raise ValueError("Prior research memory must be a list.")
     if any(not isinstance(item, dict) or item.get("direction") != direction for item in prior_memory):
         raise ValueError("Prior memory contains another direction or an invalid record.")
+    for item in prior_memory:
+        if item.get("source") == "GENERAL/offline-symbolic-discovery":
+            candidates = item.get("candidates")
+            if (
+                item.get("candidate_transfer_mode") != "FULL_VALIDATED_RECORDS"
+                or not isinstance(candidates, list)
+                or not candidates
+                or type(item.get("candidates_in_memory")) is not int
+                or type(item.get("candidates_in_context")) is not int
+                or item["candidates_in_memory"] != len(candidates)
+                or item["candidates_in_context"] != len(candidates)
+                or item.get("candidate_context_truncated") is not False
+            ):
+                raise ValueError(
+                    "Offline candidate context is incomplete; a partial candidate set cannot be sent."
+                )
     if prior_memory:
         system += (
             "\nPRIOR GENERAL-INTERNAL RESEARCH MEMORY POLICY (SAME DIRECTION ONLY):\n"
@@ -349,7 +365,7 @@ def build_messages(
             "Use aggregate outcomes only as historical development feedback. Records sourced from "
             "GENERAL/offline-symbolic-discovery are bounded local DSL explorations, not approved or verified "
             "formulas; their consumed development metrics are historical context only. In that record, the "
-            "candidate_fields list defines the positional columns of each candidates row. Rows remain in "
+            "each candidate is a complete validated record; preserve its full proposal, DSL AST, hashes, and test metrics of each candidates row. Rows remain in "
             "original generation order and do not imply ranking or automatic selection. Current proposals and the "
             "frozen candidate must still be ordered using only this run's discovery data; never rank a "
             "candidate using prior holdout scores. Verify claims against only this direction's permitted "
