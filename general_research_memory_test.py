@@ -557,10 +557,19 @@ class DirectionalMemoryContextTests(unittest.TestCase):
             persisted = memory.load_memory(memory_path)
             stored_candidates = persisted["offline_research"]["entries"][0]["candidates"]
             target = result["target_date"]
-            persisted["entries"] = [
-                sample_entry("forward", 1, target),
-                sample_entry("forward", 2, target),
-            ]
+            target_day = date.fromisoformat(target)
+            prior_entries = []
+            for entry_id in (1, 2):
+                entry = sample_entry("forward", entry_id, target)
+                entry["discovery_window"]["start_date"] = (
+                    target_day - timedelta(days=60)
+                ).isoformat()
+                entry["discovery_window"]["end_date"] = (
+                    target_day - timedelta(days=3)
+                ).isoformat()
+                entry["content_sha256"] = _hash_entry(entry)
+                prior_entries.append(entry)
+            persisted["entries"] = prior_entries
             memory_path.write_bytes(memory._canonical(persisted) + b"\n")
             before_context = memory_path.read_bytes()
 

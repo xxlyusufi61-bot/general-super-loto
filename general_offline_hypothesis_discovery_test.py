@@ -168,8 +168,11 @@ class OfflineHypothesisDiscoveryTests(unittest.TestCase):
                 forward_prompt_memory[0]["candidates_in_context"],
                 forward_prompt_memory[0]["candidates_in_memory"],
             )
+            template_index = forward_prompt_memory[0]["candidate_fields"].index(
+                "template_id"
+            )
             in_context_templates = [
-                item["template_id"] for item in forward_prompt_memory[0]["candidates"]
+                item[template_index] for item in forward_prompt_memory[0]["candidates"]
             ]
             all_templates = [
                 item["template_id"] for item in memory["entries"][0]["candidates"]
