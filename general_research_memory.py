@@ -50,8 +50,12 @@ LESSON_KEYS = {"observations", "failed_approaches", "next_tests"}
 MAX_LESSON_ITEMS = 6
 MAX_LESSON_CHARS = 700
 MAX_CONTEXT_ENTRIES = 6
-MAX_CONTEXT_CHARS = 18000
-MAX_OFFLINE_CONTEXT_CHARS = 10000
+# Conservative UTF-8 byte budgets. The active NVIDIA GLM-5.3-Flash endpoint
+# documents a 1,048,576-token context window; byte counts are a conservative
+# upper bound on tokenizer tokens. The final full-message guard reserves
+# additional room for request framing and the 8,192-token completion.
+MAX_CONTEXT_BYTES = 850_000
+MAX_OFFLINE_CONTEXT_BYTES = 800_000
 OFFLINE_CANDIDATE_CONTEXT_FIELDS = (
     "hypothesis_id",
     "family",
@@ -1630,12 +1634,12 @@ def direction_context(
             }
             _reject_number_values(offline_context, "Offline directional context")
             offline_size = len(_canonical([offline_context]))
-            if offline_size > MAX_OFFLINE_CONTEXT_CHARS:
+            if offline_size > MAX_OFFLINE_CONTEXT_BYTES:
                 raise ResearchMemoryError(
-                    "Complete offline candidate context exceeds its dedicated prompt budget; "
+                    "Complete offline candidate context exceeds its dedicated byte budget; "
                     "all candidates were retained and no prompt context was emitted."
                 )
-            if offline_size > MAX_CONTEXT_CHARS:
+            if offline_size > MAX_CONTEXT_BYTES:
                 raise ResearchMemoryError(
                     "Offline development provenance exceeds the bounded forward context."
                 )
