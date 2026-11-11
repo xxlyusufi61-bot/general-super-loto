@@ -5,6 +5,7 @@ import io
 import json
 import tempfile
 import unittest
+from unittest.mock import patch
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -525,7 +526,7 @@ class DirectionalMemoryContextTests(unittest.TestCase):
         self.assertLessEqual(len(context[0]["hypotheses"][0]["proposed_family"]), 180)
         self.assertIn("proposed_family", context[0]["hypotheses"][0]["truncated_fields"])
         self.assertIn("[TRUNCATED]", context[0]["hypotheses"][0]["proposed_family"])
-        self.assertLessEqual(len(memory._canonical(context)), memory.MAX_CONTEXT_CHARS)
+        self.assertLessEqual(len(memory._canonical(context)), memory.MAX_CONTEXT_BYTES)
 
     def test_offline_context_keeps_every_candidate_and_prior_directional_history(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -607,7 +608,7 @@ class DirectionalMemoryContextTests(unittest.TestCase):
         )
         self.assertLessEqual(
             len(memory._canonical([offline_context])),
-            memory.MAX_OFFLINE_CONTEXT_CHARS,
+            memory.MAX_OFFLINE_CONTEXT_BYTES,
         )
         self.assertLessEqual(
             len(memory._canonical(forward_context)),
@@ -620,6 +621,107 @@ class DirectionalMemoryContextTests(unittest.TestCase):
         self.assertTrue(all(item["direction"] == "forward" for item in prior_forward_entries))
         self.assertEqual(reverse_context, [])
         self.assertNotIn("draw_numbers", json.dumps(forward_context))
+
+    def test_offline_context_keeps_64_candidates_without_a_sixteen_candidate_prompt_cap(self):
+        candidates = []
+        for index in range(64):
+            candidates.append({
+                "hypothesis_id": f"HYP-{index + 1:03d}",
+                "family": "scalable synthetic family",
+                "template_id": f"template-{index + 1:03d}",
+                "proposal": {"exact_definition": f"Exact, independently specified synthetic definition {index + 1}."},
+                "specification_sha256": "a" * 64,
+                "training_signal": {
+                    "training_draw_count": 100,
+                    "distinct_score_values": 60,
+                    "score_range": 12,
+                    "selection_source": "training_prefix_only",
+                    "validation_data_used": False,
+                    "target_data_used": False,
+                },
+                "synthetic_tests": {
+                    "status": "PASS",
+                    "synthetic_cases": 8,
+                    "ranked_values_checked": 60,
+                    "target_values_used": False,
+                    "real_archive_used": False,
+                },
+                "forward_walk_forward": {
+                    "mean_hits_out_of_6": 0.6,
+                    "uniform_random_expected_hits_out_of_6": 0.6,
+                    "validation_draw_count": 10,
+                    "standard_error_of_mean_hits": 0.1,
+                    "predictive_claim": False,
+                },
+                "time_ordered_cross_validation": {
+                    "mean_hits_out_of_6": 0.6,
+                    "uniform_random_expected_hits_out_of_6": 0.6,
+                    "validation_draw_count": 10,
+                    "standard_error_of_mean_hits": 0.1,
+                    "folds": 5,
+                    "predictive_claim": False,
+                },
+                "reverse_retrospective_only": {
+                    "status": "RETROSPECTIVE_ONLY",
+                    "mean_hits_out_of_6": 0.6,
+                    "standard_error_of_mean_hits": 0.1,
+                    "evaluated_draw_count": 10,
+                    "uniform_random_expected_hits_out_of_6": 0.6,
+                    "predictive_evidence": False,
+                },
+            })
+        offline_entry = {
+            "target_date": "2026-11-10",
+            "created_at_utc": (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(),
+            "candidates": candidates,
+            "development_window": {
+                "draw_count": 10,
+                "window_sha256": "b" * 64,
+            },
+        }
+        synthetic_memory = {
+            "entries": [],
+            "offline_research": {"entries": [offline_entry]},
+        }
+        with patch.object(memory, "load_memory", return_value=synthetic_memory):
+            context = memory.direction_context("forward", "2026-11-11")
+        offline_context = context[0]
+        self.assertEqual(offline_context["candidates_in_memory"], 64)
+        self.assertEqual(offline_context["candidates_in_context"], 64)
+        self.assertFalse(offline_context["candidate_context_truncated"])
+        id_index = offline_context["candidate_fields"].index("hypothesis_id")
+        self.assertEqual(
+            [row[id_index] for row in offline_context["candidates"]],
+            [f"HYP-{index + 1:03d}" for index in range(64)],
+        )
+        self.assertLessEqual(
+            len(memory._canonical([offline_context])),
+            memory.MAX_OFFLINE_CONTEXT_BYTES,
+        )
+
+    def test_offline_context_over_budget_fails_closed_without_partial_candidate_list(self):
+        candidates = [{
+            "hypothesis_id": "HYP-001",
+            "family": "large synthetic family",
+            "template_id": "large-template",
+            "proposal": {"exact_definition": "x" * (memory.MAX_OFFLINE_CONTEXT_BYTES + 100)},
+            "specification_sha256": "a" * 64,
+            "training_signal": {},
+            "synthetic_tests": {},
+            "forward_walk_forward": {},
+            "time_ordered_cross_validation": {},
+            "reverse_retrospective_only": {},
+        }]
+        offline_entry = {
+            "target_date": "2026-11-10",
+            "created_at_utc": (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(),
+            "candidates": candidates,
+            "development_window": {"draw_count": 10, "window_sha256": "b" * 64},
+        }
+        synthetic_memory = {"entries": [], "offline_research": {"entries": [offline_entry]}}
+        with patch.object(memory, "load_memory", return_value=synthetic_memory):
+            with self.assertRaisesRegex(memory.ResearchMemoryError, "byte budget"):
+                memory.direction_context("forward", "2026-11-11")
 
     def test_direction_context_refuses_invalid_direction(self):
         with self.assertRaisesRegex(memory.ResearchMemoryError, "Direction"):
