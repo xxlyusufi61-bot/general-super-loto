@@ -461,6 +461,44 @@ class OpenResearchIsolationTests(unittest.TestCase):
             compact_payload["prior_general_research_memory_untrusted"], compact_memory
         )
 
+    def test_prompt_payload_preserves_all_64_candidate_rows(self):
+        target, train = research.isolate_pre_target(self.rows)
+        fields = ["hypothesis_id", "exact_definition"]
+        candidates = [
+            [f"HYP-{index + 1:03d}", f"Exact definition for candidate {index + 1}"]
+            for index in range(64)
+        ]
+        memory_context = [{
+            "direction": "forward",
+            "source": "GENERAL/offline-symbolic-discovery",
+            "candidate_fields": fields,
+            "candidates": candidates,
+            "candidates_in_memory": 64,
+            "candidates_in_context": 64,
+            "candidate_context_truncated": False,
+            "candidate_selection": "NONE",
+            "automatic_candidate_selection": False,
+        }]
+        messages = research.build_messages(
+            target, train, direction="forward", prior_memory=memory_context
+        )
+        payload = json.loads(messages[1]["content"])
+        carried = payload["prior_general_research_memory_untrusted"][0]
+        self.assertEqual(carried["candidates"], candidates)
+        self.assertEqual(len(carried["candidates"]), 64)
+        self.assertFalse(carried["candidate_context_truncated"])
+
+    def test_complete_prompt_byte_budget_fails_before_any_provider_reservation(self):
+        target, train = research.isolate_pre_target(self.rows)
+        oversized_memory = [{
+            "direction": "forward",
+            "oversized_test_payload": "x" * research.MAX_PROMPT_MESSAGE_BYTES,
+        }]
+        with self.assertRaisesRegex(ValueError, "no provider reservation or request was made"):
+            research.build_messages(
+                target, train, direction="forward", prior_memory=oversized_memory
+            )
+
     def test_cross_direction_memory_is_rejected_before_prompt_creation(self):
         target, train = research.isolate_pre_target(self.rows)
         with self.assertRaisesRegex(ValueError, "another direction"):
