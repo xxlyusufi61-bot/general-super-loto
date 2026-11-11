@@ -10,6 +10,8 @@ from pathlib import Path
 
 import general_autonomous_research as autonomous
 import general_research_memory as memory
+import general_offline_hypothesis_discovery as offline
+import random
 from general_nvidia_guard import initial_lock_state
 
 
@@ -524,6 +526,91 @@ class DirectionalMemoryContextTests(unittest.TestCase):
         self.assertIn("proposed_family", context[0]["hypotheses"][0]["truncated_fields"])
         self.assertIn("[TRUNCATED]", context[0]["hypotheses"][0]["proposed_family"])
         self.assertLessEqual(len(memory._canonical(context)), memory.MAX_CONTEXT_CHARS)
+
+    def test_offline_context_keeps_every_candidate_and_prior_directional_history(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive_path = root / "archive.json"
+            memory_path = root / "research-memory.json"
+            report_path = root / "offline-report.json"
+            generator = random.Random(20261111)
+            start = date(2020, 8, 2)
+            archive = [
+                {
+                    "date": (start + timedelta(days=index * 3)).isoformat(),
+                    "numbers": sorted(generator.sample(range(1, 61), 6)),
+                }
+                for index in range(120)
+            ]
+            archive_path.write_text(
+                json.dumps(archive, separators=(",", ":")),
+                encoding="utf-8",
+            )
+            result = offline.run_cycle(
+                archive_path=archive_path,
+                sealed_ledger_path=root / "missing-sealed-ledger.json",
+                memory_path=memory_path,
+                report_path=report_path,
+            )
+            self.assertEqual(result["candidate_count"], offline.MAX_CANDIDATES)
+
+            persisted = memory.load_memory(memory_path)
+            stored_candidates = persisted["offline_research"]["entries"][0]["candidates"]
+            target = result["target_date"]
+            persisted["entries"] = [
+                sample_entry("forward", 1, target),
+                sample_entry("forward", 2, target),
+            ]
+            memory_path.write_bytes(memory._canonical(persisted) + b"\n")
+            before_context = memory_path.read_bytes()
+
+            forward_context = memory.direction_context(
+                "forward", target, memory_path=memory_path
+            )
+            reverse_context = memory.direction_context(
+                "reverse", target, memory_path=memory_path
+            )
+
+            self.assertEqual(memory_path.read_bytes(), before_context)
+
+        offline_context = next(
+            item for item in forward_context
+            if item.get("source") == "GENERAL/offline-symbolic-discovery"
+        )
+        self.assertEqual(offline_context["context_schema_version"], 2)
+        self.assertEqual(offline_context["candidate_context_truncated"], False)
+        self.assertEqual(
+            offline_context["candidates_in_context"],
+            len(stored_candidates),
+        )
+        self.assertEqual(
+            offline_context["candidates_in_memory"],
+            len(stored_candidates),
+        )
+        hypothesis_id_index = offline_context["candidate_fields"].index("hypothesis_id")
+        self.assertEqual(
+            [row[hypothesis_id_index] for row in offline_context["candidates"]],
+            [candidate["hypothesis_id"] for candidate in stored_candidates],
+        )
+        self.assertTrue(
+            all(len(row) == len(offline_context["candidate_fields"])
+                for row in offline_context["candidates"])
+        )
+        self.assertLessEqual(
+            len(memory._canonical([offline_context])),
+            memory.MAX_OFFLINE_CONTEXT_CHARS,
+        )
+        self.assertLessEqual(
+            len(memory._canonical(forward_context)),
+            memory.MAX_CONTEXT_CHARS,
+        )
+        prior_forward_entries = [
+            item for item in forward_context if item.get("source") == memory.SOURCE
+        ]
+        self.assertEqual(len(prior_forward_entries), 2)
+        self.assertTrue(all(item["direction"] == "forward" for item in prior_forward_entries))
+        self.assertEqual(reverse_context, [])
+        self.assertNotIn("draw_numbers", json.dumps(forward_context))
 
     def test_direction_context_refuses_invalid_direction(self):
         with self.assertRaisesRegex(memory.ResearchMemoryError, "Direction"):

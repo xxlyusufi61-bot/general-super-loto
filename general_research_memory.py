@@ -51,6 +51,42 @@ MAX_LESSON_ITEMS = 6
 MAX_LESSON_CHARS = 700
 MAX_CONTEXT_ENTRIES = 6
 MAX_CONTEXT_CHARS = 18000
+MAX_OFFLINE_CONTEXT_CHARS = 10000
+OFFLINE_CANDIDATE_CONTEXT_FIELDS = (
+    "hypothesis_id",
+    "family",
+    "template_id",
+    "exact_definition",
+    "specification_sha256",
+    "training_draw_count",
+    "distinct_score_values",
+    "score_range",
+    "selection_source",
+    "validation_data_used",
+    "target_data_used",
+    "synthetic_status",
+    "synthetic_cases",
+    "ranked_values_checked",
+    "synthetic_target_values_used",
+    "real_archive_used",
+    "forward_mean_hits_out_of_6",
+    "forward_uniform_random_expected_hits_out_of_6",
+    "forward_validation_draw_count",
+    "forward_standard_error_of_mean_hits",
+    "forward_predictive_claim",
+    "cv_mean_hits_out_of_6",
+    "cv_uniform_random_expected_hits_out_of_6",
+    "cv_validation_draw_count",
+    "cv_standard_error_of_mean_hits",
+    "cv_folds",
+    "cv_predictive_claim",
+    "reverse_status",
+    "reverse_mean_hits_out_of_6",
+    "reverse_standard_error_of_mean_hits",
+    "reverse_evaluated_draw_count",
+    "reverse_uniform_random_expected_hits_out_of_6",
+    "reverse_predictive_evidence",
+)
 MAX_REPORT_CHARS = 9000
 MAX_ENTRIES = 10000
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
@@ -1475,6 +1511,52 @@ def _compact_proposal(proposal: dict[str, Any]) -> dict[str, Any]:
     return compact
 
 
+
+def _compact_offline_candidate_context(candidate: dict[str, Any]) -> list[Any]:
+    """Project one complete stored candidate into the compact prompt row schema."""
+    proposal = candidate["proposal"]
+    training = candidate["training_signal"]
+    synthetic = candidate["synthetic_tests"]
+    forward = candidate["forward_walk_forward"]
+    cross_validation = candidate["time_ordered_cross_validation"]
+    reverse = candidate["reverse_retrospective_only"]
+    return [
+        candidate["hypothesis_id"],
+        candidate["family"],
+        candidate["template_id"],
+        proposal["exact_definition"],
+        candidate["specification_sha256"],
+        training.get("training_draw_count"),
+        training.get("distinct_score_values"),
+        training.get("score_range"),
+        training.get("selection_source"),
+        training.get("validation_data_used"),
+        training.get("target_data_used"),
+        synthetic.get("status"),
+        synthetic.get("synthetic_cases"),
+        synthetic.get("ranked_values_checked"),
+        synthetic.get("target_values_used"),
+        synthetic.get("real_archive_used"),
+        forward.get("mean_hits_out_of_6"),
+        forward.get("uniform_random_expected_hits_out_of_6"),
+        forward.get("validation_draw_count"),
+        forward.get("standard_error_of_mean_hits"),
+        forward.get("predictive_claim"),
+        cross_validation.get("mean_hits_out_of_6"),
+        cross_validation.get("uniform_random_expected_hits_out_of_6"),
+        cross_validation.get("validation_draw_count"),
+        cross_validation.get("standard_error_of_mean_hits"),
+        cross_validation.get("folds"),
+        cross_validation.get("predictive_claim"),
+        reverse.get("status"),
+        reverse.get("mean_hits_out_of_6"),
+        reverse.get("standard_error_of_mean_hits"),
+        reverse.get("evaluated_draw_count"),
+        reverse.get("uniform_random_expected_hits_out_of_6"),
+        reverse.get("predictive_evidence"),
+    ]
+
+
 def direction_context(
     direction: str,
     target_date: str,
@@ -1498,28 +1580,24 @@ def direction_context(
     context = []
 
     # The offline symbolic namespace is forward-only. It is deliberately kept
-    # out of reverse prompts to preserve directional separation. Only one most
-    # recent prior offline cycle is included to bound the prompt payload.
+    # out of reverse prompts to preserve directional separation. Only the most
+    # recent eligible offline cycle is projected into the forward prompt.
     if direction == "forward":
         for offline_entry in reversed(memory["offline_research"]["entries"]):
             if date.fromisoformat(offline_entry["target_date"]) > current_target:
                 continue
             if _validate_timestamp(offline_entry["created_at_utc"]) >= now:
                 continue
-            candidate_summaries = []
-            for candidate in offline_entry["candidates"]:
-                candidate_summaries.append({
-                    "hypothesis_id": candidate["hypothesis_id"],
-                    "family": candidate["family"],
-                    "template_id": candidate["template_id"],
-                    "formal_definition": candidate["proposal"]["exact_definition"],
-                    "specification_sha256": candidate["specification_sha256"],
-                    "training_signal": candidate["training_signal"],
-                    "forward_walk_forward": candidate["forward_walk_forward"],
-                    "time_ordered_cross_validation": candidate["time_ordered_cross_validation"],
-                    "reverse_retrospective_only": candidate["reverse_retrospective_only"],
-                })
+
+            # Keep every stored candidate in its original generation order.
+            # A positional row plus one shared field map removes repeated JSON
+            # keys without dropping definitions, aggregate metrics, or candidates.
+            candidate_summaries = [
+                _compact_offline_candidate_context(candidate)
+                for candidate in offline_entry["candidates"]
+            ]
             offline_context = {
+                "context_schema_version": 2,
                 "prior_target_date": offline_entry["target_date"],
                 "prior_recorded_at_utc": offline_entry["created_at_utc"],
                 "source": "GENERAL/offline-symbolic-discovery",
@@ -1527,10 +1605,11 @@ def direction_context(
                 "status": "EXPLORATORY_ONLY",
                 "candidate_selection": "NONE",
                 "automatic_candidate_selection": False,
-                "candidates_in_memory": len(candidate_summaries),
-                "candidates_in_context": 0,
+                "candidates_in_memory": len(offline_entry["candidates"]),
+                "candidates_in_context": len(candidate_summaries),
                 "candidate_context_truncated": False,
-                "candidates": [],
+                "candidate_fields": list(OFFLINE_CANDIDATE_CONTEXT_FIELDS),
+                "candidates": candidate_summaries,
                 "development_window": {
                     "draw_count": offline_entry["development_window"]["draw_count"],
                     "window_sha256": offline_entry["development_window"]["window_sha256"],
@@ -1538,41 +1617,29 @@ def direction_context(
                     "consumed_for_exploratory_feedback": True,
                 },
                 "interpretation": (
-                    "Bounded offline GENERAL discovery feedback only. These definitions and aggregate "
-                    "metrics are unverified development history, not approved formulas, candidate rankings, "
-                    "or independent confirmation. Reuse of the development interval is forbidden. "
-                    "Candidate definitions are included in original discovery order only as prompt space permits; "
-                    "no candidate was selected by validation or performance score."
+                    "Bounded offline GENERAL discovery feedback only. Decode each candidates row "
+                    "using candidate_fields. Every stored candidate is included once in original "
+                    "generation order; this order is not a ranking. Definitions and aggregate metrics "
+                    "are unverified development history, not approved formulas or independent "
+                    "confirmation. Reuse of the development interval is forbidden. Full candidate "
+                    "records and execution specifications remain in the append-only memory store."
                 ),
                 "holdout_reuse": (
                     "FORBIDDEN; this consumed offline development interval is historical feedback only."
                 ),
             }
-            # Preserve original generation order. Never sort or truncate by
-            # validation/CV/reverse performance; only a size-bound prefix may
-            # enter the prompt.
-            while candidate_summaries:
-                offline_context["candidates"] = list(candidate_summaries)
-                offline_context["candidates_in_context"] = len(candidate_summaries)
-                offline_context["candidate_context_truncated"] = (
-                    len(candidate_summaries) < len(offline_entry["candidates"])
-                )
-                if len(_canonical(context + [offline_context])) <= MAX_CONTEXT_CHARS:
-                    break
-                candidate_summaries.pop()
-            if not candidate_summaries:
-                offline_context["candidates"] = []
-                offline_context["candidates_in_context"] = 0
-                offline_context["candidate_context_truncated"] = bool(offline_entry["candidates"])
             _reject_number_values(offline_context, "Offline directional context")
-            if len(_canonical(context + [offline_context])) <= MAX_CONTEXT_CHARS:
-                context.append(offline_context)
-            else:
-                # The provenance/consumption summary itself must fit. If it
-                # cannot, stop rather than silently discarding this safety fact.
+            offline_size = len(_canonical([offline_context]))
+            if offline_size > MAX_OFFLINE_CONTEXT_CHARS:
+                raise ResearchMemoryError(
+                    "Complete offline candidate context exceeds its dedicated prompt budget; "
+                    "all candidates were retained and no prompt context was emitted."
+                )
+            if offline_size > MAX_CONTEXT_CHARS:
                 raise ResearchMemoryError(
                     "Offline development provenance exceeds the bounded forward context."
                 )
+            context.append(offline_context)
             break
 
     entries = [

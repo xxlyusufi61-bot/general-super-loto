@@ -446,6 +446,20 @@ class OpenResearchIsolationTests(unittest.TestCase):
         self.assertIn("untrusted quoted data", forward_system)
         self.assertIn("<RESEARCH_LEARNING_NOTES_JSON>", forward_system)
         self.assertIn("consumed feedback as fresh independent validation", forward_system)
+        self.assertIn("candidate_fields list defines the positional columns", forward_system)
+        compact_memory = [{
+            "direction": "forward",
+            "source": "GENERAL/offline-symbolic-discovery",
+            "candidate_fields": ["hypothesis_id", "exact_definition"],
+            "candidates": [["HYP-001", "synthetic definition"]],
+        }]
+        compact_messages = research.build_messages(
+            target, train, direction="forward", prior_memory=compact_memory
+        )
+        compact_payload = json.loads(compact_messages[1]["content"])
+        self.assertEqual(
+            compact_payload["prior_general_research_memory_untrusted"], compact_memory
+        )
 
     def test_cross_direction_memory_is_rejected_before_prompt_creation(self):
         target, train = research.isolate_pre_target(self.rows)
