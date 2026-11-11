@@ -1,11 +1,31 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "window_seconds": 60,
   "max_requests": 40,
+  "normal_max_requests": 30,
+  "daily_window_seconds": 86400,
+  "daily_max_requests": 200,
+  "category_limits": {
+    "forward_discovery": 100,
+    "forward_critique": 30,
+    "reverse_diagnostic": 20,
+    "between_draws": 30,
+    "retry_reserve": 20
+  },
+  "package_max_requests": 4,
   "requests": [
     {
-      "reserved_at_utc": "2026-11-08T19:10:31.078691+00:00",
-      "source": "open-research-reverse"
+      "reserved_at_utc": "2026-11-11T07:39:46.151292+00:00",
+      "source": "open-research-forward"
+    }
+  ],
+  "daily_requests": [
+    {
+      "reserved_at_utc": "2026-11-11T07:39:46.151292+00:00",
+      "source": "open-research-forward",
+      "category": "forward_discovery",
+      "package_id": "42980959550:1",
+      "reservation_id": "b62a66c16a864daa9ea86c829ceb6dba"
     }
   ],
   "diagnostic_run_ids": [
@@ -14,5 +34,5 @@
     "41755229554",
     "42095794989"
   ],
-  "updated_at_utc": "2026-11-08T19:10:01.078691+00:00"
+  "updated_at_utc": "2026-11-11T07:39:16.151292+00:00"
 }
