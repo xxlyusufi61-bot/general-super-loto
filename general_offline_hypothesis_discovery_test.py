@@ -8,6 +8,7 @@ from pathlib import Path
 
 import general_offline_hypothesis_discovery as offline
 import general_research_memory as combined_memory
+from telegram_report import format_offline_research_messages
 
 
 def synthetic_archive(count=120):
@@ -81,8 +82,21 @@ class OfflineHypothesisDiscoveryTests(unittest.TestCase):
             self.assertGreaterEqual(result["candidate_count"], 1)
             self.assertLessEqual(result["candidate_count"], offline.MAX_CANDIDATES)
             self.assertEqual(result["candidate_selection"], "NONE")
+            self.assertIs(result["automatic_candidate_selection"], False)
             self.assertFalse(result["target_numbers_exposed"])
             self.assertFalse(result["sealed_holdout_used"])
+            # Exercise the real research-engine output against the Telegram
+            # consumer; do not patch missing producer fields into a fixture.
+            telegram_messages = format_offline_research_messages(
+                result,
+                "https://github.com/example/run",
+                "general-automation-state",
+                "Çevrimdışı keşif",
+            )
+            self.assertGreaterEqual(len(telegram_messages), 1)
+            rendered_report = "\n".join(telegram_messages)
+            self.assertIn("Otomatik kazanan/formül seçimi: YOK", rendered_report)
+            self.assertNotIn("predicted number", rendered_report.lower())
             for candidate in result["candidates"]:
                 self.assertTrue(candidate["training_signal"]["training_draw_count"] >= offline.MIN_TRAIN_DRAWS)
                 self.assertEqual(candidate["forward_walk_forward"]["validation_draw_count"], 10)

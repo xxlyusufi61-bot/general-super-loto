@@ -603,11 +603,15 @@ def main():
     parser.add_argument("--branch", default="")
     parser.add_argument("--kind", choices=["status", "candidates", "walkforward", "research", "offline"], default="status")
     parser.add_argument("--report-log")
+    parser.add_argument(
+        "--non-blocking-delivery",
+        action="store_true",
+        help=(
+            "Keep a validated research workflow moving when Telegram delivery fails; "
+            "report parsing and safety validation remain fail-closed."
+        ),
+    )
     args = parser.parse_args()
-    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
-    if not token or not chat_id or not chat_id.lstrip("-").isdigit():
-        raise SystemExit("Telegram raporu gönderilemedi: gerekli secret eksik veya geçersiz.")
     report = read_report(args.report_log)
     if args.status.lower() == "success" and args.kind in ("candidates", "walkforward", "research", "offline") and report is None:
         raise SystemExit("Telegram raporu gönderilemedi: toplu değerlendirme raporu okunamadı.")
@@ -617,12 +621,32 @@ def main():
         messages = format_offline_research_messages(report, args.run_url, args.branch, args.title)
     else:
         messages = [format_message(args.title, args.status, args.run_url, args.branch, args.kind, report)]
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    if not token or not chat_id or not chat_id.lstrip("-").isdigit():
+        error = "Telegram raporu gönderilemedi: gerekli secret eksik veya geçersiz."
+        if args.non_blocking_delivery:
+            print("TELEGRAM DELIVERY WARNING: 0/" + str(len(messages)) + " mesaj gönderildi; " + error)
+            return 0
+        raise SystemExit(error)
     for index, message in enumerate(messages):
-        _send_message(token, chat_id, message)
+        try:
+            _send_message(token, chat_id, message)
+        except SystemExit as exc:
+            if args.non_blocking_delivery:
+                print(
+                    "TELEGRAM DELIVERY WARNING: "
+                    + str(index) + "/" + str(len(messages))
+                    + " mesaj gönderildi; teslimat tamamlanamadı ("
+                    + str(exc) + "). Araştırma güvenlik kontrolleri doğrulandığı için devam edebilir."
+                )
+                return 0
+            raise
         if args.kind == "offline" and index + 1 < len(messages):
             time.sleep(1.1)
     print("TELEGRAM RAPOR TESLİMİ: BAŞARILI (" + str(len(messages)) + " mesaj)")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -1,9 +1,15 @@
 import hashlib
+import io
 import json
+import os
+import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
+import telegram_report
 from telegram_report import format_message, format_offline_research_messages, format_research_messages, read_report
 from general_hypothesis_proposals import _render_expression
 
@@ -173,6 +179,86 @@ class TelegramReportTests(unittest.TestCase):
         report["candidates"][0]["proposal"]["execution_ready"] = True
         with self.assertRaisesRegex(ValueError, "non-executable DSL candidate"):
             format_offline_research_messages(report)
+
+    def _run_offline_cli(self, root, report, *, non_blocking=True):
+        report_path = Path(root) / "offline-report.json"
+        report_path.write_text(json.dumps(report), encoding="utf-8")
+        argv = [
+            "telegram_report.py",
+            "--title", "GENERAL çevrimdışı matematiksel keşif",
+            "--status", "success",
+            "--branch", "general-automation-state",
+            "--run-url", "https://github.com/example/run",
+            "--kind", "offline",
+            "--report-log", str(report_path),
+        ]
+        if non_blocking:
+            argv.append("--non-blocking-delivery")
+        return argv
+
+    def test_nonblocking_delivery_failure_does_not_fail_a_validated_report(self):
+        with tempfile.TemporaryDirectory() as temp:
+            argv = self._run_offline_cli(temp, self._offline_report_fixture())
+            output = io.StringIO()
+            with (
+                patch.object(sys, "argv", argv),
+                patch.dict(os.environ, {
+                    "TELEGRAM_BOT_TOKEN": "test-token",
+                    "TELEGRAM_CHAT_ID": "12345",
+                }, clear=True),
+                patch.object(telegram_report, "_send_message", side_effect=SystemExit("simulated delivery failure")),
+                redirect_stdout(output),
+            ):
+                exit_code = telegram_report.main()
+            self.assertEqual(exit_code, 0)
+            self.assertIn("TELEGRAM DELIVERY WARNING: 0/2", output.getvalue())
+            self.assertIn("Araştırma güvenlik kontrolleri doğrulandığı için devam edebilir", output.getvalue())
+
+    def test_nonblocking_mode_does_not_bypass_offline_report_safety_validation(self):
+        with tempfile.TemporaryDirectory() as temp:
+            report = self._offline_report_fixture()
+            report.pop("automatic_candidate_selection")
+            argv = self._run_offline_cli(temp, report)
+            with (
+                patch.object(sys, "argv", argv),
+                patch.dict(os.environ, {
+                    "TELEGRAM_BOT_TOKEN": "test-token",
+                    "TELEGRAM_CHAT_ID": "12345",
+                }, clear=True),
+                patch.object(telegram_report, "_send_message") as send,
+            ):
+                with self.assertRaisesRegex(ValueError, "automatic_candidate_selection"):
+                    telegram_report.main()
+            send.assert_not_called()
+
+    def test_nonblocking_mode_treats_missing_delivery_secrets_as_notification_failure(self):
+        with tempfile.TemporaryDirectory() as temp:
+            argv = self._run_offline_cli(temp, self._offline_report_fixture())
+            output = io.StringIO()
+            with (
+                patch.object(sys, "argv", argv),
+                patch.dict(os.environ, {}, clear=True),
+                patch.object(telegram_report, "_send_message") as send,
+                redirect_stdout(output),
+            ):
+                exit_code = telegram_report.main()
+            self.assertEqual(exit_code, 0)
+            self.assertIn("TELEGRAM DELIVERY WARNING: 0/2", output.getvalue())
+            send.assert_not_called()
+
+    def test_delivery_remains_fail_closed_without_nonblocking_flag(self):
+        with tempfile.TemporaryDirectory() as temp:
+            argv = self._run_offline_cli(temp, self._offline_report_fixture(), non_blocking=False)
+            with (
+                patch.object(sys, "argv", argv),
+                patch.dict(os.environ, {
+                    "TELEGRAM_BOT_TOKEN": "test-token",
+                    "TELEGRAM_CHAT_ID": "12345",
+                }, clear=True),
+                patch.object(telegram_report, "_send_message", side_effect=SystemExit("simulated delivery failure")),
+            ):
+                with self.assertRaisesRegex(SystemExit, "simulated delivery failure"):
+                    telegram_report.main()
 
     def test_research_reports_are_separate_and_hide_all_draw_values(self):
         spec_a = "a" * 64

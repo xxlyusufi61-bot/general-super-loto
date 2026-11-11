@@ -6,6 +6,8 @@ on:
     paths:
       - "telegram_report.py"
       - "telegram_report_test.py"
+      - "general_offline_hypothesis_discovery.py"
+      - "general_offline_hypothesis_discovery_test.py"
       - "general_autonomous_research.py"
       - "general_autonomous_research_test.py"
       - "general_autonomous_research_state.json"
@@ -17,6 +19,8 @@ on:
     paths:
       - "telegram_report.py"
       - "telegram_report_test.py"
+      - "general_offline_hypothesis_discovery.py"
+      - "general_offline_hypothesis_discovery_test.py"
       - "general_autonomous_research.py"
       - "general_autonomous_research_test.py"
       - "general_autonomous_research_state.json"
@@ -43,10 +47,11 @@ jobs:
         run: |
           python -m py_compile \
             telegram_report.py telegram_report_test.py \
+            general_offline_hypothesis_discovery.py general_offline_hypothesis_discovery_test.py \
             general_autonomous_research.py general_autonomous_research_test.py \
             general_open_research.py general_open_research_test.py
-      - name: Run synthetic report formatting tests
-        run: python -m unittest -v general_open_research_test general_autonomous_research_test telegram_report_test
+      - name: Run report formatting and offline producer/consumer integration tests
+        run: python -m unittest -v general_open_research_test general_autonomous_research_test telegram_report_test general_offline_hypothesis_discovery_test
       - name: Parse autonomous workflow YAML
         run: |
           ruby -e 'require "yaml"; YAML.load_file(".github/workflows/general-autonomous-research.yml"); puts "Autonomous workflow YAML: PASS"'
