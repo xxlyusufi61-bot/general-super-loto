@@ -8,7 +8,7 @@ from pathlib import Path
 
 import general_offline_hypothesis_discovery as offline
 import general_research_memory as combined_memory
-from telegram_report import format_offline_research_messages
+from telegram_report import format_offline_research_messages, read_report
 
 
 def synthetic_archive(count=120):
@@ -87,8 +87,10 @@ class OfflineHypothesisDiscoveryTests(unittest.TestCase):
             self.assertFalse(result["sealed_holdout_used"])
             # Exercise the real research-engine output against the Telegram
             # consumer; do not patch missing producer fields into a fixture.
+            generated_report = read_report(report_path)
+            self.assertEqual(generated_report, result)
             telegram_messages = format_offline_research_messages(
-                result,
+                generated_report,
                 "https://github.com/example/run",
                 "general-automation-state",
                 "Çevrimdışı keşif",
