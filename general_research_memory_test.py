@@ -612,7 +612,7 @@ class DirectionalMemoryContextTests(unittest.TestCase):
         )
         self.assertLessEqual(
             len(memory._canonical(forward_context)),
-            memory.MAX_CONTEXT_CHARS,
+            memory.MAX_CONTEXT_BYTES,
         )
         prior_forward_entries = [
             item for item in forward_context if item.get("source") == memory.SOURCE
