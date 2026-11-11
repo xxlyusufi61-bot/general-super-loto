@@ -212,3 +212,12 @@ Before checking hosted-research authorization, the scheduled cycle
 materializes only the current FIFO head in the job workspace and runs the
 bounded offline symbolic discovery/evaluation task (up to sixteen safe-DSL candidates screened using only the earlier training prefix). A successful exploratory
 cycle appends only to the offline_research namespace in the existing general_research_memory.json object via the generation-guarded state writer, validates its number-safe report, attempts Telegram delivery, and uploads a short-lived report artifact. Report parsing and safety validation remain fail-closed: missing safety metadata, target exposure, or invalid candidate structure stops the cycle before the hosted-research gate. Once the report passes validation, a Telegram delivery problem (missing credentials, network error, or API rejection) is recorded as a warning and does not block the later authorization-, lock-, and target-gated NVIDIA stage. Delivery is not automatically retried, avoiding duplicate messages after uncertain submission. The existing sealed directional entries and evaluation ledger remain unchanged by this runner; the offline namespace is isolated inside the same research_memory object. A waiting or failed offline cycle does not consume the FIFO target, modify protected state, clear a lock, or create a provider request. No NVIDIA calls are made merely to fill the between-draw allocation.
+
+
+## CLI delivery-mode guard
+
+The command-line `--non-blocking-delivery` option is accepted only when
+`--kind offline` and `--status success` are supplied together. Every other
+combination is rejected during argument validation, before the report is loaded
+or a Telegram request is attempted. Other report kinds and non-success
+notifications therefore retain their fail-closed delivery behavior.

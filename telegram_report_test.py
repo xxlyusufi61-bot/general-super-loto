@@ -5,7 +5,7 @@ import os
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -180,16 +180,18 @@ class TelegramReportTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "non-executable DSL candidate"):
             format_offline_research_messages(report)
 
-    def _run_offline_cli(self, root, report, *, non_blocking=True):
+    def _run_offline_cli(
+        self, root, report, *, non_blocking=True, kind="offline", status="success"
+    ):
         report_path = Path(root) / "offline-report.json"
         report_path.write_text(json.dumps(report), encoding="utf-8")
         argv = [
             "telegram_report.py",
             "--title", "GENERAL çevrimdışı matematiksel keşif",
-            "--status", "success",
+            "--status", status,
             "--branch", "general-automation-state",
             "--run-url", "https://github.com/example/run",
-            "--kind", "offline",
+            "--kind", kind,
             "--report-log", str(report_path),
         ]
         if non_blocking:
@@ -259,6 +261,40 @@ class TelegramReportTests(unittest.TestCase):
             ):
                 with self.assertRaisesRegex(SystemExit, "simulated delivery failure"):
                     telegram_report.main()
+
+    def test_nonblocking_flag_is_rejected_for_other_report_kinds_and_statuses(self):
+        invalid_combinations = (
+            ("status", "success"),
+            ("candidates", "success"),
+            ("walkforward", "success"),
+            ("research", "success"),
+            ("offline", "failure"),
+            ("offline", "cancelled"),
+        )
+        for kind, status in invalid_combinations:
+            with self.subTest(kind=kind, status=status):
+                with tempfile.TemporaryDirectory() as temp:
+                    argv = self._run_offline_cli(
+                        temp,
+                        self._offline_report_fixture(),
+                        kind=kind,
+                        status=status,
+                    )
+                    stderr = io.StringIO()
+                    with (
+                        patch.object(sys, "argv", argv),
+                        patch.dict(os.environ, {}, clear=True),
+                        patch.object(telegram_report, "_send_message") as send,
+                        redirect_stderr(stderr),
+                    ):
+                        with self.assertRaises(SystemExit) as raised:
+                            telegram_report.main()
+                    self.assertEqual(raised.exception.code, 2)
+                    self.assertIn(
+                        "--non-blocking-delivery is only valid with --kind offline and --status success",
+                        stderr.getvalue(),
+                    )
+                    send.assert_not_called()
 
     def test_research_reports_are_separate_and_hide_all_draw_values(self):
         spec_a = "a" * 64

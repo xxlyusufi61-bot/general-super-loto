@@ -612,6 +612,12 @@ def main():
         ),
     )
     args = parser.parse_args()
+    if args.non_blocking_delivery and not (
+        args.kind == "offline" and args.status.lower() == "success"
+    ):
+        parser.error(
+            "--non-blocking-delivery is only valid with --kind offline and --status success."
+        )
     report = read_report(args.report_log)
     if args.status.lower() == "success" and args.kind in ("candidates", "walkforward", "research", "offline") and report is None:
         raise SystemExit("Telegram raporu gönderilemedi: toplu değerlendirme raporu okunamadı.")
