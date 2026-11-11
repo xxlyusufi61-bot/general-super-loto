@@ -557,6 +557,26 @@ class DirectionalMemoryContextTests(unittest.TestCase):
 
             persisted = memory.load_memory(memory_path)
             stored_candidates = persisted["offline_research"]["entries"][0]["candidates"]
+
+            # Future candidate-generation revisions may exceed today's 16-template
+            # grammar. The storage validator must not retain the old 16-item ceiling.
+            expanded_candidates = copy.deepcopy(stored_candidates)
+            while len(expanded_candidates) < 40:
+                candidate = copy.deepcopy(
+                    stored_candidates[len(expanded_candidates) % len(stored_candidates)]
+                )
+                new_id = f"HYP-{len(expanded_candidates) + 1:03d}"
+                candidate["hypothesis_id"] = new_id
+                candidate["proposal"]["hypothesis_id"] = new_id
+                expanded_candidates.append(candidate)
+            expanded_offline_memory = copy.deepcopy(persisted["offline_research"])
+            expanded_entry = copy.deepcopy(expanded_offline_memory["entries"][0])
+            expanded_entry["candidates"] = expanded_candidates
+            expanded_entry["content_sha256"] = offline._entry_hash(expanded_entry)
+            expanded_offline_memory["entries"][0] = expanded_entry
+            validated_expanded = offline.validate_memory_document(expanded_offline_memory)
+            self.assertEqual(len(validated_expanded["entries"][0]["candidates"]), 40)
+
             target = result["target_date"]
             target_day = date.fromisoformat(target)
             prior_entries = []
