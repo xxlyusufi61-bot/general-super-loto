@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "project": "GENERAL Super Loto",
   "research_epoch": "general-open-research-memory-v2",
   "purpose": "Append-only GENERAL-origin directional research memory. It may retain validated hypotheses, safe execution specifications, sanitized same-direction report narratives, and safe aggregate feedback. No legacy user/Pydroid experiments, raw archive rows, consumed holdout rows/dates, target values, or predicted number values are permitted.",
@@ -84,5 +84,2222 @@
       },
       "content_sha256": "a4f30cbb4af2a25e5e18fee5740005878bda11aad8afc7648329087e2d52f619"
     }
-  ]
+  ],
+  "offline_research": {
+    "schema_version": 1,
+    "purpose": "Append-only memory and development-date consumption ledger for GENERAL's bounded offline symbolic hypothesis engine. No legacy experiments, raw archive rows, draw-number sets, per-draw scores, or target values.",
+    "entries": [
+      {
+        "entry_id": 1,
+        "cycle_id": "d3000a8bfdf48ae05d0905bb3a12a7983d8ba0549435dc344e93e0c4deba4d8b",
+        "source": "GENERAL/offline-symbolic-discovery",
+        "direction": "forward",
+        "created_at_utc": "2026-11-11T01:28:15.244153+00:00",
+        "target_date": "2026-11-10",
+        "archive_sha256": "ae7b79e4922d4178a86c7d7880af3e4758d1a5e7f78d6cc3d2595fbb4fd66596",
+        "runner_version": "0.1.0",
+        "status": "EXPLORATORY_ONLY",
+        "discovery_window": {
+          "start_date": "2020-10-11",
+          "end_date": "2026-08-06",
+          "draw_count": 912
+        },
+        "development_window": {
+          "draw_count": 10,
+          "window_sha256": "0d6788cb642b7aa57dca94960970f41c05a9f22782f7eb2ac9037630d99a724e",
+          "dates_stored": false
+        },
+        "candidates": [
+          {
+            "hypothesis_id": "HYP-001",
+            "family": "A→B→C",
+            "template_id": "abc_persistent_membership",
+            "proposal": {
+              "hypothesis_id": "HYP-001",
+              "discovery_direction": "forward",
+              "proposed_family": "A→B→C",
+              "research_rationale": "Count consecutive A/B/C triples in which the candidate is present in all three draw states.",
+              "hypothesis": "The score defined by the attached formal DSL expression is hypothesized to rank candidates with greater chronological test-draw overlap than the uniform random 6-of-60 baseline.",
+              "exact_definition": "Formal DSL definition: score(candidate) = AGGREGATE_HISTORY_TRIPLES[COUNT](((candidate_present_in_A AND candidate_present_in_B) AND candidate_present_in_C)).",
+              "inputs": "Only direction-isolated 6-of-60 records strictly earlier than each chronological scoring cutoff; the cutoff draw and every later record are excluded.",
+              "output_rule": "Score every member of the complete supported number pool with the formal DSL expression; rank by descending score and break equal-score ties by ascending value.",
+              "parameter_policy": "All constants in the validated DSL expression are frozen before sealed evaluation; sealed outcomes cannot tune them.",
+              "selection_policy": "The formal DSL definition is fixed before sealed evaluation. Discovery and time-ordered development data may be used for selection; sealed outcomes and post-target records may not be used.",
+              "falsification_criterion": "Reject the hypothesis if chronological forward evaluation and time-ordered cross-validation do not outperform the uniform-random 6-of-60 baseline within reported uncertainty. Reverse results remain retrospective stress tests only.",
+              "known_risks": [
+                "A descriptive historical association may not persist in later draws.",
+                "The bounded DSL cannot represent every possible interpretation of this research-family label.",
+                "Selection and evaluation are exploratory and do not establish predictive advantage."
+              ],
+              "formal_execution_spec": {
+                "schema_version": 1,
+                "score_expression": {
+                  "op": "aggregate_history_triples",
+                  "aggregate": "count",
+                  "expression": {
+                    "op": "and",
+                    "left": {
+                      "op": "and",
+                      "left": {
+                        "op": "var",
+                        "name": "a_contains_candidate"
+                      },
+                      "right": {
+                        "op": "var",
+                        "name": "b_contains_candidate"
+                      }
+                    },
+                    "right": {
+                      "op": "var",
+                      "name": "c_contains_candidate"
+                    }
+                  }
+                }
+              },
+              "evaluation_protocols": [
+                "forward_walk_forward",
+                "reverse_retrospective_stress_test",
+                "time_ordered_cross_validation",
+                "uniform_random_6_of_N"
+              ],
+              "status": "PROPOSAL_ONLY",
+              "execution_ready": false,
+              "registry_write_allowed": false
+            },
+            "execution_spec": {
+              "schema_version": 1,
+              "score_expression": {
+                "op": "aggregate_history_triples",
+                "aggregate": "count",
+                "expression": {
+                  "op": "and",
+                  "left": {
+                    "op": "and",
+                    "left": {
+                      "op": "var",
+                      "name": "a_contains_candidate"
+                    },
+                    "right": {
+                      "op": "var",
+                      "name": "b_contains_candidate"
+                    }
+                  },
+                  "right": {
+                    "op": "var",
+                    "name": "c_contains_candidate"
+                  }
+                }
+              }
+            },
+            "specification_sha256": "0e731100f5c9473fbecac39f5be790ff08016cd89a8c2da1c7e156b5dd25942d",
+            "training_signal": {
+              "distinct_score_values": 5,
+              "score_range": 4,
+              "training_draw_count": 912,
+              "selection_source": "training_prefix_only",
+              "validation_data_used": false,
+              "target_data_used": false
+            },
+            "synthetic_tests": {
+              "status": "PASS",
+              "synthetic_cases": 1,
+              "ranked_values_checked": 60,
+              "target_values_used": false,
+              "real_archive_used": false
+            },
+            "forward_walk_forward": {
+              "mean_hits_out_of_6": 0.1,
+              "uniform_random_expected_hits_out_of_6": 0.6,
+              "validation_draw_count": 10,
+              "standard_error_of_mean_hits": 0.1,
+              "predictive_claim": false
+            },
+            "time_ordered_cross_validation": {
+              "mean_hits_out_of_6": 0.1,
+              "uniform_random_expected_hits_out_of_6": 0.6,
+              "validation_draw_count": 10,
+              "standard_error_of_mean_hits": null,
+              "folds": 5,
+              "predictive_claim": false
+            },
+            "reverse_retrospective_only": {
+              "status": "EVALUATED_RETROSPECTIVE_ONLY",
+              "mean_hits_out_of_6": 0.5,
+              "standard_error_of_mean_hits": 0.166667,
+              "evaluated_draw_count": 10,
+              "uniform_random_expected_hits_out_of_6": 0.6,
+              "predictive_evidence": false
+            }
+          },
+          {
+            "hypothesis_id": "HYP-002",
+            "family": "A→B→C",
+            "template_id": "abc_disappearing_membership",
+            "proposal": {
+              "hypothesis_id": "HYP-002",
+              "discovery_direction": "forward",
+              "proposed_family": "A→B→C",
+              "research_rationale": "Count consecutive A/B/C triples in which the candidate is present in A and B but absent in C.",
+              "hypothesis": "The score defined by the attached formal DSL expression is hypothesized to rank candidates with greater chronological test-draw overlap than the uniform random 6-of-60 baseline.",
+              "exact_definition": "Formal DSL definition: score(candidate) = AGGREGATE_HISTORY_TRIPLES[COUNT](((candidate_present_in_A AND candidate_present_in_B) AND NOT(candidate_present_in_C))).",
+              "inputs": "Only direction-isolated 6-of-60 records strictly earlier than each chronological scoring cutoff; the cutoff draw and every later record are excluded.",
+              "output_rule": "Score every member of the complete supported number pool with the formal DSL expression; rank by descending score and break equal-score ties by ascending value.",
+              "parameter_policy": "All constants in the validated DSL expression are frozen before sealed evaluation; sealed outcomes cannot tune them.",
+              "selection_policy": "The formal DSL definition is fixed before sealed evaluation. Discovery and time-ordered development data may be used for selection; sealed outcomes and post-target records may not be used.",
+              "falsification_criterion": "Reject the hypothesis if chronological forward evaluation and time-ordered cross-validation do not outperform the uniform-random 6-of-60 baseline within reported uncertainty. Reverse results remain retrospective stress tests only.",
+              "known_risks": [
+                "A descriptive historical association may not persist in later draws.",
+                "The bounded DSL cannot represent every possible interpretation of this research-family label.",
+                "Selection and evaluation are exploratory and do not establish predictive advantage."
+              ],
+              "formal_execution_spec": {
+                "schema_version": 1,
+                "score_expression": {
+                  "op": "aggregate_history_triples",
+                  "aggregate": "count",
+                  "expression": {
+                    "op": "and",
+                    "left": {
+                      "op": "and",
+                      "left": {
+                        "op": "var",
+                        "name": "a_contains_candidate"
+                      },
+                      "right": {
+                        "op": "var",
+                        "name": "b_contains_candidate"
+                      }
+                    },
+                    "right": {
+                      "op": "not",
+                      "arg": {
+                        "op": "var",
+                        "name": "c_contains_candidate"
+                      }
+                    }
+                  }
+                }
+              },
+              "evaluation_protocols": [
+                "forward_walk_forward",
+                "reverse_retrospective_stress_test",
+                "time_ordered_cross_validation",
+                "uniform_random_6_of_N"
+              ],
+              "status": "PROPOSAL_ONLY",
+              "execution_ready": false,
+              "registry_write_allowed": false
+            },
+            "execution_spec": {
+              "schema_version": 1,
+              "score_expression": {
+                "op": "aggregate_history_triples",
+                "aggregate": "count",
+                "expression": {
+                  "op": "and",
+                  "left": {
+                    "op": "and",
+                    "left": {
+                      "op": "var",
+                      "name": "a_contains_candidate"
+                    },
+                    "right": {
+                      "op": "var",
+                      "name": "b_contains_candidate"
+                    }
+                  },
+                  "right": {
+                    "op": "not",
+                    "arg": {
+                      "op": "var",
+                      "name": "c_contains_candidate"
+                    }
+                  }
+                }
+              }
+            },
+            "specification_sha256": "816de0c15c72588d4a7115a1dc43006737897398cac73b0331da5b96e2ea8ff9",
+            "training_signal": {
+              "distinct_score_values": 13,
+              "score_range": 13,
+              "training_draw_count": 912,
+              "selection_source": "training_prefix_only",
+              "validation_data_used": false,
+              "target_data_used": false
+            },
+            "synthetic_tests": {
+              "status": "PASS",
+              "synthetic_cases": 1,
+              "ranked_values_checked": 60,
+              "target_values_used": false,
+              "real_archive_used": false
+            },
+            "forward_walk_forward": {
+              "mean_hits_out_of_6": 0.6,
+              "uniform_random_expected_hits_out_of_6": 0.6,
+              "validation_draw_count": 10,
+              "standard_error_of_mean_hits": 0.163299,
+              "predictive_claim": false
+            },
+            "time_ordered_cross_validation": {
+              "mean_hits_out_of_6": 0.6,
+              "uniform_random_expected_hits_out_of_6": 0.6,
+              "validation_draw_count": 10,
+              "standard_error_of_mean_hits": null,
+              "folds": 5,
+              "predictive_claim": false
+            },
+            "reverse_retrospective_only": {
+              "status": "EVALUATED_RETROSPECTIVE_ONLY",
+              "mean_hits_out_of_6": 0.5,
+              "standard_error_of_mean_hits": 0.166667,
+              "evaluated_draw_count": 10,
+              "uniform_random_expected_hits_out_of_6": 0.6,
+              "predictive_evidence": false
+            }
+          },
+          {
+            "hypothesis_id": "HYP-003",
+            "family": "A→B→C",
+            "template_id": "abc_new_persistent_membership",
+            "proposal": {
+              "hypothesis_id": "HYP-003",
+              "discovery_direction": "forward",
+              "proposed_family": "A→B→C",
+              "research_rationale": "Count consecutive A/B/C triples in which the candidate is absent in A and present in B and C.",
+              "hypothesis": "The score defined by the attached formal DSL expression is hypothesized to rank candidates with greater chronological test-draw overlap than the uniform random 6-of-60 baseline.",
+              "exact_definition": "Formal DSL definition: score(candidate) = AGGREGATE_HISTORY_TRIPLES[COUNT](((NOT(candidate_present_in_A) AND candidate_present_in_B) AND candidate_present_in_C)).",
+              "inputs": "Only direction-isolated 6-of-60 records strictly earlier than each chronological scoring cutoff; the cutoff draw and every later record are excluded.",
+              "output_rule": "Score every member of the complete supported number pool with the formal DSL expression; rank by descending score and break equal-score ties by ascending value.",
+              "parameter_policy": "All constants in the validated DSL expression are frozen before sealed evaluation; sealed outcomes cannot tune them.",
+              "selection_policy": "The formal DSL definition is fixed before sealed evaluation. Discovery and time-ordered development data may be used for selection; sealed outcomes and post-target records may not be used.",
+              "falsification_criterion": "Reject the hypothesis if chronological forward evaluation and time-ordered cross-validation do not outperform the uniform-random 6-of-60 baseline within reported uncertainty. Reverse results remain retrospective stress tests only.",
+              "known_risks": [
+                "A descriptive historical association may not persist in later draws.",
+                "The bounded DSL cannot represent every possible interpretation of this research-family label.",
+                "Selection and evaluation are exploratory and do not establish predictive advantage."
+              ],
+              "formal_execution_spec": {
+                "schema_version": 1,
+                "score_expression": {
+                  "op": "aggregate_history_triples",
+                  "aggregate": "count",
+                  "expression": {
+                    "op": "and",
+                    "left": {
+                      "op": "and",
+                      "left": {
+                        "op": "not",
+                        "arg": {
+                          "op": "var",
+                          "name": "a_contains_candidate"
+                        }
+                      },
+                      "right": {
+                        "op": "var",
+                        "name": "b_contains_candidate"
+                      }
+                    },
+                    "right": {
+                      "op": "var",
+                      "name": "c_contains_candidate"
+                    }
+                  }
+                }
+              },
+              "evaluation_protocols": [
+                "forward_walk_forward",
+                "reverse_retrospective_stress_test",
+                "time_ordered_cross_validation",
+                "uniform_random_6_of_N"
+              ],
+              "status": "PROPOSAL_ONLY",
+              "execution_ready": false,
+              "registry_write_allowed": false
+            },
+            "execution_spec": {
+              "schema_version": 1,
+              "score_expression": {
+                "op": "aggregate_history_triples",
+                "aggregate": "count",
+                "expression": {
+                  "op": "and",
+                  "left": {
+                    "op": "and",
+                    "left": {
+                      "op": "not",
+                      "arg": {
+                        "op": "var",
+                        "name": "a_contains_candidate"
+                      }
+                    },
+                    "right": {
+                      "op": "var",
+                      "name": "b_contains_candidate"
+                    }
+                  },
+                  "right": {
+                    "op": "var",
+                    "name": "c_contains_candidate"
+                  }
+                }
+              }
+            },
+            "specification_sha256": "a8f624cfbc18fbdd6a11bb0772d96490f052c9f4b6c2887cb46429d4b2b8d5d9",
+            "training_signal": {
+              "distinct_score_values": 13,
+              "score_range": 13,
+              "training_draw_count": 912,
+              "selection_source": "training_prefix_only",
+              "validation_data_used": false,
+              "target_data_used": false
+            },
+            "synthetic_tests": {
+              "status": "PASS",
+              "synthetic_cases": 1,
+              "ranked_values_checked": 60,
+              "target_values_used": false,
+              "real_archive_used": false
+            },
+            "forward_walk_forward": {
+              "mean_hits_out_of_6": 0.6,
+              "uniform_random_expected_hits_out_of_6": 0.6,
+              "validation_draw_count": 10,
+              "standard_error_of_mean_hits": 0.163299,
+              "predictive_claim": false
+            },
+            "time_ordered_cross_validation": {
+              "mean_hits_out_of_6": 0.6,
+              "uniform_random_expected_hits_out_of_6": 0.6,
+              "validation_draw_count": 10,
+              "standard_error_of_mean_hits": null,
+              "folds": 5,
+              "predictive_claim": false
+            },
+            "reverse_retrospective_only": {
+              "status": "EVALUATED_RETROSPECTIVE_ONLY",
+              "mean_hits_out_of_6": 0.5,
+              "standard_error_of_mean_hits": 0.166667,
+              "evaluated_draw_count": 10,
+              "uniform_random_expected_hits_out_of_6": 0.6,
+              "predictive_evidence": false
+            }
+          },
+          {
+            "hypothesis_id": "HYP-004",
+            "family": "A→B→C",
+            "template_id": "abc_reappearance_membership",
+            "proposal": {
+              "hypothesis_id": "HYP-004",
+              "discovery_direction": "forward",
+              "proposed_family": "A→B→C",
+              "research_rationale": "Count consecutive A/B/C triples in which the candidate is present in A and C but absent in B.",
+              "hypothesis": "The score defined by the attached formal DSL expression is hypothesized to rank candidates with greater chronological test-draw overlap than the uniform random 6-of-60 baseline.",
+              "exact_definition": "Formal DSL definition: score(candidate) = AGGREGATE_HISTORY_TRIPLES[COUNT](((candidate_present_in_A AND NOT(candidate_present_in_B)) AND candidate_present_in_C)).",
+              "inputs": "Only direction-isolated 6-of-60 records strictly earlier than each chronological scoring cutoff; the cutoff draw and every later record are excluded.",
+              "output_rule": "Score every member of the complete supported number pool with the formal DSL expression; rank by descending score and break equal-score ties by ascending value.",
+              "parameter_policy": "All constants in the validated DSL expression are frozen before sealed evaluation; sealed outcomes cannot tune them.",
+              "selection_policy": "The formal DSL definition is fixed before sealed evaluation. Discovery and time-ordered development data may be used for selection; sealed outcomes and post-target records may not be used.",
+              "falsification_criterion": "Reject the hypothesis if chronological forward evaluation and time-ordered cross-validation do not outperform the uniform-random 6-of-60 baseline within reported uncertainty. Reverse results remain retrospective stress tests only.",
+              "known_risks": [
+                "A descriptive historical association may not persist in later draws.",
+                "The bounded DSL cannot represent every possible interpretation of this research-family label.",
+                "Selection and evaluation are exploratory and do not establish predictive advantage."
+              ],
+              "formal_execution_spec": {
+                "schema_version": 1,
+                "score_expression": {
+                  "op": "aggregate_history_triples",
+                  "aggregate": "count",
+                  "expression": {
+                    "op": "and",
+                    "left": {
+                      "op": "and",
+                      "left": {
+                        "op": "var",
+                        "name": "a_contains_candidate"
+                      },
+                      "right": {
+                        "op": "not",
+                        "arg": {
+                          "op": "var",
+                          "name": "b_contains_candidate"
+                        }
+                      }
+                    },
+                    "right": {
+                      "op": "var",
+                      "name": "c_contains_candidate"
+                    }
+                  }
+                }
+              },
+              "evaluation_protocols": [
+                "forward_walk_forward",
+                "reverse_retrospective_stress_test",
+                "time_ordered_cross_validation",
+                "uniform_random_6_of_N"
+              ],
+              "status": "PROPOSAL_ONLY",
+              "execution_ready": false,
+              "registry_write_allowed": false
+            },
+            "execution_spec": {
+              "schema_version": 1,
+              "score_expression": {
+                "op": "aggregate_history_triples",
+                "aggregate": "count",
+                "expression": {
+                  "op": "and",
+                  "left": {
+                    "op": "and",
+                    "left": {
+                      "op": "var",
+                      "name": "a_contains_candidate"
+                    },
+                    "right": {
+                      "op": "not",
+                      "arg": {
+                        "op": "var",
+                        "name": "b_contains_candidate"
+                      }
+                    }
+                  },
+                  "right": {
+                    "op": "var",
+                    "name": "c_contains_candidate"
+                  }
+                }
+              }
+            },
+            "specification_sha256": "dd9949976d6c3a9baa84bd2173151918179509477ec26257555967feffa0e778",
+            "training_signal": {
+              "distinct_score_values": 14,
+              "score_range": 16,
+              "training_draw_count": 912,
+              "selection_source": "training_prefix_only",
+              "validation_data_used": false,
+              "target_data_used": false
+            },
+            "synthetic_tests": {
+              "status": "PASS",
+              "synthetic_cases": 1,
+              "ranked_values_checked": 60,
+              "target_values_used": false,
+              "real_archive_used": false
+            },
+            "forward_walk_forward": {
+              "mean_hits_out_of_6": 0.3,
+              "uniform_random_expected_hits_out_of_6": 0.6,
+              "validation_draw_count": 10,
+              "standard_error_of_mean_hits": 0.152753,
+              "predictive_claim": false
+            },
+            "time_ordered_cross_validation": {
+              "mean_hits_out_of_6": 0.3,
+              "uniform_random_expected_hits_out_of_6": 0.6,
+              "validation_draw_count": 10,
+              "standard_error_of_mean_hits": null,
+              "folds": 5,
+              "predictive_claim": false
+            },
+            "reverse_retrospective_only": {
+              "status": "EVALUATED_RETROSPECTIVE_ONLY",
+              "mean_hits_out_of_6": 0.5,
+              "standard_error_of_mean_hits": 0.166667,
+              "evaluated_draw_count": 10,
+              "uniform_random_expected_hits_out_of_6": 0.6,
+              "predictive_evidence": false
+            }
+          },
+          {
+            "hypothesis_id": "HYP-005",
+            "family": "A→T",
+            "template_id": "at_exact_historical_frequency",
+            "proposal": {
+              "hypothesis_id": "HYP-005",
+              "discovery_direction": "forward",
+              "proposed_family": "A→T",
+              "research_rationale": "Count exact occurrences of the candidate across the permitted earlier draw history.",
+              "hypothesis": "The score defined by the attached formal DSL expression is hypothesized to rank candidates with greater chronological test-draw overlap than the uniform random 6-of-60 baseline.",
+              "exact_definition": "Formal DSL definition: score(candidate) = AGGREGATE_HISTORY_NUMBERS[COUNT]((historical_draw_value == candidate_value)).",
+              "inputs": "Only direction-isolated 6-of-60 records strictly earlier than each chronological scoring cutoff; the cutoff draw and every later record are excluded.",
+              "output_rule": "Score every member of the complete supported number pool with the formal DSL expression; rank by descending score and break equal-score ties by ascending value.",
+              "parameter_policy": "All constants in the validated DSL expression are frozen before sealed evaluation; sealed outcomes cannot tune them.",
+              "selection_policy": "The formal DSL definition is fixed before sealed evaluation. Discovery and time-ordered development data may be used for selection; sealed outcomes and post-target records may not be used.",
+              "falsification_criterion": "Reject the hypothesis if chronological forward evaluation and time-ordered cross-validation do not outperform the uniform-random 6-of-60 baseline within reported uncertainty. Reverse results remain retrospective stress tests only.",
+              "known_risks": [
+                "A descriptive historical association may not persist in later draws.",
+                "The bounded DSL cannot represent every possible interpretation of this research-family label.",
+                "Selection and evaluation are exploratory and do not establish predictive advantage."
+              ],
+              "formal_execution_spec": {
+                "schema_version": 1,
+                "score_expression": {
+                  "op": "aggregate_history_numbers",
+                  "aggregate": "count",
+                  "expression": {
+                    "op": "eq",
+                    "left": {
+                      "op": "var",
+                      "name": "value"
+                    },
+                    "right": {
+                      "op": "var",
+                      "name": "candidate"
+                    }
+                  }
+                }
+              },
+              "evaluation_protocols": [
+                "forward_walk_forward",
+                "reverse_retrospective_stress_test",
+                "time_ordered_cross_validation",
+                "uniform_random_6_of_N"
+              ],
+              "status": "PROPOSAL_ONLY",
+              "execution_ready": false,
+              "registry_write_allowed": false
+            },
+            "execution_spec": {
+              "schema_version": 1,
+              "score_expression": {
+                "op": "aggregate_history_numbers",
+                "aggregate": "count",
+                "expression": {
+                  "op": "eq",
+                  "left": {
+                    "op": "var",
+                    "name": "value"
+                  },
+                  "right": {
+                    "op": "var",
+                    "name": "candidate"
+                  }
+                }
+              }
+            },
+            "specification_sha256": "f9eb88007a36426d17575582a3f01a258e961cd1f79d22744ec9a04bc4fb30c2",
+            "training_signal": {
+              "distinct_score_values": 28,
+              "score_range": 38,
+              "training_draw_count": 912,
+              "selection_source": "training_prefix_only",
+              "validation_data_used": false,
+              "target_data_used": false
+            },
+            "synthetic_tests": {
+              "status": "PASS",
+              "synthetic_cases": 1,
+              "ranked_values_checked": 60,
+              "target_values_used": false,
+              "real_archive_used": false
+            },
+            "forward_walk_forward": {
+              "mean_hits_out_of_6": 0.6,
+              "uniform_random_expected_hits_out_of_6": 0.6,
+              "validation_draw_count": 10,
+              "standard_error_of_mean_hits": 0.305505,
+              "predictive_claim": false
+            },
+            "time_ordered_cross_validation": {
+              "mean_hits_out_of_6": 0.6,
+              "uniform_random_expected_hits_out_of_6": 0.6,
+              "validation_draw_count": 10,
+              "standard_error_of_mean_hits": null,
+              "folds": 5,
+              "predictive_claim": false
+            },
+            "reverse_retrospective_only": {
+              "status": "EVALUATED_RETROSPECTIVE_ONLY",
+              "mean_hits_out_of_6": 0.7,
+              "standard_error_of_mean_hits": 0.213437,
+              "evaluated_draw_count": 10,
+              "uniform_random_expected_hits_out_of_6": 0.6,
+              "predictive_evidence": false
+            }
+          },
+          {
+            "hypothesis_id": "HYP-006",
+            "family": "A→T",
+            "template_id": "at_same_parity",
+            "proposal": {
+              "hypothesis_id": "HYP-006",
+              "discovery_direction": "forward",
+              "proposed_family": "A→T",
+              "research_rationale": "Count earlier draw values with the same modulo-two remainder as the candidate.",
+              "hypothesis": "The score defined by the attached formal DSL expression is hypothesized to rank candidates with greater chronological test-draw overlap than the uniform random 6-of-60 baseline.",
+              "exact_definition": "Formal DSL definition: score(candidate) = AGGREGATE_HISTORY_NUMBERS[COUNT](((historical_draw_value MOD 2) == (candidate_value MOD 2))).",
+              "inputs": "Only direction-isolated 6-of-60 records strictly earlier than each chronological scoring cutoff; the cutoff draw and every later record are excluded.",
+              "output_rule": "Score every member of the complete supported number pool with the formal DSL expression; rank by descending score and break equal-score ties by ascending value.",
+              "parameter_policy": "All constants in the validated DSL expression are frozen before sealed evaluation; sealed outcomes cannot tune them.",
+              "selection_policy": "The formal DSL definition is fixed before sealed evaluation. Discovery and time-ordered development data may be used for selection; sealed outcomes and post-target records may not be used.",
+              "falsification_criterion": "Reject the hypothesis if chronological forward evaluation and time-ordered cross-validation do not outperform the uniform-random 6-of-60 baseline within reported uncertainty. Reverse results remain retrospective stress tests only.",
+              "known_risks": [
+                "A descriptive historical association may not persist in later draws.",
+                "The bounded DSL cannot represent every possible interpretation of this research-family label.",
+                "Selection and evaluation are exploratory and do not establish predictive advantage."
+              ],
+              "formal_execution_spec": {
+                "schema_version": 1,
+                "score_expression": {
+                  "op": "aggregate_history_numbers",
+                  "aggregate": "count",
+                  "expression": {
+                    "op": "eq",
+                    "left": {
+                      "op": "mod",
+                      "left": {
+                        "op": "var",
+                        "name": "value"
+                      },
+                      "right": {
+                        "op": "const",
+                        "value": 2
+                      }
+                    },
+                    "right": {
+                      "op": "mod",
+                      "left": {
+                        "op": "var",
+                        "name": "candidate"
+                      },
+                      "right": {
+                        "op": "const",
+                        "value": 2
+                      }
+                    }
+                  }
+                }
+              },
+              "evaluation_protocols": [
+                "forward_walk_forward",
+                "reverse_retrospective_stress_test",
+                "time_ordered_cross_validation",
+                "uniform_random_6_of_N"
+              ],
+              "status": "PROPOSAL_ONLY",
+              "execution_ready": false,
+              "registry_write_allowed": false
+            },
+            "execution_spec": {
+              "schema_version": 1,
+              "score_expression": {
+                "op": "aggregate_history_numbers",
+                "aggregate": "count",
+                "expression": {
+                  "op": "eq",
+                  "left": {
+                    "op": "mod",
+                    "left": {
+                      "op": "var",
+                      "name": "value"
+                    },
+                    "right": {
+                      "op": "const",
+                      "value": 2
+                    }
+                  },
+                  "right": {
+                    "op": "mod",
+                    "left": {
+                      "op": "var",
+                      "name": "candidate"
+                    },
+                    "right": {
+                      "op": "const",
+                      "value": 2
+                    }
+                  }
+                }
+              }
+            },
+            "specification_sha256": "385fe2028cedd195bd70ca6da264c586480fcd54193fca6a846451ab5f3c378b",
+            "training_signal": {
+              "distinct_score_values": 2,
+              "score_range": 28,
+              "training_draw_count": 912,
+              "selection_source": "training_prefix_only",
+              "validation_data_used": false,
+              "target_data_used": false
+            },
+            "synthetic_tests": {
+              "status": "PASS",
+              "synthetic_cases": 1,
+              "ranked_values_checked": 60,
+              "target_values_used": false,
+              "real_archive_used": false
+            },
+            "forward_walk_forward": {
+              "mean_hits_out_of_6": 0.4,
+              "uniform_random_expected_hits_out_of_6": 0.6,
+              "validation_draw_count": 10,
+              "standard_error_of_mean_hits": 0.163299,
+              "predictive_claim": false
+            },
+            "time_ordered_cross_validation": {
+              "mean_hits_out_of_6": 0.4,
+              "uniform_random_expected_hits_out_of_6": 0.6,
+              "validation_draw_count": 10,
+              "standard_error_of_mean_hits": null,
+              "folds": 5,
+              "predictive_claim": false
+            },
+            "reverse_retrospective_only": {
+              "status": "EVALUATED_RETROSPECTIVE_ONLY",
+              "mean_hits_out_of_6": 0.4,
+              "standard_error_of_mean_hits": 0.163299,
+              "evaluated_draw_count": 10,
+              "uniform_random_expected_hits_out_of_6": 0.6,
+              "predictive_evidence": false
+            }
+          },
+          {
+            "hypothesis_id": "HYP-007",
+            "family": "A→T",
+            "template_id": "at_same_final_digit",
+            "proposal": {
+              "hypothesis_id": "HYP-007",
+              "discovery_direction": "forward",
+              "proposed_family": "A→T",
+              "research_rationale": "Count earlier draw values with the same modulo-ten remainder as the candidate.",
+              "hypothesis": "The score defined by the attached formal DSL expression is hypothesized to rank candidates with greater chronological test-draw overlap than the uniform random 6-of-60 baseline.",
+              "exact_definition": "Formal DSL definition: score(candidate) = AGGREGATE_HISTORY_NUMBERS[COUNT](((historical_draw_value MOD 10) == (candidate_value MOD 10))).",
+              "inputs": "Only direction-isolated 6-of-60 records strictly earlier than each chronological scoring cutoff; the cutoff draw and every later record are excluded.",
+              "output_rule": "Score every member of the complete supported number pool with the formal DSL expression; rank by descending score and break equal-score ties by ascending value.",
+              "parameter_policy": "All constants in the validated DSL expression are frozen before sealed evaluation; sealed outcomes cannot tune them.",
+              "selection_policy": "The formal DSL definition is fixed before sealed evaluation. Discovery and time-ordered development data may be used for selection; sealed outcomes and post-target records may not be used.",
+              "falsification_criterion": "Reject the hypothesis if chronological forward evaluation and time-ordered cross-validation do not outperform the uniform-random 6-of-60 baseline within reported uncertainty. Reverse results remain retrospective stress tests only.",
+              "known_risks": [
+                "A descriptive historical association may not persist in later draws.",
+                "The bounded DSL cannot represent every possible interpretation of this research-family label.",
+                "Selection and evaluation are exploratory and do not establish predictive advantage."
+              ],
+              "formal_execution_spec": {
+                "schema_version": 1,
+                "score_expression": {
+                  "op": "aggregate_history_numbers",
+                  "aggregate": "count",
+                  "expression": {
+                    "op": "eq",
+                    "left": {
+                      "op": "mod",
+                      "left": {
+                        "op": "var",
+                        "name": "value"
+                      },
+                      "right": {
+                        "op": "const",
+                        "value": 10
+                      }
+                    },
+                    "right": {
+                      "op": "mod",
+                      "left": {
+                        "op": "var",
+                        "name": "candidate"
+                      },
+                      "right": {
+                        "op": "const",
+                        "value": 10
+                      }
+                    }
+                  }
+                }
+              },
+              "evaluation_protocols": [
+                "forward_walk_forward",
+                "reverse_retrospective_stress_test",
+                "time_ordered_cross_validation",
+                "uniform_random_6_of_N"
+              ],
+              "status": "PROPOSAL_ONLY",
+              "execution_ready": false,
+              "registry_write_allowed": false
+            },
+            "execution_spec": {
+              "schema_version": 1,
+              "score_expression": {
+                "op": "aggregate_history_numbers",
+                "aggregate": "count",
+                "expression": {
+                  "op": "eq",
+                  "left": {
+                    "op": "mod",
+                    "left": {
+                      "op": "var",
+                      "name": "value"
+                    },
+                    "right": {
+                      "op": "const",
+                      "value": 10
+                    }
+                  },
+                  "right": {
+                    "op": "mod",
+                    "left": {
+                      "op": "var",
+                      "name": "candidate"
+                    },
+                    "right": {
+                      "op": "const",
+                      "value": 10
+                    }
+                  }
+                }
+              }
+            },
+            "specification_sha256": "c586e08c3e5e56a7fa5a46a7659dfd5d74adce4f51405fa33aaff51f015d5f0e",
+            "training_signal": {
+              "distinct_score_values": 10,
+              "score_range": 62,
+              "training_draw_count": 912,
+              "selection_source": "training_prefix_only",
+              "validation_data_used": false,
+              "target_data_used": false
+            },
+            "synthetic_tests": {
+              "status": "PASS",
+              "synthetic_cases": 1,
+              "ranked_values_checked": 60,
+              "target_values_used": false,
+              "real_archive_used": false
+            },
+            "forward_walk_forward": {
+              "mean_hits_out_of_6": 0.8,
+              "uniform_random_expected_hits_out_of_6": 0.6,
+              "validation_draw_count": 10,
+              "standard_error_of_mean_hits": 0.290593,
+              "predictive_claim": false
+            },
+            "time_ordered_cross_validation": {
+              "mean_hits_out_of_6": 0.8,
+              "uniform_random_expected_hits_out_of_6": 0.6,
+              "validation_draw_count": 10,
+              "standard_error_of_mean_hits": null,
+              "folds": 5,
+              "predictive_claim": false
+            },
+            "reverse_retrospective_only": {
+              "status": "EVALUATED_RETROSPECTIVE_ONLY",
+              "mean_hits_out_of_6": 0.4,
+              "standard_error_of_mean_hits": 0.163299,
+              "evaluated_draw_count": 10,
+              "uniform_random_expected_hits_out_of_6": 0.6,
+              "predictive_evidence": false
+            }
+          },
+          {
+            "hypothesis_id": "HYP-008",
+            "family": "A→T",
+            "template_id": "at_recent_exact_frequency_5",
+            "proposal": {
+              "hypothesis_id": "HYP-008",
+              "discovery_direction": "forward",
+              "proposed_family": "A→T",
+              "research_rationale": "Count exact candidate occurrences within a bounded recent earlier-draw window.",
+              "hypothesis": "The score defined by the attached formal DSL expression is hypothesized to rank candidates with greater chronological test-draw overlap than the uniform random 6-of-60 baseline.",
+              "exact_definition": "Formal DSL definition: score(candidate) = AGGREGATE_HISTORY_NUMBERS[COUNT](((historical_draw_value == candidate_value) AND (directional_draw_age <= 4))).",
+              "inputs": "Only direction-isolated 6-of-60 records strictly earlier than each chronological scoring cutoff; the cutoff draw and every later record are excluded.",
+              "output_rule": "Score every member of the complete supported number pool with the formal DSL expression; rank by descending score and break equal-score ties by ascending value.",
+              "parameter_policy": "All constants in the validated DSL expression are frozen before sealed evaluation; sealed outcomes cannot tune them.",
+              "selection_policy": "The formal DSL definition is fixed before sealed evaluation. Discovery and time-ordered development data may be used for selection; sealed outcomes and post-target records may not be used.",
+              "falsification_criterion": "Reject the hypothesis if chronological forward evaluation and time-ordered cross-validation do not outperform the uniform-random 6-of-60 baseline within reported uncertainty. Reverse results remain retrospective stress tests only.",
+              "known_risks": [
+                "A descriptive historical association may not persist in later draws.",
+                "The bounded DSL cannot represent every possible interpretation of this research-family label.",
+                "Selection and evaluation are exploratory and do not establish predictive advantage."
+              ],
+              "formal_execution_spec": {
+                "schema_version": 1,
+                "score_expression": {
+                  "op": "aggregate_history_numbers",
+                  "aggregate": "count",
+                  "expression": {
+                    "op": "and",
+                    "left": {
+                      "op": "eq",
+                      "left": {
+                        "op": "var",
+                        "name": "value"
+                      },
+                      "right": {
+                        "op": "var",
+                        "name": "candidate"
+                      }
+                    },
+                    "right": {
+                      "op": "lte",
+                      "left": {
+                        "op": "var",
+                        "name": "draw_age"
+                      },
+                      "right": {
+                        "op": "const",
+                        "value": 4
+                      }
+                    }
+                  }
+                }
+              },
+              "evaluation_protocols": [
+                "forward_walk_forward",
+                "reverse_retrospective_stress_test",
+                "time_ordered_cross_validation",
+                "uniform_random_6_of_N"
+              ],
+              "status": "PROPOSAL_ONLY",
+              "execution_ready": false,
+              "registry_write_allowed": false
+            },
+            "execution_spec": {
+              "schema_version": 1,
+              "score_expression": {
+                "op": "aggregate_history_numbers",
+                "aggregate": "count",
+                "expression": {
+                  "op": "and",
+                  "left": {
+                    "op": "eq",
+                    "left": {
+                      "op": "var",
+                      "name": "value"
+                    },
+                    "right": {
+                      "op": "var",
+                      "name": "candidate"
+                    }
+                  },
+                  "right": {
+                    "op": "lte",
+                    "left": {
+                      "op": "var",
+                      "name": "draw_age"
+                    },
+                    "right": {
+                      "op": "const",
+                      "value": 4
+                    }
+                  }
+                }
+              }
+            },
+            "specification_sha256": "555315d27ae2c3904d18720d907c92b5aa1702e14fc380befa04e723623e9e41",
+            "training_signal": {
+              "distinct_score_values": 4,
+              "score_range": 3,
+              "training_draw_count": 912,
+              "selection_source": "training_prefix_only",
+              "validation_data_used": false,
+              "target_data_used": false
+            },
+            "synthetic_tests": {
+              "status": "PASS",
+              "synthetic_cases": 1,
+              "ranked_values_checked": 60,
+              "target_values_used": false,
+              "real_archive_used": false
+            },
+            "forward_walk_forward": {
+              "mean_hits_out_of_6": 0.6,
+              "uniform_random_expected_hits_out_of_6": 0.6,
+              "validation_draw_count": 10,
+              "standard_error_of_mean_hits": 0.221108,
+              "predictive_claim": false
+            },
+            "time_ordered_cross_validation": {
+              "mean_hits_out_of_6": 0.6,
+              "uniform_random_expected_hits_out_of_6": 0.6,
+              "validation_draw_count": 10,
+              "standard_error_of_mean_hits": null,
+              "folds": 5,
+              "predictive_claim": false
+            },
+            "reverse_retrospective_only": {
+              "status": "EVALUATED_RETROSPECTIVE_ONLY",
+              "mean_hits_out_of_6": 0.4,
+              "standard_error_of_mean_hits": 0.163299,
+              "evaluated_draw_count": 10,
+              "uniform_random_expected_hits_out_of_6": 0.6,
+              "predictive_evidence": false
+            }
+          },
+          {
+            "hypothesis_id": "HYP-009",
+            "family": "A→T",
+            "template_id": "at_recent_exact_frequency_10",
+            "proposal": {
+              "hypothesis_id": "HYP-009",
+              "discovery_direction": "forward",
+              "proposed_family": "A→T",
+              "research_rationale": "Count exact candidate occurrences within a bounded recent earlier-draw window.",
+              "hypothesis": "The score defined by the attached formal DSL expression is hypothesized to rank candidates with greater chronological test-draw overlap than the uniform random 6-of-60 baseline.",
+              "exact_definition": "Formal DSL definition: score(candidate) = AGGREGATE_HISTORY_NUMBERS[COUNT](((historical_draw_value == candidate_value) AND (directional_draw_age <= 9))).",
+              "inputs": "Only direction-isolated 6-of-60 records strictly earlier than each chronological scoring cutoff; the cutoff draw and every later record are excluded.",
+              "output_rule": "Score every member of the complete supported number pool with the formal DSL expression; rank by descending score and break equal-score ties by ascending value.",
+              "parameter_policy": "All constants in the validated DSL expression are frozen before sealed evaluation; sealed outcomes cannot tune them.",
+              "selection_policy": "The formal DSL definition is fixed before sealed evaluation. Discovery and time-ordered development data may be used for selection; sealed outcomes and post-target records may not be used.",
+              "falsification_criterion": "Reject the hypothesis if chronological forward evaluation and time-ordered cross-validation do not outperform the uniform-random 6-of-60 baseline within reported uncertainty. Reverse results remain retrospective stress tests only.",
+              "known_risks": [
+                "A descriptive historical association may not persist in later draws.",
+                "The bounded DSL cannot represent every possible interpretation of this research-family label.",
+                "Selection and evaluation are exploratory and do not establish predictive advantage."
+              ],
+              "formal_execution_spec": {
+                "schema_version": 1,
+                "score_expression": {
+                  "op": "aggregate_history_numbers",
+                  "aggregate": "count",
+                  "expression": {
+                    "op": "and",
+                    "left": {
+                      "op": "eq",
+                      "left": {
+                        "op": "var",
+                        "name": "value"
+                      },
+                      "right": {
+                        "op": "var",
+                        "name": "candidate"
+                      }
+                    },
+                    "right": {
+                      "op": "lte",
+                      "left": {
+                        "op": "var",
+                        "name": "draw_age"
+                      },
+                      "right": {
+                        "op": "const",
+                        "value": 9
+                      }
+                    }
+                  }
+                }
+              },
+              "evaluation_protocols": [
+                "forward_walk_forward",
+                "reverse_retrospective_stress_test",
+                "time_ordered_cross_validation",
+                "uniform_random_6_of_N"
+              ],
+              "status": "PROPOSAL_ONLY",
+              "execution_ready": false,
+              "registry_write_allowed": false
+            },
+            "execution_spec": {
+              "schema_version": 1,
+              "score_expression": {
+                "op": "aggregate_history_numbers",
+                "aggregate": "count",
+                "expression": {
+                  "op": "and",
+                  "left": {
+                    "op": "eq",
+                    "left": {
+                      "op": "var",
+                      "name": "value"
+                    },
+                    "right": {
+                      "op": "var",
+                      "name": "candidate"
+                    }
+                  },
+                  "right": {
+                    "op": "lte",
+                    "left": {
+                      "op": "var",
+                      "name": "draw_age"
+                    },
+                    "right": {
+                      "op": "const",
+                      "value": 9
+                    }
+                  }
+                }
+              }
+            },
+            "specification_sha256": "c8ffda65ce8041abb30fd42783db2d36cd3484bc92b51e14499713304915bff1",
+            "training_signal": {
+              "distinct_score_values": 4,
+              "score_range": 3,
+              "training_draw_count": 912,
+              "selection_source": "training_prefix_only",
+              "validation_data_used": false,
+              "target_data_used": false
+            },
+            "synthetic_tests": {
+              "status": "PASS",
+              "synthetic_cases": 1,
+              "ranked_values_checked": 60,
+              "target_values_used": false,
+              "real_archive_used": false
+            },
+            "forward_walk_forward": {
+              "mean_hits_out_of_6": 0.4,
+              "uniform_random_expected_hits_out_of_6": 0.6,
+              "validation_draw_count": 10,
+              "standard_error_of_mean_hits": 0.221108,
+              "predictive_claim": false
+            },
+            "time_ordered_cross_validation": {
+              "mean_hits_out_of_6": 0.4,
+              "uniform_random_expected_hits_out_of_6": 0.6,
+              "validation_draw_count": 10,
+              "standard_error_of_mean_hits": null,
+              "folds": 5,
+              "predictive_claim": false
+            },
+            "reverse_retrospective_only": {
+              "status": "EVALUATED_RETROSPECTIVE_ONLY",
+              "mean_hits_out_of_6": 0.2,
+              "standard_error_of_mean_hits": 0.133333,
+              "evaluated_draw_count": 10,
+              "uniform_random_expected_hits_out_of_6": 0.6,
+              "predictive_evidence": false
+            }
+          },
+          {
+            "hypothesis_id": "HYP-010",
+            "family": "A→T",
+            "template_id": "at_recent_exact_frequency_20",
+            "proposal": {
+              "hypothesis_id": "HYP-010",
+              "discovery_direction": "forward",
+              "proposed_family": "A→T",
+              "research_rationale": "Count exact candidate occurrences within a bounded recent earlier-draw window.",
+              "hypothesis": "The score defined by the attached formal DSL expression is hypothesized to rank candidates with greater chronological test-draw overlap than the uniform random 6-of-60 baseline.",
+              "exact_definition": "Formal DSL definition: score(candidate) = AGGREGATE_HISTORY_NUMBERS[COUNT](((historical_draw_value == candidate_value) AND (directional_draw_age <= 19))).",
+              "inputs": "Only direction-isolated 6-of-60 records strictly earlier than each chronological scoring cutoff; the cutoff draw and every later record are excluded.",
+              "output_rule": "Score every member of the complete supported number pool with the formal DSL expression; rank by descending score and break equal-score ties by ascending value.",
+              "parameter_policy": "All constants in the validated DSL expression are frozen before sealed evaluation; sealed outcomes cannot tune them.",
+              "selection_policy": "The formal DSL definition is fixed before sealed evaluation. Discovery and time-ordered development data may be used for selection; sealed outcomes and post-target records may not be used.",
+              "falsification_criterion": "Reject the hypothesis if chronological forward evaluation and time-ordered cross-validation do not outperform the uniform-random 6-of-60 baseline within reported uncertainty. Reverse results remain retrospective stress tests only.",
+              "known_risks": [
+                "A descriptive historical association may not persist in later draws.",
+                "The bounded DSL cannot represent every possible interpretation of this research-family label.",
+                "Selection and evaluation are exploratory and do not establish predictive advantage."
+              ],
+              "formal_execution_spec": {
+                "schema_version": 1,
+                "score_expression": {
+                  "op": "aggregate_history_numbers",
+                  "aggregate": "count",
+                  "expression": {
+                    "op": "and",
+                    "left": {
+                      "op": "eq",
+                      "left": {
+                        "op": "var",
+                        "name": "value"
+                      },
+                      "right": {
+                        "op": "var",
+                        "name": "candidate"
+                      }
+                    },
+                    "right": {
+                      "op": "lte",
+                      "left": {
+                        "op": "var",
+                        "name": "draw_age"
+                      },
+                      "right": {
+                        "op": "const",
+                        "value": 19
+                      }
+                    }
+                  }
+                }
+              },
+              "evaluation_protocols": [
+                "forward_walk_forward",
+                "reverse_retrospective_stress_test",
+                "time_ordered_cross_validation",
+                "uniform_random_6_of_N"
+              ],
+              "status": "PROPOSAL_ONLY",
+              "execution_ready": false,
+              "registry_write_allowed": false
+            },
+            "execution_spec": {
+              "schema_version": 1,
+              "score_expression": {
+                "op": "aggregate_history_numbers",
+                "aggregate": "count",
+                "expression": {
+                  "op": "and",
+                  "left": {
+                    "op": "eq",
+                    "left": {
+                      "op": "var",
+                      "name": "value"
+                    },
+                    "right": {
+                      "op": "var",
+                      "name": "candidate"
+                    }
+                  },
+                  "right": {
+                    "op": "lte",
+                    "left": {
+                      "op": "var",
+                      "name": "draw_age"
+                    },
+                    "right": {
+                      "op": "const",
+                      "value": 19
+                    }
+                  }
+                }
+              }
+            },
+            "specification_sha256": "4933b235153d881d696e3f3e2dd2ef1632f80d2801c766640ff2c0606d8a65eb",
+            "training_signal": {
+              "distinct_score_values": 7,
+              "score_range": 6,
+              "training_draw_count": 912,
+              "selection_source": "training_prefix_only",
+              "validation_data_used": false,
+              "target_data_used": false
+            },
+            "synthetic_tests": {
+              "status": "PASS",
+              "synthetic_cases": 1,
+              "ranked_values_checked": 60,
+              "target_values_used": false,
+              "real_archive_used": false
+            },
+            "forward_walk_forward": {
+              "mean_hits_out_of_6": 0.4,
+              "uniform_random_expected_hits_out_of_6": 0.6,
+              "validation_draw_count": 10,
+              "standard_error_of_mean_hits": 0.163299,
+              "predictive_claim": false
+            },
+            "time_ordered_cross_validation": {
+              "mean_hits_out_of_6": 0.4,
+              "uniform_random_expected_hits_out_of_6": 0.6,
+              "validation_draw_count": 10,
+              "standard_error_of_mean_hits": null,
+              "folds": 5,
+              "predictive_claim": false
+            },
+            "reverse_retrospective_only": {
+              "status": "EVALUATED_RETROSPECTIVE_ONLY",
+              "mean_hits_out_of_6": 0.2,
+              "standard_error_of_mean_hits": 0.133333,
+              "evaluated_draw_count": 10,
+              "uniform_random_expected_hits_out_of_6": 0.6,
+              "predictive_evidence": false
+            }
+          },
+          {
+            "hypothesis_id": "HYP-011",
+            "family": "A→T",
+            "template_id": "at_neighbourhood_radius_1",
+            "proposal": {
+              "hypothesis_id": "HYP-011",
+              "discovery_direction": "forward",
+              "proposed_family": "A→T",
+              "research_rationale": "Count earlier draw values whose absolute distance from the candidate is within a bounded neighbourhood.",
+              "hypothesis": "The score defined by the attached formal DSL expression is hypothesized to rank candidates with greater chronological test-draw overlap than the uniform random 6-of-60 baseline.",
+              "exact_definition": "Formal DSL definition: score(candidate) = AGGREGATE_HISTORY_NUMBERS[COUNT]((ABS((historical_draw_value - candidate_value)) <= 1)).",
+              "inputs": "Only direction-isolated 6-of-60 records strictly earlier than each chronological scoring cutoff; the cutoff draw and every later record are excluded.",
+              "output_rule": "Score every member of the complete supported number pool with the formal DSL expression; rank by descending score and break equal-score ties by ascending value.",
+              "parameter_policy": "All constants in the validated DSL expression are frozen before sealed evaluation; sealed outcomes cannot tune them.",
+              "selection_policy": "The formal DSL definition is fixed before sealed evaluation. Discovery and time-ordered development data may be used for selection; sealed outcomes and post-target records may not be used.",
+              "falsification_criterion": "Reject the hypothesis if chronological forward evaluation and time-ordered cross-validation do not outperform the uniform-random 6-of-60 baseline within reported uncertainty. Reverse results remain retrospective stress tests only.",
+              "known_risks": [
+                "A descriptive historical association may not persist in later draws.",
+                "The bounded DSL cannot represent every possible interpretation of this research-family label.",
+                "Selection and evaluation are exploratory and do not establish predictive advantage."
+              ],
+              "formal_execution_spec": {
+                "schema_version": 1,
+                "score_expression": {
+                  "op": "aggregate_history_numbers",
+                  "aggregate": "count",
+                  "expression": {
+                    "op": "lte",
+                    "left": {
+                      "op": "abs",
+                      "arg": {
+                        "op": "sub",
+                        "left": {
+                          "op": "var",
+                          "name": "value"
+                        },
+                        "right": {
+                          "op": "var",
+                          "name": "candidate"
+                        }
+                      }
+                    },
+                    "right": {
+                      "op": "const",
+                      "value": 1
+                    }
+                  }
+                }
+              },
+              "evaluation_protocols": [
+                "forward_walk_forward",
+                "reverse_retrospective_stress_test",
+                "time_ordered_cross_validation",
+                "uniform_random_6_of_N"
+              ],
+              "status": "PROPOSAL_ONLY",
+              "execution_ready": false,
+              "registry_write_allowed": false
+            },
+            "execution_spec": {
+              "schema_version": 1,
+              "score_expression": {
+                "op": "aggregate_history_numbers",
+                "aggregate": "count",
+                "expression": {
+                  "op": "lte",
+                  "left": {
+                    "op": "abs",
+                    "arg": {
+                      "op": "sub",
+                      "left": {
+                        "op": "var",
+                        "name": "value"
+                      },
+                      "right": {
+                        "op": "var",
+                        "name": "candidate"
+                      }
+                    }
+                  },
+                  "right": {
+                    "op": "const",
+                    "value": 1
+                  }
+                }
+              }
+            },
+            "specification_sha256": "1b4b81ebe4b5c8497acbaeee378df597c9392a8caa3685d5ddff1914d81bcd57",
+            "training_signal": {
+              "distinct_score_values": 42,
+              "score_range": 140,
+              "training_draw_count": 912,
+              "selection_source": "training_prefix_only",
+              "validation_data_used": false,
+              "target_data_used": false
+            },
+            "synthetic_tests": {
+              "status": "PASS",
+              "synthetic_cases": 1,
+              "ranked_values_checked": 60,
+              "target_values_used": false,
+              "real_archive_used": false
+            },
+            "forward_walk_forward": {
+              "mean_hits_out_of_6": 0.7,
+              "uniform_random_expected_hits_out_of_6": 0.6,
+              "validation_draw_count": 10,
+              "standard_error_of_mean_hits": 0.213437,
+              "predictive_claim": false
+            },
+            "time_ordered_cross_validation": {
+              "mean_hits_out_of_6": 0.7,
+              "uniform_random_expected_hits_out_of_6": 0.6,
+              "validation_draw_count": 10,
+              "standard_error_of_mean_hits": null,
+              "folds": 5,
+              "predictive_claim": false
+            },
+            "reverse_retrospective_only": {
+              "status": "EVALUATED_RETROSPECTIVE_ONLY",
+              "mean_hits_out_of_6": 0.8,
+              "standard_error_of_mean_hits": 0.133333,
+              "evaluated_draw_count": 10,
+              "uniform_random_expected_hits_out_of_6": 0.6,
+              "predictive_evidence": false
+            }
+          },
+          {
+            "hypothesis_id": "HYP-012",
+            "family": "A→T",
+            "template_id": "at_neighbourhood_radius_2",
+            "proposal": {
+              "hypothesis_id": "HYP-012",
+              "discovery_direction": "forward",
+              "proposed_family": "A→T",
+              "research_rationale": "Count earlier draw values whose absolute distance from the candidate is within a bounded neighbourhood.",
+              "hypothesis": "The score defined by the attached formal DSL expression is hypothesized to rank candidates with greater chronological test-draw overlap than the uniform random 6-of-60 baseline.",
+              "exact_definition": "Formal DSL definition: score(candidate) = AGGREGATE_HISTORY_NUMBERS[COUNT]((ABS((historical_draw_value - candidate_value)) <= 2)).",
+              "inputs": "Only direction-isolated 6-of-60 records strictly earlier than each chronological scoring cutoff; the cutoff draw and every later record are excluded.",
+              "output_rule": "Score every member of the complete supported number pool with the formal DSL expression; rank by descending score and break equal-score ties by ascending value.",
+              "parameter_policy": "All constants in the validated DSL expression are frozen before sealed evaluation; sealed outcomes cannot tune them.",
+              "selection_policy": "The formal DSL definition is fixed before sealed evaluation. Discovery and time-ordered development data may be used for selection; sealed outcomes and post-target records may not be used.",
+              "falsification_criterion": "Reject the hypothesis if chronological forward evaluation and time-ordered cross-validation do not outperform the uniform-random 6-of-60 baseline within reported uncertainty. Reverse results remain retrospective stress tests only.",
+              "known_risks": [
+                "A descriptive historical association may not persist in later draws.",
+                "The bounded DSL cannot represent every possible interpretation of this research-family label.",
+                "Selection and evaluation are exploratory and do not establish predictive advantage."
+              ],
+              "formal_execution_spec": {
+                "schema_version": 1,
+                "score_expression": {
+                  "op": "aggregate_history_numbers",
+                  "aggregate": "count",
+                  "expression": {
+                    "op": "lte",
+                    "left": {
+                      "op": "abs",
+                      "arg": {
+                        "op": "sub",
+                        "left": {
+                          "op": "var",
+                          "name": "value"
+                        },
+                        "right": {
+                          "op": "var",
+                          "name": "candidate"
+                        }
+                      }
+                    },
+                    "right": {
+                      "op": "const",
+                      "value": 2
+                    }
+                  }
+                }
+              },
+              "evaluation_protocols": [
+                "forward_walk_forward",
+                "reverse_retrospective_stress_test",
+                "time_ordered_cross_validation",
+                "uniform_random_6_of_N"
+              ],
+              "status": "PROPOSAL_ONLY",
+              "execution_ready": false,
+              "registry_write_allowed": false
+            },
+            "execution_spec": {
+              "schema_version": 1,
+              "score_expression": {
+                "op": "aggregate_history_numbers",
+                "aggregate": "count",
+                "expression": {
+                  "op": "lte",
+                  "left": {
+                    "op": "abs",
+                    "arg": {
+                      "op": "sub",
+                      "left": {
+                        "op": "var",
+                        "name": "value"
+                      },
+                      "right": {
+                        "op": "var",
+                        "name": "candidate"
+                      }
+                    }
+                  },
+                  "right": {
+                    "op": "const",
+                    "value": 2
+                  }
+                }
+              }
+            },
+            "specification_sha256": "86d8d965343ecf4e6c44e5a1f057f508096d3d88bb48fb874f0e231060a50b1c",
+            "training_signal": {
+              "distinct_score_values": 43,
+              "score_range": 225,
+              "training_draw_count": 912,
+              "selection_source": "training_prefix_only",
+              "validation_data_used": false,
+              "target_data_used": false
+            },
+            "synthetic_tests": {
+              "status": "PASS",
+              "synthetic_cases": 1,
+              "ranked_values_checked": 60,
+              "target_values_used": false,
+              "real_archive_used": false
+            },
+            "forward_walk_forward": {
+              "mean_hits_out_of_6": 0.4,
+              "uniform_random_expected_hits_out_of_6": 0.6,
+              "validation_draw_count": 10,
+              "standard_error_of_mean_hits": 0.163299,
+              "predictive_claim": false
+            },
+            "time_ordered_cross_validation": {
+              "mean_hits_out_of_6": 0.4,
+              "uniform_random_expected_hits_out_of_6": 0.6,
+              "validation_draw_count": 10,
+              "standard_error_of_mean_hits": null,
+              "folds": 5,
+              "predictive_claim": false
+            },
+            "reverse_retrospective_only": {
+              "status": "EVALUATED_RETROSPECTIVE_ONLY",
+              "mean_hits_out_of_6": 0.3,
+              "standard_error_of_mean_hits": 0.152753,
+              "evaluated_draw_count": 10,
+              "uniform_random_expected_hits_out_of_6": 0.6,
+              "predictive_evidence": false
+            }
+          },
+          {
+            "hypothesis_id": "HYP-013",
+            "family": "MOD5→T",
+            "template_id": "mod5_same_residue_frequency",
+            "proposal": {
+              "hypothesis_id": "HYP-013",
+              "discovery_direction": "forward",
+              "proposed_family": "MOD5→T",
+              "research_rationale": "Count earlier values in the candidate's explicitly defined non-negative modulo-five residue class.",
+              "hypothesis": "The score defined by the attached formal DSL expression is hypothesized to rank candidates with greater chronological test-draw overlap than the uniform random 6-of-60 baseline.",
+              "exact_definition": "Formal DSL definition: score(candidate) = AGGREGATE_HISTORY_NUMBERS[COUNT](((historical_draw_value MOD 5) == (candidate_value MOD 5))).",
+              "inputs": "Only direction-isolated 6-of-60 records strictly earlier than each chronological scoring cutoff; the cutoff draw and every later record are excluded.",
+              "output_rule": "Score every member of the complete supported number pool with the formal DSL expression; rank by descending score and break equal-score ties by ascending value.",
+              "parameter_policy": "All constants in the validated DSL expression are frozen before sealed evaluation; sealed outcomes cannot tune them.",
+              "selection_policy": "The formal DSL definition is fixed before sealed evaluation. Discovery and time-ordered development data may be used for selection; sealed outcomes and post-target records may not be used.",
+              "falsification_criterion": "Reject the hypothesis if chronological forward evaluation and time-ordered cross-validation do not outperform the uniform-random 6-of-60 baseline within reported uncertainty. Reverse results remain retrospective stress tests only.",
+              "known_risks": [
+                "A descriptive historical association may not persist in later draws.",
+                "The bounded DSL cannot represent every possible interpretation of this research-family label.",
+                "Selection and evaluation are exploratory and do not establish predictive advantage."
+              ],
+              "formal_execution_spec": {
+                "schema_version": 1,
+                "score_expression": {
+                  "op": "aggregate_history_numbers",
+                  "aggregate": "count",
+                  "expression": {
+                    "op": "eq",
+                    "left": {
+                      "op": "mod",
+                      "left": {
+                        "op": "var",
+                        "name": "value"
+                      },
+                      "right": {
+                        "op": "const",
+                        "value": 5
+                      }
+                    },
+                    "right": {
+                      "op": "mod",
+                      "left": {
+                        "op": "var",
+                        "name": "candidate"
+                      },
+                      "right": {
+                        "op": "const",
+                        "value": 5
+                      }
+                    }
+                  }
+                }
+              },
+              "evaluation_protocols": [
+                "forward_walk_forward",
+                "reverse_retrospective_stress_test",
+                "time_ordered_cross_validation",
+                "uniform_random_6_of_N"
+              ],
+              "status": "PROPOSAL_ONLY",
+              "execution_ready": false,
+              "registry_write_allowed": false
+            },
+            "execution_spec": {
+              "schema_version": 1,
+              "score_expression": {
+                "op": "aggregate_history_numbers",
+                "aggregate": "count",
+                "expression": {
+                  "op": "eq",
+                  "left": {
+                    "op": "mod",
+                    "left": {
+                      "op": "var",
+                      "name": "value"
+                    },
+                    "right": {
+                      "op": "const",
+                      "value": 5
+                    }
+                  },
+                  "right": {
+                    "op": "mod",
+                    "left": {
+                      "op": "var",
+                      "name": "candidate"
+                    },
+                    "right": {
+                      "op": "const",
+                      "value": 5
+                    }
+                  }
+                }
+              }
+            },
+            "specification_sha256": "e910f543096cd8506c8ebddfe1f00e11d6ec014c6be419db25a86e263e0f9079",
+            "training_signal": {
+              "distinct_score_values": 5,
+              "score_range": 50,
+              "training_draw_count": 912,
+              "selection_source": "training_prefix_only",
+              "validation_data_used": false,
+              "target_data_used": false
+            },
+            "synthetic_tests": {
+              "status": "PASS",
+              "synthetic_cases": 1,
+              "ranked_values_checked": 60,
+              "target_values_used": false,
+              "real_archive_used": false
+            },
+            "forward_walk_forward": {
+              "mean_hits_out_of_6": 0.7,
+              "uniform_random_expected_hits_out_of_6": 0.6,
+              "validation_draw_count": 10,
+              "standard_error_of_mean_hits": 0.213437,
+              "predictive_claim": false
+            },
+            "time_ordered_cross_validation": {
+              "mean_hits_out_of_6": 0.7,
+              "uniform_random_expected_hits_out_of_6": 0.6,
+              "validation_draw_count": 10,
+              "standard_error_of_mean_hits": null,
+              "folds": 5,
+              "predictive_claim": false
+            },
+            "reverse_retrospective_only": {
+              "status": "EVALUATED_RETROSPECTIVE_ONLY",
+              "mean_hits_out_of_6": 0.6,
+              "standard_error_of_mean_hits": 0.266667,
+              "evaluated_draw_count": 10,
+              "uniform_random_expected_hits_out_of_6": 0.6,
+              "predictive_evidence": false
+            }
+          },
+          {
+            "hypothesis_id": "HYP-014",
+            "family": "MOD5→T",
+            "template_id": "mod5_recent_same_residue_frequency_5",
+            "proposal": {
+              "hypothesis_id": "HYP-014",
+              "discovery_direction": "forward",
+              "proposed_family": "MOD5→T",
+              "research_rationale": "Count same-residue modulo-five values within a bounded recent earlier-draw window.",
+              "hypothesis": "The score defined by the attached formal DSL expression is hypothesized to rank candidates with greater chronological test-draw overlap than the uniform random 6-of-60 baseline.",
+              "exact_definition": "Formal DSL definition: score(candidate) = AGGREGATE_HISTORY_NUMBERS[COUNT]((((historical_draw_value MOD 5) == (candidate_value MOD 5)) AND (directional_draw_age <= 4))).",
+              "inputs": "Only direction-isolated 6-of-60 records strictly earlier than each chronological scoring cutoff; the cutoff draw and every later record are excluded.",
+              "output_rule": "Score every member of the complete supported number pool with the formal DSL expression; rank by descending score and break equal-score ties by ascending value.",
+              "parameter_policy": "All constants in the validated DSL expression are frozen before sealed evaluation; sealed outcomes cannot tune them.",
+              "selection_policy": "The formal DSL definition is fixed before sealed evaluation. Discovery and time-ordered development data may be used for selection; sealed outcomes and post-target records may not be used.",
+              "falsification_criterion": "Reject the hypothesis if chronological forward evaluation and time-ordered cross-validation do not outperform the uniform-random 6-of-60 baseline within reported uncertainty. Reverse results remain retrospective stress tests only.",
+              "known_risks": [
+                "A descriptive historical association may not persist in later draws.",
+                "The bounded DSL cannot represent every possible interpretation of this research-family label.",
+                "Selection and evaluation are exploratory and do not establish predictive advantage."
+              ],
+              "formal_execution_spec": {
+                "schema_version": 1,
+                "score_expression": {
+                  "op": "aggregate_history_numbers",
+                  "aggregate": "count",
+                  "expression": {
+                    "op": "and",
+                    "left": {
+                      "op": "eq",
+                      "left": {
+                        "op": "mod",
+                        "left": {
+                          "op": "var",
+                          "name": "value"
+                        },
+                        "right": {
+                          "op": "const",
+                          "value": 5
+                        }
+                      },
+                      "right": {
+                        "op": "mod",
+                        "left": {
+                          "op": "var",
+                          "name": "candidate"
+                        },
+                        "right": {
+                          "op": "const",
+                          "value": 5
+                        }
+                      }
+                    },
+                    "right": {
+                      "op": "lte",
+                      "left": {
+                        "op": "var",
+                        "name": "draw_age"
+                      },
+                      "right": {
+                        "op": "const",
+                        "value": 4
+                      }
+                    }
+                  }
+                }
+              },
+              "evaluation_protocols": [
+                "forward_walk_forward",
+                "reverse_retrospective_stress_test",
+                "time_ordered_cross_validation",
+                "uniform_random_6_of_N"
+              ],
+              "status": "PROPOSAL_ONLY",
+              "execution_ready": false,
+              "registry_write_allowed": false
+            },
+            "execution_spec": {
+              "schema_version": 1,
+              "score_expression": {
+                "op": "aggregate_history_numbers",
+                "aggregate": "count",
+                "expression": {
+                  "op": "and",
+                  "left": {
+                    "op": "eq",
+                    "left": {
+                      "op": "mod",
+                      "left": {
+                        "op": "var",
+                        "name": "value"
+                      },
+                      "right": {
+                        "op": "const",
+                        "value": 5
+                      }
+                    },
+                    "right": {
+                      "op": "mod",
+                      "left": {
+                        "op": "var",
+                        "name": "candidate"
+                      },
+                      "right": {
+                        "op": "const",
+                        "value": 5
+                      }
+                    }
+                  },
+                  "right": {
+                    "op": "lte",
+                    "left": {
+                      "op": "var",
+                      "name": "draw_age"
+                    },
+                    "right": {
+                      "op": "const",
+                      "value": 4
+                    }
+                  }
+                }
+              }
+            },
+            "specification_sha256": "5c1ac675525e2725b478c30eee05b52af4acdad52d810b60d4c854a6216ca1d3",
+            "training_signal": {
+              "distinct_score_values": 4,
+              "score_range": 6,
+              "training_draw_count": 912,
+              "selection_source": "training_prefix_only",
+              "validation_data_used": false,
+              "target_data_used": false
+            },
+            "synthetic_tests": {
+              "status": "PASS",
+              "synthetic_cases": 1,
+              "ranked_values_checked": 60,
+              "target_values_used": false,
+              "real_archive_used": false
+            },
+            "forward_walk_forward": {
+              "mean_hits_out_of_6": 0.4,
+              "uniform_random_expected_hits_out_of_6": 0.6,
+              "validation_draw_count": 10,
+              "standard_error_of_mean_hits": 0.163299,
+              "predictive_claim": false
+            },
+            "time_ordered_cross_validation": {
+              "mean_hits_out_of_6": 0.4,
+              "uniform_random_expected_hits_out_of_6": 0.6,
+              "validation_draw_count": 10,
+              "standard_error_of_mean_hits": null,
+              "folds": 5,
+              "predictive_claim": false
+            },
+            "reverse_retrospective_only": {
+              "status": "EVALUATED_RETROSPECTIVE_ONLY",
+              "mean_hits_out_of_6": 0.6,
+              "standard_error_of_mean_hits": 0.221108,
+              "evaluated_draw_count": 10,
+              "uniform_random_expected_hits_out_of_6": 0.6,
+              "predictive_evidence": false
+            }
+          },
+          {
+            "hypothesis_id": "HYP-015",
+            "family": "MOD5→T",
+            "template_id": "mod5_recent_same_residue_frequency_10",
+            "proposal": {
+              "hypothesis_id": "HYP-015",
+              "discovery_direction": "forward",
+              "proposed_family": "MOD5→T",
+              "research_rationale": "Count same-residue modulo-five values within a bounded recent earlier-draw window.",
+              "hypothesis": "The score defined by the attached formal DSL expression is hypothesized to rank candidates with greater chronological test-draw overlap than the uniform random 6-of-60 baseline.",
+              "exact_definition": "Formal DSL definition: score(candidate) = AGGREGATE_HISTORY_NUMBERS[COUNT]((((historical_draw_value MOD 5) == (candidate_value MOD 5)) AND (directional_draw_age <= 9))).",
+              "inputs": "Only direction-isolated 6-of-60 records strictly earlier than each chronological scoring cutoff; the cutoff draw and every later record are excluded.",
+              "output_rule": "Score every member of the complete supported number pool with the formal DSL expression; rank by descending score and break equal-score ties by ascending value.",
+              "parameter_policy": "All constants in the validated DSL expression are frozen before sealed evaluation; sealed outcomes cannot tune them.",
+              "selection_policy": "The formal DSL definition is fixed before sealed evaluation. Discovery and time-ordered development data may be used for selection; sealed outcomes and post-target records may not be used.",
+              "falsification_criterion": "Reject the hypothesis if chronological forward evaluation and time-ordered cross-validation do not outperform the uniform-random 6-of-60 baseline within reported uncertainty. Reverse results remain retrospective stress tests only.",
+              "known_risks": [
+                "A descriptive historical association may not persist in later draws.",
+                "The bounded DSL cannot represent every possible interpretation of this research-family label.",
+                "Selection and evaluation are exploratory and do not establish predictive advantage."
+              ],
+              "formal_execution_spec": {
+                "schema_version": 1,
+                "score_expression": {
+                  "op": "aggregate_history_numbers",
+                  "aggregate": "count",
+                  "expression": {
+                    "op": "and",
+                    "left": {
+                      "op": "eq",
+                      "left": {
+                        "op": "mod",
+                        "left": {
+                          "op": "var",
+                          "name": "value"
+                        },
+                        "right": {
+                          "op": "const",
+                          "value": 5
+                        }
+                      },
+                      "right": {
+                        "op": "mod",
+                        "left": {
+                          "op": "var",
+                          "name": "candidate"
+                        },
+                        "right": {
+                          "op": "const",
+                          "value": 5
+                        }
+                      }
+                    },
+                    "right": {
+                      "op": "lte",
+                      "left": {
+                        "op": "var",
+                        "name": "draw_age"
+                      },
+                      "right": {
+                        "op": "const",
+                        "value": 9
+                      }
+                    }
+                  }
+                }
+              },
+              "evaluation_protocols": [
+                "forward_walk_forward",
+                "reverse_retrospective_stress_test",
+                "time_ordered_cross_validation",
+                "uniform_random_6_of_N"
+              ],
+              "status": "PROPOSAL_ONLY",
+              "execution_ready": false,
+              "registry_write_allowed": false
+            },
+            "execution_spec": {
+              "schema_version": 1,
+              "score_expression": {
+                "op": "aggregate_history_numbers",
+                "aggregate": "count",
+                "expression": {
+                  "op": "and",
+                  "left": {
+                    "op": "eq",
+                    "left": {
+                      "op": "mod",
+                      "left": {
+                        "op": "var",
+                        "name": "value"
+                      },
+                      "right": {
+                        "op": "const",
+                        "value": 5
+                      }
+                    },
+                    "right": {
+                      "op": "mod",
+                      "left": {
+                        "op": "var",
+                        "name": "candidate"
+                      },
+                      "right": {
+                        "op": "const",
+                        "value": 5
+                      }
+                    }
+                  },
+                  "right": {
+                    "op": "lte",
+                    "left": {
+                      "op": "var",
+                      "name": "draw_age"
+                    },
+                    "right": {
+                      "op": "const",
+                      "value": 9
+                    }
+                  }
+                }
+              }
+            },
+            "specification_sha256": "754102c0d6753ea48305c9c19e9e106f964aa3a1377d1b7ee99e8c75e6c7fd78",
+            "training_signal": {
+              "distinct_score_values": 5,
+              "score_range": 11,
+              "training_draw_count": 912,
+              "selection_source": "training_prefix_only",
+              "validation_data_used": false,
+              "target_data_used": false
+            },
+            "synthetic_tests": {
+              "status": "PASS",
+              "synthetic_cases": 1,
+              "ranked_values_checked": 60,
+              "target_values_used": false,
+              "real_archive_used": false
+            },
+            "forward_walk_forward": {
+              "mean_hits_out_of_6": 0.4,
+              "uniform_random_expected_hits_out_of_6": 0.6,
+              "validation_draw_count": 10,
+              "standard_error_of_mean_hits": 0.163299,
+              "predictive_claim": false
+            },
+            "time_ordered_cross_validation": {
+              "mean_hits_out_of_6": 0.4,
+              "uniform_random_expected_hits_out_of_6": 0.6,
+              "validation_draw_count": 10,
+              "standard_error_of_mean_hits": null,
+              "folds": 5,
+              "predictive_claim": false
+            },
+            "reverse_retrospective_only": {
+              "status": "EVALUATED_RETROSPECTIVE_ONLY",
+              "mean_hits_out_of_6": 0.9,
+              "standard_error_of_mean_hits": 0.233333,
+              "evaluated_draw_count": 10,
+              "uniform_random_expected_hits_out_of_6": 0.6,
+              "predictive_evidence": false
+            }
+          },
+          {
+            "hypothesis_id": "HYP-016",
+            "family": "MOD5→T",
+            "template_id": "mod5_recent_same_residue_frequency_20",
+            "proposal": {
+              "hypothesis_id": "HYP-016",
+              "discovery_direction": "forward",
+              "proposed_family": "MOD5→T",
+              "research_rationale": "Count same-residue modulo-five values within a bounded recent earlier-draw window.",
+              "hypothesis": "The score defined by the attached formal DSL expression is hypothesized to rank candidates with greater chronological test-draw overlap than the uniform random 6-of-60 baseline.",
+              "exact_definition": "Formal DSL definition: score(candidate) = AGGREGATE_HISTORY_NUMBERS[COUNT]((((historical_draw_value MOD 5) == (candidate_value MOD 5)) AND (directional_draw_age <= 19))).",
+              "inputs": "Only direction-isolated 6-of-60 records strictly earlier than each chronological scoring cutoff; the cutoff draw and every later record are excluded.",
+              "output_rule": "Score every member of the complete supported number pool with the formal DSL expression; rank by descending score and break equal-score ties by ascending value.",
+              "parameter_policy": "All constants in the validated DSL expression are frozen before sealed evaluation; sealed outcomes cannot tune them.",
+              "selection_policy": "The formal DSL definition is fixed before sealed evaluation. Discovery and time-ordered development data may be used for selection; sealed outcomes and post-target records may not be used.",
+              "falsification_criterion": "Reject the hypothesis if chronological forward evaluation and time-ordered cross-validation do not outperform the uniform-random 6-of-60 baseline within reported uncertainty. Reverse results remain retrospective stress tests only.",
+              "known_risks": [
+                "A descriptive historical association may not persist in later draws.",
+                "The bounded DSL cannot represent every possible interpretation of this research-family label.",
+                "Selection and evaluation are exploratory and do not establish predictive advantage."
+              ],
+              "formal_execution_spec": {
+                "schema_version": 1,
+                "score_expression": {
+                  "op": "aggregate_history_numbers",
+                  "aggregate": "count",
+                  "expression": {
+                    "op": "and",
+                    "left": {
+                      "op": "eq",
+                      "left": {
+                        "op": "mod",
+                        "left": {
+                          "op": "var",
+                          "name": "value"
+                        },
+                        "right": {
+                          "op": "const",
+                          "value": 5
+                        }
+                      },
+                      "right": {
+                        "op": "mod",
+                        "left": {
+                          "op": "var",
+                          "name": "candidate"
+                        },
+                        "right": {
+                          "op": "const",
+                          "value": 5
+                        }
+                      }
+                    },
+                    "right": {
+                      "op": "lte",
+                      "left": {
+                        "op": "var",
+                        "name": "draw_age"
+                      },
+                      "right": {
+                        "op": "const",
+                        "value": 19
+                      }
+                    }
+                  }
+                }
+              },
+              "evaluation_protocols": [
+                "forward_walk_forward",
+                "reverse_retrospective_stress_test",
+                "time_ordered_cross_validation",
+                "uniform_random_6_of_N"
+              ],
+              "status": "PROPOSAL_ONLY",
+              "execution_ready": false,
+              "registry_write_allowed": false
+            },
+            "execution_spec": {
+              "schema_version": 1,
+              "score_expression": {
+                "op": "aggregate_history_numbers",
+                "aggregate": "count",
+                "expression": {
+                  "op": "and",
+                  "left": {
+                    "op": "eq",
+                    "left": {
+                      "op": "mod",
+                      "left": {
+                        "op": "var",
+                        "name": "value"
+                      },
+                      "right": {
+                        "op": "const",
+                        "value": 5
+                      }
+                    },
+                    "right": {
+                      "op": "mod",
+                      "left": {
+                        "op": "var",
+                        "name": "candidate"
+                      },
+                      "right": {
+                        "op": "const",
+                        "value": 5
+                      }
+                    }
+                  },
+                  "right": {
+                    "op": "lte",
+                    "left": {
+                      "op": "var",
+                      "name": "draw_age"
+                    },
+                    "right": {
+                      "op": "const",
+                      "value": 19
+                    }
+                  }
+                }
+              }
+            },
+            "specification_sha256": "e6bfb215efc1120213369f29ba94de21f5e4757d00b800d8b4011caed2b12f6c",
+            "training_signal": {
+              "distinct_score_values": 4,
+              "score_range": 16,
+              "training_draw_count": 912,
+              "selection_source": "training_prefix_only",
+              "validation_data_used": false,
+              "target_data_used": false
+            },
+            "synthetic_tests": {
+              "status": "PASS",
+              "synthetic_cases": 1,
+              "ranked_values_checked": 60,
+              "target_values_used": false,
+              "real_archive_used": false
+            },
+            "forward_walk_forward": {
+              "mean_hits_out_of_6": 0.5,
+              "uniform_random_expected_hits_out_of_6": 0.6,
+              "validation_draw_count": 10,
+              "standard_error_of_mean_hits": 0.223607,
+              "predictive_claim": false
+            },
+            "time_ordered_cross_validation": {
+              "mean_hits_out_of_6": 0.5,
+              "uniform_random_expected_hits_out_of_6": 0.6,
+              "validation_draw_count": 10,
+              "standard_error_of_mean_hits": null,
+              "folds": 5,
+              "predictive_claim": false
+            },
+            "reverse_retrospective_only": {
+              "status": "EVALUATED_RETROSPECTIVE_ONLY",
+              "mean_hits_out_of_6": 0.9,
+              "standard_error_of_mean_hits": 0.233333,
+              "evaluated_draw_count": 10,
+              "uniform_random_expected_hits_out_of_6": 0.6,
+              "predictive_evidence": false
+            }
+          }
+        ],
+        "candidate_selection": "NONE",
+        "automatic_candidate_selection": false,
+        "method_registry_modified": false,
+        "target_numbers_stored": false,
+        "archive_rows_stored": false,
+        "per_draw_scores_stored": false,
+        "sealed_holdout_used": false,
+        "content_sha256": "cb6a920645ee50026ebce587625dea7d745f43dcf574e0d2db5926351f878da1"
+      }
+    ],
+    "consumed_development_windows": [
+      {
+        "cycle_id": "d3000a8bfdf48ae05d0905bb3a12a7983d8ba0549435dc344e93e0c4deba4d8b",
+        "dates": [
+          "2026-08-09",
+          "2026-08-11",
+          "2026-08-13",
+          "2026-08-16",
+          "2026-08-18",
+          "2026-08-20",
+          "2026-08-23",
+          "2026-08-25",
+          "2026-08-27",
+          "2026-08-30"
+        ],
+        "window_sha256": "0d6788cb642b7aa57dca94960970f41c05a9f22782f7eb2ac9037630d99a724e"
+      }
+    ]
+  }
 }
