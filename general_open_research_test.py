@@ -456,8 +456,16 @@ class OpenResearchIsolationTests(unittest.TestCase):
             "candidate_context_truncated": False,
             "candidates": [{
                 "hypothesis_id": "HYP-001",
-                "proposal": {"exact_definition": "synthetic definition"},
+                "family": "synthetic family",
+                "template_id": "synthetic-template",
+                "proposal": {"hypothesis_id": "HYP-001", "exact_definition": "synthetic definition"},
                 "execution_spec": {"schema_version": 1},
+                "specification_sha256": "a" * 64,
+                "training_signal": {},
+                "synthetic_tests": {},
+                "forward_walk_forward": {},
+                "time_ordered_cross_validation": {},
+                "reverse_retrospective_only": {},
             }],
         }]
         compact_messages = research.build_messages(
@@ -473,7 +481,9 @@ class OpenResearchIsolationTests(unittest.TestCase):
         candidates = [
             {
                 "hypothesis_id": f"HYP-{index + 1:03d}",
-                "proposal": {"exact_definition": f"Exact definition for candidate {index + 1}"},
+                "family": "synthetic family",
+                "template_id": f"synthetic-template-{index + 1}",
+                "proposal": {"hypothesis_id": f"HYP-{index + 1:03d}", "exact_definition": f"Exact definition for candidate {index + 1}"},
                 "execution_spec": {"schema_version": 1, "candidate_index": index + 1},
                 "specification_sha256": "a" * 64,
                 "training_signal": {"training_draw_count": 100},
@@ -504,6 +514,32 @@ class OpenResearchIsolationTests(unittest.TestCase):
         self.assertEqual(len(carried["candidates"]), 64)
         self.assertEqual(carried["candidate_transfer_mode"], "FULL_VALIDATED_RECORDS")
         self.assertFalse(carried["candidate_context_truncated"])
+
+    def test_offline_candidate_record_with_missing_execution_spec_is_rejected(self):
+        target, train = research.isolate_pre_target(self.rows)
+        incomplete = {
+            "hypothesis_id": "HYP-001",
+            "family": "synthetic family",
+            "template_id": "synthetic-template",
+            "proposal": {"hypothesis_id": "HYP-001"},
+            "specification_sha256": "a" * 64,
+            "training_signal": {},
+            "synthetic_tests": {},
+            "forward_walk_forward": {},
+            "time_ordered_cross_validation": {},
+            "reverse_retrospective_only": {},
+        }
+        context = [{
+            "direction": "forward",
+            "source": "GENERAL/offline-symbolic-discovery",
+            "candidate_transfer_mode": "FULL_VALIDATED_RECORDS",
+            "candidates_in_memory": 1,
+            "candidates_in_context": 1,
+            "candidate_context_truncated": False,
+            "candidates": [incomplete],
+        }]
+        with self.assertRaisesRegex(ValueError, "incomplete or contains a partial/duplicate record"):
+            research.build_messages(target, train, direction="forward", prior_memory=context)
 
     def test_partial_offline_candidate_context_is_rejected_before_prompt_creation(self):
         target, train = research.isolate_pre_target(self.rows)

@@ -341,10 +341,28 @@ def build_messages(
     for item in prior_memory:
         if item.get("source") == "GENERAL/offline-symbolic-discovery":
             candidates = item.get("candidates")
+            required_candidate_keys = {
+                "hypothesis_id", "family", "template_id", "proposal",
+                "execution_spec", "specification_sha256", "training_signal",
+                "synthetic_tests", "forward_walk_forward",
+                "time_ordered_cross_validation", "reverse_retrospective_only",
+            }
+            candidate_ids = []
+            candidate_records_valid = isinstance(candidates, list) and bool(candidates)
+            if candidate_records_valid:
+                for candidate in candidates:
+                    if not isinstance(candidate, dict) or set(candidate) != required_candidate_keys:
+                        candidate_records_valid = False
+                        break
+                    candidate_id = candidate.get("hypothesis_id")
+                    if not isinstance(candidate_id, str) or not candidate_id:
+                        candidate_records_valid = False
+                        break
+                    candidate_ids.append(candidate_id)
             if (
                 item.get("candidate_transfer_mode") != "FULL_VALIDATED_RECORDS"
-                or not isinstance(candidates, list)
-                or not candidates
+                or not candidate_records_valid
+                or len(candidate_ids) != len(set(candidate_ids))
                 or type(item.get("candidates_in_memory")) is not int
                 or type(item.get("candidates_in_context")) is not int
                 or item["candidates_in_memory"] != len(candidates)
@@ -352,7 +370,8 @@ def build_messages(
                 or item.get("candidate_context_truncated") is not False
             ):
                 raise ValueError(
-                    "Offline candidate context is incomplete; a partial candidate set cannot be sent."
+                    "Offline candidate context is incomplete or contains a partial/duplicate record; "
+                    "no candidate set was sent."
                 )
     if prior_memory:
         system += (
@@ -365,8 +384,9 @@ def build_messages(
             "Use aggregate outcomes only as historical development feedback. Records sourced from "
             "GENERAL/offline-symbolic-discovery are bounded local DSL explorations, not approved or verified "
             "formulas; their consumed development metrics are historical context only. In that record, the "
-            "each candidate is a complete validated record; preserve its full proposal, DSL AST, hashes, and test metrics of each candidates row. Rows remain in "
-            "original generation order and do not imply ranking or automatic selection. Current proposals and the "
+            "each candidate is a complete validated record. Preserve its proposal, exact DSL AST, "
+            "specification hash, training signal, synthetic-test metadata, and all forward/CV/reverse "
+            "metrics. Candidates remain in original generation order and do not imply ranking or automatic selection. Current proposals and the "
             "frozen candidate must still be ordered using only this run's discovery data; never rank a "
             "candidate using prior holdout scores. Verify claims against only this direction's permitted "
             "discovery data. Never reuse consumed holdout dates or describe consumed feedback as fresh "
