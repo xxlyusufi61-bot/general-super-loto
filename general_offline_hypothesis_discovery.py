@@ -36,7 +36,7 @@ CV_FOLDS = 5
 # Storage accepts a larger future candidate catalogue without changing today's
 # discovery grammar or automatically expanding the search space.
 MAX_GENERATED_CANDIDATES = 16
-MAX_STORED_CANDIDATES = 1024
+MAX_STORED_CANDIDATES = 999
 MAX_CANDIDATES = MAX_GENERATED_CANDIDATES  # compatibility alias for existing callers/tests
 MAX_MEMORY_ENTRIES = 10000
 SOURCE = "GENERAL/offline-symbolic-discovery"
