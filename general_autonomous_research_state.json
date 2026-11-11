@@ -62,6 +62,12 @@
       "outcome": "NO_ELIGIBLE_CANDIDATE",
       "recorded_at_utc": "2026-11-08T19:12:56.538516+00:00",
       "reason_code": "NO_FROZEN_DIRECTIONAL_CANDIDATE"
+    },
+    {
+      "attempt_id": "a7f0195c30826b11cf6f8336d03d2f0954a196c2e76f336c7d0cbe83329740f3",
+      "outcome": "FAILED",
+      "recorded_at_utc": "2026-11-11T07:44:21.270524+00:00",
+      "reason_code": "PROVIDER_DELIVERY_UNCERTAIN"
     }
   ],
   "target_queue": {
