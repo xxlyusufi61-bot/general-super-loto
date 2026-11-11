@@ -7,7 +7,7 @@
     "independent_record_count": 156,
     "matching_dates_and_number_sets": 156,
     "result": "PASS",
-    "checked_at": "2026-11-11T01:27:14.143773+00:00",
+    "checked_at": "2026-11-11T07:38:34.869025+00:00",
     "pages_checked": [
       "https://loto.gen.tr/super-loto/arsiv/2025",
       "https://loto.gen.tr/super-loto/arsiv/2025?sayfa=2"
@@ -25,7 +25,7 @@
       "pages_checked": [
         "https://loto.gen.tr/super-loto/arsiv/2020"
       ],
-      "checked_at": "2026-11-11T01:27:14.861758+00:00"
+      "checked_at": "2026-11-11T07:38:35.524265+00:00"
     },
     "2021": {
       "result": "PASS",
@@ -39,7 +39,7 @@
         "https://loto.gen.tr/super-loto/arsiv/2021",
         "https://loto.gen.tr/super-loto/arsiv/2021?sayfa=2"
       ],
-      "checked_at": "2026-11-11T01:27:16.295368+00:00"
+      "checked_at": "2026-11-11T07:38:36.834181+00:00"
     },
     "2022": {
       "result": "PASS",
@@ -53,7 +53,7 @@
         "https://loto.gen.tr/super-loto/arsiv/2022",
         "https://loto.gen.tr/super-loto/arsiv/2022?sayfa=2"
       ],
-      "checked_at": "2026-11-11T01:27:17.641874+00:00"
+      "checked_at": "2026-11-11T07:38:38.151466+00:00"
     },
     "2023": {
       "result": "PASS",
@@ -67,7 +67,7 @@
         "https://loto.gen.tr/super-loto/arsiv/2023",
         "https://loto.gen.tr/super-loto/arsiv/2023?sayfa=2"
       ],
-      "checked_at": "2026-11-11T01:27:19.053481+00:00"
+      "checked_at": "2026-11-11T07:38:39.500538+00:00"
     },
     "2024": {
       "result": "PASS",
@@ -81,7 +81,7 @@
         "https://loto.gen.tr/super-loto/arsiv/2024",
         "https://loto.gen.tr/super-loto/arsiv/2024?sayfa=2"
       ],
-      "checked_at": "2026-11-11T01:27:20.633144+00:00"
+      "checked_at": "2026-11-11T07:38:41.132000+00:00"
     },
     "2025": {
       "result": "PASS",
@@ -95,7 +95,7 @@
         "https://loto.gen.tr/super-loto/arsiv/2025",
         "https://loto.gen.tr/super-loto/arsiv/2025?sayfa=2"
       ],
-      "checked_at": "2026-11-11T01:27:20.817595+00:00"
+      "checked_at": "2026-11-11T07:38:41.284112+00:00"
     },
     "2026": {
       "result": "PASS",
@@ -113,10 +113,10 @@
         "https://loto.gen.tr/super-loto/arsiv (root archive page 5)",
         "https://loto.gen.tr/super-loto/arsiv (root archive page 6)"
       ],
-      "checked_at": "2026-11-11T01:27:24.451851+00:00"
+      "checked_at": "2026-11-11T07:38:44.891766+00:00"
     }
   },
-  "fetched_at": "2026-11-11T01:27:24.452622+00:00",
+  "fetched_at": "2026-11-11T07:38:44.892570+00:00",
   "corrections_applied": [
     {
       "removed_source_date": "2025-07-19",
