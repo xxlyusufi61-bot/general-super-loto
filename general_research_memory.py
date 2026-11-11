@@ -1678,7 +1678,7 @@ def direction_context(
         }
         _reject_number_values(compact, "Directional context")
         candidate_context = context + [compact]
-        if len(candidate_context) > limit or len(_canonical(candidate_context)) > MAX_CONTEXT_CHARS:
+        if len(candidate_context) > limit or len(_canonical(candidate_context)) > MAX_CONTEXT_BYTES:
             continue
         context = candidate_context
     return context
