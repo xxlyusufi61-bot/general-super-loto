@@ -1296,6 +1296,9 @@ class ResearchMemoryWorkflowWiringTests(unittest.TestCase):
         evaluation_telegram = workflow[workflow.index("- name: Send separate forward and reverse Telegram reports"):workflow.index("- name: Notify Telegram when no directional DSL candidate was eligible")]
         no_candidate_telegram = workflow[workflow.index("- name: Notify Telegram when no directional DSL candidate was eligible"):workflow.index("- name: Notify Telegram after a failed claimed cycle")]
         failure_telegram = workflow[workflow.index("- name: Notify Telegram after a failed claimed cycle"):workflow.index("- name: Upload number-safe autonomous cycle artifacts")]
+        persist_eval_step = workflow[workflow.index("- name: Persist evaluation completion in the state store"):workflow.index("- name: Append sanitized GENERAL research memory")]
+        self.assertIn("if: ${{ steps.evaluation.outcome == 'success' }}", persist_eval_step)
+        self.assertNotIn("steps.persist_final_state.outcome", persist_eval_step)
         self.assertIn("steps.persist_final_state.outcome == 'success'", evaluation_telegram)
         self.assertIn("steps.persist_final_state.outcome == 'success'", no_candidate_telegram)
         self.assertIn("steps.research_memory.outcome == 'failure'", failure_telegram)

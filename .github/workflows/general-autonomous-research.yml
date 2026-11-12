@@ -354,7 +354,7 @@ jobs:
             --output open_research_evaluation_report.json
       - name: Persist evaluation completion in the state store
         id: persist_eval
-        if: ${{ steps.evaluation.outcome == 'success' && steps.persist_final_state.outcome == 'success' }}
+        if: ${{ steps.evaluation.outcome == 'success' }}
         uses: ./.github/actions/publish-automation-state
         with:
           token: ${{ github.token }}
