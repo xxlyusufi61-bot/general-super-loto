@@ -1057,6 +1057,7 @@ def call_model(
     } else "unlabelled"
     attempt_marker = Path("/tmp/general_nvidia_api_attempted_" + safe_request_key)
     success_marker = Path("/tmp/general_nvidia_api_succeeded_" + safe_request_key)
+    no_retry_marker = Path("/tmp/general_nvidia_api_no_retry_" + safe_request_key)
     run_attempt_marker = Path("/tmp/general_nvidia_api_attempted")
     run_attempt_marker.write_text(
         datetime.now(timezone.utc).isoformat(), encoding="utf-8"
@@ -1119,6 +1120,11 @@ def call_model(
             response_headers = getattr(error_response, "headers", None)
 
     duration = time.monotonic() - request_started
+    if status_code in {402, 429}:
+        # Persist the no-retry classification before usage-report I/O.
+        no_retry_marker.write_text(
+            datetime.now(timezone.utc).isoformat(), encoding="utf-8"
+        )
     try:
         client.close()
     except Exception:
@@ -1262,6 +1268,7 @@ def main() -> int:
             for marker in (
                 Path("/tmp/general_nvidia_api_attempted_" + label),
                 Path("/tmp/general_nvidia_api_succeeded_" + label),
+                Path("/tmp/general_nvidia_api_no_retry_" + label),
             )
         ),
     ):
