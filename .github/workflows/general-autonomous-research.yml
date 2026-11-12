@@ -245,7 +245,7 @@ jobs:
           python3 general_autonomous_research.py queue-materialize \
             --output super_loto_archive.json
 
-      - name: Prepare one cycle only for a new target and fresh sealed windows
+      - name: Prepare one cycle for the oldest queued target and fresh sealed windows
         id: prepare
         if: ${{ steps.status.outputs.authorized == 'true' && steps.status.outputs.lock_clear == 'true' && steps.queue_capture.outputs.has_pending == 'true' }}
         run: |
