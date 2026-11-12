@@ -50,7 +50,12 @@ status, pause, preview, and publication.
 The pause action disables the existing
 .github/workflows/general-autonomous-research.yml workflow through GitHub's
 workflow-disable API. This prevents future schedule triggers and also makes
-that research workflow's manual dispatch unavailable while disabled. It does
+that research workflow's manual dispatch unavailable while disabled.
+The pause action disables workflow triggers only; it does not change the scheduler's
+authorization record. The pinned recovery intentionally preserves the
+Generation 52 authorization exactly, so the authorization flag remains enabled
+in the Generation 53 recovery state. Keep the research workflow disabled after
+recovery; re-enabling it requires a separate, explicit authorization decision. It does
 not cancel queued or in-progress runs. The controller lists every run for that workflow, regardless of whether it
 began from schedule or manual dispatch, and the migration gate refuses to
 proceed until every run is completed. The preview and publication gates require two zero-active-run
