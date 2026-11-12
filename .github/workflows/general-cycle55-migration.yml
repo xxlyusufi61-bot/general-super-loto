@@ -116,7 +116,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-        run: python3 general_cycle55_migration.py assert-ready
+        run: python3 general_cycle55_migration.py assert-ready --settle-seconds 60
       - name: Fetch read-only state-store history and pin Generation 51/52 commits
         shell: bash
         run: |
@@ -190,7 +190,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-        run: python3 general_cycle55_migration.py assert-ready
+        run: python3 general_cycle55_migration.py assert-ready --settle-seconds 60
       - name: Fetch read-only state-store history and pin Generation 51/52 commits
         shell: bash
         run: |
@@ -238,7 +238,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-        run: python3 general_cycle55_migration.py assert-ready
+        run: python3 general_cycle55_migration.py assert-ready --settle-seconds 60
       - name: Publish only the recovered scheduler state with Generation 52 guard
         shell: bash
         env:
