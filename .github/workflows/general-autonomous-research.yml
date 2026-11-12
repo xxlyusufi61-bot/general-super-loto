@@ -456,7 +456,7 @@ jobs:
           message: "Persist autonomous cycle outcome and sanitized research memory"
 
       - name: Send separate forward and reverse Telegram reports
-        if: ${{ steps.evaluation.outcome == 'success' }}
+        if: ${{ steps.evaluation.outcome == 'success' && steps.persist_final_state.outcome == 'success' }}
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}

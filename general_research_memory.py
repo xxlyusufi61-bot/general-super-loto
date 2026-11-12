@@ -60,7 +60,7 @@ MAX_REPORT_CHARS = 9000
 MAX_ENTRIES = 10000
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 REPORT_DATE_PATTERN = re.compile(
-    r"(?<![0-9])(?:\d{4}[-/]\d{2}[-/]\d{2}|\d{1,2}[./]\d{1,2}[./]\d{4})(?![0-9])"
+    r"(?<![0-9])(?:\d{4}[-/]\d{2}[-/]\d{2}|\d{1,2}[./]\d{1,2}[./]\d{4}|\d{1,2}/\d{1,2}/\d{4})(?![0-9])"
 )
 ENGLISH_MONTHS = {
     "january": 1, "jan": 1, "february": 2, "feb": 2,
