@@ -1068,5 +1068,66 @@ class GlobalNvidiaLockTests(unittest.TestCase):
         )
 
 
+    def test_manual_lock_command_persists_global_lock_without_unlocking(self):
+        clear_state = initial_lock_state()
+        with patch.dict(
+            os.environ,
+            {
+                "GITHUB_REPOSITORY": DIAGNOSTIC_REPOSITORY,
+                "GITHUB_RUN_ID": "offline-manual-lock-test",
+                "GITHUB_ACTOR": "offline-test-actor",
+            },
+            clear=True,
+        ), patch.object(
+            nvidia_guard, "read_remote_lock", return_value=(clear_state, "clear-lock-sha")
+        ), patch.object(
+            nvidia_guard, "write_remote_lock", return_value="manual-lock-commit"
+        ) as write_lock, patch.object(
+            nvidia_guard, "send_telegram", return_value=True
+        ), patch.object(
+            nvidia_guard, "reserve_nvidia_request"
+        ) as reserve_request, patch.object(
+            nvidia_guard, "command_unlock"
+        ) as unlock:
+            self.assertEqual(
+                nvidia_guard.command_lock("offline manual lock test"),
+                0,
+            )
+
+        written_state = write_lock.call_args.args[0]
+        self.assertIs(written_state["locked"], True)
+        self.assertEqual(written_state["reason"], "offline manual lock test")
+        self.assertIsNotNone(written_state["locked_at"])
+        write_lock.assert_called_once()
+        reserve_request.assert_not_called()
+        unlock.assert_not_called()
+
+    def test_manual_lock_workflow_requires_confirmation_and_cannot_call_provider_or_unlock(self):
+        workflow_path = Path(".github/workflows/general-nvidia-manual-lock.yml")
+        workflow = workflow_path.read_text(encoding="utf-8")
+
+        self.assertIn("name: GENERAL NVIDIA Manual Lock", workflow)
+        self.assertIn("'on':\n  workflow_dispatch:", workflow)
+        self.assertNotRegex(workflow, r"(?m)^  (push|pull_request|schedule):")
+        self.assertIn('default: "no"', workflow)
+        self.assertIn('inputs.confirm == \'yes\'', workflow)
+        self.assertIn("github.ref == 'refs/heads/main'", workflow)
+        self.assertIn("permissions:\n  contents: write", workflow)
+        self.assertIn("group: general-nvidia-api", workflow)
+        self.assertIn("python3 general_nvidia_guard.py lock --reason", workflow)
+        self.assertIn("from general_nvidia_guard import read_remote_lock, validate_lock_state", workflow)
+        self.assertIn('if state["locked"] is not True:', workflow)
+        self.assertNotIn("python3 general_nvidia_guard.py unlock", workflow)
+        self.assertNotIn("NVIDIA_API_KEY", workflow)
+        self.assertNotIn("GENERAL_ALLOW_NVIDIA_CALL", workflow)
+        self.assertNotIn("general_nvidia_diagnostic.py", workflow)
+        self.assertNotIn("general_open_research.py", workflow)
+
+        marker = "python3 - <<'PY'\n"
+        self.assertIn(marker, workflow)
+        script = workflow.split(marker, 1)[1].split("\n          PY", 1)[0]
+        compile(textwrap.dedent(script), str(workflow_path), "exec")
+
+
 if __name__ == "__main__":
     unittest.main()
