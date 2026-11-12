@@ -170,7 +170,16 @@ class GitHubActionsWorkflowClient:
             raise MigrationGateError("GitHub Actions API path is outside the fixed workflow scope.")
 
         if self.request_func is not None:
-            status, raw = self.request_func(method, path, self.token)
+            try:
+                status, raw = self.request_func(method, path, self.token)
+            except MigrationGateError:
+                raise
+            except Exception:
+                if method == "PUT":
+                    raise MigrationGateError(
+                        "GitHub Actions pause result is uncertain; inspect status before retrying."
+                    ) from None
+                raise MigrationGateError("GitHub Actions API read failed.") from None
         else:
             request = urllib.request.Request(
                 API_ROOT + path,
