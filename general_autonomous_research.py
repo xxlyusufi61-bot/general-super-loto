@@ -26,7 +26,6 @@ MAX_AUTHORIZATION_DAYS = 30
 MAX_ATTEMPTS_PER_TARGET = 3
 RETRYABLE_FAILURE_REASON_CODES = {
     "NO_PROVIDER_REQUEST_SENT",
-    "WORKFLOW_FAILED",
     "PROVIDER_DELIVERY_UNCERTAIN",
 }
 ALLOWED_OUTCOMES = {"SUCCEEDED", "FAILED", "NO_ELIGIBLE_CANDIDATE"}
@@ -419,11 +418,12 @@ def prepare_cycle(
                     retryable = True
                     retry_number = same_target_attempts + 1
                 else:
-                    blocked_status = (
-                        "PROVIDER_HTTP_REJECTION_NO_RETRY"
-                        if reason_code == "PROVIDER_HTTP_REJECTION_NO_RETRY"
-                        else "PROVIDER_DELIVERY_UNCERTAIN_MANUAL_RECOVERY_REQUIRED"
-                    )
+                    if reason_code == "PROVIDER_HTTP_REJECTION_NO_RETRY":
+                        blocked_status = "PROVIDER_HTTP_REJECTION_NO_RETRY"
+                    elif reason_code == "WORKFLOW_FAILED":
+                        blocked_status = "WORKFLOW_FAILED_NO_AUTOMATIC_RETRY"
+                    else:
+                        blocked_status = "PROVIDER_DELIVERY_UNCERTAIN_MANUAL_RECOVERY_REQUIRED"
                     return {
                         "status": blocked_status,
                         "eligible": False,
@@ -449,10 +449,9 @@ def prepare_cycle(
                     **status,
                 }
             if last_event["outcome"] == "FAILED":
-                previous_retry_is_ready = last_event["reason_code"] in {
-                    "NO_PROVIDER_REQUEST_SENT",
-                    "WORKFLOW_FAILED",
-                }
+                previous_retry_is_ready = (
+                    last_event["reason_code"] == "NO_PROVIDER_REQUEST_SENT"
+                )
                 if last_event["reason_code"] == "PROVIDER_DELIVERY_UNCERTAIN":
                     previous_retry_is_ready = manual_recovery_confirmed(lock, last_event)
                 previous_attempt_count = sum(
