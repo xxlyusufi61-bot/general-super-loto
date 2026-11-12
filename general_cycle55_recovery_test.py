@@ -153,7 +153,7 @@ class Cycle55RecoveryTests(unittest.TestCase):
         autonomous.CYCLE55_RECOVERY_ARCHIVE_SHA256 = self.original_autonomous_target_hash
 
     def recover(self):
-        return recovery.recover_cycle55_state(
+        return _recover_preview(
             self.current_state,
             self.source_state,
             recorded_at_utc=STAMP,
@@ -241,7 +241,7 @@ class Cycle55RecoveryTests(unittest.TestCase):
         source = copy.deepcopy(self.source_state)
         source["target_queue"]["items"][1]["enqueued_at_utc"] = "2026-11-12T19:17:55.192421+00:00"
         with self.assertRaisesRegex(recovery.Cycle55RecoveryError, "pending FIFO tail"):
-            recovery.recover_cycle55_state(
+            _recover_preview(
                 self.current_state, source, recorded_at_utc=STAMP
             )
 
@@ -249,16 +249,16 @@ class Cycle55RecoveryTests(unittest.TestCase):
         current = copy.deepcopy(self.current_state)
         current["events"][-1]["reason_code"] = "WORKFLOW_FAILED"
         with self.assertRaisesRegex(recovery.Cycle55RecoveryError, "false terminal event"):
-            recovery.recover_cycle55_state(current, self.source_state, recorded_at_utc=STAMP)
+            _recover_preview(current, self.source_state, recorded_at_utc=STAMP)
 
         current = copy.deepcopy(self.current_state)
         current["target_queue"]["completed"][-1]["archive_record_count"] += 1
         with self.assertRaisesRegex(recovery.Cycle55RecoveryError, "false FIFO completion"):
-            recovery.recover_cycle55_state(current, self.source_state, recorded_at_utc=STAMP)
+            _recover_preview(current, self.source_state, recorded_at_utc=STAMP)
 
     def test_unpinned_provenance_and_non_generation_51_snapshot_are_rejected(self):
         with self.assertRaisesRegex(recovery.Cycle55RecoveryError, "pinned Git history"):
-            recovery.recover_cycle55_state(
+            _recover_preview(
                 self.current_state,
                 self.source_state,
                 recorded_at_utc=STAMP,
@@ -279,7 +279,7 @@ class Cycle55RecoveryTests(unittest.TestCase):
         with self.assertRaisesRegex(
             recovery.Cycle55RecoveryError, "Generation 51 does not contain Cycle #55 at the FIFO head"
         ):
-            recovery.recover_cycle55_state(
+            _recover_preview(
                 self.current_state, source, recorded_at_utc=STAMP
             )
 
@@ -296,10 +296,10 @@ class Cycle55RecoveryTests(unittest.TestCase):
             autonomous.validate_state(moved_head)
 
         with self.assertRaisesRegex(recovery.Cycle55RecoveryError, "schema v2"):
-            recovery.recover_cycle55_state(recovered, self.source_state, recorded_at_utc=STAMP)
+            _recover_preview(recovered, self.source_state, recorded_at_utc=STAMP)
 
         with self.assertRaisesRegex(recovery.Cycle55RecoveryError, "pinned Git history"):
-            recovery.recover_cycle55_state(
+            _recover_preview(
                 self.current_state,
                 self.source_state,
                 recorded_at_utc=STAMP,
