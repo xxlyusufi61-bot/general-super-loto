@@ -247,7 +247,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
                     reason_code="WORKFLOW_FAILED", now=NOW,
                 )
 
-    def test_retryable_system_failures_allow_unbounded_same_target_retries(self):
+    def test_retryable_system_failures_allow_same_target_retries_with_existing_cap(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             archive = root / "archive.json"
@@ -270,7 +270,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
                 reason_code="WORKFLOW_FAILED", now=NOW,
             )
 
-            for number in range(2, 7):
+            for number in range(2, 4):
                 at = NOW + timedelta(minutes=number - 1)
                 retry_plan = auto.prepare_cycle(
                     state, archive_path=archive, ledger_path=ledger,
@@ -290,8 +290,14 @@ class AutonomousResearchStateTests(unittest.TestCase):
                 )
                 previous = current
 
-            self.assertEqual(len(state["attempts"]), 6)
+            self.assertEqual(len(state["attempts"]), 3)
             auto.validate_state(state)
+            blocked = auto.prepare_cycle(
+                state, archive_path=archive, ledger_path=ledger,
+                global_lock_path=lock, now=NOW + timedelta(minutes=4),
+            )
+            self.assertFalse(blocked["eligible"])
+            self.assertEqual(blocked["status"], "TARGET_RETRY_LIMIT_REACHED")
 
     def test_failed_target_with_existing_sealed_claim_retries_using_fresh_holdouts(self):
         with tempfile.TemporaryDirectory() as directory:
