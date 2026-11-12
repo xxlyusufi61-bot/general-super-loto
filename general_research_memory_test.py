@@ -149,6 +149,43 @@ class ResearchMemoryValidationTests(unittest.TestCase):
                 "Synthetic proposal",
             )
 
+    def test_learning_notes_redact_forbidden_dates_without_weakening_proposal_guards(self):
+        forbidden = {"2020-08-02", "2026-11-05"}
+        notes = {
+            "observations": [
+                "The 2020-08-02 scope boundary is also reserved.",
+                "The equivalent date 02.08.2020 must not be retained.",
+                "The same point was stated as August 2, 2020.",
+                "Türkçe tarih biçimi 2 Ağustos 2020 must be redacted.",
+            ],
+            "failed_approaches": [
+                "Ambiguous 11/05/2026 must be redacted when either reading is forbidden."
+            ],
+            "next_tests": [
+                "An unrelated date 2026-10-20 remains unchanged."
+            ],
+        }
+        sanitized = memory._redact_forbidden_validation_dates(notes, forbidden)
+        serialized = memory._canonical(sanitized).decode("utf-8")
+        self.assertNotIn("2020-08-02", serialized)
+        self.assertNotIn("02.08.2020", serialized)
+        self.assertNotIn("August 2, 2020", serialized)
+        self.assertNotIn("2 Ağustos 2020", serialized)
+        self.assertNotIn("11/05/2026", serialized)
+        self.assertGreaterEqual(serialized.count("[reserved validation date omitted]"), 5)
+        self.assertIn("2026-10-20", serialized)
+        memory._reject_consumed_validation_dates(
+            sanitized, forbidden, "Redacted learning notes"
+        )
+
+        # The same date remains forbidden in proposals and specifications.
+        with self.assertRaisesRegex(memory.ResearchMemoryError, "consumed validation date"):
+            memory._reject_consumed_validation_dates(
+                {"hypothesis": "Use the 2020-08-02 holdout date."},
+                forbidden,
+                "Synthetic proposal",
+            )
+
 
     def test_written_month_dates_are_rejected_when_they_match_reserved_holdouts(self):
         for report in (
@@ -1225,7 +1262,7 @@ class ResearchMemoryWorkflowWiringTests(unittest.TestCase):
         self.assertNotIn("git add general_research_memory.json", workflow)
         self.assertIn("general_research_memory_test.py", workflow)
 
-    def test_autonomous_workflow_persists_memory_without_enabling_automation(self):
+    def test_autonomous_workflow_persists_memory_before_atomic_terminal_fifo_outcome(self):
         workflow = Path(".github/workflows/general-autonomous-research.yml").read_text(encoding="utf-8")
         self.assertIn("python3 general_research_memory.py record-cycle", workflow)
         self.assertIn("objects: archive", workflow)
@@ -1234,10 +1271,35 @@ class ResearchMemoryWorkflowWiringTests(unittest.TestCase):
         self.assertIn("general_evaluation_snapshots/", workflow)
         self.assertNotIn("git rebase origin/main", workflow)
         self.assertIn("steps.attempt_reservation.outputs.attempt_id != ''", workflow)
+
         memory_step = workflow.index("- name: Append sanitized GENERAL research memory")
-        self.assertLess(workflow.index("- name: Record successful evaluation outcome"), memory_step)
-        self.assertLess(workflow.index("- name: Record no-candidate outcome without scoring the archive"), memory_step)
-        self.assertLess(workflow.index("- name: Record failed claimed cycle"), memory_step)
+        success_step = workflow.index("- name: Record successful evaluation outcome")
+        no_candidate_step = workflow.index("- name: Record no-candidate outcome without scoring the archive")
+        failure_step = workflow.index("- name: Record failed claimed cycle")
+        persist_step = workflow.index("- name: Persist final scheduler state and sanitized research memory")
+        self.assertLess(memory_step, success_step)
+        self.assertLess(memory_step, no_candidate_step)
+        self.assertLess(memory_step, failure_step)
+        self.assertLess(success_step, persist_step)
+        self.assertLess(no_candidate_step, persist_step)
+        self.assertLess(failure_step, persist_step)
+
+        self.assertIn("id: research_memory", workflow[memory_step:success_step])
+        self.assertIn("steps.research_memory.outcome == 'success'", workflow[success_step:no_candidate_step])
+        self.assertIn("steps.research_memory.outcome == 'success'", workflow[no_candidate_step:failure_step])
+        failed_block = workflow[failure_step:persist_step]
+        self.assertIn("steps.research_memory.outcome == 'failure'", failed_block)
+        self.assertIn('reason_code="WORKFLOW_FAILED"', failed_block)
+        self.assertIn('reason_code="PROVIDER_DELIVERY_UNCERTAIN"', failed_block)
+        self.assertIn('reason_code="PROVIDER_HTTP_REJECTION_NO_RETRY"', failed_block)
+
+        evaluation_telegram = workflow[workflow.index("- name: Send separate forward and reverse Telegram reports"):workflow.index("- name: Notify Telegram when no directional DSL candidate was eligible")]
+        no_candidate_telegram = workflow[workflow.index("- name: Notify Telegram when no directional DSL candidate was eligible"):workflow.index("- name: Notify Telegram after a failed claimed cycle")]
+        failure_telegram = workflow[workflow.index("- name: Notify Telegram after a failed claimed cycle"):workflow.index("- name: Upload number-safe autonomous cycle artifacts")]
+        self.assertIn("steps.persist_final_state.outcome == 'success'", evaluation_telegram)
+        self.assertIn("steps.persist_final_state.outcome == 'success'", no_candidate_telegram)
+        self.assertIn("steps.research_memory.outcome == 'failure'", failure_telegram)
+        self.assertIn("steps.persist_final_state.outcome == 'failure'", failure_telegram)
 
 
 class AutonomousResearchMemoryIntegrationTests(unittest.TestCase):

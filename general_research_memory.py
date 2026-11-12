@@ -335,6 +335,43 @@ def _report_dates_in_text(value: str) -> set[str]:
         normalized.add(parsed.isoformat())
     return normalized
 
+def _redact_forbidden_validation_dates(
+    value: Any,
+    forbidden_dates: set[str] | None,
+) -> Any:
+    """Replace exact reserved/consumed date tokens in learning notes with a date-free marker.
+
+    This is deliberately limited to learning-note text. Proposals and execution
+    specifications continue to fail closed when they mention a forbidden date.
+    Any date form the normalizer cannot match remains subject to the strict
+    rejection check immediately after redaction.
+    """
+    forbidden = set(forbidden_dates or ())
+    if not forbidden:
+        return value
+
+    if isinstance(value, str):
+        matches = list(REPORT_DATE_PATTERN.finditer(value))
+        matches.extend(REPORT_TEXT_DATE_PATTERN.finditer(value))
+        redacted = value
+        for match in sorted(matches, key=lambda item: item.start(), reverse=True):
+            if _report_dates_in_text(match.group(0)).intersection(forbidden):
+                redacted = (
+                    redacted[:match.start()]
+                    + "[reserved validation date omitted]"
+                    + redacted[match.end():]
+                )
+        return redacted
+    if isinstance(value, list):
+        return [_redact_forbidden_validation_dates(item, forbidden) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: _redact_forbidden_validation_dates(item, forbidden)
+            for key, item in value.items()
+        }
+    return value
+
+
 def _reject_consumed_validation_dates(
     value: Any,
     forbidden_dates: set[str] | None,
@@ -1109,6 +1146,10 @@ def _direction_artifacts(
         specs["specifications"] = []
         specs["rejection_reasons"] = ["Only a specification for this direction's first proposal can be retained."]
     notes = _parse_learning_notes(report)
+    # Learning notes may describe the active research boundary, which can also
+    # be a real reserved reverse-holdout date. Remove only exact forbidden date
+    # tokens here; proposal/specification date references remain hard failures.
+    notes = _redact_forbidden_validation_dates(notes, forbidden_validation_dates)
     _reject_number_values(proposals["proposals"], "Directional proposals")
     _reject_candidate_value_references(proposals["proposals"], "Directional proposals")
     _reject_number_values(specs["specifications"], "Directional specifications")

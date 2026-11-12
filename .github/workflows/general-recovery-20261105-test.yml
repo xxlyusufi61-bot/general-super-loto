@@ -9,6 +9,9 @@ name: GENERAL 2026-11-05 Recovery Offline Tests
       - ".github/workflows/general-recovery-20261105-test.yml"
       - "general_autonomous_research.py"
       - "general_autonomous_research_test.py"
+      - "general_research_memory.py"
+      - "general_research_memory_test.py"
+      - "docs/general-research-memory.md"
       - "general_target_queue.py"
       - "general_target_queue_test.py"
       - "general_sealed_evaluation.py"
@@ -23,6 +26,9 @@ name: GENERAL 2026-11-05 Recovery Offline Tests
       - ".github/workflows/general-recovery-20261105-test.yml"
       - "general_autonomous_research.py"
       - "general_autonomous_research_test.py"
+      - "general_research_memory.py"
+      - "general_research_memory_test.py"
+      - "docs/general-research-memory.md"
       - "general_target_queue.py"
       - "general_target_queue_test.py"
       - "general_sealed_evaluation.py"
@@ -49,13 +55,13 @@ jobs:
 
       - name: Validate workflow YAML syntax
         run: |
-          ruby -e 'require "yaml"; %w[.github/workflows/general-recovery-20261105.yml .github/workflows/general-recovery-20261105-test.yml].each { |path| YAML.parse_file(path) }'
+          ruby -e 'require "yaml"; %w[.github/workflows/general-recovery-20261105.yml .github/workflows/general-recovery-20261105-test.yml .github/workflows/general-autonomous-research.yml].each { |path| YAML.parse_file(path) }'
           echo "Recovery workflow YAML syntax: PASS"
 
       - name: Compile recovery and existing safety modules
         run: |
-          python3 -m py_compile general_recovery_20261105.py general_recovery_20261105_test.py general_open_research.py general_autonomous_research.py general_sealed_evaluation.py general_nvidia_guard.py
+          python3 -m py_compile general_recovery_20261105.py general_recovery_20261105_test.py general_open_research.py general_autonomous_research.py general_research_memory.py general_research_memory_test.py general_sealed_evaluation.py general_nvidia_guard.py
 
       - name: Run offline recovery and regression suites
         run: |
-          python3 -m unittest -v general_recovery_20261105_test general_open_research_test general_sealed_evaluation_test general_autonomous_research_test
+          python3 -m unittest -v general_recovery_20261105_test general_open_research_test general_sealed_evaluation_test general_autonomous_research_test general_research_memory_test
