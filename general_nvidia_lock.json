@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
-  "locked": true,
-  "reason": "Autonomous NVIDIA request delivery or response validation is uncertain; global safety pause is required. No automatic retry is allowed.",
-  "locked_at": "2026-11-11T07:44:19.793663+00:00",
-  "locked_by": "xxlyusufi61-bot | https://github.com/xxlyusufi61-bot/general-super-loto/actions/runs/42980959550",
+  "locked": false,
+  "reason": "",
+  "locked_at": null,
+  "locked_by": null,
   "last_lock_reason": "Autonomous NVIDIA request delivery or response validation is uncertain; global safety pause is required. No automatic retry is allowed.",
-  "last_unlocked_at": "2026-11-08T17:50:56.630764+00:00",
-  "updated_at": "2026-11-11T07:44:19.793663+00:00"
+  "last_unlocked_at": "2026-11-12T00:18:42.376890+00:00",
+  "updated_at": "2026-11-12T00:18:42.376890+00:00"
 }
