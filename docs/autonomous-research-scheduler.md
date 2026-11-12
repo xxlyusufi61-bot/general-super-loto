@@ -46,8 +46,10 @@ scheduler does not expose target values to discovery.
 - PROVIDER_DELIVERY_UNCERTAIN remains blocked until a manual unlock is recorded
   strictly after that failure. Only a later scheduled cycle may then retry the
   same target. The workflow never unlocks itself.
+- HTTP 402/429 responses are recorded as PROVIDER_HTTP_REJECTION_NO_RETRY.
+  Manual unlock does not override this non-retryable classification.
 - No automatic unlocking, paid conversion, card-required service, or billing
-  transition is permitted. A 402/429 response is not retried.
+  transition is permitted.
 
 The manual activation action does not itself call NVIDIA. It only records the
 expiring authorization. The next scheduled check may run only after the global
