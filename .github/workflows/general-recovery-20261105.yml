@@ -24,13 +24,13 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Checkout main
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -246,7 +246,7 @@ jobs:
 
       - name: Upload number-safe recovery report and metadata
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: general-one-time-recovery-2026-11-05-${{ github.run_id }}
           path: |

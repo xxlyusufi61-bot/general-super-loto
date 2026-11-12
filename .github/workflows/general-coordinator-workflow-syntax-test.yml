@@ -73,7 +73,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Checkout source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Parse coordinator workflow YAML
         run: |

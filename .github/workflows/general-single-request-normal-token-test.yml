@@ -49,9 +49,9 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install pinned NVIDIA OpenAI SDK
@@ -92,12 +92,12 @@ jobs:
       cancel-in-progress: false
     steps:
       - name: Checkout exact main workflow commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install pinned NVIDIA OpenAI SDK
@@ -205,7 +205,7 @@ jobs:
             --reason "The one-request normal-mode 8192-token validation workflow ended; restore the fail-closed global lock."
       - name: Upload sanitized request metadata only
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: general-single-request-normal-token-test-${{ github.run_id }}
           path: |
