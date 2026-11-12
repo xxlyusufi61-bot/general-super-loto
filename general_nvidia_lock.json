@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
-  "locked": true,
-  "reason": "Manual safety lock activated before the separately authorized one-request NVIDIA diagnostic.",
-  "locked_at": "2026-11-12T15:14:01.994044+00:00",
-  "locked_by": "xxlyusufi61-bot | https://github.com/xxlyusufi61-bot/general-super-loto/actions/runs/43245534581",
+  "locked": false,
+  "reason": "",
+  "locked_at": null,
+  "locked_by": null,
   "last_lock_reason": "Manual safety lock activated before the separately authorized one-request NVIDIA diagnostic.",
-  "last_unlocked_at": "2026-11-12T14:30:36.746048+00:00",
-  "updated_at": "2026-11-12T15:14:01.994044+00:00"
+  "last_unlocked_at": "2026-11-12T15:28:08.214412+00:00",
+  "updated_at": "2026-11-12T15:28:08.214412+00:00"
 }
