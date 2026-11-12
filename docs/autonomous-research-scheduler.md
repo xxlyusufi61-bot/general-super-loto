@@ -39,10 +39,12 @@ scheduler does not expose target values to discovery.
   Free-use and no-billing verification remains an explicit operator attestation.
 - A provider request is reserved before network access. Failed and uncertain
   submissions consume the reservation. SDK automatic retries remain disabled.
-- A failed target remains at the FIFO head. The next scheduled cycle may retry
-  the same target after NO_PROVIDER_REQUEST_SENT or WORKFLOW_FAILED, within the
-  existing limit of three total attempts per target. Every retry is recorded and
-  uses the controlled retry reserve within the shared request budget.
+- A failed target remains at the FIFO head. Only NO_PROVIDER_REQUEST_SENT
+  (proof that no provider request started) permits an automatic same-target
+  retry, within the existing limit of three total attempts per target. Each
+  retry is recorded and uses the controlled retry reserve.
+- WORKFLOW_FAILED means a provider request was sent and returned, but a later
+  workflow stage failed; it is not automatically retried.
 - PROVIDER_DELIVERY_UNCERTAIN remains blocked until a manual unlock is recorded
   strictly after that failure. Only a later scheduled cycle may then retry the
   same target. The workflow never unlocks itself.
@@ -122,10 +124,11 @@ fetch or push failure blocks the corresponding NVIDIA request.
   consumed dates in its existing append-only ledger. The scheduler never changes
   those dates or silently reduces minimum history requirements.
 - A target date is reserved in the scheduler's append-only attempt list before
-  the first hosted request. NO_PROVIDER_REQUEST_SENT and WORKFLOW_FAILED allow
-  the same FIFO target to be retried by a later scheduled cycle. A
-  PROVIDER_DELIVERY_UNCERTAIN failure allows retry only after a later manual
-  unlock is recorded; no automatic unlock or same-run retry is performed.
+  the first hosted request. Only a NO_PROVIDER_REQUEST_SENT outcome allows an
+  automatic retry. WORKFLOW_FAILED is not automatically replayed after a
+  provider request has been sent. A PROVIDER_DELIVERY_UNCERTAIN failure allows
+  retry only after a later manual unlock is recorded; no automatic unlock or
+  same-run retry is performed.
 - A previously claimed target may be researched again after a retryable failure
   when fresh sealed windows remain available. The sealed evaluator excludes all
   previously consumed dates and must create new, disjoint holdouts; it never
@@ -184,9 +187,10 @@ blocks processing rather than silently repairing or skipping a draw.
 
 A target leaves the queue only after the scheduler records SUCCEEDED or
 NO_ELIGIBLE_CANDIDATE for the matching target date, snapshot hash, and row count.
-A NO_PROVIDER_REQUEST_SENT or WORKFLOW_FAILED outcome retains the same FIFO
-head for retry on a later scheduled cycle, up to three total attempts for that
-target. Retries are recorded. A PROVIDER_DELIVERY_UNCERTAIN outcome retains the head
+A NO_PROVIDER_REQUEST_SENT outcome retains the same FIFO head for retry on a
+later scheduled cycle, up to three total attempts for that target. WORKFLOW_FAILED
+does not trigger an automatic retry after a provider request has been sent.
+Retries are recorded. A PROVIDER_DELIVERY_UNCERTAIN outcome retains the head
 until the global lock is manually unlocked after the failure timestamp. A later
 scheduled cycle may then retry the same target. Any retry must pass sealed
 preflight with fresh, disjoint, previously unconsumed holdouts. A target already
