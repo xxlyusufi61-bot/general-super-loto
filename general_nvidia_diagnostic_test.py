@@ -291,30 +291,37 @@ class SingleRequestDiagnosticTests(unittest.TestCase):
             "GENERAL_NVIDIA_FREE_USAGE_VERIFIED": "true",
             "NVIDIA_API_KEY": "test-secret",
         }
-        completion = SimpleNamespace(
-            _request_id="diagnostic-synthetic-request",
-            chunks=[
-                SimpleNamespace(
-                    choices=[SimpleNamespace(
-                        delta=SimpleNamespace(
-                            content="synthetic final response",
-                            reasoning_content="this must never be treated as final content",
-                        ),
-                        finish_reason=None,
-                    )],
-                    usage=None,
-                ),
-                SimpleNamespace(
-                    choices=[SimpleNamespace(
-                        delta=SimpleNamespace(content=None),
-                        finish_reason="stop",
-                    )],
-                    usage={"total_tokens": 2},
-                ),
-            ],
-            close=MagicMock(),
-        )
-        completion.__iter__ = lambda self=completion: iter(self.chunks)
+        class SyntheticDiagnosticStream:
+            def __init__(self):
+                self._request_id = "diagnostic-synthetic-request"
+                self.chunks = [
+                    SimpleNamespace(
+                        choices=[SimpleNamespace(
+                            delta=SimpleNamespace(
+                                content="synthetic final response",
+                                reasoning_content="this must never be treated as final content",
+                            ),
+                            finish_reason=None,
+                        )],
+                        usage=None,
+                    ),
+                    SimpleNamespace(
+                        choices=[SimpleNamespace(
+                            delta=SimpleNamespace(content=None),
+                            finish_reason="stop",
+                        )],
+                        usage={"total_tokens": 2},
+                    ),
+                ]
+                self.closed = False
+
+            def __iter__(self):
+                return iter(self.chunks)
+
+            def close(self):
+                self.closed = True
+
+        completion = SyntheticDiagnosticStream()
         client = MagicMock()
         client.chat.completions.create.return_value = completion
         saved_observations = []
