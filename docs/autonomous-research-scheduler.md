@@ -39,6 +39,13 @@ scheduler does not expose target values to discovery.
   Free-use and no-billing verification remains an explicit operator attestation.
 - A provider request is reserved before network access. Failed and uncertain
   submissions consume the reservation. SDK automatic retries remain disabled.
+- The NVIDIA-compatible Chat Completions call uses the official OpenAI SDK's
+  managed SSE streaming mode. GENERAL accumulates only `delta.content`, ignores
+  reasoning-only fields, and accepts a response only after the stream terminates
+  with `finish_reason=stop`. An interrupted stream or a stream without that
+  terminal marker is incomplete and cannot be used as a research report.
+  Streaming does not authorize another request: uncertain delivery remains
+  subject to the same global lock and manual-recovery rules.
 - A failed target remains at the FIFO head. Only NO_PROVIDER_REQUEST_SENT
   (proof that no provider request started) permits an automatic same-target
   retry, within the existing limit of three total attempts per target. Each

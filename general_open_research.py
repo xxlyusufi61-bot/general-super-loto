@@ -33,7 +33,7 @@ from general_execution_spec_parser import parse_execution_spec_block
 import general_sealed_evaluation as sealed
 import general_research_memory as research_memory
 
-VERSION = "0.8.0"
+VERSION = "0.8.1"
 MODEL = "z-ai/glm-5.3-flash"
 BASE = Path(__file__).resolve().parent
 ARCHIVE = BASE / os.environ.get("GENERAL_ARCHIVE_FILE", "super_loto_archive.json")
@@ -486,6 +486,8 @@ def build_usage_observation(
     stream_finish_reason: str | None = None,
     failure_stage: str | None = None,
     error_type: str | None = None,
+    network_error_chain: list[str] | None = None,
+    stream_requested: bool = False,
     response_complete: bool | None = None,
     max_tokens_requested: int | None = None,
     request_timeout_seconds: int | None = None,
@@ -517,7 +519,7 @@ def build_usage_observation(
         "transport": "openai-python-sdk",
         "client_library": "openai",
         "client_library_version": OPENAI_SDK_VERSION,
-        "stream_requested": False,
+        "stream_requested": stream_requested,
         "sdk_max_retries": 0,
         "http_status": status_code,
         "inference_requests_made_by_this_run": 1,
@@ -559,6 +561,11 @@ def build_usage_observation(
         "model_finish_reason": model_finish_reason,
         "failure_stage": failure_stage,
         "network_error_type": error_type,
+        "network_error_chain": (
+            [name for name in network_error_chain if isinstance(name, str)][:5]
+            if isinstance(network_error_chain, list)
+            else []
+        ),
         "rate_limit_headers_returned": filter_usage_headers(headers),
         "token_usage_returned_by_provider": usage,
         "remaining_quota_before_request": None,
@@ -835,7 +842,7 @@ class InvalidModelResponseError(RuntimeError):
 
 
 class IncompleteModelResponseError(RuntimeError):
-    """A completed provider response whose answer was cut off by its token limit."""
+    """A provider response stream that did not produce a valid complete answer."""
 
     def __init__(
         self,
@@ -856,7 +863,7 @@ class IncompleteModelResponseError(RuntimeError):
 def _validate_json_chat_completion(
     payload: Any,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Validate one non-streaming Chat Completions response; only message.content is final text."""
+    """Validate a buffered Chat Completion; only message.content is final text."""
     if not isinstance(payload, dict):
         raise InvalidModelResponseError("Research model JSON response was not an object.")
     choices = payload.get("choices")
@@ -892,6 +899,113 @@ def _validate_json_chat_completion(
             "reasoning_content is not accepted as a substitute."
         )
     return payload, {"finish_reason": "stop"}
+
+
+def _stream_field(value: Any, name: str, default: Any = None) -> Any:
+    if isinstance(value, Mapping):
+        return value.get(name, default)
+    return getattr(value, name, default)
+
+
+def _stream_usage_payload(value: Any) -> dict[str, Any] | None:
+    if isinstance(value, Mapping):
+        return dict(value)
+    model_dump = getattr(value, "model_dump", None)
+    if callable(model_dump):
+        payload = model_dump(exclude_none=False)
+        return payload if isinstance(payload, dict) else None
+    return None
+
+
+def _exception_chain_types(exc: BaseException) -> list[str]:
+    """Return class names only; exception messages may contain sensitive URLs or data."""
+    result: list[str] = []
+    seen: set[int] = {id(exc)}
+    current = exc.__cause__ or exc.__context__
+    while isinstance(current, BaseException) and id(current) not in seen and len(result) < 5:
+        seen.add(id(current))
+        result.append(type(current).__name__)
+        current = current.__cause__ or current.__context__
+    return result
+
+
+def _consume_streaming_chat_completion(
+    stream: Any,
+    state: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Collect SDK-managed SSE chunks; accept only a complete final content answer."""
+    content_parts: list[str] = []
+    for chunk in stream:
+        state["stream_event_count"] += 1
+        chunk_usage = _stream_usage_payload(_stream_field(chunk, "usage"))
+        if chunk_usage is not None:
+            state["usage"] = chunk_usage
+
+        choices = _stream_field(chunk, "choices")
+        if not isinstance(choices, (list, tuple)):
+            raise InvalidModelResponseError("NVIDIA streaming response contained invalid choices.")
+        if not choices:
+            continue
+
+        choice = choices[0]
+        finish_reason = _stream_field(choice, "finish_reason")
+        if finish_reason is not None:
+            state["stream_finish_reason"] = str(finish_reason)
+
+        delta = _stream_field(choice, "delta")
+        if delta is None:
+            continue
+        content = _stream_field(delta, "content")
+        if content is not None:
+            if not isinstance(content, str):
+                raise InvalidModelResponseError("NVIDIA stream emitted non-text final content.")
+            if content:
+                content_parts.append(content)
+
+    state["stream_completed"] = True
+    finish_reason = state.get("stream_finish_reason")
+    usage = state.get("usage")
+    if finish_reason == "length":
+        raise IncompleteModelResponseError(
+            "Research model streaming response reached max_tokens before completion; "
+            "the partial response was rejected.",
+            usage=usage,
+            stream_event_count=state["stream_event_count"],
+            stream_completed=True,
+            stream_finish_reason="length",
+        )
+    if finish_reason is None:
+        raise IncompleteModelResponseError(
+            "Research model stream ended without a terminal finish_reason; "
+            "the incomplete response was rejected.",
+            usage=usage,
+            stream_event_count=state["stream_event_count"],
+            stream_completed=True,
+            stream_finish_reason=None,
+        )
+    if finish_reason != "stop":
+        raise InvalidModelResponseError(
+            "Research model streaming response did not finish with finish_reason=stop."
+        )
+
+    content = "".join(content_parts)
+    if not content.strip():
+        raise InvalidModelResponseError(
+            "Research model stream completed without final delta.content; "
+            "reasoning_content is not accepted as a substitute."
+        )
+    payload = {
+        "choices": [{
+            "message": {"role": "assistant", "content": content},
+            "finish_reason": "stop",
+        }],
+        "usage": usage,
+    }
+    return payload, {
+        "finish_reason": "stop",
+        "stream_event_count": state["stream_event_count"],
+        "stream_completed": True,
+    }
 
 
 def _create_nvidia_client(api_key: str, timeout_seconds: int):
@@ -1086,6 +1200,12 @@ def call_model(
     status_code = None
     response_headers: Mapping[str, Any] | None = None
     failure: Exception | None = None
+    stream_state: dict[str, Any] = {
+        "stream_event_count": 0,
+        "stream_completed": False,
+        "stream_finish_reason": None,
+        "usage": None,
+    }
 
     try:
         completion = client.chat.completions.create(
@@ -1097,18 +1217,31 @@ def call_model(
                 "reasoning_effort": "low",
                 "chat_template_kwargs": {"clear_thinking": True},
             },
-            stream=False,
+            stream=True,
         )
-        response_received = True
-        status_code = 200
+        raw_response = getattr(completion, "_response", None)
+        if raw_response is None:
+            raw_response = getattr(completion, "response", None)
+        if raw_response is not None:
+            candidate_status = getattr(raw_response, "status_code", None)
+            if isinstance(candidate_status, int):
+                status_code = candidate_status
+            candidate_headers = getattr(raw_response, "headers", None)
+            if candidate_headers is not None:
+                response_headers = candidate_headers
+        if status_code is None:
+            status_code = 200
         request_id = getattr(completion, "_request_id", None)
-        if isinstance(request_id, str) and request_id.strip():
+        if isinstance(request_id, str) and request_id.strip() and response_headers is None:
             response_headers = {"x-request-id": request_id}
-        result, json_metadata = _validate_json_chat_completion(
-            _chat_completion_payload(completion)
+        result, json_metadata = _consume_streaming_chat_completion(
+            completion,
+            stream_state,
         )
+        response_received = stream_state["stream_completed"] is True
     except Exception as exc:
         failure = exc
+        response_received = stream_state["stream_completed"] is True
         error_response = getattr(exc, "response", None)
         error_status = getattr(exc, "status_code", None)
         if error_status is None and error_response is not None:
@@ -1118,6 +1251,14 @@ def call_model(
             response_received = True
         if error_response is not None:
             response_headers = getattr(error_response, "headers", None)
+
+    if completion is not None:
+        close_stream = getattr(completion, "close", None)
+        if callable(close_stream):
+            try:
+                close_stream()
+            except Exception:
+                pass
 
     duration = time.monotonic() - request_started
     if status_code in {402, 429}:
@@ -1141,6 +1282,7 @@ def call_model(
             "model_finish" if incomplete_model_response
             else "provider_http_error" if status_code is not None and status_code >= 400
             else "response_validation" if response_received
+            else "provider_stream" if stream_state["stream_event_count"] > 0
             else "provider_call"
         )
         save_usage_observation(
@@ -1148,15 +1290,13 @@ def call_model(
                 status_code,
                 response_headers,
                 failure_payload,
-                response_mode="json",
+                response_mode="sse",
                 request_duration_seconds=duration,
-                stream_event_count=None,
-                stream_completed=None,
-                stream_finish_reason=None,
-                model_finish_reason=(
-                    "length" if incomplete_model_response else None
-                ),
-                response_complete=False if response_received else None,
+                stream_event_count=stream_state["stream_event_count"],
+                stream_completed=stream_state["stream_completed"],
+                stream_finish_reason=stream_state["stream_finish_reason"],
+                model_finish_reason=stream_state["stream_finish_reason"],
+                response_complete=False,
                 max_tokens_requested=request_max_tokens,
                 request_timeout_seconds=request_timeout_seconds,
                 request_delivery_state=(
@@ -1168,6 +1308,8 @@ def call_model(
                 user_prompt_bytes=user_prompt_bytes,
                 failure_stage=failure_stage,
                 error_type=type(failure).__name__,
+                network_error_chain=_exception_chain_types(failure),
+                stream_requested=True,
             ),
             request_label=request_label,
         )
@@ -1202,8 +1344,11 @@ def call_model(
             status_code,
             response_headers,
             result,
-            response_mode="json",
+            response_mode="sse",
             request_duration_seconds=duration,
+            stream_event_count=stream_state["stream_event_count"],
+            stream_completed=stream_state["stream_completed"],
+            stream_finish_reason=stream_state["stream_finish_reason"],
             response_complete=True,
             max_tokens_requested=request_max_tokens,
             request_timeout_seconds=request_timeout_seconds,
@@ -1213,6 +1358,7 @@ def call_model(
             model_finish_reason=(
                 json_metadata.get("finish_reason") if isinstance(json_metadata, dict) else None
             ),
+            stream_requested=True,
         ),
         request_label=request_label,
     )
