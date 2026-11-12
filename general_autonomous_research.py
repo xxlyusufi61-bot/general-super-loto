@@ -24,6 +24,13 @@ RESEARCH_SCOPE_START = date(2020, 8, 2)
 AUTO_CONFIRMATION_PHRASE = "I_AUTHORIZE_AUTONOMOUS_FREE_ONLY_NVIDIA_RESEARCH_NO_BILLING"
 MAX_AUTHORIZATION_DAYS = 30
 MAX_ATTEMPTS_PER_TARGET = 3
+CYCLE55_RECOVERY_TARGET_DATE = "2026-11-10"
+CYCLE55_RECOVERY_ARCHIVE_SHA256 = "ae7b79e4922d4178a86c7d7880af3e4758d1a5e7f78d6cc3d2595fbb4fd66596"
+CYCLE55_RECOVERY_ARCHIVE_RECORD_COUNT = 983
+CYCLE55_RECOVERY_CURRENT_GENERATION = 52
+CYCLE55_RECOVERY_CURRENT_COMMIT_SHA = "0c9e5bbbe0cbafea188f941b0408e068080c1e68"
+CYCLE55_RECOVERY_SNAPSHOT_GENERATION = 51
+CYCLE55_RECOVERY_SNAPSHOT_COMMIT_SHA = "6197bfadb8af22633dcb22c5490d32c9ffbd52c7"
 RETRYABLE_FAILURE_REASON_CODES = {
     "NO_PROVIDER_REQUEST_SENT",
     "PROVIDER_DELIVERY_UNCERTAIN",
@@ -288,13 +295,13 @@ def validate_state(value: Any) -> dict[str, Any]:
         if entry["snapshot_source"]["generation"] >= entry["source_state"]["generation"]:
             raise AutonomousResearchError("Recovery snapshot source must predate the faulty state.")
         if (
-            entry["source_state"]["generation"] != 52
-            or entry["source_state"]["commit_sha"] != "0c9e5bbbe0cbafea188f941b0408e068080c1e68"
-            or entry["snapshot_source"]["generation"] != 51
-            or entry["snapshot_source"]["commit_sha"] != "6197bfadb8af22633dcb22c5490d32c9ffbd52c7"
-            or target != "2026-11-10"
-            or entry["archive_sha256"] != "ae7b79e4922d4178a86c7d7880af3e4758d1a5e7f78d6cc3d2595fbb4fd66596"
-            or entry["archive_record_count"] != 983
+            entry["source_state"]["generation"] != CYCLE55_RECOVERY_CURRENT_GENERATION
+            or entry["source_state"]["commit_sha"] != CYCLE55_RECOVERY_CURRENT_COMMIT_SHA
+            or entry["snapshot_source"]["generation"] != CYCLE55_RECOVERY_SNAPSHOT_GENERATION
+            or entry["snapshot_source"]["commit_sha"] != CYCLE55_RECOVERY_SNAPSHOT_COMMIT_SHA
+            or target != CYCLE55_RECOVERY_TARGET_DATE
+            or entry["archive_sha256"] != CYCLE55_RECOVERY_ARCHIVE_SHA256
+            or entry["archive_record_count"] != CYCLE55_RECOVERY_ARCHIVE_RECORD_COUNT
         ):
             raise AutonomousResearchError("Recovery journal does not match the pinned Cycle #55 provenance.")
         failure_time = _timestamp(entry["failure_at_utc"], "recovery.failure_at_utc")
