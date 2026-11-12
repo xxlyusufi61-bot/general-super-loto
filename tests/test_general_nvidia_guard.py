@@ -1107,12 +1107,12 @@ class GlobalNvidiaLockTests(unittest.TestCase):
         workflow = workflow_path.read_text(encoding="utf-8")
 
         self.assertIn("name: GENERAL NVIDIA Manual Lock", workflow)
-        self.assertIn("'on':\\n  workflow_dispatch:", workflow)
+        self.assertIn("'on':\n  workflow_dispatch:", workflow)
         self.assertNotRegex(workflow, r"(?m)^  (push|pull_request|schedule):")
         self.assertIn('default: "no"', workflow)
         self.assertIn('inputs.confirm == \'yes\'', workflow)
         self.assertIn("github.ref == 'refs/heads/main'", workflow)
-        self.assertIn("permissions:\\n  contents: write", workflow)
+        self.assertIn("permissions:\n  contents: write", workflow)
         self.assertIn("group: general-nvidia-api", workflow)
         self.assertIn("python3 general_nvidia_guard.py lock --reason", workflow)
         self.assertIn("from general_nvidia_guard import read_remote_lock, validate_lock_state", workflow)
@@ -1123,9 +1123,9 @@ class GlobalNvidiaLockTests(unittest.TestCase):
         self.assertNotIn("general_nvidia_diagnostic.py", workflow)
         self.assertNotIn("general_open_research.py", workflow)
 
-        marker = "python3 - <<'PY'\\n"
+        marker = "python3 - <<'PY'\n"
         self.assertIn(marker, workflow)
-        script = workflow.split(marker, 1)[1].split("\\n          PY", 1)[0]
+        script = workflow.split(marker, 1)[1].split("\n          PY", 1)[0]
         compile(textwrap.dedent(script), str(workflow_path), "exec")
 
 
