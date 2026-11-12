@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -146,6 +147,7 @@ class GitHubActionsWorkflowClient:
         token: str,
         *,
         request_func: Callable[[str, str, str], tuple[int, bytes]] | None = None,
+        sleep_func: Callable[[float], None] = time.sleep,
     ) -> None:
         if not isinstance(repository, str) or repository.count("/") != 1:
             raise MigrationGateError("Repository must use owner/repository form.")
@@ -157,6 +159,7 @@ class GitHubActionsWorkflowClient:
         self.repository = repository
         self.token = token.strip()
         self.request_func = request_func
+        self.sleep_func = sleep_func
         self.base = (
             "/repos/" + urllib.parse.quote(owner, safe="")
             + "/" + urllib.parse.quote(name, safe="")
@@ -299,15 +302,31 @@ class GitHubActionsWorkflowClient:
             )
         return result
 
-    def assert_ready(self) -> dict[str, Any]:
-        result = self.status()
-        if result["workflow_state"] != "disabled_manually":
+    def assert_ready(self, *, settle_seconds: int = 0) -> dict[str, Any]:
+        if type(settle_seconds) is not int or not 0 <= settle_seconds <= 300:
+            raise MigrationGateError("Drain quiet-window duration must be between 0 and 300 seconds.")
+        first = self.status()
+        if first["workflow_state"] != "disabled_manually":
             raise MigrationGateError("Research workflow is not manually disabled.")
-        if result["active_scheduled_run_count"] != 0:
+        if first["active_scheduled_run_count"] != 0:
             raise MigrationGateError(
                 "Scheduled runs are still active; wait for them to complete. No run was cancelled."
             )
-        return {**result, "status": "MIGRATION_GATE_READY"}
+        if settle_seconds:
+            self.sleep_func(float(settle_seconds))
+        result = self.status()
+        if result["workflow_state"] != "disabled_manually":
+            raise MigrationGateError("Research workflow was re-enabled during the drain quiet window.")
+        if result["active_scheduled_run_count"] != 0:
+            raise MigrationGateError(
+                "A scheduled run appeared during the drain quiet window; migration is blocked."
+            )
+        return {
+            **result,
+            "status": "MIGRATION_GATE_READY",
+            "drain_confirmations": 2,
+            "quiet_window_seconds": settle_seconds,
+        }
 
 
 def _client_from_environment() -> GitHubActionsWorkflowClient:
@@ -321,7 +340,8 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="action", required=True)
     sub.add_parser("status")
     sub.add_parser("pause")
-    sub.add_parser("assert-ready")
+    ready = sub.add_parser("assert-ready")
+    ready.add_argument("--settle-seconds", type=int, default=60)
     verify = sub.add_parser("verify-state-source")
     verify.add_argument("--manifest", type=Path, required=True)
     verify.add_argument("--state", type=Path, required=True)
@@ -347,7 +367,7 @@ def main(argv: list[str] | None = None) -> int:
             elif args.action == "pause":
                 report = client.pause()
             else:
-                report = client.assert_ready()
+                report = client.assert_ready(settle_seconds=args.settle_seconds)
     except (MigrationGateError, state_contract.AutomationStateError) as exc:
         print("CYCLE55 MIGRATION GATE FAILED: " + str(exc), file=sys.stderr)
         return 2
