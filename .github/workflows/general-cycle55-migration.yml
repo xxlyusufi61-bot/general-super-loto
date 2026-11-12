@@ -1,0 +1,290 @@
+name: GENERAL Cycle #55 Schema v3 Recovery
+
+'on':
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Read status, pause the research schedule, prepare a local preview, or publish the one-time recovery.
+        required: true
+        type: choice
+        options:
+          - status
+          - pause
+          - preview
+          - publish
+        default: status
+      confirm_recovery_write:
+        description: Exact phrase required only for the one-time Generation 52 to Schema v3 state-store publication.
+        required: false
+        type: string
+        default: "NO"
+
+permissions:
+  contents: none
+
+concurrency:
+  group: cycle55-schema-v3-recovery
+  cancel-in-progress: false
+
+jobs:
+  reject-non-main:
+    if: ${{ github.ref != 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Refuse non-main dispatch
+        run: |
+          echo "This maintenance workflow must be dispatched from main."
+          exit 1
+
+  status:
+    if: ${{ github.ref == 'refs/heads/main' && inputs.action == 'status' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Read-only schedule and drain status
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python3 general_cycle55_migration.py status
+
+  pause:
+    if: ${{ github.ref == 'refs/heads/main' && inputs.action == 'pause' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Disable future schedule triggers without cancelling active runs
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python3 general_cycle55_migration.py pause
+
+  refuse-unconfirmed-publish:
+    if: ${{ github.ref == 'refs/heads/main' && inputs.action == 'publish' && inputs.confirm_recovery_write != 'CYCLE55_CONFIRM_V3_RECOVERY_WRITE_2026_11_10' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Refuse an unconfirmed production state write
+        run: |
+          echo "The exact one-time recovery confirmation was not supplied."
+          exit 1
+
+  preview:
+    if: ${{ github.ref == 'refs/heads/main' && inputs.action == 'preview' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          persist-credentials: true
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Require the research schedule to be disabled and fully drained
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python3 general_cycle55_migration.py assert-ready
+      - name: Fetch read-only state-store history and pin Generation 51/52 commits
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin \
+            refs/heads/general-automation-state:refs/remotes/origin/general-automation-state
+          actual_head="$(git rev-parse refs/remotes/origin/general-automation-state)"
+          expected_head="0c9e5bbbe0cbafea188f941b0408e068080c1e68"
+          if [ "$actual_head" != "$expected_head" ]; then
+            echo "State-store branch moved from pinned Generation 52; refusing preview."
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/cycle55-source"
+          git show "6197bfadb8af22633dcb22c5490d32c9ffbd52c7:manifest.json" \
+            > "$RUNNER_TEMP/cycle55-source/generation-51-manifest.json"
+          git show "6197bfadb8af22633dcb22c5490d32c9ffbd52c7:general_autonomous_research_state.json" \
+            > "$RUNNER_TEMP/cycle55-source/generation-51-state.json"
+          git show "0c9e5bbbe0cbafea188f941b0408e068080c1e68:manifest.json" \
+            > "$RUNNER_TEMP/cycle55-source/generation-52-manifest.json"
+          git show "0c9e5bbbe0cbafea188f941b0408e068080c1e68:general_autonomous_research_state.json" \
+            > "$RUNNER_TEMP/cycle55-source/generation-52-state.json"
+      - name: Verify raw pinned manifests and scheduler state blobs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 general_cycle55_migration.py verify-state-source \
+            --manifest "$RUNNER_TEMP/cycle55-source/generation-51-manifest.json" \
+            --state "$RUNNER_TEMP/cycle55-source/generation-51-state.json" \
+            --generation 51 \
+            --commit-sha 6197bfadb8af22633dcb22c5490d32c9ffbd52c7
+          python3 general_cycle55_migration.py verify-state-source \
+            --manifest "$RUNNER_TEMP/cycle55-source/generation-52-manifest.json" \
+            --state "$RUNNER_TEMP/cycle55-source/generation-52-state.json" \
+            --generation 52 \
+            --commit-sha 0c9e5bbbe0cbafea188f941b0408e068080c1e68
+      - name: Build and validate a local-only recovery preview
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 general_cycle55_recovery.py \
+            --current-state "$RUNNER_TEMP/cycle55-source/generation-52-state.json" \
+            --snapshot-source "$RUNNER_TEMP/cycle55-source/generation-51-state.json" \
+            --output "$RUNNER_TEMP/cycle55-source/recovery-preview.json" \
+            --recorded-at-utc "$(date -u +%Y-%m-%dT%H:%M:%S+00:00)"
+      - name: Confirm this job performed no production write or provider operation
+        run: |
+          echo "Local preview only: production state writes=0; NVIDIA requests=0; research cycles=0; Telegram messages=0; lock changes=0."
+          echo "The preview file is not uploaded as an artifact and is not published."
+
+  publish:
+    if: ${{ github.ref == 'refs/heads/main' && inputs.action == 'publish' && inputs.confirm_recovery_write == 'CYCLE55_CONFIRM_V3_RECOVERY_WRITE_2026_11_10' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          persist-credentials: true
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Require the research schedule to be disabled and fully drained
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python3 general_cycle55_migration.py assert-ready
+      - name: Fetch read-only state-store history and pin Generation 51/52 commits
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin \
+            refs/heads/general-automation-state:refs/remotes/origin/general-automation-state
+          actual_head="$(git rev-parse refs/remotes/origin/general-automation-state)"
+          expected_head="0c9e5bbbe0cbafea188f941b0408e068080c1e68"
+          if [ "$actual_head" != "$expected_head" ]; then
+            echo "State-store branch moved from pinned Generation 52; refusing publication."
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/cycle55-source"
+          git show "6197bfadb8af22633dcb22c5490d32c9ffbd52c7:manifest.json" \
+            > "$RUNNER_TEMP/cycle55-source/generation-51-manifest.json"
+          git show "6197bfadb8af22633dcb22c5490d32c9ffbd52c7:general_autonomous_research_state.json" \
+            > "$RUNNER_TEMP/cycle55-source/generation-51-state.json"
+          git show "0c9e5bbbe0cbafea188f941b0408e068080c1e68:manifest.json" \
+            > "$RUNNER_TEMP/cycle55-source/generation-52-manifest.json"
+          git show "0c9e5bbbe0cbafea188f941b0408e068080c1e68:general_autonomous_research_state.json" \
+            > "$RUNNER_TEMP/cycle55-source/generation-52-state.json"
+      - name: Verify pinned source bytes immediately before recovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 general_cycle55_migration.py verify-state-source \
+            --manifest "$RUNNER_TEMP/cycle55-source/generation-51-manifest.json" \
+            --state "$RUNNER_TEMP/cycle55-source/generation-51-state.json" \
+            --generation 51 \
+            --commit-sha 6197bfadb8af22633dcb22c5490d32c9ffbd52c7
+          python3 general_cycle55_migration.py verify-state-source \
+            --manifest "$RUNNER_TEMP/cycle55-source/generation-52-manifest.json" \
+            --state "$RUNNER_TEMP/cycle55-source/generation-52-state.json" \
+            --generation 52 \
+            --commit-sha 0c9e5bbbe0cbafea188f941b0408e068080c1e68
+          python3 general_cycle55_recovery.py \
+            --current-state "$RUNNER_TEMP/cycle55-source/generation-52-state.json" \
+            --snapshot-source "$RUNNER_TEMP/cycle55-source/generation-51-state.json" \
+            --output "$RUNNER_TEMP/cycle55-source/recovery-preview.json" \
+            --recorded-at-utc "$(date -u +%Y-%m-%dT%H:%M:%S+00:00)"
+      - name: Recheck schedule drain immediately before the state-store write
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python3 general_cycle55_migration.py assert-ready
+      - name: Publish only the recovered scheduler state with Generation 52 guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp "$RUNNER_TEMP/cycle55-source/recovery-preview.json" \
+            "$GITHUB_WORKSPACE/general_autonomous_research_state.json"
+          python3 general_automation_state_writer.py publish \
+            --workspace "$GITHUB_WORKSPACE" \
+            --expected-generation 52 \
+            --objects autonomous_research_state \
+            --message "Recover Cycle #55 false terminal completion"
+      - name: Read back and verify the Generation 53 recovery publication
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/cycle55-readback"
+          python3 general_automation_state_writer.py hydrate \
+            --workspace "$RUNNER_TEMP/cycle55-readback" \
+            > "$RUNNER_TEMP/cycle55-readback/result.json"
+          python3 - "$RUNNER_TEMP/cycle55-readback" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          root = Path(sys.argv[1])
+          result = json.loads((root / "result.json").read_text(encoding="utf-8"))
+          state = json.loads((root / "general_autonomous_research_state.json").read_text(encoding="utf-8"))
+          if result.get("generation") != 53 or state.get("schema_version") != 3:
+              raise SystemExit("Recovery publication did not read back as Generation 53 / schema v3.")
+          history = state.get("recovery_history")
+          if not isinstance(history, list) or len(history) != 1:
+              raise SystemExit("Recovery journal did not read back exactly once.")
+          if not state.get("events") or state["events"][-1].get("outcome") != "FAILED" or state["events"][-1].get("reason_code") != "WORKFLOW_FAILED":
+              raise SystemExit("Cycle #55 was not preserved as FAILED / WORKFLOW_FAILED.")
+          queue = state.get("target_queue", {})
+          items = queue.get("items", []) if isinstance(queue, dict) else []
+          if not items or items[0].get("target_date") != "2026-11-10":
+              raise SystemExit("Cycle #55 was not restored as the FIFO head.")
+          print(json.dumps({
+              "status": "GENERATION_53_RECOVERY_READBACK_PASS",
+              "generation": result["generation"],
+              "schema_version": state["schema_version"],
+              "recovery_history_count": len(history),
+              "active_outcome": state["events"][-1]["outcome"],
+              "active_reason_code": state["events"][-1]["reason_code"],
+              "fifo_head_date": items[0]["target_date"],
+              "production_objects_written": ["autonomous_research_state"],
+              "nvidia_requests": 0,
+              "research_cycles_run": 0,
+              "telegram_messages": 0,
+              "global_lock_changed": False,
+              "draw_rows_rendered": False,
+              "target_values_rendered": False,
+          }, sort_keys=True))
+          PY
