@@ -245,7 +245,7 @@ jobs:
           python3 general_autonomous_research.py queue-materialize \
             --output super_loto_archive.json
 
-      - name: Prepare one cycle only for a new target and fresh sealed windows
+      - name: Prepare one cycle for the oldest queued target and fresh sealed windows
         id: prepare
         if: ${{ steps.status.outputs.authorized == 'true' && steps.status.outputs.lock_clear == 'true' && steps.queue_capture.outputs.has_pending == 'true' }}
         run: |
@@ -386,6 +386,7 @@ jobs:
         run: |
           incomplete_request=false
           any_request=false
+          http_rejection_no_retry=false
           for request_label in forward reverse forward_critique between_draws unlabelled; do
             if [ -f "/tmp/general_nvidia_api_attempted_${request_label}" ]; then
               any_request=true
@@ -393,8 +394,13 @@ jobs:
                 incomplete_request=true
               fi
             fi
+            if [ -f "/tmp/general_nvidia_api_no_retry_${request_label}" ]; then
+              http_rejection_no_retry=true
+            fi
           done
-          if [ "$incomplete_request" = "true" ]; then
+          if [ "$http_rejection_no_retry" = "true" ]; then
+            reason_code="PROVIDER_HTTP_REJECTION_NO_RETRY"
+          elif [ "$incomplete_request" = "true" ]; then
             reason_code="PROVIDER_DELIVERY_UNCERTAIN"
           elif [ "$any_request" = "true" ]; then
             reason_code="WORKFLOW_FAILED"

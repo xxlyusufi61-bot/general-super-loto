@@ -1,4 +1,4 @@
-"""Fail-closed scheduler state for one autonomous research cycle per new draw date.
+"""Fail-closed scheduler state for one active FIFO target and its recorded attempts.
 
 This module never calls NVIDIA or Telegram. It only manages an expiring, explicit
 free-only authorization, verifies the shared lock and sealed-evaluation preflight,
@@ -24,6 +24,10 @@ RESEARCH_SCOPE_START = date(2020, 8, 2)
 AUTO_CONFIRMATION_PHRASE = "I_AUTHORIZE_AUTONOMOUS_FREE_ONLY_NVIDIA_RESEARCH_NO_BILLING"
 MAX_AUTHORIZATION_DAYS = 30
 MAX_ATTEMPTS_PER_TARGET = 3
+RETRYABLE_FAILURE_REASON_CODES = {
+    "NO_PROVIDER_REQUEST_SENT",
+    "PROVIDER_DELIVERY_UNCERTAIN",
+}
 ALLOWED_OUTCOMES = {"SUCCEEDED", "FAILED", "NO_ELIGIBLE_CANDIDATE"}
 ALLOWED_REASON_CODES = {
     "EVALUATION_COMPLETED",
@@ -31,6 +35,7 @@ ALLOWED_REASON_CODES = {
     "NO_FROZEN_DIRECTIONAL_CANDIDATE",
     "NO_PROVIDER_REQUEST_SENT",
     "PROVIDER_DELIVERY_UNCERTAIN",
+    "PROVIDER_HTTP_REJECTION_NO_RETRY",
 }
 
 
@@ -185,8 +190,7 @@ def validate_state(value: Any) -> dict[str, Any]:
     for target in attempt_dates:
         target_counts[target] = target_counts.get(target, 0) + 1
     if any(count > MAX_ATTEMPTS_PER_TARGET for count in target_counts.values()):
-        raise AutonomousResearchError("A target exceeded the bounded pre-provider retry limit.")
-
+        raise AutonomousResearchError("A target exceeded the existing three-attempt limit.")
     terminal_attempts: set[str] = set()
     required_event = {"attempt_id", "outcome", "recorded_at_utc", "reason_code"}
     for event in events:
@@ -214,10 +218,10 @@ def validate_state(value: Any) -> dict[str, Any]:
                 if (
                     prior_event is None
                     or prior_event["outcome"] != "FAILED"
-                    or prior_event["reason_code"] != "NO_PROVIDER_REQUEST_SENT"
+                    or prior_event["reason_code"] not in RETRYABLE_FAILURE_REASON_CODES
                 ):
                     raise AutonomousResearchError(
-                        "Repeated target attempts are allowed only after a proven no-provider-request failure."
+                        "Repeated target attempts require a recorded retryable failure; uncertain provider delivery remains blocked."
                     )
     return value
 
@@ -254,6 +258,22 @@ def read_global_lock(path: str | Path) -> dict[str, Any]:
         return validate_lock_state(value)
     except Exception:
         raise AutonomousResearchError("Global NVIDIA lock failed validation; automation is blocked.") from None
+
+
+def manual_recovery_confirmed(lock_state: dict[str, Any], failed_event: dict[str, Any]) -> bool:
+    """Require a recorded manual unlock strictly after an uncertain provider failure."""
+    if failed_event.get("reason_code") != "PROVIDER_DELIVERY_UNCERTAIN":
+        return False
+    unlocked_at = lock_state.get("last_unlocked_at")
+    if not isinstance(unlocked_at, str):
+        return False
+    try:
+        return _timestamp(unlocked_at, "global_lock.last_unlocked_at") > _timestamp(
+            failed_event.get("recorded_at_utc"),
+            "failed_event.recorded_at_utc",
+        )
+    except AutonomousResearchError:
+        return False
 
 
 def activate_state(
@@ -359,6 +379,7 @@ def prepare_cycle(
     attempts = state["attempts"]
     retryable = False
     retry_number = 1
+    recovered_after_uncertain_delivery = False
     if attempts:
         last_attempt = attempts[-1]
         last_target = last_attempt["target_date"]
@@ -378,23 +399,41 @@ def prepare_cycle(
                     "archive_sha256": archive["archive_sha256"],
                     **status,
                 }
-            if (
-                last_event["outcome"] == "FAILED"
-                and last_event["reason_code"] == "NO_PROVIDER_REQUEST_SENT"
-            ):
-                if same_target_attempts >= MAX_ATTEMPTS_PER_TARGET:
+            if last_event["outcome"] == "FAILED":
+                reason_code = last_event["reason_code"]
+                if reason_code == "PROVIDER_DELIVERY_UNCERTAIN":
+                    recovered_after_uncertain_delivery = manual_recovery_confirmed(lock, last_event)
+                if (
+                    reason_code in RETRYABLE_FAILURE_REASON_CODES
+                    and (reason_code != "PROVIDER_DELIVERY_UNCERTAIN" or recovered_after_uncertain_delivery)
+                ):
+                    if same_target_attempts >= MAX_ATTEMPTS_PER_TARGET:
+                        return {
+                            "status": "TARGET_RETRY_LIMIT_REACHED",
+                            "eligible": False,
+                            "target_date": target_date,
+                            "archive_sha256": archive["archive_sha256"],
+                            **status,
+                        }
+                    retryable = True
+                    retry_number = same_target_attempts + 1
+                else:
+                    if reason_code == "PROVIDER_HTTP_REJECTION_NO_RETRY":
+                        blocked_status = "PROVIDER_HTTP_REJECTION_NO_RETRY"
+                    elif reason_code == "WORKFLOW_FAILED":
+                        blocked_status = "WORKFLOW_FAILED_NO_AUTOMATIC_RETRY"
+                    else:
+                        blocked_status = "PROVIDER_DELIVERY_UNCERTAIN_MANUAL_RECOVERY_REQUIRED"
                     return {
-                        "status": "TARGET_RETRY_LIMIT_REACHED",
+                        "status": blocked_status,
                         "eligible": False,
                         "target_date": target_date,
                         "archive_sha256": archive["archive_sha256"],
                         **status,
                     }
-                retryable = True
-                retry_number = same_target_attempts + 1
             else:
                 return {
-                    "status": "NO_NEW_TARGET_DRAW",
+                    "status": "TARGET_ALREADY_COMPLETED",
                     "eligible": False,
                     "target_date": target_date,
                     "archive_sha256": archive["archive_sha256"],
@@ -410,11 +449,22 @@ def prepare_cycle(
                     **status,
                 }
             if last_event["outcome"] == "FAILED":
-                blocking_status = (
-                    "PREVIOUS_TARGET_RETRY_REQUIRED"
-                    if last_event["reason_code"] == "NO_PROVIDER_REQUEST_SENT"
-                    else "PREVIOUS_TARGET_MANUAL_RECOVERY_REQUIRED"
+                previous_retry_is_ready = (
+                    last_event["reason_code"] == "NO_PROVIDER_REQUEST_SENT"
                 )
+                if last_event["reason_code"] == "PROVIDER_DELIVERY_UNCERTAIN":
+                    previous_retry_is_ready = manual_recovery_confirmed(lock, last_event)
+                previous_attempt_count = sum(
+                    1 for item in attempts if item["target_date"] == last_target
+                )
+                if previous_retry_is_ready and previous_attempt_count >= MAX_ATTEMPTS_PER_TARGET:
+                    blocking_status = "PREVIOUS_TARGET_RETRY_LIMIT_REACHED"
+                else:
+                    blocking_status = (
+                        "PREVIOUS_TARGET_RETRY_REQUIRED"
+                        if previous_retry_is_ready
+                        else "PREVIOUS_TARGET_MANUAL_RECOVERY_REQUIRED"
+                    )
                 return {
                     "status": blocking_status,
                     "eligible": False,
@@ -422,16 +472,6 @@ def prepare_cycle(
                     "pending_target_date": last_target,
                     **status,
                 }
-
-    ledger = sealed.load_ledger(ledger_path)
-    if any(entry.get("target_date") == target_date for entry in ledger["entries"]):
-        return {
-            "status": "TARGET_ALREADY_HAS_A_SEALED_CLAIM",
-            "eligible": False,
-            "target_date": target_date,
-            "archive_sha256": archive["archive_sha256"],
-            **status,
-        }
 
     try:
         plan = sealed.preflight(archive_path, ledger_path)
@@ -492,7 +532,7 @@ def prepare_cycle(
         "previously_consumed_holdout_dates_reused": False,
         "retryable": retryable,
         "retry_number": retry_number,
-        "maximum_target_attempts": MAX_ATTEMPTS_PER_TARGET,
+        "manual_recovery_confirmed": recovered_after_uncertain_delivery,
     }
 
 
@@ -539,11 +579,20 @@ def claim_attempt(
             if (
                 last_event is None
                 or last_event["outcome"] != "FAILED"
-                or last_event["reason_code"] != "NO_PROVIDER_REQUEST_SENT"
+                or last_event["reason_code"] not in RETRYABLE_FAILURE_REASON_CODES
             ):
-                raise AutonomousResearchError("A target retry requires proof that no provider request was sent.")
+                raise AutonomousResearchError(
+                    "A target retry requires a recorded retryable failure."
+                )
+            if (
+                last_event["reason_code"] == "PROVIDER_DELIVERY_UNCERTAIN"
+                and plan.get("manual_recovery_confirmed") is not True
+            ):
+                raise AutonomousResearchError(
+                    "Uncertain provider delivery requires a manual unlock after the failed attempt."
+                )
             if previous_count >= MAX_ATTEMPTS_PER_TARGET:
-                raise AutonomousResearchError("The bounded no-send retry limit for this target is exhausted.")
+                raise AutonomousResearchError("The existing three-attempt target limit is exhausted.")
             attempt_number = previous_count + 1
         else:
             if last_event is None:

@@ -587,6 +587,8 @@ class NvidiaUsageObservationTests(unittest.TestCase):
     def setUp(self):
         research._NVIDIA_REQUESTS_ATTEMPTED = 0
         research._NVIDIA_REQUEST_LABELS_ATTEMPTED.clear()
+        for label in ("forward", "reverse", "forward_critique", "between_draws", "unlabelled"):
+            Path("/tmp/general_nvidia_api_no_retry_" + label).unlink(missing_ok=True)
 
     @staticmethod
     def sdk_response(
@@ -640,6 +642,8 @@ class NvidiaUsageObservationTests(unittest.TestCase):
     def tearDown(self):
         Path("/tmp/general_nvidia_api_attempted").unlink(missing_ok=True)
         Path("/tmp/general_nvidia_api_succeeded").unlink(missing_ok=True)
+        for label in ("forward", "reverse", "forward_critique", "between_draws", "unlabelled"):
+            Path("/tmp/general_nvidia_api_no_retry_" + label).unlink(missing_ok=True)
 
     def test_openai_sdk_client_uses_nvidia_base_url_timeout_and_zero_retries(self):
         fake_client = MagicMock()
@@ -944,6 +948,56 @@ class NvidiaUsageObservationTests(unittest.TestCase):
         )
         self.assertNotIn("never-log-this", json.dumps(saved[0]))
         self.assertEqual(saved[0]["automatic_retries"], 0)
+        self.assertTrue(Path("/tmp/general_nvidia_api_no_retry_forward").is_file())
+
+    def test_rate_limit_no_retry_marker_survives_usage_report_write_failure(self):
+        class SyntheticStatusError(Exception):
+            status_code = 429
+            response = SimpleNamespace(headers={})
+
+        client = self.client_with_response()
+        client.chat.completions.create.side_effect = SyntheticStatusError("rate limited")
+        with patch.dict(os.environ, self.live_env(), clear=True), patch.object(
+            research, "reserve_nvidia_request"
+        ), patch.object(
+            research, "save_usage_observation", side_effect=OSError("synthetic disk error")
+        ), patch(
+            "general_open_research._create_nvidia_client", return_value=client
+        ):
+            with self.assertRaisesRegex(OSError, "synthetic disk error"):
+                research.call_model(
+                    [{"role": "user", "content": "rate limit with report-write failure"}],
+                    request_label="between_draws",
+                )
+
+        self.assertTrue(Path("/tmp/general_nvidia_api_no_retry_between_draws").is_file())
+
+    def test_sdk_insufficient_credit_error_is_marked_non_retryable(self):
+        class SyntheticStatusError(Exception):
+            status_code = 402
+            response = SimpleNamespace(headers={})
+
+        client = self.client_with_response()
+        client.chat.completions.create.side_effect = SyntheticStatusError("insufficient credits")
+        saved = []
+        with patch.dict(os.environ, self.live_env(), clear=True), patch.object(
+            research, "reserve_nvidia_request"
+        ), patch.object(
+            research, "save_usage_observation",
+            side_effect=lambda observation, **kwargs: saved.append(observation),
+        ), patch(
+            "general_open_research._create_nvidia_client", return_value=client
+        ):
+            with self.assertRaisesRegex(RuntimeError, "HTTP 402"):
+                research.call_model(
+                    [{"role": "user", "content": "insufficient credit test"}],
+                    request_label="forward",
+                )
+
+        client.chat.completions.create.assert_called_once()
+        self.assertEqual(saved[0]["http_status"], 402)
+        self.assertEqual(saved[0]["failure_stage"], "provider_http_error")
+        self.assertTrue(Path("/tmp/general_nvidia_api_no_retry_forward").is_file())
 
     def test_json_response_rejects_reasoning_only_content(self):
         client = self.client_with_response(

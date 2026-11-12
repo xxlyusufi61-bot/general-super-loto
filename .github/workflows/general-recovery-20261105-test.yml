@@ -7,12 +7,28 @@ name: GENERAL 2026-11-05 Recovery Offline Tests
       - "general_recovery_20261105_test.py"
       - ".github/workflows/general-recovery-20261105.yml"
       - ".github/workflows/general-recovery-20261105-test.yml"
+      - "general_autonomous_research.py"
+      - "general_autonomous_research_test.py"
+      - "general_target_queue.py"
+      - "general_target_queue_test.py"
+      - "general_sealed_evaluation.py"
+      - "general_nvidia_guard.py"
+      - "docs/autonomous-research-scheduler.md"
+      - ".github/workflows/general-autonomous-research.yml"
   pull_request:
     paths:
       - "general_recovery_20261105.py"
       - "general_recovery_20261105_test.py"
       - ".github/workflows/general-recovery-20261105.yml"
       - ".github/workflows/general-recovery-20261105-test.yml"
+      - "general_autonomous_research.py"
+      - "general_autonomous_research_test.py"
+      - "general_target_queue.py"
+      - "general_target_queue_test.py"
+      - "general_sealed_evaluation.py"
+      - "general_nvidia_guard.py"
+      - "docs/autonomous-research-scheduler.md"
+      - ".github/workflows/general-autonomous-research.yml"
   workflow_dispatch:
 
 permissions:

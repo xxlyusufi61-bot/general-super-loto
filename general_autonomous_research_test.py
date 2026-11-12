@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import general_autonomous_research as auto
-from general_nvidia_guard import initial_lock_state, make_locked_state
+from general_nvidia_guard import initial_lock_state, make_locked_state, make_unlocked_state
 
 
 AUTO_PHRASE = auto.AUTO_CONFIRMATION_PHRASE
@@ -227,7 +227,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
                 state, plan, github_run_id="445566", now=NOW,
             )
             self.assertEqual(attempt["target_date"], plan["target_date"])
-            with self.assertRaisesRegex(auto.AutonomousResearchError, "retry requires proof"):
+            with self.assertRaisesRegex(auto.AutonomousResearchError, "retryable failure"):
                 auto.claim_attempt(state, plan, github_run_id="445567", now=NOW)
             skipped = auto.prepare_cycle(
                 state, archive_path=archive, ledger_path=ledger,
@@ -247,7 +247,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
                     reason_code="WORKFLOW_FAILED", now=NOW,
                 )
 
-    def test_only_proven_no_send_failures_allow_bounded_same_target_retry(self):
+    def test_proven_no_send_failures_allow_same_target_retries_with_existing_cap(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             archive = root / "archive.json"
@@ -264,46 +264,135 @@ class AutonomousResearchStateTests(unittest.TestCase):
                 state, archive_path=archive, ledger_path=ledger,
                 global_lock_path=lock, now=NOW,
             )
-            first = auto.claim_attempt(state, plan, github_run_id="420000001", now=NOW)
+            previous = auto.claim_attempt(state, plan, github_run_id="420000001", now=NOW)
             auto.record_outcome(
-                state, first["attempt_id"], outcome="FAILED",
+                state, previous["attempt_id"], outcome="FAILED",
                 reason_code="NO_PROVIDER_REQUEST_SENT", now=NOW,
             )
 
+            for number in range(2, 4):
+                at = NOW + timedelta(minutes=number - 1)
+                retry_plan = auto.prepare_cycle(
+                    state, archive_path=archive, ledger_path=ledger,
+                    global_lock_path=lock, now=at,
+                )
+                self.assertTrue(retry_plan["eligible"])
+                self.assertTrue(retry_plan["retryable"])
+                self.assertEqual(retry_plan["retry_number"], number)
+                current = auto.claim_attempt(
+                    state, retry_plan, github_run_id=str(420000000 + number), now=at,
+                )
+                self.assertNotEqual(previous["attempt_id"], current["attempt_id"])
+                auto.record_outcome(
+                    state, current["attempt_id"], outcome="FAILED",
+                    reason_code="NO_PROVIDER_REQUEST_SENT",
+                    now=at,
+                )
+                previous = current
+
+            self.assertEqual(len(state["attempts"]), 3)
+            auto.validate_state(state)
+            blocked = auto.prepare_cycle(
+                state, archive_path=archive, ledger_path=ledger,
+                global_lock_path=lock, now=NOW + timedelta(minutes=4),
+            )
+            self.assertFalse(blocked["eligible"])
+            self.assertEqual(blocked["status"], "TARGET_RETRY_LIMIT_REACHED")
+
+    def test_workflow_failed_after_provider_delivery_is_not_automatically_retried(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root / "archive.json"
+            ledger = root / "ledger.json"
+            lock = root / "lock.json"
+            archive.write_text(json.dumps({"draws": synthetic_rows(90)}), encoding="utf-8")
+            ledger.write_text(
+                json.dumps({"schema_version": 1, "purpose": "test", "entries": []}),
+                encoding="utf-8",
+            )
+            lock.write_text(json.dumps(initial_lock_state()), encoding="utf-8")
+            state = active_state()
+            plan = auto.prepare_cycle(
+                state, archive_path=archive, ledger_path=ledger,
+                global_lock_path=lock, now=NOW,
+            )
+            attempt = auto.claim_attempt(
+                state, plan, github_run_id="420000012", now=NOW,
+            )
+            auto.record_outcome(
+                state, attempt["attempt_id"], outcome="FAILED",
+                reason_code="WORKFLOW_FAILED", now=NOW,
+            )
+
+            later_unlock = NOW + timedelta(minutes=1)
+            lock.write_text(
+                json.dumps(make_unlocked_state(initial_lock_state(), stamp=later_unlock.isoformat())),
+                encoding="utf-8",
+            )
+            blocked = auto.prepare_cycle(
+                state, archive_path=archive, ledger_path=ledger,
+                global_lock_path=lock, now=NOW + timedelta(minutes=2),
+            )
+            self.assertFalse(blocked["eligible"])
+            self.assertEqual(blocked["status"], "WORKFLOW_FAILED_NO_AUTOMATIC_RETRY")
+
+    def test_failed_target_with_existing_sealed_claim_retries_using_fresh_holdouts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root / "archive.json"
+            ledger = root / "ledger.json"
+            lock = root / "lock.json"
+            rows = synthetic_rows(90)
+            archive.write_text(json.dumps({"draws": rows}), encoding="utf-8")
+            existing_claim = {
+                "claim_id": "a" * 64,
+                "state": "CLAIMED",
+                "target_date": rows[-1]["date"],
+                "validation_dates": [rows[0]["date"]],
+                "reverse_validation_dates": [rows[1]["date"]],
+            }
+            ledger.write_text(
+                json.dumps({
+                    "schema_version": 1,
+                    "purpose": "test append-only ledger",
+                    "entries": [existing_claim],
+                }),
+                encoding="utf-8",
+            )
+            lock.write_text(json.dumps(initial_lock_state()), encoding="utf-8")
+            state = active_state()
+            first_plan = auto.prepare_cycle(
+                state, archive_path=archive, ledger_path=ledger,
+                global_lock_path=lock, now=NOW,
+            )
+            self.assertTrue(first_plan["eligible"])
+            self.assertEqual(first_plan["status"], "READY")
+
+            attempt = auto.claim_attempt(
+                state, first_plan, github_run_id="420000007", now=NOW,
+            )
+            auto.record_outcome(
+                state, attempt["attempt_id"], outcome="FAILED",
+                reason_code="NO_PROVIDER_REQUEST_SENT", now=NOW,
+            )
             retry_plan = auto.prepare_cycle(
                 state, archive_path=archive, ledger_path=ledger,
                 global_lock_path=lock, now=NOW + timedelta(minutes=1),
             )
             self.assertTrue(retry_plan["eligible"])
             self.assertTrue(retry_plan["retryable"])
-            self.assertEqual(retry_plan["retry_number"], 2)
-            second = auto.claim_attempt(
-                state, retry_plan, github_run_id="420000002", now=NOW + timedelta(minutes=1),
+            retry_attempt = auto.claim_attempt(
+                state, retry_plan, github_run_id="420000010", now=NOW + timedelta(minutes=2),
             )
-            self.assertNotEqual(first["attempt_id"], second["attempt_id"])
-            auto.record_outcome(
-                state, second["attempt_id"], outcome="FAILED",
-                reason_code="NO_PROVIDER_REQUEST_SENT", now=NOW + timedelta(minutes=1),
-            )
+            self.assertEqual(retry_attempt["target_date"], attempt["target_date"])
 
-            third_plan = auto.prepare_cycle(
-                state, archive_path=archive, ledger_path=ledger,
-                global_lock_path=lock, now=NOW + timedelta(minutes=2),
+            fresh_plan = auto.sealed.preflight(archive, ledger)
+            fresh_holdouts = set(
+                fresh_plan["forward_validation_dates"] + fresh_plan["reverse_validation_dates"]
             )
-            self.assertTrue(third_plan["eligible"])
-            third = auto.claim_attempt(
-                state, third_plan, github_run_id="420000003", now=NOW + timedelta(minutes=2),
-            )
-            auto.record_outcome(
-                state, third["attempt_id"], outcome="FAILED",
-                reason_code="NO_PROVIDER_REQUEST_SENT", now=NOW + timedelta(minutes=2),
-            )
-            blocked = auto.prepare_cycle(
-                state, archive_path=archive, ledger_path=ledger,
-                global_lock_path=lock, now=NOW + timedelta(minutes=3),
-            )
-            self.assertFalse(blocked["eligible"])
-            self.assertEqual(blocked["status"], "TARGET_RETRY_LIMIT_REACHED")
+            self.assertNotIn(rows[0]["date"], fresh_holdouts)
+            self.assertNotIn(rows[1]["date"], fresh_holdouts)
+
 
     def test_provider_delivery_uncertainty_never_allows_target_retry(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -332,7 +421,111 @@ class AutonomousResearchStateTests(unittest.TestCase):
                 global_lock_path=lock, now=NOW + timedelta(minutes=1),
             )
             self.assertFalse(blocked["eligible"])
-            self.assertEqual(blocked["status"], "NO_NEW_TARGET_DRAW")
+            self.assertEqual(blocked["status"], "PROVIDER_DELIVERY_UNCERTAIN_MANUAL_RECOVERY_REQUIRED")
+
+    def test_provider_delivery_uncertainty_retries_only_after_later_manual_unlock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root / "archive.json"
+            ledger = root / "ledger.json"
+            lock = root / "lock.json"
+            archive.write_text(json.dumps({"draws": synthetic_rows(90)}), encoding="utf-8")
+            ledger.write_text(
+                json.dumps({"schema_version": 1, "purpose": "test", "entries": []}),
+                encoding="utf-8",
+            )
+            lock.write_text(json.dumps(initial_lock_state()), encoding="utf-8")
+            state = active_state()
+            first_plan = auto.prepare_cycle(
+                state, archive_path=archive, ledger_path=ledger,
+                global_lock_path=lock, now=NOW,
+            )
+            first_attempt = auto.claim_attempt(
+                state, first_plan, github_run_id="420000008", now=NOW,
+            )
+            auto.record_outcome(
+                state, first_attempt["attempt_id"], outcome="FAILED",
+                reason_code="PROVIDER_DELIVERY_UNCERTAIN", now=NOW,
+            )
+
+            blocked = auto.prepare_cycle(
+                state, archive_path=archive, ledger_path=ledger,
+                global_lock_path=lock, now=NOW + timedelta(minutes=1),
+            )
+            self.assertFalse(blocked["eligible"])
+            self.assertEqual(blocked["status"], "PROVIDER_DELIVERY_UNCERTAIN_MANUAL_RECOVERY_REQUIRED")
+
+            stale_unlock_time = NOW - timedelta(minutes=1)
+            lock.write_text(
+                json.dumps(make_unlocked_state(initial_lock_state(), stamp=stale_unlock_time.isoformat())),
+                encoding="utf-8",
+            )
+            stale_unlock_plan = auto.prepare_cycle(
+                state, archive_path=archive, ledger_path=ledger,
+                global_lock_path=lock, now=NOW + timedelta(minutes=1, seconds=30),
+            )
+            self.assertFalse(stale_unlock_plan["eligible"])
+            self.assertEqual(
+                stale_unlock_plan["status"],
+                "PROVIDER_DELIVERY_UNCERTAIN_MANUAL_RECOVERY_REQUIRED",
+            )
+
+            unlock_time = NOW + timedelta(minutes=2)
+            lock.write_text(
+                json.dumps(make_unlocked_state(initial_lock_state(), stamp=unlock_time.isoformat())),
+                encoding="utf-8",
+            )
+            retry_plan = auto.prepare_cycle(
+                state, archive_path=archive, ledger_path=ledger,
+                global_lock_path=lock, now=NOW + timedelta(minutes=3),
+            )
+            self.assertTrue(retry_plan["eligible"])
+            self.assertTrue(retry_plan["retryable"])
+            self.assertTrue(retry_plan["manual_recovery_confirmed"])
+            retry_attempt = auto.claim_attempt(
+                state, retry_plan, github_run_id="420000009",
+                now=NOW + timedelta(minutes=3),
+            )
+            self.assertEqual(retry_attempt["target_date"], first_attempt["target_date"])
+            self.assertNotEqual(retry_attempt["attempt_id"], first_attempt["attempt_id"])
+            auto.validate_state(state)
+
+    def test_http_402_429_rejection_is_not_retryable_even_after_manual_unlock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root / "archive.json"
+            ledger = root / "ledger.json"
+            lock = root / "lock.json"
+            archive.write_text(json.dumps({"draws": synthetic_rows(90)}), encoding="utf-8")
+            ledger.write_text(
+                json.dumps({"schema_version": 1, "purpose": "test", "entries": []}),
+                encoding="utf-8",
+            )
+            lock.write_text(json.dumps(initial_lock_state()), encoding="utf-8")
+            state = active_state()
+            plan = auto.prepare_cycle(
+                state, archive_path=archive, ledger_path=ledger,
+                global_lock_path=lock, now=NOW,
+            )
+            attempt = auto.claim_attempt(
+                state, plan, github_run_id="420000011", now=NOW,
+            )
+            auto.record_outcome(
+                state, attempt["attempt_id"], outcome="FAILED",
+                reason_code="PROVIDER_HTTP_REJECTION_NO_RETRY", now=NOW,
+            )
+
+            later_unlock = NOW + timedelta(minutes=1)
+            lock.write_text(
+                json.dumps(make_unlocked_state(initial_lock_state(), stamp=later_unlock.isoformat())),
+                encoding="utf-8",
+            )
+            blocked = auto.prepare_cycle(
+                state, archive_path=archive, ledger_path=ledger,
+                global_lock_path=lock, now=NOW + timedelta(minutes=2),
+            )
+            self.assertFalse(blocked["eligible"])
+            self.assertEqual(blocked["status"], "PROVIDER_HTTP_REJECTION_NO_RETRY")
 
     def test_new_target_cannot_skip_a_previous_proven_no_send_target(self):
         with tempfile.TemporaryDirectory() as directory:
