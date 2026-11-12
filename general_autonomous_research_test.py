@@ -247,7 +247,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
                     reason_code="WORKFLOW_FAILED", now=NOW,
                 )
 
-    def test_retryable_system_failures_allow_same_target_retries_with_existing_cap(self):
+    def test_proven_no_send_failures_allow_same_target_retries_with_existing_cap(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             archive = root / "archive.json"
@@ -267,7 +267,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
             previous = auto.claim_attempt(state, plan, github_run_id="420000001", now=NOW)
             auto.record_outcome(
                 state, previous["attempt_id"], outcome="FAILED",
-                reason_code="WORKFLOW_FAILED", now=NOW,
+                reason_code="NO_PROVIDER_REQUEST_SENT", now=NOW,
             )
 
             for number in range(2, 4):
@@ -285,7 +285,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
                 self.assertNotEqual(previous["attempt_id"], current["attempt_id"])
                 auto.record_outcome(
                     state, current["attempt_id"], outcome="FAILED",
-                    reason_code=("NO_PROVIDER_REQUEST_SENT" if number % 2 else "WORKFLOW_FAILED"),
+                    reason_code="NO_PROVIDER_REQUEST_SENT",
                     now=at,
                 )
                 previous = current
@@ -298,6 +298,43 @@ class AutonomousResearchStateTests(unittest.TestCase):
             )
             self.assertFalse(blocked["eligible"])
             self.assertEqual(blocked["status"], "TARGET_RETRY_LIMIT_REACHED")
+
+    def test_workflow_failed_after_provider_delivery_is_not_automatically_retried(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root / "archive.json"
+            ledger = root / "ledger.json"
+            lock = root / "lock.json"
+            archive.write_text(json.dumps({"draws": synthetic_rows(90)}), encoding="utf-8")
+            ledger.write_text(
+                json.dumps({"schema_version": 1, "purpose": "test", "entries": []}),
+                encoding="utf-8",
+            )
+            lock.write_text(json.dumps(initial_lock_state()), encoding="utf-8")
+            state = active_state()
+            plan = auto.prepare_cycle(
+                state, archive_path=archive, ledger_path=ledger,
+                global_lock_path=lock, now=NOW,
+            )
+            attempt = auto.claim_attempt(
+                state, plan, github_run_id="420000012", now=NOW,
+            )
+            auto.record_outcome(
+                state, attempt["attempt_id"], outcome="FAILED",
+                reason_code="WORKFLOW_FAILED", now=NOW,
+            )
+
+            later_unlock = NOW + timedelta(minutes=1)
+            lock.write_text(
+                json.dumps(make_unlocked_state(initial_lock_state(), stamp=later_unlock.isoformat())),
+                encoding="utf-8",
+            )
+            blocked = auto.prepare_cycle(
+                state, archive_path=archive, ledger_path=ledger,
+                global_lock_path=lock, now=NOW + timedelta(minutes=2),
+            )
+            self.assertFalse(blocked["eligible"])
+            self.assertEqual(blocked["status"], "WORKFLOW_FAILED_NO_AUTOMATIC_RETRY")
 
     def test_failed_target_with_existing_sealed_claim_retries_using_fresh_holdouts(self):
         with tempfile.TemporaryDirectory() as directory:
