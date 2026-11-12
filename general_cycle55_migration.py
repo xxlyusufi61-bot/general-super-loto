@@ -234,54 +234,53 @@ class GitHubActionsWorkflowClient:
             raise MigrationGateError("Workflow has an unknown or unsupported state.")
         return value
 
-    def _scheduled_runs(self) -> list[dict[str, Any]]:
+    def _workflow_runs(self) -> list[dict[str, Any]]:
+        """List every event type for this workflow; manual runs can also be live."""
         runs: list[dict[str, Any]] = []
         seen_ids: set[int] = set()
         for page in range(1, MAX_RUN_PAGES + 1):
-            query = urllib.parse.urlencode(
-                {"event": "schedule", "per_page": 100, "page": page}
-            )
+            query = urllib.parse.urlencode({"per_page": 100, "page": page})
             value = self._request("GET", self.base + "/runs?" + query)
             page_runs = value.get("workflow_runs")
             if not isinstance(page_runs, list) or len(page_runs) > 100:
-                raise MigrationGateError("Scheduled workflow run listing is malformed.")
+                raise MigrationGateError("Workflow run listing is malformed.")
             for item in page_runs:
                 if not isinstance(item, dict):
-                    raise MigrationGateError("Scheduled workflow run record is malformed.")
+                    raise MigrationGateError("Workflow run record is malformed.")
                 run_id = item.get("id")
                 if type(run_id) is not int or run_id < 1 or run_id in seen_ids:
-                    raise MigrationGateError("Scheduled workflow run identity is invalid or duplicated.")
-                if item.get("event") != "schedule":
-                    raise MigrationGateError("Run listing returned a non-schedule event.")
-                if not isinstance(item.get("status"), str):
-                    raise MigrationGateError("Scheduled workflow run status is missing.")
+                    raise MigrationGateError("Workflow run identity is invalid or duplicated.")
+                if not isinstance(item.get("event"), str) or not item["event"]:
+                    raise MigrationGateError("Workflow run event is missing.")
+                if not isinstance(item.get("status"), str) or not item["status"]:
+                    raise MigrationGateError("Workflow run status is missing.")
                 seen_ids.add(run_id)
                 runs.append(item)
             if len(page_runs) < 100:
                 return runs
-        raise MigrationGateError("Scheduled run history exceeded the pagination safety limit.")
+        raise MigrationGateError("Workflow run history exceeded the pagination safety limit.")
 
     def status(self) -> dict[str, Any]:
         workflow = self._workflow()
-        runs = self._scheduled_runs()
+        runs = self._workflow_runs()
         active = [
-            {"run_id": item["id"], "status": item["status"]}
+            {"run_id": item["id"], "event": item["event"], "status": item["status"]}
             for item in runs
             if item["status"] != "completed"
         ]
         state = workflow["state"]
         if state == "disabled_manually":
-            result = "SCHEDULE_PAUSED_READY" if not active else "SCHEDULE_PAUSED_DRAINING"
+            result = "WORKFLOW_PAUSED_READY" if not active else "WORKFLOW_PAUSED_DRAINING"
         elif state == "active":
-            result = "SCHEDULE_ACTIVE"
+            result = "WORKFLOW_ACTIVE"
         else:
-            result = "SCHEDULE_DISABLED_BY_OTHER_CAUSE"
+            result = "WORKFLOW_DISABLED_BY_OTHER_CAUSE"
         return {
             "status": result,
             "workflow_state": state,
-            "scheduled_run_count": len(runs),
-            "active_scheduled_run_count": len(active),
-            "active_scheduled_runs": active,
+            "workflow_run_count": len(runs),
+            "active_workflow_run_count": len(active),
+            "active_workflow_runs": active,
             "workflow_path": WORKFLOW_FILE,
             "runs_cancelled": 0,
         }
@@ -308,7 +307,7 @@ class GitHubActionsWorkflowClient:
         first = self.status()
         if first["workflow_state"] != "disabled_manually":
             raise MigrationGateError("Research workflow is not manually disabled.")
-        if first["active_scheduled_run_count"] != 0:
+        if first["active_workflow_run_count"] != 0:
             raise MigrationGateError(
                 "Scheduled runs are still active; wait for them to complete. No run was cancelled."
             )
@@ -317,7 +316,7 @@ class GitHubActionsWorkflowClient:
         result = self.status()
         if result["workflow_state"] != "disabled_manually":
             raise MigrationGateError("Research workflow was re-enabled during the drain quiet window.")
-        if result["active_scheduled_run_count"] != 0:
+        if result["active_workflow_run_count"] != 0:
             raise MigrationGateError(
                 "A scheduled run appeared during the drain quiet window; migration is blocked."
             )
