@@ -93,22 +93,26 @@ def _verify_provenance(
         raise Cycle55RecoveryError(label + " provenance does not match the pinned Git history.")
 
 
-def recover_cycle55_state(
+def _recover_cycle55_state_from_verified_documents(
     current_state: dict[str, Any],
     snapshot_source_state: dict[str, Any],
     *,
     recorded_at_utc: str,
-    current_state_provenance: dict[str, Any] | None = None,
-    snapshot_source_provenance: dict[str, Any] | None = None,
+    current_state_provenance: dict[str, Any],
+    snapshot_source_provenance: dict[str, Any],
 ) -> dict[str, Any]:
-    """Build a v3 state preview without mutating either input document."""
+    """Internal transformation; callers must first verify exact raw Git blob bytes.
+
+    The supported entry point is build_preview_files(), which pins both source
+    files to their manifest SHA-256 and Git blob SHA-1 before calling this helper.
+    """
     _verify_provenance(
-        CURRENT_STATE_PROVENANCE if current_state_provenance is None else current_state_provenance,
+        current_state_provenance,
         CURRENT_STATE_PROVENANCE,
         "Current state",
     )
     _verify_provenance(
-        SNAPSHOT_SOURCE_PROVENANCE if snapshot_source_provenance is None else snapshot_source_provenance,
+        snapshot_source_provenance,
         SNAPSHOT_SOURCE_PROVENANCE,
         "Generation 51 snapshot source",
     )
@@ -275,8 +279,12 @@ def build_preview_files(
 
     current = _strict_json(current_raw, "Current state")
     source = _strict_json(source_raw, "Generation 51 snapshot source")
-    recovered = recover_cycle55_state(
-        current, source, recorded_at_utc=recorded_at_utc
+    recovered = _recover_cycle55_state_from_verified_documents(
+        current,
+        source,
+        recorded_at_utc=recorded_at_utc,
+        current_state_provenance=CURRENT_STATE_PROVENANCE,
+        snapshot_source_provenance=SNAPSHOT_SOURCE_PROVENANCE,
     )
     output.parent.mkdir(parents=True, exist_ok=True)
     encoded = (
@@ -291,7 +299,23 @@ def build_preview_files(
             stream.write(encoded)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temp_name, output)
+        try:
+            # Publish the completed temp file atomically without replacing an
+            # output created after the initial exists check.
+            os.link(temp_name, output)
+        except FileExistsError:
+            raise Cycle55RecoveryError(
+                "Preview output appeared during creation; refusing to overwrite it."
+            ) from None
+        Path(temp_name).unlink()
+        temp_name = None
+    except Cycle55RecoveryError:
+        if temp_name:
+            try:
+                Path(temp_name).unlink(missing_ok=True)
+            except OSError:
+                pass
+        raise
     except OSError:
         if temp_name:
             try:
