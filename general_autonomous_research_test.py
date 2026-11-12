@@ -604,6 +604,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
     def test_legacy_state_schema_is_upgraded_in_memory_without_losing_history(self):
         state = auto.initial_state()
         state.pop("target_queue")
+        state.pop("recovery_history")
         state["schema_version"] = 1
         state["attempts"].append({
             "attempt_id": "e" * 64,
