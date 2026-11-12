@@ -164,7 +164,7 @@ class GitHubActionsWorkflowClient:
         )
 
     def _request(self, method: str, path: str) -> dict[str, Any]:
-        if method not in {"GET", "PATCH"}:
+        if method not in {"GET", "PUT"}:
             raise MigrationGateError("Unsupported GitHub Actions API method.")
         if not isinstance(path, str) or not path.startswith(self.base):
             raise MigrationGateError("GitHub Actions API path is outside the fixed workflow scope.")
@@ -198,7 +198,7 @@ class GitHubActionsWorkflowClient:
 
         if not isinstance(raw, bytes) or len(raw) > MAX_RESPONSE_BYTES:
             raise MigrationGateError("GitHub Actions API response is malformed or oversized.")
-        if method == "PATCH" and status == 204 and not raw:
+        if method == "PUT" and status == 204 and not raw:
             return {}
         if status != 200:
             raise MigrationGateError("GitHub Actions API returned an unexpected HTTP status.")
@@ -278,7 +278,7 @@ class GitHubActionsWorkflowClient:
         workflow = self._workflow()
         state = workflow["state"]
         if state == "active":
-            self._request("PATCH", self.base + "/disable")
+            self._request("PUT", self.base + "/disable")
         elif state != "disabled_manually":
             raise MigrationGateError(
                 "Workflow is disabled for a cause other than manual pause; refusing to change it."
