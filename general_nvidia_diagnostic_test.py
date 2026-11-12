@@ -200,8 +200,8 @@ class SingleRequestDiagnosticTests(unittest.TestCase):
         self.assertNotIn(self.target, sent_dates)
 
         self.assertEqual(result["status"], "RESPONSE_RECEIVED")
-        self.assertEqual(result["response_mode"], "json")
-        self.assertFalse(result["response_streaming"])
+        self.assertEqual(result["response_mode"], "sse")
+        self.assertTrue(result["response_streaming"])
         self.assertEqual(result["provider_requests_attempted"], 1)
         self.assertEqual(result["automatic_retries"], 0)
         self.assertEqual(result["max_tokens_requested"], 8192)
@@ -285,24 +285,36 @@ class SingleRequestDiagnosticTests(unittest.TestCase):
         self.assertIsNone(caught.exception.stream_event_count)
         self.assertIsNone(caught.exception.stream_completed)
 
-    def test_call_model_uses_openai_sdk_json_nonstreaming_and_hard_stops_after_one_request(self):
+    def test_call_model_uses_openai_sdk_streaming_and_hard_stops_after_one_request(self):
         env = self._environment() | {
             "GENERAL_ALLOW_NVIDIA_CALL": "true",
             "GENERAL_NVIDIA_FREE_USAGE_VERIFIED": "true",
             "NVIDIA_API_KEY": "test-secret",
         }
-        completion = MagicMock()
-        completion.model_dump.return_value = {
-            "choices": [{
-                "message": {
-                    "content": "synthetic final response",
-                    "reasoning_content": "this must never be treated as final content",
-                },
-                "finish_reason": "stop",
-            }],
-            "usage": {"total_tokens": 2},
-        }
-        completion._request_id = "diagnostic-synthetic-request"
+        completion = SimpleNamespace(
+            _request_id="diagnostic-synthetic-request",
+            chunks=[
+                SimpleNamespace(
+                    choices=[SimpleNamespace(
+                        delta=SimpleNamespace(
+                            content="synthetic final response",
+                            reasoning_content="this must never be treated as final content",
+                        ),
+                        finish_reason=None,
+                    )],
+                    usage=None,
+                ),
+                SimpleNamespace(
+                    choices=[SimpleNamespace(
+                        delta=SimpleNamespace(content=None),
+                        finish_reason="stop",
+                    )],
+                    usage={"total_tokens": 2},
+                ),
+            ],
+            close=MagicMock(),
+        )
+        completion.__iter__ = lambda self=completion: iter(self.chunks)
         client = MagicMock()
         client.chat.completions.create.return_value = completion
         saved_observations = []
@@ -327,17 +339,19 @@ class SingleRequestDiagnosticTests(unittest.TestCase):
             client.chat.completions.create.assert_called_once()
             sent = client.chat.completions.create.call_args.kwargs
             self.assertEqual(sent["max_tokens"], research.DIAGNOSTIC_MAX_COMPLETION_TOKENS)
-            self.assertIs(sent["stream"], False)
+            self.assertIs(sent["stream"], True)
             self.assertEqual(sent["reasoning_effort"] if "reasoning_effort" in sent else sent["extra_body"]["reasoning_effort"], "low")
             client.close.assert_called_once()
             self.assertEqual(len(saved_observations), 1)
             observation = saved_observations[0]
-            self.assertEqual(observation["response_mode"], "json")
+            self.assertEqual(observation["response_mode"], "sse")
             self.assertEqual(observation["transport"], "openai-python-sdk")
-            self.assertFalse(observation["stream_requested"])
+            self.assertTrue(observation["stream_requested"])
             self.assertEqual(observation["sdk_max_retries"], 0)
+            self.assertEqual(observation["automatic_retries"], 0)
             self.assertTrue(observation["response_complete"])
-            self.assertIsNone(observation["stream_completed"])
+            self.assertTrue(observation["stream_completed"])
+            self.assertEqual(observation["stream_finish_reason"], "stop")
             self.assertEqual(observation["model_finish_reason"], "stop")
             self.assertEqual(
                 observation["token_usage_returned_by_provider"]["total_tokens"], 2
@@ -393,7 +407,9 @@ class SingleRequestDiagnosticTests(unittest.TestCase):
 
         self.assertEqual(len(saved), 1)
         observation = saved[0]
-        self.assertEqual(observation["response_mode"], "json")
+        self.assertEqual(observation["response_mode"], "sse")
+        self.assertTrue(observation["stream_requested"])
+        self.assertFalse(observation["stream_completed"])
         self.assertEqual(
             observation["request_timeout_seconds"],
             research.DIAGNOSTIC_REQUEST_TIMEOUT_SECONDS,
