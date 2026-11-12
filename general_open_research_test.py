@@ -991,13 +991,13 @@ class NvidiaUsageObservationTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "HTTP 402"):
                 research.call_model(
                     [{"role": "user", "content": "insufficient credit test"}],
-                    request_label="reverse",
+                    request_label="forward",
                 )
 
         client.chat.completions.create.assert_called_once()
         self.assertEqual(saved[0]["http_status"], 402)
         self.assertEqual(saved[0]["failure_stage"], "provider_http_error")
-        self.assertTrue(Path("/tmp/general_nvidia_api_no_retry_reverse").is_file())
+        self.assertTrue(Path("/tmp/general_nvidia_api_no_retry_forward").is_file())
 
     def test_json_response_rejects_reasoning_only_content(self):
         client = self.client_with_response(
