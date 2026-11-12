@@ -418,6 +418,21 @@ class AutonomousResearchStateTests(unittest.TestCase):
             self.assertFalse(blocked["eligible"])
             self.assertEqual(blocked["status"], "PROVIDER_DELIVERY_UNCERTAIN_MANUAL_RECOVERY_REQUIRED")
 
+            stale_unlock_time = NOW - timedelta(minutes=1)
+            lock.write_text(
+                json.dumps(make_unlocked_state(initial_lock_state(), stamp=stale_unlock_time.isoformat())),
+                encoding="utf-8",
+            )
+            stale_unlock_plan = auto.prepare_cycle(
+                state, archive_path=archive, ledger_path=ledger,
+                global_lock_path=lock, now=NOW + timedelta(minutes=1, seconds=30),
+            )
+            self.assertFalse(stale_unlock_plan["eligible"])
+            self.assertEqual(
+                stale_unlock_plan["status"],
+                "PROVIDER_DELIVERY_UNCERTAIN_MANUAL_RECOVERY_REQUIRED",
+            )
+
             unlock_time = NOW + timedelta(minutes=2)
             lock.write_text(
                 json.dumps(make_unlocked_state(initial_lock_state(), stamp=unlock_time.isoformat())),
@@ -437,6 +452,43 @@ class AutonomousResearchStateTests(unittest.TestCase):
             self.assertEqual(retry_attempt["target_date"], first_attempt["target_date"])
             self.assertNotEqual(retry_attempt["attempt_id"], first_attempt["attempt_id"])
             auto.validate_state(state)
+
+    def test_http_402_429_rejection_is_not_retryable_even_after_manual_unlock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root / "archive.json"
+            ledger = root / "ledger.json"
+            lock = root / "lock.json"
+            archive.write_text(json.dumps({"draws": synthetic_rows(90)}), encoding="utf-8")
+            ledger.write_text(
+                json.dumps({"schema_version": 1, "purpose": "test", "entries": []}),
+                encoding="utf-8",
+            )
+            lock.write_text(json.dumps(initial_lock_state()), encoding="utf-8")
+            state = active_state()
+            plan = auto.prepare_cycle(
+                state, archive_path=archive, ledger_path=ledger,
+                global_lock_path=lock, now=NOW,
+            )
+            attempt = auto.claim_attempt(
+                state, plan, github_run_id="420000011", now=NOW,
+            )
+            auto.record_outcome(
+                state, attempt["attempt_id"], outcome="FAILED",
+                reason_code="PROVIDER_HTTP_REJECTION_NO_RETRY", now=NOW,
+            )
+
+            later_unlock = NOW + timedelta(minutes=1)
+            lock.write_text(
+                json.dumps(make_unlocked_state(initial_lock_state(), stamp=later_unlock.isoformat())),
+                encoding="utf-8",
+            )
+            blocked = auto.prepare_cycle(
+                state, archive_path=archive, ledger_path=ledger,
+                global_lock_path=lock, now=NOW + timedelta(minutes=2),
+            )
+            self.assertFalse(blocked["eligible"])
+            self.assertEqual(blocked["status"], "PROVIDER_HTTP_REJECTION_NO_RETRY")
 
     def test_new_target_cannot_skip_a_previous_proven_no_send_target(self):
         with tempfile.TemporaryDirectory() as directory:
