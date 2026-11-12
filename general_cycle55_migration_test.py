@@ -21,28 +21,32 @@ def _synthetic_source(generation, commit_sha):
         "events": [],
         "target_queue": {},
     })
-    blob_sha = migration._git_blob_sha(state_raw)
     manifest = state_contract.initial_manifest()
-    manifest["generation"] = generation - 1
-    manifest["status"] = "BOOTSTRAP_ONLY"
+    manifest["generation"] = generation
+    manifest["status"] = "ACTIVE"
     manifest["updated_at_utc"] = "2026-11-01T00:00:00+00:00"
-    entry = state_contract.build_manifest_entry(
-        "autonomous_research_state",
-        state_raw.decode("utf-8"),
-        blob_sha,
-        generation,
-        "2026-11-01T00:00:00+00:00",
-    )
-    manifest = state_contract.apply_manifest_update(
-        manifest,
-        "autonomous_research_state",
-        entry,
-        generation - 1,
-    )
+    manifest["entries"] = {}
+    objects = {
+        "archive": _json_bytes({"test_placeholder": "archive"}).decode("utf-8"),
+        "evaluation_ledger": _json_bytes({"test_placeholder": "evaluation_ledger"}).decode("utf-8"),
+        "autonomous_research_state": state_raw.decode("utf-8"),
+        "research_memory": _json_bytes({"test_placeholder": "research_memory"}).decode("utf-8"),
+    }
+    for key, content in objects.items():
+        entry_generation = generation if key == "autonomous_research_state" else 1
+        blob_sha = state_contract.git_blob_sha(content)
+        manifest["entries"][key] = state_contract.build_manifest_entry(
+            key,
+            content,
+            blob_sha,
+            entry_generation,
+            "2026-11-01T00:00:00+00:00",
+        )
+    manifest = state_contract.validate_manifest(manifest)
     return _json_bytes(manifest), state_raw, {
         "commit_sha": commit_sha,
         "generation": generation,
-        "blob_sha": blob_sha,
+        "blob_sha": migration._git_blob_sha(state_raw),
         "content_sha256": hashlib.sha256(state_raw).hexdigest(),
     }
 
@@ -277,6 +281,22 @@ class PinnedSourceVerificationTests(unittest.TestCase):
     def test_duplicate_manifest_keys_are_rejected(self):
         with self.assertRaisesRegex(migration.MigrationGateError, "duplicate"):
             migration._strict_json_bytes(b'{"schema_version":1,"schema_version":1}', "test")
+
+    def test_manifest_missing_a_runtime_object_is_rejected(self):
+        manifest_raw, state_raw, pin = _synthetic_source(
+            51,
+            migration.PINNED_STATE_PROVENANCE[51]["commit_sha"],
+        )
+        manifest = json.loads(manifest_raw)
+        manifest["entries"].pop("research_memory")
+        with patch.dict(migration.PINNED_STATE_PROVENANCE, {51: pin}):
+            with self.assertRaisesRegex(migration.MigrationGateError, "exact four"):
+                migration.verify_pinned_state_source(
+                    _json_bytes(manifest),
+                    state_raw,
+                    generation=51,
+                    commit_sha=pin["commit_sha"],
+                )
 
     def test_wrong_raw_schema_is_rejected(self):
         state_raw = _json_bytes({"schema_version": 3})
