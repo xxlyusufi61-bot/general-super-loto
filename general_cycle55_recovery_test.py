@@ -347,6 +347,16 @@ class Cycle55RecoveryTests(unittest.TestCase):
                 self.assertEqual(current_path.read_bytes(), current_raw)
                 self.assertEqual(source_path.read_bytes(), source_raw)
 
+                tampered_source = root / "tampered-generation-51.json"
+                tampered_source.write_bytes(source_raw + b" ")
+                with self.assertRaisesRegex(recovery.Cycle55RecoveryError, "content SHA-256"):
+                    recovery.build_preview_files(
+                        current_path,
+                        tampered_source,
+                        root / "tampered-preview.json",
+                        recorded_at_utc=STAMP,
+                    )
+
                 with self.assertRaisesRegex(recovery.Cycle55RecoveryError, "must not overwrite"):
                     recovery.build_preview_files(
                         current_path,
