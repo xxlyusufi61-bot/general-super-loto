@@ -23,6 +23,7 @@ PROJECT = "GENERAL Super Loto"
 RESEARCH_SCOPE_START = date(2020, 8, 2)
 AUTO_CONFIRMATION_PHRASE = "I_AUTHORIZE_AUTONOMOUS_FREE_ONLY_NVIDIA_RESEARCH_NO_BILLING"
 MAX_AUTHORIZATION_DAYS = 30
+MAX_ATTEMPTS_PER_TARGET = 3
 RETRYABLE_FAILURE_REASON_CODES = {
     "NO_PROVIDER_REQUEST_SENT",
     "WORKFLOW_FAILED",
@@ -185,6 +186,11 @@ def validate_state(value: Any) -> dict[str, Any]:
             raise AutonomousResearchError("GitHub run identifier is invalid.")
     if attempt_dates != sorted(attempt_dates):
         raise AutonomousResearchError("Attempt targets must remain chronological.")
+    target_counts: dict[str, int] = {}
+    for target in attempt_dates:
+        target_counts[target] = target_counts.get(target, 0) + 1
+    if any(count > MAX_ATTEMPTS_PER_TARGET for count in target_counts.values()):
+        raise AutonomousResearchError("A target exceeded the existing three-attempt limit.")
     terminal_attempts: set[str] = set()
     required_event = {"attempt_id", "outcome", "recorded_at_utc", "reason_code"}
     for event in events:
@@ -401,6 +407,14 @@ def prepare_cycle(
                     reason_code in RETRYABLE_FAILURE_REASON_CODES
                     and (reason_code != "PROVIDER_DELIVERY_UNCERTAIN" or recovered_after_uncertain_delivery)
                 ):
+                    if same_target_attempts >= MAX_ATTEMPTS_PER_TARGET:
+                        return {
+                            "status": "TARGET_RETRY_LIMIT_REACHED",
+                            "eligible": False,
+                            "target_date": target_date,
+                            "archive_sha256": archive["archive_sha256"],
+                            **status,
+                        }
                     retryable = True
                     retry_number = same_target_attempts + 1
                 else:
@@ -435,11 +449,17 @@ def prepare_cycle(
                 }
                 if last_event["reason_code"] == "PROVIDER_DELIVERY_UNCERTAIN":
                     previous_retry_is_ready = manual_recovery_confirmed(lock, last_event)
-                blocking_status = (
-                    "PREVIOUS_TARGET_RETRY_REQUIRED"
-                    if previous_retry_is_ready
-                    else "PREVIOUS_TARGET_MANUAL_RECOVERY_REQUIRED"
+                previous_attempt_count = sum(
+                    1 for item in attempts if item["target_date"] == last_target
                 )
+                if previous_retry_is_ready and previous_attempt_count >= MAX_ATTEMPTS_PER_TARGET:
+                    blocking_status = "PREVIOUS_TARGET_RETRY_LIMIT_REACHED"
+                else:
+                    blocking_status = (
+                        "PREVIOUS_TARGET_RETRY_REQUIRED"
+                        if previous_retry_is_ready
+                        else "PREVIOUS_TARGET_MANUAL_RECOVERY_REQUIRED"
+                    )
                 return {
                     "status": blocking_status,
                     "eligible": False,
@@ -566,6 +586,8 @@ def claim_attempt(
                 raise AutonomousResearchError(
                     "Uncertain provider delivery requires a manual unlock after the failed attempt."
                 )
+            if previous_count >= MAX_ATTEMPTS_PER_TARGET:
+                raise AutonomousResearchError("The existing three-attempt target limit is exhausted.")
             attempt_number = previous_count + 1
         else:
             if last_event is None:
