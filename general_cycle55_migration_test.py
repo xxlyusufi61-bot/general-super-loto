@@ -71,15 +71,15 @@ class FakeActionsAPI:
         if path.startswith(base + "/runs?") and method == "GET":
             query = parse_qs(urlsplit(path).query)
             page = int(query["page"][0])
-            if query.get("event") != ["schedule"] or query.get("per_page") != ["100"]:
-                raise AssertionError("run query must be narrowly scoped and paginated")
+            if "event" in query or query.get("per_page") != ["100"]:
+                raise AssertionError("run query must include all event types and paginate")
             items = self.pages[page - 1] if page <= len(self.pages) else []
             return 200, _json_bytes({"total_count": sum(map(len, self.pages)), "workflow_runs": items})
         raise AssertionError("unexpected request: " + method + " " + path)
 
 
-def _run(run_id, status="completed"):
-    return {"id": run_id, "event": "schedule", "status": status}
+def _run(run_id, status="completed", event="schedule"):
+    return {"id": run_id, "event": event, "status": status}
 
 
 class WorkflowPauseGateTests(unittest.TestCase):
@@ -90,34 +90,34 @@ class WorkflowPauseGateTests(unittest.TestCase):
             request_func=api.request,
         )
 
-    def test_pause_disables_schedule_but_never_cancels_existing_runs(self):
+    def test_pause_disables_workflow_but_never_cancels_existing_runs(self):
         api = FakeActionsAPI(
             state="active",
             pages=[[_run(10, "queued"), _run(11, "in_progress")]],
         )
         client = self.make_client(api)
         result = client.pause()
-        self.assertEqual(result["status"], "SCHEDULE_PAUSED_DRAINING")
-        self.assertEqual(result["active_scheduled_run_count"], 2)
+        self.assertEqual(result["status"], "WORKFLOW_PAUSED_DRAINING")
+        self.assertEqual(result["active_workflow_run_count"], 2)
         self.assertEqual(result["runs_cancelled"], 0)
         self.assertEqual([call[0] for call in api.calls].count("PUT"), 1)
         self.assertFalse(any("cancel" in path for _, path in api.calls))
         with self.assertRaisesRegex(migration.MigrationGateError, "still active"):
             client.assert_ready()
 
-    def test_assert_ready_succeeds_only_after_all_scheduled_runs_complete(self):
+    def test_assert_ready_succeeds_only_after_all_workflow_runs_complete(self):
         api = FakeActionsAPI(
             state="disabled_manually",
             pages=[[_run(10, "completed"), _run(11, "completed")]],
         )
         result = self.make_client(api).assert_ready()
         self.assertEqual(result["status"], "MIGRATION_GATE_READY")
-        self.assertEqual(result["active_scheduled_run_count"], 0)
+        self.assertEqual(result["active_workflow_run_count"], 0)
 
     def test_already_manually_disabled_workflow_is_not_disabled_again(self):
         api = FakeActionsAPI(state="disabled_manually", pages=[[]])
         result = self.make_client(api).pause()
-        self.assertEqual(result["status"], "SCHEDULE_PAUSED_READY")
+        self.assertEqual(result["status"], "WORKFLOW_PAUSED_READY")
         self.assertEqual([method for method, _ in api.calls].count("PUT"), 0)
 
     def test_workflow_disabled_for_other_reason_is_not_reclassified_or_changed(self):
@@ -131,15 +131,15 @@ class WorkflowPauseGateTests(unittest.TestCase):
         with self.assertRaisesRegex(migration.MigrationGateError, "unknown or unsupported"):
             self.make_client(api).status()
 
-    def test_pagination_scans_every_schedule_run_page(self):
+    def test_pagination_scans_every_workflow_run_page(self):
         first = [_run(index + 1, "completed") for index in range(100)]
         second = [_run(101, "queued")]
         api = FakeActionsAPI(state="disabled_manually", pages=[first, second])
         result = self.make_client(api).status()
         run_calls = [path for method, path in api.calls if method == "GET" and "/runs?" in path]
         self.assertEqual(len(run_calls), 2)
-        self.assertEqual(result["scheduled_run_count"], 101)
-        self.assertEqual(result["active_scheduled_run_count"], 1)
+        self.assertEqual(result["workflow_run_count"], 101)
+        self.assertEqual(result["active_workflow_run_count"], 1)
 
     def test_duplicate_run_ids_fail_closed(self):
         api = FakeActionsAPI(
@@ -149,12 +149,23 @@ class WorkflowPauseGateTests(unittest.TestCase):
         with self.assertRaisesRegex(migration.MigrationGateError, "duplicated"):
             self.make_client(api).status()
 
-    def test_non_schedule_run_in_filtered_result_fails_closed(self):
+    def test_manual_dispatch_run_is_included_in_drain_status(self):
         api = FakeActionsAPI(
             state="disabled_manually",
-            pages=[[{"id": 8, "event": "workflow_dispatch", "status": "completed"}]],
+            pages=[[_run(8, "in_progress", event="workflow_dispatch")]],
         )
-        with self.assertRaisesRegex(migration.MigrationGateError, "non-schedule"):
+        result = self.make_client(api).status()
+        self.assertEqual(result["active_workflow_run_count"], 1)
+        self.assertEqual(result["active_workflow_runs"][0]["event"], "workflow_dispatch")
+        with self.assertRaisesRegex(migration.MigrationGateError, "still active"):
+            self.make_client(api).assert_ready()
+
+    def test_missing_run_event_fails_closed(self):
+        api = FakeActionsAPI(
+            state="disabled_manually",
+            pages=[[{"id": 8, "status": "completed"}]],
+        )
+        with self.assertRaisesRegex(migration.MigrationGateError, "event is missing"):
             self.make_client(api).status()
 
     def test_uncertain_pause_is_not_retried_automatically(self):
