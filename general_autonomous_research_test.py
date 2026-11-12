@@ -373,7 +373,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
             )
             auto.record_outcome(
                 state, attempt["attempt_id"], outcome="FAILED",
-                reason_code="WORKFLOW_FAILED", now=NOW,
+                reason_code="NO_PROVIDER_REQUEST_SENT", now=NOW,
             )
             retry_plan = auto.prepare_cycle(
                 state, archive_path=archive, ledger_path=ledger,
