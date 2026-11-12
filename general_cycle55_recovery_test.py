@@ -42,6 +42,7 @@ def _attempt(target_item, run_id, suffix, claimed_at):
 class Cycle55RecoveryTests(unittest.TestCase):
     def setUp(self):
         self.original_target_hash = recovery.TARGET_ARCHIVE_SHA256
+        self.original_autonomous_target_hash = autonomous.CYCLE55_RECOVERY_ARCHIVE_SHA256
         rows_10 = synthetic_rows(983, recovery.TARGET_DATE)
         rows_12 = rows_10 + synthetic_rows(
             1, "2026-11-12"
@@ -57,6 +58,7 @@ class Cycle55RecoveryTests(unittest.TestCase):
             enqueued_at_utc="2026-11-12T19:17:54.192421+00:00",
         )
         recovery.TARGET_ARCHIVE_SHA256 = self.head_item["archive_sha256"]
+        autonomous.CYCLE55_RECOVERY_ARCHIVE_SHA256 = self.head_item["archive_sha256"]
 
         state = autonomous.initial_state()
         state.pop("recovery_history")
@@ -125,6 +127,7 @@ class Cycle55RecoveryTests(unittest.TestCase):
 
     def tearDown(self):
         recovery.TARGET_ARCHIVE_SHA256 = self.original_target_hash
+        autonomous.CYCLE55_RECOVERY_ARCHIVE_SHA256 = self.original_autonomous_target_hash
 
     def recover(self):
         return recovery.recover_cycle55_state(
