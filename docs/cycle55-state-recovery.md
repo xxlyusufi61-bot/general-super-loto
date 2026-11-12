@@ -51,9 +51,9 @@ The pause action disables the existing
 .github/workflows/general-autonomous-research.yml workflow through GitHub's
 workflow-disable API. This prevents future schedule triggers and also makes
 that research workflow's manual dispatch unavailable while disabled. It does
-not cancel queued or in-progress runs. The controller reports those runs and
-the migration gate refuses to proceed until every schedule-triggered run is
-completed. The preview and publication gates require two zero-active-run
+not cancel queued or in-progress runs. The controller lists every run for that workflow, regardless of whether it
+began from schedule or manual dispatch, and the migration gate refuses to
+proceed until every run is completed. The preview and publication gates require two zero-active-run
 observations separated by a 60-second quiet window. It never cancels a run and
 never treats an uncertain disable result as success.
 
@@ -64,7 +64,7 @@ pause therefore has to be completed and drained before recovery preview or
 publication.
 
 The status action is read-only. Preview requires the research workflow to be
-disabled_manually and every schedule run to be complete. It fetches the exact
+disabled_manually and every run of the research workflow to be complete. It fetches the exact
 raw Generation 51 and Generation 52 files from their pinned Git commits,
 verifies each manifest, Git blob SHA-1, content SHA-256, byte length, and
 schema-v2 source identity, then runs the existing local preview utility. It
