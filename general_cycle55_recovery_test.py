@@ -213,7 +213,7 @@ class Cycle55RecoveryTests(unittest.TestCase):
 
     def test_source_tail_mutation_is_rejected(self):
         source = copy.deepcopy(self.source_state)
-        source["target_queue"]["items"][1]["snapshot_zlib_base64"] = "eJw="
+        source["target_queue"]["items"][1]["enqueued_at_utc"] = "2026-11-12T19:17:55.192421+00:00"
         with self.assertRaisesRegex(recovery.Cycle55RecoveryError, "pending FIFO tail"):
             recovery.recover_cycle55_state(
                 self.current_state, source, recorded_at_utc=STAMP
@@ -243,8 +243,16 @@ class Cycle55RecoveryTests(unittest.TestCase):
             )
 
         source = copy.deepcopy(self.source_state)
-        source["target_queue"]["items"].reverse()
-        with self.assertRaisesRegex(recovery.Cycle55RecoveryError, "FIFO head"):
+        earlier_rows = synthetic_rows(982, "2026-11-08")
+        earlier_item = target_queue._make_item(
+            earlier_rows,
+            source_archive_sha256="a" * 64,
+            enqueued_at_utc="2026-11-10T12:00:00+00:00",
+        )
+        source["target_queue"]["items"].insert(0, earlier_item)
+        with self.assertRaisesRegex(
+            recovery.Cycle55RecoveryError, "Generation 51 does not contain Cycle #55 at the FIFO head"
+        ):
             recovery.recover_cycle55_state(
                 self.current_state, source, recorded_at_utc=STAMP
             )
@@ -253,7 +261,7 @@ class Cycle55RecoveryTests(unittest.TestCase):
         recovered = self.recover()
         broken = copy.deepcopy(recovered)
         broken["recovery_history"][0]["archived_terminal_event"]["reason_code"] = "WORKFLOW_FAILED"
-        with self.assertRaisesRegex(autonomous.AutonomousResearchError, "digest"):
+        with self.assertRaisesRegex(autonomous.AutonomousResearchError, "Archived terminal event"):
             autonomous.validate_state(broken)
         with self.assertRaisesRegex(recovery.Cycle55RecoveryError, "schema v2"):
             recovery.recover_cycle55_state(recovered, self.source_state, recorded_at_utc=STAMP)
