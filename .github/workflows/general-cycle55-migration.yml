@@ -126,9 +126,12 @@ jobs:
           actual_head="$(git rev-parse refs/remotes/origin/general-automation-state)"
           expected_head="0c9e5bbbe0cbafea188f941b0408e068080c1e68"
           if [ "$actual_head" != "$expected_head" ]; then
-            echo "State-store branch moved from pinned Generation 52; refusing preview."
+            echo "State-store branch moved from pinned Generation 52; refusing operation."
             exit 1
           fi
+          git merge-base --is-ancestor 6197bfadb8af22633dcb22c5490d32c9ffbd52c7 "$expected_head"
+          git cat-file -e "6197bfadb8af22633dcb22c5490d32c9ffbd52c7:manifest.json"
+          git cat-file -e "0c9e5bbbe0cbafea188f941b0408e068080c1e68:manifest.json"
           mkdir -p "$RUNNER_TEMP/cycle55-source"
           git show "6197bfadb8af22633dcb22c5490d32c9ffbd52c7:manifest.json" \
             > "$RUNNER_TEMP/cycle55-source/generation-51-manifest.json"
@@ -197,9 +200,12 @@ jobs:
           actual_head="$(git rev-parse refs/remotes/origin/general-automation-state)"
           expected_head="0c9e5bbbe0cbafea188f941b0408e068080c1e68"
           if [ "$actual_head" != "$expected_head" ]; then
-            echo "State-store branch moved from pinned Generation 52; refusing publication."
+            echo "State-store branch moved from pinned Generation 52; refusing operation."
             exit 1
           fi
+          git merge-base --is-ancestor 6197bfadb8af22633dcb22c5490d32c9ffbd52c7 "$expected_head"
+          git cat-file -e "6197bfadb8af22633dcb22c5490d32c9ffbd52c7:manifest.json"
+          git cat-file -e "0c9e5bbbe0cbafea188f941b0408e068080c1e68:manifest.json"
           mkdir -p "$RUNNER_TEMP/cycle55-source"
           git show "6197bfadb8af22633dcb22c5490d32c9ffbd52c7:manifest.json" \
             > "$RUNNER_TEMP/cycle55-source/generation-51-manifest.json"
@@ -235,6 +241,9 @@ jobs:
         run: python3 general_cycle55_migration.py assert-ready
       - name: Publish only the recovered scheduler state with Generation 52 guard
         shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
           cp "$RUNNER_TEMP/cycle55-source/recovery-preview.json" \
@@ -246,6 +255,9 @@ jobs:
             --message "Recover Cycle #55 false terminal completion"
       - name: Read back and verify the Generation 53 recovery publication
         shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/cycle55-readback"
