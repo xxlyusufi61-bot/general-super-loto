@@ -121,8 +121,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git fetch --no-tags origin \
-            refs/heads/general-automation-state:refs/remotes/origin/general-automation-state
+          state_ref="refs/heads/general-automation-state:refs/remotes/origin/general-automation-state"
+          shallow_file="$(git rev-parse --git-path shallow)"
+          if [ -f "$shallow_file" ]; then
+            git fetch --unshallow --no-tags origin "$state_ref"
+          else
+            git fetch --no-tags origin "$state_ref"
+          fi
           actual_head="$(git rev-parse refs/remotes/origin/general-automation-state)"
           expected_head="0c9e5bbbe0cbafea188f941b0408e068080c1e68"
           if [ "$actual_head" != "$expected_head" ]; then
@@ -195,8 +200,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git fetch --no-tags origin \
-            refs/heads/general-automation-state:refs/remotes/origin/general-automation-state
+          state_ref="refs/heads/general-automation-state:refs/remotes/origin/general-automation-state"
+          shallow_file="$(git rev-parse --git-path shallow)"
+          if [ -f "$shallow_file" ]; then
+            git fetch --unshallow --no-tags origin "$state_ref"
+          else
+            git fetch --no-tags origin "$state_ref"
+          fi
           actual_head="$(git rev-parse refs/remotes/origin/general-automation-state)"
           expected_head="0c9e5bbbe0cbafea188f941b0408e068080c1e68"
           if [ "$actual_head" != "$expected_head" ]; then
