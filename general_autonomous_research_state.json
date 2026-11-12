@@ -76,6 +76,12 @@
       "outcome": "FAILED",
       "recorded_at_utc": "2026-11-11T07:44:21.270524+00:00",
       "reason_code": "PROVIDER_DELIVERY_UNCERTAIN"
+    },
+    {
+      "attempt_id": "6892f02f5531ff1e8ca150d1bbe556b7f7ee5f6622cc17479020cb03b4fc6e06",
+      "outcome": "FAILED",
+      "recorded_at_utc": "2026-11-12T07:46:56.797495+00:00",
+      "reason_code": "PROVIDER_DELIVERY_UNCERTAIN"
     }
   ],
   "target_queue": {

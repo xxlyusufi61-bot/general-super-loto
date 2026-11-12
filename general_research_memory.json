@@ -123,6 +123,46 @@
         "archive_rows_copied": false
       },
       "content_sha256": "43936fc488b9da6eac60b7188158eef0e36cbd2280f68c454261a08d4100f5ff"
+    },
+    {
+      "entry_id": 4,
+      "cycle_id": "c959e7dad02dc6ae49561ae7fc3c4327b2f0b35b800e5b8c184f21c42457b5cf",
+      "source": "GENERAL/open-research",
+      "research_epoch": "general-open-research-memory-v2",
+      "direction": "forward",
+      "created_at_utc": "2026-11-12T07:46:56.897807+00:00",
+      "target_date": "2026-11-10",
+      "archive_sha256": "ae7b79e4922d4178a86c7d7880af3e4758d1a5e7f78d6cc3d2595fbb4fd66596",
+      "runner_version": "0.9.0",
+      "status": "REQUEST_FAILED",
+      "research_report_sha256": null,
+      "research_report_content": null,
+      "research_report_content_sha256": null,
+      "research_report_content_status": "NOT_AVAILABLE",
+      "proposal_status": "NOT_RUN",
+      "proposals": [],
+      "execution_spec_status": "NOT_RUN",
+      "execution_spec": null,
+      "execution_spec_sha256": null,
+      "learning_notes": {
+        "observations": [],
+        "next_tests": [],
+        "failed_approaches": []
+      },
+      "evaluation_feedback": null,
+      "failure": {
+        "stage": "forward_inference",
+        "error_type": "RuntimeError",
+        "failure_metadata_only": true
+      },
+      "discovery_window": {
+        "start_date": "2020-10-11",
+        "end_date": "2026-08-06",
+        "draw_count": 912,
+        "holdout_dates_copied": false,
+        "archive_rows_copied": false
+      },
+      "content_sha256": "06ea09702486931618ef56a7fd6ad5b91f696f1deccfe30154de49f0312a2449"
     }
   ],
   "offline_research": {
