@@ -338,6 +338,10 @@ class AutonomousResearchStateTests(unittest.TestCase):
             )
             self.assertTrue(retry_plan["eligible"])
             self.assertTrue(retry_plan["retryable"])
+            retry_attempt = auto.claim_attempt(
+                state, retry_plan, github_run_id="420000010", now=NOW + timedelta(minutes=2),
+            )
+            self.assertEqual(retry_attempt["target_date"], attempt["target_date"])
 
             fresh_plan = auto.sealed.preflight(archive, ledger)
             fresh_holdouts = set(
