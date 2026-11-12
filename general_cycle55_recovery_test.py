@@ -303,8 +303,12 @@ class Cycle55RecoveryTests(unittest.TestCase):
             old_current_provenance = recovery.CURRENT_STATE_PROVENANCE
             old_source_provenance = recovery.SNAPSHOT_SOURCE_PROVENANCE
             try:
-                recovery.CURRENT_STATE_PROVENANCE = provenance(current_raw, 52, "a" * 40)
-                recovery.SNAPSHOT_SOURCE_PROVENANCE = provenance(source_raw, 51, "b" * 40)
+                recovery.CURRENT_STATE_PROVENANCE = provenance(
+                    current_raw, 52, recovery.CURRENT_STATE_PROVENANCE["commit_sha"]
+                )
+                recovery.SNAPSHOT_SOURCE_PROVENANCE = provenance(
+                    source_raw, 51, recovery.SNAPSHOT_SOURCE_PROVENANCE["commit_sha"]
+                )
                 current_path.write_bytes(current_raw)
                 source_path.write_bytes(source_raw)
                 result = recovery.build_preview_files(
