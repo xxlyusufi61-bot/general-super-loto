@@ -950,6 +950,28 @@ class NvidiaUsageObservationTests(unittest.TestCase):
         self.assertEqual(saved[0]["automatic_retries"], 0)
         self.assertTrue(Path("/tmp/general_nvidia_api_no_retry_forward").is_file())
 
+    def test_rate_limit_no_retry_marker_survives_usage_report_write_failure(self):
+        class SyntheticStatusError(Exception):
+            status_code = 429
+            response = SimpleNamespace(headers={})
+
+        client = self.client_with_response()
+        client.chat.completions.create.side_effect = SyntheticStatusError("rate limited")
+        with patch.dict(os.environ, self.live_env(), clear=True), patch.object(
+            research, "reserve_nvidia_request"
+        ), patch.object(
+            research, "save_usage_observation", side_effect=OSError("synthetic disk error")
+        ), patch(
+            "general_open_research._create_nvidia_client", return_value=client
+        ):
+            with self.assertRaisesRegex(OSError, "synthetic disk error"):
+                research.call_model(
+                    [{"role": "user", "content": "rate limit with report-write failure"}],
+                    request_label="between_draws",
+                )
+
+        self.assertTrue(Path("/tmp/general_nvidia_api_no_retry_between_draws").is_file())
+
     def test_sdk_insufficient_credit_error_is_marked_non_retryable(self):
         class SyntheticStatusError(Exception):
             status_code = 402
