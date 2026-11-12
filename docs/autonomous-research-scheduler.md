@@ -13,7 +13,7 @@ A scheduled check refreshes and validates the canonical 6-of-60 archive
 independently of AI authorization and NVIDIA lock state. The research job checks
 explicit authorization and the global lock before any hosted call. It activates
 one target in chronological order; a newer archive target is held while the
-previous target has unfinished work or a recoverable no-send failure. The
+previous target has unfinished work or a retryable failed cycle. The
 scheduler does not expose target values to discovery.
 
 ## Authorization and NVIDIA safety
@@ -39,11 +39,12 @@ scheduler does not expose target values to discovery.
   Free-use and no-billing verification remains an explicit operator attestation.
 - A provider request is reserved before network access. Failed and uncertain
   submissions consume the reservation. SDK automatic retries remain disabled.
-- A target may be retried only when the workflow proves that no provider request
-  started. Such retries are bounded to three attempts total per target (initial
-  attempt plus at most two no-send retries), and use the dedicated four-call
-  daily retry reserve. Any sent, partial, or uncertain request blocks automatic
-  retry and keeps the global fail-closed lock behavior.
+- A failed target remains at the FIFO head. The next scheduled cycle may retry
+  the same target after a system/workflow failure (NO_PROVIDER_REQUEST_SENT or
+  WORKFLOW_FAILED); there is no per-target attempt cap. Every retry is recorded
+  separately and consumes the ordinary shared provider budget.
+- A provider delivery-uncertain outcome is not automatically retried. It keeps
+  the global fail-closed lock and requires manual recovery.
 - No automatic unlocking, paid conversion, card-required service, or billing
   transition is permitted. A 402/429 or uncertain provider response is not retried.
 
@@ -118,11 +119,14 @@ fetch or push failure blocks the corresponding NVIDIA request.
   consumed dates in its existing append-only ledger. The scheduler never changes
   those dates or silently reduces minimum history requirements.
 - A target date is reserved in the scheduler's append-only attempt list before
-  the first hosted request. Only a recorded NO_PROVIDER_REQUEST_SENT outcome
-  permits a bounded retry. Any delivery-uncertain or already-sent request is not
-  repeated automatically.
-- A target already present in the sealed evaluation ledger is not run again by
-  the scheduler, including a cycle previously started manually.
+  the first hosted request. Recorded NO_PROVIDER_REQUEST_SENT and WORKFLOW_FAILED
+  outcomes allow the same FIFO target to be retried by a later scheduled cycle
+  after the underlying issue is fixed. A delivery-uncertain provider request
+  remains blocked for manual recovery.
+- A previously claimed target may be researched again after a retryable failure
+  when fresh sealed windows remain available. The sealed evaluator excludes all
+  previously consumed dates and must create new, disjoint holdouts; it never
+  reuses an earlier claim's validation dates.
 
 ## Reporting and limits
 
@@ -177,9 +181,11 @@ blocks processing rather than silently repairing or skipping a draw.
 
 A target leaves the queue only after the scheduler records SUCCEEDED or
 NO_ELIGIBLE_CANDIDATE for the matching target date, snapshot hash, and row count.
-A proven NO_PROVIDER_REQUEST_SENT failure retains the same FIFO head for its
-bounded retry. Any other failure, delivery uncertainty, or manual-recovery
-requirement also retains the head and blocks later targets. A target already
+A NO_PROVIDER_REQUEST_SENT or WORKFLOW_FAILED outcome retains the same FIFO
+head for retry on a later scheduled cycle; retries are recorded but are not
+capped by target date. A PROVIDER_DELIVERY_UNCERTAIN outcome also retains the
+head and blocks later targets until manual recovery. Any retry must pass sealed
+preflight with fresh, disjoint, previously unconsumed holdouts. A target already
 being processed is never replaced by the latest archive head.
 
 When the queue is first introduced to a scheduler state with no prior attempts,
