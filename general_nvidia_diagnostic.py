@@ -1,7 +1,7 @@
 """Single-forward-request NVIDIA diagnostic for GENERAL Super Loto.
 
 The diagnostic reuses the existing archive, target-isolation, prompt-building,
-JSON-mode non-streaming transport, and global-lock safeguards. It performs exactly one forward request.
+official SDK-managed streaming transport, and global-lock safeguards. It performs exactly one forward request.
 It does not parse or promote hypotheses, claim a sealed interval, evaluate a
 formula, modify the method registry/ledger/memory, or persist model text.
 """
@@ -19,7 +19,7 @@ import general_sealed_evaluation as sealed
 from general_live_consent import has_explicit_diagnostic_consent
 
 RESULT_PATH = Path(__file__).resolve().parent / "general_nvidia_diagnostic_result.json"
-DIAGNOSTIC_VERSION = "1.1.0"
+DIAGNOSTIC_VERSION = "1.2.0"
 RESEARCH_SCOPE_START = date(2020, 8, 2)
 
 
@@ -223,8 +223,8 @@ def run_diagnostic() -> dict[str, Any]:
         "status": "RESPONSE_RECEIVED",
         "mode": "single_request_forward_only",
         "model": research.MODEL,
-        "response_mode": "json",
-        "response_streaming": False,
+        "response_mode": "sse",
+        "response_streaming": True,
         "completed_at_utc": datetime.now(timezone.utc).isoformat(),
         "archive_sha256": archive_proof["archive_sha256"],
         "archive_record_count": len(rows),
