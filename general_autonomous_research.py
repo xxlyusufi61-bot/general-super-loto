@@ -1,4 +1,4 @@
-"""Fail-closed scheduler state for one autonomous research cycle per new draw date.
+"""Fail-closed scheduler state for one active FIFO target and its recorded attempts.
 
 This module never calls NVIDIA or Telegram. It only manages an expiring, explicit
 free-only authorization, verifies the shared lock and sealed-evaluation preflight,
