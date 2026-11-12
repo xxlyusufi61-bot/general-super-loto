@@ -287,6 +287,17 @@ def validate_state(value: Any) -> dict[str, Any]:
                 raise AutonomousResearchError("Recovery source content SHA-256 is invalid.")
         if entry["snapshot_source"]["generation"] >= entry["source_state"]["generation"]:
             raise AutonomousResearchError("Recovery snapshot source must predate the faulty state.")
+        if (
+            entry["source_state"]["generation"] != 52
+            or entry["source_state"]["commit_sha"] != "0c9e5bbbe0cbafea188f941b0408e068080c1e68"
+            or entry["snapshot_source"]["generation"] != 51
+            or entry["snapshot_source"]["commit_sha"] != "6197bfadb8af22633dcb22c5490d32c9ffbd52c7"
+            or target != "2026-11-10"
+            or entry["archive_sha256"] != "ae7b79e4922d4178a86c7d7880af3e4758d1a5e7f78d6cc3d2595fbb4fd66596"
+            or entry["archive_record_count"] != 983
+        ):
+            raise AutonomousResearchError("Recovery journal does not match the pinned Cycle #55 provenance.")
+        failure_time = _timestamp(entry["failure_at_utc"], "recovery.failure_at_utc")
         attempt = next(item for item in attempts if item["attempt_id"] == attempt_id)
         if (
             attempt["target_date"] != target
@@ -303,7 +314,11 @@ def validate_state(value: Any) -> dict[str, Any]:
             or archived_event["reason_code"] != "NO_FROZEN_DIRECTIONAL_CANDIDATE"
         ):
             raise AutonomousResearchError("Archived terminal event is not the expected false completion.")
-        _timestamp(archived_event["recorded_at_utc"], "recovery.archived_terminal_event.recorded_at_utc")
+        archived_event_time = _timestamp(
+            archived_event["recorded_at_utc"], "recovery.archived_terminal_event.recorded_at_utc"
+        )
+        if archived_event_time > failure_time:
+            raise AutonomousResearchError("Archived terminal event postdates the recorded provider failure.")
         archived_completed = entry["archived_completed_record"]
         if (
             not isinstance(archived_completed, dict)
@@ -317,7 +332,12 @@ def validate_state(value: Any) -> dict[str, Any]:
             or archived_completed["outcome"] != "NO_ELIGIBLE_CANDIDATE"
         ):
             raise AutonomousResearchError("Archived FIFO completion record is invalid.")
-        _timestamp(archived_completed["completed_at_utc"], "recovery.archived_completed_record.completed_at_utc")
+        archived_completed_time = _timestamp(
+            archived_completed["completed_at_utc"],
+            "recovery.archived_completed_record.completed_at_utc",
+        )
+        if archived_completed_time > failure_time:
+            raise AutonomousResearchError("Archived FIFO completion postdates the recorded provider failure.")
 
         recovery_payload = {key: val for key, val in entry.items() if key != "recovery_id"}
         expected_recovery_id = hashlib.sha256(
@@ -332,8 +352,23 @@ def validate_state(value: Any) -> dict[str, Any]:
             active_event is None
             or active_event["outcome"] != "FAILED"
             or active_event["reason_code"] != "WORKFLOW_FAILED"
+            or active_event["recorded_at_utc"] != entry["failure_at_utc"]
         ):
             raise AutonomousResearchError("Recovered attempt is not actively classified as WORKFLOW_FAILED.")
+        queue_items = value["target_queue"]["items"]
+        if not queue_items:
+            raise AutonomousResearchError("Recovered WORKFLOW_FAILED target must remain at the FIFO head.")
+        queue_head = queue_items[0]
+        queue_head_sha = hashlib.sha256(
+            json.dumps(queue_head, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+        ).hexdigest()
+        if (
+            queue_head["target_date"] != entry["target_date"]
+            or queue_head["archive_sha256"] != entry["archive_sha256"]
+            or queue_head["archive_record_count"] != entry["archive_record_count"]
+            or queue_head_sha != entry["restored_snapshot_item_sha256"]
+        ):
+            raise AutonomousResearchError("Recovered Cycle #55 snapshot is no longer the exact FIFO head.")
     return value
 
 
