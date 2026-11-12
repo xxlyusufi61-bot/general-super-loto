@@ -1,0 +1,62 @@
+name: GENERAL NVIDIA Manual Lock
+
+'on':
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Choose yes only to activate the global NVIDIA safety lock. No NVIDIA request is sent."
+        required: true
+        type: choice
+        options:
+          - "no"
+          - "yes"
+        default: "no"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: general-nvidia-api
+  cancel-in-progress: false
+
+jobs:
+  activate-lock:
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.confirm == 'yes' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Activate global NVIDIA safety lock
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GENERAL_DEFAULT_BRANCH: main
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python3 general_nvidia_guard.py lock --reason "Manual safety lock activated before the separately authorized one-request NVIDIA diagnostic."
+
+      - name: Verify persisted lock on the canonical default branch
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GENERAL_DEFAULT_BRANCH: main
+        run: |
+          python3 - <<'PY'
+          from general_nvidia_guard import read_remote_lock, validate_lock_state
+
+          state, _ = read_remote_lock()
+          validate_lock_state(state)
+          if state["locked"] is not True:
+              raise SystemExit("Global NVIDIA safety lock was not persisted as active.")
+          if not state["reason"].strip():
+              raise SystemExit("Active NVIDIA safety lock has no recorded reason.")
+          print("GENERAL NVIDIA GLOBAL SAFETY LOCK: VERIFIED ACTIVE")
+          PY
