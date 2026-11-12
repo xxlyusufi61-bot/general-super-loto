@@ -615,10 +615,35 @@ class NvidiaUsageObservationTests(unittest.TestCase):
                 "total_tokens": 15,
             },
         }
-        completion = MagicMock()
-        completion.model_dump.return_value = payload
-        completion._request_id = "synthetic-request-id"
-        return completion
+        first_delta = SimpleNamespace(
+            content=content,
+            reasoning_content=reasoning_content,
+        )
+        terminal_delta = SimpleNamespace(content=None, reasoning_content=None)
+        usage_chunk = payload["usage"]
+
+        class SyntheticSDKStream:
+            def __init__(self):
+                self.chunks = [
+                    SimpleNamespace(
+                        choices=[SimpleNamespace(delta=first_delta, finish_reason=None)],
+                        usage=None,
+                    ),
+                    SimpleNamespace(
+                        choices=[SimpleNamespace(delta=terminal_delta, finish_reason=finish_reason)],
+                        usage=usage_chunk,
+                    ),
+                ]
+                self._request_id = "synthetic-request-id"
+                self.closed = False
+
+            def __iter__(self):
+                return iter(self.chunks)
+
+            def close(self):
+                self.closed = True
+
+        return SyntheticSDKStream()
 
     @staticmethod
     def client_with_response(completion=None):
@@ -762,7 +787,7 @@ class NvidiaUsageObservationTests(unittest.TestCase):
                 sent = client.chat.completions.create.call_args.kwargs
                 self.assertEqual(sent["max_tokens"], research.DEFAULT_MAX_COMPLETION_TOKENS)
                 self.assertEqual(sent["max_tokens"], 8192)
-                self.assertIs(sent["stream"], False)
+                self.assertIs(sent["stream"], True)
                 self.assertEqual(
                     client_factory.call_args.args[1],
                     research.DEFAULT_REQUEST_TIMEOUT_SECONDS,
@@ -840,7 +865,7 @@ class NvidiaUsageObservationTests(unittest.TestCase):
         for client in clients:
             client.chat.completions.create.assert_called_once()
             call = client.chat.completions.create.call_args.kwargs
-            self.assertIs(call["stream"], False)
+            self.assertIs(call["stream"], True)
             self.assertEqual(call["model"], research.MODEL)
             self.assertEqual(call["max_tokens"], 8192)
             self.assertEqual(call["temperature"], 0.2)
@@ -858,11 +883,14 @@ class NvidiaUsageObservationTests(unittest.TestCase):
             ["forward", "reverse", "forward_critique", "between_draws"],
         )
         for observation, _kwargs in saved:
-            self.assertEqual(observation["response_mode"], "json")
+            self.assertEqual(observation["response_mode"], "sse")
             self.assertEqual(observation["transport"], "openai-python-sdk")
             self.assertFalse(observation["stream_requested"])
             self.assertEqual(observation["sdk_max_retries"], 0)
             self.assertEqual(observation["automatic_retries"], 0)
+            self.assertTrue(observation["stream_requested"])
+            self.assertTrue(observation["stream_completed"])
+            self.assertEqual(observation["stream_finish_reason"], "stop")
             self.assertEqual(observation["request_delivery_state"], "response_received")
             self.assertEqual(observation["model_finish_reason"], "stop")
             self.assertEqual(
@@ -903,7 +931,7 @@ class NvidiaUsageObservationTests(unittest.TestCase):
         client.close.assert_called_once()
         self.assertEqual(len(saved), 1)
         self.assertEqual(saved[0]["failure_stage"], "provider_call")
-        self.assertEqual(saved[0]["response_mode"], "json")
+        self.assertEqual(saved[0]["response_mode"], "sse")
         self.assertEqual(saved[0]["network_error_type"], "TimeoutError")
         self.assertEqual(
             saved[0]["request_delivery_state"],
@@ -912,6 +940,122 @@ class NvidiaUsageObservationTests(unittest.TestCase):
         self.assertEqual(saved[0]["automatic_retries"], 0)
         self.assertEqual(saved[0]["sdk_max_retries"], 0)
         self.assertEqual(research._NVIDIA_REQUESTS_ATTEMPTED, 1)
+
+    def test_http_504_is_recorded_as_uncertain_and_never_marked_retryable(self):
+        class SyntheticGatewayTimeout(Exception):
+            status_code = 504
+            response = SimpleNamespace(headers={
+                "x-request-id": "gateway-request-504",
+                "Authorization": "never-log-this",
+            })
+
+        client = self.client_with_response()
+        client.chat.completions.create.side_effect = SyntheticGatewayTimeout("gateway timed out")
+        saved = []
+        with patch.dict(os.environ, self.live_env(), clear=True), patch.object(
+            research, "reserve_nvidia_request"
+        ), patch.object(
+            research, "save_usage_observation",
+            side_effect=lambda observation, **kwargs: saved.append(observation),
+        ), patch(
+            "general_open_research._create_nvidia_client", return_value=client
+        ):
+            with self.assertRaisesRegex(RuntimeError, "SyntheticGatewayTimeout"):
+                research.call_model(
+                    [{"role": "user", "content": "gateway timeout test"}],
+                    request_label="forward",
+                )
+
+        self.assertEqual(len(saved), 1)
+        self.assertEqual(saved[0]["http_status"], 504)
+        self.assertEqual(saved[0]["failure_stage"], "provider_http_error")
+        self.assertEqual(saved[0]["request_delivery_state"], "response_received")
+        self.assertFalse(Path("/tmp/general_nvidia_api_no_retry_forward").exists())
+        self.assertEqual(research._NVIDIA_REQUESTS_ATTEMPTED, 1)
+        client.close.assert_called_once()
+
+    def test_api_connection_error_records_only_nested_exception_types(self):
+        class SyntheticAPIConnectionError(Exception):
+            pass
+
+        cause = ConnectionResetError("sensitive endpoint detail must not be persisted")
+        error = SyntheticAPIConnectionError("outer provider detail must not be persisted")
+        error.__cause__ = cause
+        client = self.client_with_response()
+        client.chat.completions.create.side_effect = error
+        saved = []
+        with patch.dict(os.environ, self.live_env(), clear=True), patch.object(
+            research, "reserve_nvidia_request"
+        ), patch.object(
+            research, "save_usage_observation",
+            side_effect=lambda observation, **kwargs: saved.append(observation),
+        ), patch(
+            "general_open_research._create_nvidia_client", return_value=client
+        ):
+            with self.assertRaisesRegex(RuntimeError, "SyntheticAPIConnectionError"):
+                research.call_model(
+                    [{"role": "user", "content": "connection error test"}],
+                    request_label="forward",
+                )
+
+        self.assertEqual(len(saved), 1)
+        self.assertEqual(saved[0]["network_error_type"], "SyntheticAPIConnectionError")
+        self.assertEqual(saved[0]["network_error_chain"], ["ConnectionResetError"])
+        self.assertEqual(
+            saved[0]["request_delivery_state"],
+            "unknown_after_sdk_request_started",
+        )
+        serialized = json.dumps(saved[0])
+        self.assertNotIn("sensitive endpoint detail", serialized)
+        self.assertNotIn("outer provider detail", serialized)
+        self.assertEqual(research._NVIDIA_REQUESTS_ATTEMPTED, 1)
+        client.close.assert_called_once()
+
+    def test_stream_disconnect_discards_partial_content_and_keeps_delivery_uncertain(self):
+        class SyntheticStreamDisconnect(Exception):
+            pass
+
+        class InterruptedStream:
+            def __iter__(self):
+                yield SimpleNamespace(
+                    choices=[SimpleNamespace(
+                        delta=SimpleNamespace(content="partial answer must not be accepted"),
+                        finish_reason=None,
+                    )],
+                    usage=None,
+                )
+                raise SyntheticStreamDisconnect("simulated stream interruption")
+
+            def close(self):
+                pass
+
+        client = self.client_with_response(InterruptedStream())
+        saved = []
+        with patch.dict(os.environ, self.live_env(), clear=True), patch.object(
+            research, "reserve_nvidia_request"
+        ), patch.object(
+            research, "save_usage_observation",
+            side_effect=lambda observation, **kwargs: saved.append(observation),
+        ), patch(
+            "general_open_research._create_nvidia_client", return_value=client
+        ):
+            with self.assertRaisesRegex(RuntimeError, "No automatic retry was attempted"):
+                research.call_model(
+                    [{"role": "user", "content": "interrupted stream test"}],
+                    request_label="forward",
+                )
+
+        self.assertEqual(len(saved), 1)
+        self.assertEqual(saved[0]["stream_event_count"], 1)
+        self.assertFalse(saved[0]["stream_completed"])
+        self.assertFalse(saved[0]["response_complete"])
+        self.assertEqual(
+            saved[0]["request_delivery_state"],
+            "unknown_after_sdk_request_started",
+        )
+        self.assertNotIn("partial answer must not be accepted", json.dumps(saved[0]))
+        self.assertEqual(research._NVIDIA_REQUESTS_ATTEMPTED, 1)
+        client.close.assert_called_once()
 
     def test_sdk_rate_limit_error_records_safe_metadata_without_retry(self):
         class SyntheticStatusError(Exception):
