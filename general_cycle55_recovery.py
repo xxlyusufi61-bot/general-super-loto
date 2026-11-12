@@ -103,12 +103,12 @@ def recover_cycle55_state(
 ) -> dict[str, Any]:
     """Build a v3 state preview without mutating either input document."""
     _verify_provenance(
-        current_state_provenance or CURRENT_STATE_PROVENANCE,
+        CURRENT_STATE_PROVENANCE if current_state_provenance is None else current_state_provenance,
         CURRENT_STATE_PROVENANCE,
         "Current state",
     )
     _verify_provenance(
-        snapshot_source_provenance or SNAPSHOT_SOURCE_PROVENANCE,
+        SNAPSHOT_SOURCE_PROVENANCE if snapshot_source_provenance is None else snapshot_source_provenance,
         SNAPSHOT_SOURCE_PROVENANCE,
         "Generation 51 snapshot source",
     )
