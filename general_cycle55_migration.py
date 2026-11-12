@@ -320,7 +320,7 @@ class GitHubActionsWorkflowClient:
             raise MigrationGateError("Research workflow is not manually disabled.")
         if first["active_workflow_run_count"] != 0:
             raise MigrationGateError(
-                "Scheduled runs are still active; wait for them to complete. No run was cancelled."
+                "Research workflow runs are still active; wait for them to complete. No run was cancelled."
             )
         if settle_seconds:
             self.sleep_func(float(settle_seconds))
@@ -329,7 +329,7 @@ class GitHubActionsWorkflowClient:
             raise MigrationGateError("Research workflow was re-enabled during the drain quiet window.")
         if result["active_workflow_run_count"] != 0:
             raise MigrationGateError(
-                "A scheduled run appeared during the drain quiet window; migration is blocked."
+                "A workflow run appeared during the drain quiet window; migration is blocked."
             )
         return {
             **result,
