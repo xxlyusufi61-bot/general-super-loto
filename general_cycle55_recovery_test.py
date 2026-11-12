@@ -39,6 +39,29 @@ def _attempt(target_item, run_id, suffix, claimed_at):
     }
 
 
+def _recover_preview(
+    current_state,
+    snapshot_source_state,
+    *,
+    recorded_at_utc=STAMP,
+    current_state_provenance=None,
+    snapshot_source_provenance=None,
+):
+    return recovery._recover_cycle55_state_from_verified_documents(
+        current_state,
+        snapshot_source_state,
+        recorded_at_utc=recorded_at_utc,
+        current_state_provenance=(
+            recovery.CURRENT_STATE_PROVENANCE
+            if current_state_provenance is None else current_state_provenance
+        ),
+        snapshot_source_provenance=(
+            recovery.SNAPSHOT_SOURCE_PROVENANCE
+            if snapshot_source_provenance is None else snapshot_source_provenance
+        ),
+    )
+
+
 class Cycle55RecoveryTests(unittest.TestCase):
     def setUp(self):
         self.original_target_hash = recovery.TARGET_ARCHIVE_SHA256
