@@ -263,8 +263,22 @@ class Cycle55RecoveryTests(unittest.TestCase):
         broken["recovery_history"][0]["archived_terminal_event"]["reason_code"] = "WORKFLOW_FAILED"
         with self.assertRaisesRegex(autonomous.AutonomousResearchError, "Archived terminal event"):
             autonomous.validate_state(broken)
+
+        moved_head = copy.deepcopy(recovered)
+        moved_head["target_queue"]["items"][0]["source_archive_sha256"] = "f" * 64
+        with self.assertRaisesRegex(autonomous.AutonomousResearchError, "exact FIFO head"):
+            autonomous.validate_state(moved_head)
+
         with self.assertRaisesRegex(recovery.Cycle55RecoveryError, "schema v2"):
             recovery.recover_cycle55_state(recovered, self.source_state, recorded_at_utc=STAMP)
+
+        with self.assertRaisesRegex(recovery.Cycle55RecoveryError, "pinned Git history"):
+            recovery.recover_cycle55_state(
+                self.current_state,
+                self.source_state,
+                recorded_at_utc=STAMP,
+                current_state_provenance={},
+            )
 
     def test_local_preview_writer_checks_provenance_and_never_overwrites_sources(self):
         with tempfile.TemporaryDirectory() as directory:
