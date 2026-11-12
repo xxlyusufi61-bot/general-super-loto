@@ -885,7 +885,6 @@ class NvidiaUsageObservationTests(unittest.TestCase):
         for observation, _kwargs in saved:
             self.assertEqual(observation["response_mode"], "sse")
             self.assertEqual(observation["transport"], "openai-python-sdk")
-            self.assertFalse(observation["stream_requested"])
             self.assertEqual(observation["sdk_max_retries"], 0)
             self.assertEqual(observation["automatic_retries"], 0)
             self.assertTrue(observation["stream_requested"])
@@ -1008,6 +1007,32 @@ class NvidiaUsageObservationTests(unittest.TestCase):
         serialized = json.dumps(saved[0])
         self.assertNotIn("sensitive endpoint detail", serialized)
         self.assertNotIn("outer provider detail", serialized)
+        self.assertEqual(research._NVIDIA_REQUESTS_ATTEMPTED, 1)
+        client.close.assert_called_once()
+
+    def test_stream_ending_without_finish_reason_is_rejected_as_incomplete(self):
+        stream = self.sdk_response("partial without terminal finish reason", finish_reason=None)
+        client = self.client_with_response(stream)
+        saved = []
+        with patch.dict(os.environ, self.live_env(), clear=True), patch.object(
+            research, "reserve_nvidia_request"
+        ), patch.object(
+            research, "save_usage_observation",
+            side_effect=lambda observation, **kwargs: saved.append(observation),
+        ), patch(
+            "general_open_research._create_nvidia_client", return_value=client
+        ):
+            with self.assertRaisesRegex(RuntimeError, "without a terminal finish_reason"):
+                research.call_model(
+                    [{"role": "user", "content": "missing terminal chunk test"}],
+                    request_label="forward",
+                )
+
+        self.assertEqual(len(saved), 1)
+        self.assertFalse(saved[0]["response_complete"])
+        self.assertTrue(saved[0]["stream_completed"])
+        self.assertIsNone(saved[0]["stream_finish_reason"])
+        self.assertNotIn("partial without terminal", json.dumps(saved[0]))
         self.assertEqual(research._NVIDIA_REQUESTS_ATTEMPTED, 1)
         client.close.assert_called_once()
 
