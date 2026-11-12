@@ -26,6 +26,7 @@ MAX_AUTHORIZATION_DAYS = 30
 RETRYABLE_FAILURE_REASON_CODES = {
     "NO_PROVIDER_REQUEST_SENT",
     "WORKFLOW_FAILED",
+    "PROVIDER_DELIVERY_UNCERTAIN",
 }
 ALLOWED_OUTCOMES = {"SUCCEEDED", "FAILED", "NO_ELIGIBLE_CANDIDATE"}
 ALLOWED_REASON_CODES = {
@@ -253,6 +254,22 @@ def read_global_lock(path: str | Path) -> dict[str, Any]:
         raise AutonomousResearchError("Global NVIDIA lock failed validation; automation is blocked.") from None
 
 
+def manual_recovery_confirmed(lock_state: dict[str, Any], failed_event: dict[str, Any]) -> bool:
+    """Require a recorded manual unlock strictly after an uncertain provider failure."""
+    if failed_event.get("reason_code") != "PROVIDER_DELIVERY_UNCERTAIN":
+        return False
+    unlocked_at = lock_state.get("last_unlocked_at")
+    if not isinstance(unlocked_at, str):
+        return False
+    try:
+        return _timestamp(unlocked_at, "global_lock.last_unlocked_at") > _timestamp(
+            failed_event.get("recorded_at_utc"),
+            "failed_event.recorded_at_utc",
+        )
+    except AutonomousResearchError:
+        return False
+
+
 def activate_state(
     state: dict[str, Any],
     *,
@@ -356,6 +373,7 @@ def prepare_cycle(
     attempts = state["attempts"]
     retryable = False
     retry_number = 1
+    recovered_after_uncertain_delivery = False
     if attempts:
         last_attempt = attempts[-1]
         last_target = last_attempt["target_date"]
@@ -376,7 +394,13 @@ def prepare_cycle(
                     **status,
                 }
             if last_event["outcome"] == "FAILED":
-                if last_event["reason_code"] in RETRYABLE_FAILURE_REASON_CODES:
+                reason_code = last_event["reason_code"]
+                if reason_code == "PROVIDER_DELIVERY_UNCERTAIN":
+                    recovered_after_uncertain_delivery = manual_recovery_confirmed(lock, last_event)
+                if (
+                    reason_code in RETRYABLE_FAILURE_REASON_CODES
+                    and (reason_code != "PROVIDER_DELIVERY_UNCERTAIN" or recovered_after_uncertain_delivery)
+                ):
                     retryable = True
                     retry_number = same_target_attempts + 1
                 else:
@@ -405,9 +429,15 @@ def prepare_cycle(
                     **status,
                 }
             if last_event["outcome"] == "FAILED":
+                previous_retry_is_ready = last_event["reason_code"] in {
+                    "NO_PROVIDER_REQUEST_SENT",
+                    "WORKFLOW_FAILED",
+                }
+                if last_event["reason_code"] == "PROVIDER_DELIVERY_UNCERTAIN":
+                    previous_retry_is_ready = manual_recovery_confirmed(lock, last_event)
                 blocking_status = (
                     "PREVIOUS_TARGET_RETRY_REQUIRED"
-                    if last_event["reason_code"] in RETRYABLE_FAILURE_REASON_CODES
+                    if previous_retry_is_ready
                     else "PREVIOUS_TARGET_MANUAL_RECOVERY_REQUIRED"
                 )
                 return {
@@ -418,7 +448,6 @@ def prepare_cycle(
                     **status,
                 }
 
-    ledger = sealed.load_ledger(ledger_path)
     try:
         plan = sealed.preflight(archive_path, ledger_path)
     except sealed.SealedEvaluationError as exc:
@@ -478,6 +507,7 @@ def prepare_cycle(
         "previously_consumed_holdout_dates_reused": False,
         "retryable": retryable,
         "retry_number": retry_number,
+        "manual_recovery_confirmed": recovered_after_uncertain_delivery,
     }
 
 
@@ -527,7 +557,14 @@ def claim_attempt(
                 or last_event["reason_code"] not in RETRYABLE_FAILURE_REASON_CODES
             ):
                 raise AutonomousResearchError(
-                    "A target retry requires a recorded retryable failure; uncertain provider delivery remains blocked."
+                    "A target retry requires a recorded retryable failure."
+                )
+            if (
+                last_event["reason_code"] == "PROVIDER_DELIVERY_UNCERTAIN"
+                and plan.get("manual_recovery_confirmed") is not True
+            ):
+                raise AutonomousResearchError(
+                    "Uncertain provider delivery requires a manual unlock after the failed attempt."
                 )
             attempt_number = previous_count + 1
         else:
