@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+from types import SimpleNamespace
 import tempfile
 import unittest
 from datetime import date, timedelta
