@@ -3,11 +3,11 @@
   "project": "GENERAL Super Loto",
   "authorization": {
     "enabled": true,
-    "authorized_at_utc": "2026-11-05T20:02:44.716288+00:00",
-    "expires_at_utc": "2026-11-12T20:02:44.716288+00:00",
-    "authorization_days": 7,
+    "authorized_at_utc": "2026-11-12T15:31:49.551665+00:00",
+    "expires_at_utc": "2026-12-12T15:31:49.551665+00:00",
+    "authorization_days": 30,
     "free_usage_verified": true,
-    "max_requests_per_target": 2,
+    "max_requests_per_target": null,
     "last_paused_at_utc": null
   },
   "attempts": [
