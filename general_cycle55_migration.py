@@ -105,6 +105,17 @@ def verify_pinned_state_source(
     if manifest["generation"] != generation:
         raise MigrationGateError("Manifest generation does not match the pinned source.")
 
+    expected_objects = {
+        "archive",
+        "evaluation_ledger",
+        "autonomous_research_state",
+        "research_memory",
+    }
+    if set(manifest["entries"]) != expected_objects:
+        raise MigrationGateError(
+            "Pinned manifest does not contain the exact four authoritative runtime objects."
+        )
+
     entry = manifest["entries"].get("autonomous_research_state")
     if not isinstance(entry, dict) or entry.get("path") != STATE_OBJECT_PATH:
         raise MigrationGateError("Pinned scheduler state entry is missing or misrouted.")
