@@ -36,6 +36,7 @@ ALLOWED_REASON_CODES = {
     "NO_FROZEN_DIRECTIONAL_CANDIDATE",
     "NO_PROVIDER_REQUEST_SENT",
     "PROVIDER_DELIVERY_UNCERTAIN",
+    "PROVIDER_HTTP_REJECTION_NO_RETRY",
 }
 
 
@@ -418,8 +419,13 @@ def prepare_cycle(
                     retryable = True
                     retry_number = same_target_attempts + 1
                 else:
+                    blocked_status = (
+                        "PROVIDER_HTTP_REJECTION_NO_RETRY"
+                        if reason_code == "PROVIDER_HTTP_REJECTION_NO_RETRY"
+                        else "PROVIDER_DELIVERY_UNCERTAIN_MANUAL_RECOVERY_REQUIRED"
+                    )
                     return {
-                        "status": "PROVIDER_DELIVERY_UNCERTAIN_MANUAL_RECOVERY_REQUIRED",
+                        "status": blocked_status,
                         "eligible": False,
                         "target_date": target_date,
                         "archive_sha256": archive["archive_sha256"],
