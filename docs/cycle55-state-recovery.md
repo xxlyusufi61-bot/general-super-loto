@@ -53,8 +53,9 @@ workflow-disable API. This prevents future schedule triggers and also makes
 that research workflow's manual dispatch unavailable while disabled. It does
 not cancel queued or in-progress runs. The controller reports those runs and
 the migration gate refuses to proceed until every schedule-triggered run is
-completed. It never cancels a run and never treats an uncertain disable result
-as success.
+completed. The preview and publication gates require two zero-active-run
+observations separated by a 60-second quiet window. It never cancels a run and
+never treats an uncertain disable result as success.
 
 The scheduler's existing pause input is not a substitute for disabling the
 workflow: its authorization flag is checked after scheduled archive refresh,
