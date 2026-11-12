@@ -842,7 +842,7 @@ class InvalidModelResponseError(RuntimeError):
 
 
 class IncompleteModelResponseError(RuntimeError):
-    """A completed provider response whose answer was cut off by its token limit."""
+    """A provider response stream that did not produce a valid complete answer."""
 
     def __init__(
         self,
@@ -863,7 +863,7 @@ class IncompleteModelResponseError(RuntimeError):
 def _validate_json_chat_completion(
     payload: Any,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Validate one non-streaming Chat Completions response; only message.content is final text."""
+    """Validate a buffered Chat Completion; only message.content is final text."""
     if not isinstance(payload, dict):
         raise InvalidModelResponseError("Research model JSON response was not an object.")
     choices = payload.get("choices")
