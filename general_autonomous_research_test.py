@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import general_autonomous_research as auto
-from general_nvidia_guard import initial_lock_state, make_locked_state
+from general_nvidia_guard import initial_lock_state, make_locked_state, make_unlocked_state
 
 
 AUTO_PHRASE = auto.AUTO_CONFIRMATION_PHRASE
@@ -375,6 +375,58 @@ class AutonomousResearchStateTests(unittest.TestCase):
             )
             self.assertFalse(blocked["eligible"])
             self.assertEqual(blocked["status"], "PROVIDER_DELIVERY_UNCERTAIN_MANUAL_RECOVERY_REQUIRED")
+
+    def test_provider_delivery_uncertainty_retries_only_after_later_manual_unlock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root / "archive.json"
+            ledger = root / "ledger.json"
+            lock = root / "lock.json"
+            archive.write_text(json.dumps({"draws": synthetic_rows(90)}), encoding="utf-8")
+            ledger.write_text(
+                json.dumps({"schema_version": 1, "purpose": "test", "entries": []}),
+                encoding="utf-8",
+            )
+            lock.write_text(json.dumps(initial_lock_state()), encoding="utf-8")
+            state = active_state()
+            first_plan = auto.prepare_cycle(
+                state, archive_path=archive, ledger_path=ledger,
+                global_lock_path=lock, now=NOW,
+            )
+            first_attempt = auto.claim_attempt(
+                state, first_plan, github_run_id="420000008", now=NOW,
+            )
+            auto.record_outcome(
+                state, first_attempt["attempt_id"], outcome="FAILED",
+                reason_code="PROVIDER_DELIVERY_UNCERTAIN", now=NOW,
+            )
+
+            blocked = auto.prepare_cycle(
+                state, archive_path=archive, ledger_path=ledger,
+                global_lock_path=lock, now=NOW + timedelta(minutes=1),
+            )
+            self.assertFalse(blocked["eligible"])
+            self.assertEqual(blocked["status"], "PROVIDER_DELIVERY_UNCERTAIN_MANUAL_RECOVERY_REQUIRED")
+
+            unlock_time = NOW + timedelta(minutes=2)
+            lock.write_text(
+                json.dumps(make_unlocked_state(initial_lock_state(), stamp=unlock_time.isoformat())),
+                encoding="utf-8",
+            )
+            retry_plan = auto.prepare_cycle(
+                state, archive_path=archive, ledger_path=ledger,
+                global_lock_path=lock, now=NOW + timedelta(minutes=3),
+            )
+            self.assertTrue(retry_plan["eligible"])
+            self.assertTrue(retry_plan["retryable"])
+            self.assertTrue(retry_plan["manual_recovery_confirmed"])
+            retry_attempt = auto.claim_attempt(
+                state, retry_plan, github_run_id="420000009",
+                now=NOW + timedelta(minutes=3),
+            )
+            self.assertEqual(retry_attempt["target_date"], first_attempt["target_date"])
+            self.assertNotEqual(retry_attempt["attempt_id"], first_attempt["attempt_id"])
+            auto.validate_state(state)
 
     def test_new_target_cannot_skip_a_previous_proven_no_send_target(self):
         with tempfile.TemporaryDirectory() as directory:
