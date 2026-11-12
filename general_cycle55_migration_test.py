@@ -173,6 +173,29 @@ class WorkflowPauseGateTests(unittest.TestCase):
         with self.assertRaisesRegex(migration.MigrationGateError, "still active"):
             self.make_client(api).assert_ready()
 
+    def test_run_arriving_during_quiet_window_blocks_migration(self):
+        api = FakeActionsAPI(state="disabled_manually", pages=[[]])
+        sleeps = []
+
+        def inject_run(seconds):
+            sleeps.append(seconds)
+            api.pages = [[_run(13, "queued")]]
+
+        client = migration.GitHubActionsWorkflowClient(
+            "test/repo",
+            "not-a-real-token",
+            request_func=api.request,
+            sleep_func=inject_run,
+        )
+        with self.assertRaisesRegex(migration.MigrationGateError, "quiet window"):
+            client.assert_ready(settle_seconds=60)
+        self.assertEqual(sleeps, [60.0])
+
+    def test_invalid_drain_quiet_window_is_rejected(self):
+        api = FakeActionsAPI(state="disabled_manually", pages=[[]])
+        with self.assertRaisesRegex(migration.MigrationGateError, "between 0 and 300"):
+            self.make_client(api).assert_ready(settle_seconds=301)
+
 
 class PinnedSourceVerificationTests(unittest.TestCase):
     def test_generation_51_and_52_sources_require_exact_commit_and_blob_pins(self):
