@@ -40,9 +40,9 @@ scheduler does not expose target values to discovery.
 - A provider request is reserved before network access. Failed and uncertain
   submissions consume the reservation. SDK automatic retries remain disabled.
 - A failed target remains at the FIFO head. The next scheduled cycle may retry
-  the same target after NO_PROVIDER_REQUEST_SENT or WORKFLOW_FAILED; there is no
-  per-target attempt cap. Every retry is recorded and uses the controlled retry
-  reserve within the shared request budget.
+  the same target after NO_PROVIDER_REQUEST_SENT or WORKFLOW_FAILED, within the
+  existing limit of three total attempts per target. Every retry is recorded and
+  uses the controlled retry reserve within the shared request budget.
 - PROVIDER_DELIVERY_UNCERTAIN remains blocked until a manual unlock is recorded
   strictly after that failure. Only a later scheduled cycle may then retry the
   same target. The workflow never unlocks itself.
@@ -183,8 +183,8 @@ blocks processing rather than silently repairing or skipping a draw.
 A target leaves the queue only after the scheduler records SUCCEEDED or
 NO_ELIGIBLE_CANDIDATE for the matching target date, snapshot hash, and row count.
 A NO_PROVIDER_REQUEST_SENT or WORKFLOW_FAILED outcome retains the same FIFO
-head for retry on a later scheduled cycle; retries are recorded but are not
-capped by target date. A PROVIDER_DELIVERY_UNCERTAIN outcome retains the head
+head for retry on a later scheduled cycle, up to three total attempts for that
+target. Retries are recorded. A PROVIDER_DELIVERY_UNCERTAIN outcome retains the head
 until the global lock is manually unlocked after the failure timestamp. A later
 scheduled cycle may then retry the same target. Any retry must pass sealed
 preflight with fresh, disjoint, previously unconsumed holdouts. A target already
