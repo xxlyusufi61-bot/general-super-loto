@@ -18,12 +18,31 @@ import general_sealed_evaluation as sealed
 from general_nvidia_guard import validate_lock_state
 import general_target_queue as target_queue
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 PROJECT = "GENERAL Super Loto"
 RESEARCH_SCOPE_START = date(2020, 8, 2)
 AUTO_CONFIRMATION_PHRASE = "I_AUTHORIZE_AUTONOMOUS_FREE_ONLY_NVIDIA_RESEARCH_NO_BILLING"
 MAX_AUTHORIZATION_DAYS = 30
 MAX_ATTEMPTS_PER_TARGET = 3
+CYCLE55_MANUAL_RETRY_TARGET_DATE = "2026-11-10"
+CYCLE55_MANUAL_RETRY_ARCHIVE_SHA256 = "ae7b79e4922d4178a86c7d7880af3e4758d1a5e7f78d6cc3d2595fbb4fd66596"
+CYCLE55_MANUAL_RETRY_ARCHIVE_RECORD_COUNT = 983
+CYCLE55_MANUAL_RETRY_CONFIRMATION = "CYCLE55_MANUAL_RETRY_2026_11_13_ONE_TIME_ONLY"
+CYCLE55_MANUAL_RETRY_CONFIRMATION_SHA256 = "e7a7845bafd4bef2191f2137663c60d1f855a9c1a46c5b3d0ce9e1a0bbcd2a67"
+CYCLE55_MANUAL_RETRY_ACTOR_LOGIN = "xxlyusufi61-bot"
+CYCLE55_MANUAL_RETRY_ACTOR_ID = 345811504
+CYCLE55_MANUAL_RETRY_WORKFLOW_ID = 403181605
+CYCLE55_MANUAL_RETRY_WORKFLOW_PATH = ".github/workflows/general-autonomous-research.yml"
+CYCLE55_MANUAL_RETRY_PRIOR_ATTEMPT_IDS = (
+    "a7f0195c30826b11cf6f8336d03d2f0954a196c2e76f336c7d0cbe83329740f3",
+    "6892f02f5531ff1e8ca150d1bbe556b7f7ee5f6622cc17479020cb03b4fc6e06",
+    "6ab3c502b6a74c16de8443c30ed7a8ecd589616c61804a0a8093a127ce27dce5",
+)
+CYCLE55_MANUAL_RETRY_PRIOR_FAILURE_AT_UTC = "2026-11-12T19:29:11.330937+00:00"
+RETRYABLE_FAILURE_REASON_CODES = {
+    "NO_PROVIDER_REQUEST_SENT",
+    "PROVIDER_DELIVERY_UNCERTAIN",
+}
 CYCLE55_RECOVERY_TARGET_DATE = "2026-11-10"
 CYCLE55_RECOVERY_ARCHIVE_SHA256 = "ae7b79e4922d4178a86c7d7880af3e4758d1a5e7f78d6cc3d2595fbb4fd66596"
 CYCLE55_RECOVERY_ARCHIVE_RECORD_COUNT = 983
@@ -91,7 +110,7 @@ def _is_sha256(value: Any) -> bool:
 
 def initial_state() -> dict[str, Any]:
     return {
-        "schema_version": 3,
+        "schema_version": 4,
         "project": PROJECT,
         "authorization": {
             "enabled": False,
@@ -106,29 +125,35 @@ def initial_state() -> dict[str, Any]:
         "events": [],
         "target_queue": target_queue.initial_queue(),
         "recovery_history": [],
+        "manual_retry_history": [],
     }
 
 
 def validate_state(value: Any) -> dict[str, Any]:
     legacy_v1_keys = {"schema_version", "project", "authorization", "attempts", "events"}
     legacy_v2_keys = legacy_v1_keys | {"target_queue"}
+    legacy_v3_keys = legacy_v2_keys | {"recovery_history"}
     if isinstance(value, dict) and set(value) == legacy_v1_keys and value.get("schema_version") == 1:
-        # Upgrade legacy v1 state in memory only; persistence remains a separate,
-        # generation-guarded state-store operation.
-        value["schema_version"] = 3
+        value["schema_version"] = 4
         value["target_queue"] = target_queue.initial_queue()
         value["recovery_history"] = []
+        value["manual_retry_history"] = []
     elif isinstance(value, dict) and set(value) == legacy_v2_keys and value.get("schema_version") == 2:
-        # Schema v3 adds an append-only, metadata-only recovery journal.
-        value["schema_version"] = 3
+        value["schema_version"] = 4
         value["recovery_history"] = []
+        value["manual_retry_history"] = []
+    elif isinstance(value, dict) and set(value) == legacy_v3_keys and value.get("schema_version") == 3:
+        # Schema v4 adds an append-only journal for one narrowly scoped,
+        # explicitly approved Cycle #55 retry exception.
+        value["schema_version"] = 4
+        value["manual_retry_history"] = []
     if not isinstance(value, dict) or set(value) != {
         "schema_version", "project", "authorization", "attempts", "events",
-        "target_queue", "recovery_history"
+        "target_queue", "recovery_history", "manual_retry_history"
     }:
         raise AutonomousResearchError("Autonomous scheduler state has an invalid schema.")
-    if type(value.get("schema_version")) is not int or value["schema_version"] != 3:
-        raise AutonomousResearchError("Unsupported autonomous scheduler schema version.")
+    if type(value.get("schema_version")) is not int or value["schema_version"] != 4:
+        raise AutonomousResearchError("Unsupported autonomous scheduler state schema version.")
     try:
         target_queue.validate_queue(value["target_queue"])
     except target_queue.TargetQueueError as exc:
@@ -201,11 +226,6 @@ def validate_state(value: Any) -> dict[str, Any]:
             raise AutonomousResearchError("GitHub run identifier is invalid.")
     if attempt_dates != sorted(attempt_dates):
         raise AutonomousResearchError("Attempt targets must remain chronological.")
-    target_counts: dict[str, int] = {}
-    for target in attempt_dates:
-        target_counts[target] = target_counts.get(target, 0) + 1
-    if any(count > MAX_ATTEMPTS_PER_TARGET for count in target_counts.values()):
-        raise AutonomousResearchError("A target exceeded the existing three-attempt limit.")
     terminal_attempts: set[str] = set()
     required_event = {"attempt_id", "outcome", "recorded_at_utc", "reason_code"}
     for event in events:
@@ -222,22 +242,7 @@ def validate_state(value: Any) -> dict[str, Any]:
             raise AutonomousResearchError("An attempt already has a terminal event.")
         terminal_attempts.add(event["attempt_id"])
 
-    attempts_by_target: dict[str, list[dict[str, Any]]] = {}
-    for item in attempts:
-        attempts_by_target.setdefault(item["target_date"], []).append(item)
     event_by_attempt = {event["attempt_id"]: event for event in events}
-    for target, target_attempts in attempts_by_target.items():
-        if len(target_attempts) > 1:
-            for prior_attempt in target_attempts[:-1]:
-                prior_event = event_by_attempt.get(prior_attempt["attempt_id"])
-                if (
-                    prior_event is None
-                    or prior_event["outcome"] != "FAILED"
-                    or prior_event["reason_code"] not in RETRYABLE_FAILURE_REASON_CODES
-                ):
-                    raise AutonomousResearchError(
-                        "Repeated target attempts require a recorded retryable failure; uncertain provider delivery remains blocked."
-                    )
 
     recovery_history = value.get("recovery_history")
     if not isinstance(recovery_history, list) or len(recovery_history) > 256:
@@ -376,6 +381,136 @@ def validate_state(value: Any) -> dict[str, Any]:
             or queue_head_sha != entry["restored_snapshot_item_sha256"]
         ):
             raise AutonomousResearchError("Recovered Cycle #55 snapshot is no longer the exact FIFO head.")
+    manual_retry_history = value.get("manual_retry_history")
+    if not isinstance(manual_retry_history, list) or len(manual_retry_history) > 1:
+        raise AutonomousResearchError("Cycle #55 one-time manual retry journal is not a valid single-use list.")
+    manual_retry = manual_retry_history[0] if manual_retry_history else None
+    if manual_retry is not None:
+        required_manual_retry = {
+            "schema_version", "authorization_id", "authorization_type", "target_date",
+            "archive_sha256", "archive_record_count", "prior_attempt_id",
+            "prior_failure_at_utc", "prior_failure_reason_code", "attempt_id",
+            "github_run_id", "github_workflow_id", "github_workflow_path",
+            "github_actor_login", "github_actor_id", "approval_phrase_sha256",
+            "authorized_at_utc", "claimed_at_utc", "preflight_sha256",
+            "forward_validation_count", "reverse_validation_count", "discovery_count",
+            "fifo_snapshot_sha256", "consumed",
+        }
+        if not isinstance(manual_retry, dict) or set(manual_retry) != required_manual_retry:
+            raise AutonomousResearchError("Cycle #55 manual retry authorization has an invalid schema.")
+        if type(manual_retry["schema_version"]) is not int or manual_retry["schema_version"] != 1:
+            raise AutonomousResearchError("Unsupported Cycle #55 manual retry journal version.")
+        if (
+            manual_retry["authorization_type"] != "CYCLE55_PR103_ONE_TIME_EXCEPTION"
+            or manual_retry["target_date"] != CYCLE55_MANUAL_RETRY_TARGET_DATE
+            or manual_retry["archive_sha256"] != CYCLE55_MANUAL_RETRY_ARCHIVE_SHA256
+            or manual_retry["archive_record_count"] != CYCLE55_MANUAL_RETRY_ARCHIVE_RECORD_COUNT
+            or manual_retry["prior_attempt_id"] != CYCLE55_MANUAL_RETRY_PRIOR_ATTEMPT_IDS[-1]
+            or manual_retry["prior_failure_reason_code"] != "WORKFLOW_FAILED"
+            or manual_retry["prior_failure_at_utc"] != CYCLE55_MANUAL_RETRY_PRIOR_FAILURE_AT_UTC
+            or manual_retry["github_workflow_id"] != CYCLE55_MANUAL_RETRY_WORKFLOW_ID
+            or manual_retry["github_workflow_path"] != CYCLE55_MANUAL_RETRY_WORKFLOW_PATH
+            or manual_retry["github_actor_login"] != CYCLE55_MANUAL_RETRY_ACTOR_LOGIN
+            or manual_retry["github_actor_id"] != CYCLE55_MANUAL_RETRY_ACTOR_ID
+            or manual_retry["approval_phrase_sha256"] != CYCLE55_MANUAL_RETRY_CONFIRMATION_SHA256
+            or manual_retry["consumed"] is not True
+        ):
+            raise AutonomousResearchError("Cycle #55 manual retry journal exceeds or mismatches the one-target authorization.")
+        if (
+            not _is_sha256(manual_retry["authorization_id"])
+            or not _is_sha256(manual_retry["preflight_sha256"])
+            or not _is_sha256(manual_retry["fifo_snapshot_sha256"])
+        ):
+            raise AutonomousResearchError("Cycle #55 manual retry journal digest is invalid.")
+        if (
+            not isinstance(manual_retry["github_run_id"], str)
+            or not manual_retry["github_run_id"].isdigit()
+            or len(manual_retry["github_run_id"]) > 32
+        ):
+            raise AutonomousResearchError("Cycle #55 manual retry GitHub run ID is invalid.")
+        _timestamp(manual_retry["authorized_at_utc"], "manual_retry.authorized_at_utc")
+        claimed_at = _timestamp(manual_retry["claimed_at_utc"], "manual_retry.claimed_at_utc")
+        if claimed_at < _timestamp(manual_retry["authorized_at_utc"], "manual_retry.authorized_at_utc"):
+            raise AutonomousResearchError("Manual retry claim predates its dispatch authorization.")
+        for field, minimum in (
+            ("forward_validation_count", sealed.MIN_VALIDATION_DRAWS),
+            ("reverse_validation_count", sealed.MIN_VALIDATION_DRAWS),
+            ("discovery_count", sealed.DEFAULT_MIN_TRAIN_DRAWS),
+        ):
+            count = manual_retry[field]
+            if type(count) is not int or count < minimum:
+                raise AutonomousResearchError("Manual retry journal does not prove minimum fresh sealed windows.")
+        target_attempts = [item for item in attempts if item["target_date"] == CYCLE55_MANUAL_RETRY_TARGET_DATE]
+        if len(target_attempts) != 4 or [item["attempt_id"] for item in target_attempts[:3]] != list(CYCLE55_MANUAL_RETRY_PRIOR_ATTEMPT_IDS):
+            raise AutonomousResearchError("Manual retry journal is not bound to exactly the three pinned prior attempts.")
+        fourth = target_attempts[3]
+        if (
+            fourth["attempt_id"] != manual_retry["attempt_id"]
+            or fourth["github_run_id"] != manual_retry["github_run_id"]
+            or fourth["archive_sha256"] != CYCLE55_MANUAL_RETRY_ARCHIVE_SHA256
+            or fourth["archive_record_count"] != CYCLE55_MANUAL_RETRY_ARCHIVE_RECORD_COUNT
+            or fourth["claimed_at_utc"] != manual_retry["claimed_at_utc"]
+        ):
+            raise AutonomousResearchError("The fourth attempt does not match its consumed one-time authorization.")
+        prior_event = event_by_attempt.get(manual_retry["prior_attempt_id"])
+        if (
+            prior_event is None
+            or prior_event["outcome"] != "FAILED"
+            or prior_event["reason_code"] != "WORKFLOW_FAILED"
+            or prior_event["recorded_at_utc"] != manual_retry["prior_failure_at_utc"]
+        ):
+            raise AutonomousResearchError("Manual retry exception does not match Cycle #55's final WORKFLOW_FAILED event.")
+        payload = {key: item for key, item in manual_retry.items() if key != "authorization_id"}
+        expected_id = hashlib.sha256(
+            json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+        ).hexdigest()
+        if manual_retry["authorization_id"] != expected_id:
+            raise AutonomousResearchError("Cycle #55 manual retry authorization digest does not match its immutable metadata.")
+
+    target_counts: dict[str, int] = {}
+    for target in attempt_dates:
+        target_counts[target] = target_counts.get(target, 0) + 1
+    for target, count in target_counts.items():
+        if count > MAX_ATTEMPTS_PER_TARGET:
+            permitted_manual_fourth = (
+                target == CYCLE55_MANUAL_RETRY_TARGET_DATE
+                and count == MAX_ATTEMPTS_PER_TARGET + 1
+                and manual_retry is not None
+                and manual_retry["attempt_id"] == next(
+                    item["attempt_id"] for item in reversed(attempts)
+                    if item["target_date"] == target
+                )
+            )
+            if not permitted_manual_fourth:
+                raise AutonomousResearchError("A target exceeded the existing three-attempt limit outside the single Cycle #55 exception.")
+
+    attempts_by_target: dict[str, list[dict[str, Any]]] = {}
+    for item in attempts:
+        attempts_by_target.setdefault(item["target_date"], []).append(item)
+    for target, target_attempts in attempts_by_target.items():
+        if len(target_attempts) > 1:
+            for index, prior_attempt in enumerate(target_attempts[:-1]):
+                prior_event = event_by_attempt.get(prior_attempt["attempt_id"])
+                normal_retry = (
+                    prior_event is not None
+                    and prior_event["outcome"] == "FAILED"
+                    and prior_event["reason_code"] in RETRYABLE_FAILURE_REASON_CODES
+                )
+                approved_cycle55_exception = (
+                    target == CYCLE55_MANUAL_RETRY_TARGET_DATE
+                    and len(target_attempts) == 4
+                    and manual_retry is not None
+                    and index == 2
+                    and prior_attempt["attempt_id"] == manual_retry["prior_attempt_id"]
+                    and prior_event is not None
+                    and prior_event["outcome"] == "FAILED"
+                    and prior_event["reason_code"] == "WORKFLOW_FAILED"
+                )
+                if not (normal_retry or approved_cycle55_exception):
+                    raise AutonomousResearchError(
+                        "Repeated target attempts require a recorded retryable failure; only the consumed Cycle #55 authorization permits its exact fourth attempt."
+                    )
+
     return value
 
 
