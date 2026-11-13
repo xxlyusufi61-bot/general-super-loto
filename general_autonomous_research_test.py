@@ -605,6 +605,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
         state = auto.initial_state()
         state.pop("target_queue")
         state.pop("recovery_history")
+        state.pop("manual_retry_history")
         state["schema_version"] = 1
         state["attempts"].append({
             "attempt_id": "e" * 64,
@@ -615,7 +616,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
             "github_run_id": "98765",
         })
         upgraded = auto.validate_state(state)
-        self.assertEqual(upgraded["schema_version"], 3)
+        self.assertEqual(upgraded["schema_version"], 4)
         self.assertEqual(upgraded["target_queue"], auto.target_queue.initial_queue())
         self.assertEqual(upgraded["recovery_history"], [])
         self.assertEqual(upgraded["attempts"][0]["attempt_id"], "e" * 64)
