@@ -368,19 +368,41 @@ def validate_state(value: Any) -> dict[str, Any]:
         ):
             raise AutonomousResearchError("Recovered attempt is not actively classified as WORKFLOW_FAILED.")
         queue_items = value["target_queue"]["items"]
-        if not queue_items:
-            raise AutonomousResearchError("Recovered WORKFLOW_FAILED target must remain at the FIFO head.")
-        queue_head = queue_items[0]
-        queue_head_sha = hashlib.sha256(
-            json.dumps(queue_head, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
-        ).hexdigest()
-        if (
-            queue_head["target_date"] != entry["target_date"]
-            or queue_head["archive_sha256"] != entry["archive_sha256"]
-            or queue_head["archive_record_count"] != entry["archive_record_count"]
-            or queue_head_sha != entry["restored_snapshot_item_sha256"]
-        ):
-            raise AutonomousResearchError("Recovered Cycle #55 snapshot is no longer the exact FIFO head.")
+        queue_head_matches = False
+        if queue_items:
+            queue_head = queue_items[0]
+            queue_head_sha = hashlib.sha256(
+                json.dumps(queue_head, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+            ).hexdigest()
+            queue_head_matches = (
+                queue_head["target_date"] == entry["target_date"]
+                and queue_head["archive_sha256"] == entry["archive_sha256"]
+                and queue_head["archive_record_count"] == entry["archive_record_count"]
+                and queue_head_sha == entry["restored_snapshot_item_sha256"]
+            )
+        if not queue_head_matches:
+            # The original recovery journal remains valid after the explicitly
+            # authorized fourth attempt completes, but only if the exact FIFO
+            # item was atomically moved into completed by that attempt.
+            manual_history = value.get("manual_retry_history", [])
+            manual = manual_history[0] if isinstance(manual_history, list) and len(manual_history) == 1 else None
+            manual_event = event_by_attempt.get(manual.get("attempt_id")) if isinstance(manual, dict) else None
+            completed = [
+                item for item in value["target_queue"]["completed"]
+                if item.get("target_date") == entry["target_date"]
+                and item.get("archive_sha256") == entry["archive_sha256"]
+                and item.get("archive_record_count") == entry["archive_record_count"]
+            ]
+            if (
+                not isinstance(manual, dict)
+                or manual.get("prior_attempt_id") != entry["attempt_id"]
+                or manual.get("target_date") != entry["target_date"]
+                or manual_event is None
+                or manual_event.get("outcome") not in {"SUCCEEDED", "NO_ELIGIBLE_CANDIDATE"}
+                or len(completed) != 1
+                or completed[0].get("outcome") != manual_event["outcome"]
+            ):
+                raise AutonomousResearchError("Recovered Cycle #55 snapshot is neither the exact FIFO head nor a correctly completed one-time retry.")
     manual_retry_history = value.get("manual_retry_history")
     if not isinstance(manual_retry_history, list) or len(manual_retry_history) > 1:
         raise AutonomousResearchError("Cycle #55 one-time manual retry journal is not a valid single-use list.")
