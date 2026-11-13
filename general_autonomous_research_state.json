@@ -1,5 +1,5 @@
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "project": "GENERAL Super Loto",
   "authorization": {
     "enabled": true,
@@ -58,6 +58,14 @@
       "archive_record_count": 983,
       "claimed_at_utc": "2026-11-12T19:18:00.576351+00:00",
       "github_run_id": "43288555182"
+    },
+    {
+      "attempt_id": "25135d06049ee281e793b792b5b1ae6f344418fc1038ea55b1524cfd8c3fdf4f",
+      "target_date": "2026-11-10",
+      "archive_sha256": "ae7b79e4922d4178a86c7d7880af3e4758d1a5e7f78d6cc3d2595fbb4fd66596",
+      "archive_record_count": 983,
+      "claimed_at_utc": "2026-11-13T09:42:47.342602+00:00",
+      "github_run_id": "43403558067"
     }
   ],
   "events": [
@@ -161,6 +169,34 @@
       },
       "restored_snapshot_item_sha256": "e8e8d1f801e5ef88c0d9aeefa45970c478d8e5133fb9951219c66a3b516e5cfc",
       "recovery_id": "5fe7fe85ed3810cf041e8781aaf7593a40480215ab734c37358208ead0944634"
+    }
+  ],
+  "manual_retry_history": [
+    {
+      "schema_version": 1,
+      "authorization_type": "CYCLE55_PR103_ONE_TIME_EXCEPTION",
+      "target_date": "2026-11-10",
+      "archive_sha256": "ae7b79e4922d4178a86c7d7880af3e4758d1a5e7f78d6cc3d2595fbb4fd66596",
+      "archive_record_count": 983,
+      "prior_attempt_id": "6ab3c502b6a74c16de8443c30ed7a8ecd589616c61804a0a8093a127ce27dce5",
+      "prior_failure_at_utc": "2026-11-12T19:29:11.330937+00:00",
+      "prior_failure_reason_code": "WORKFLOW_FAILED",
+      "attempt_id": "25135d06049ee281e793b792b5b1ae6f344418fc1038ea55b1524cfd8c3fdf4f",
+      "github_run_id": "43403558067",
+      "github_workflow_id": 403181605,
+      "github_workflow_path": ".github/workflows/general-autonomous-research.yml",
+      "github_actor_login": "xxlyusufi61-bot",
+      "github_actor_id": 345811504,
+      "approval_phrase_sha256": "e7a7845bafd4bef2191f2137663c60d1f855a9c1a46c5b3d0ce9e1a0bbcd2a67",
+      "authorized_at_utc": "2026-11-13T09:42:29+00:00",
+      "claimed_at_utc": "2026-11-13T09:42:47.342602+00:00",
+      "preflight_sha256": "9621f7d62cd890bfa535d3b5eb3c2d2fc19e84bebf417bb9caf970c4804599d6",
+      "forward_validation_count": 30,
+      "reverse_validation_count": 30,
+      "discovery_count": 912,
+      "fifo_snapshot_sha256": "e8e8d1f801e5ef88c0d9aeefa45970c478d8e5133fb9951219c66a3b516e5cfc",
+      "consumed": true,
+      "authorization_id": "54178121ac875c7c33f1a7ccbde18d17ff89acd94c17dca36d25ecc56e1c6e44"
     }
   ]
 }
