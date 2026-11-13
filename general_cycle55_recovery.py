@@ -243,7 +243,7 @@ def _recover_cycle55_state_from_verified_documents(
     try:
         return autonomous.validate_state(recovered)
     except autonomous.AutonomousResearchError as exc:
-        raise Cycle55RecoveryError("Recovered preview failed schema v3 validation: " + str(exc)) from None
+        raise Cycle55RecoveryError("Recovered preview failed schema v4 validation: " + str(exc)) from None
 
 
 def build_preview_files(
