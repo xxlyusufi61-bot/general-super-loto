@@ -9,6 +9,8 @@ name: GENERAL 2026-11-05 Recovery Offline Tests
       - ".github/workflows/general-recovery-20261105-test.yml"
       - "general_autonomous_research.py"
       - "general_autonomous_research_test.py"
+      - "general_cycle55_recovery.py"
+      - "general_cycle55_recovery_test.py"
       - "general_research_memory.py"
       - "general_research_memory_test.py"
       - "docs/general-research-memory.md"
@@ -60,8 +62,8 @@ jobs:
 
       - name: Compile recovery and existing safety modules
         run: |
-          python3 -m py_compile general_recovery_20261105.py general_recovery_20261105_test.py general_open_research.py general_autonomous_research.py general_research_memory.py general_research_memory_test.py general_sealed_evaluation.py general_nvidia_guard.py
+          python3 -m py_compile general_recovery_20261105.py general_recovery_20261105_test.py general_open_research.py general_autonomous_research.py general_cycle55_recovery.py general_cycle55_recovery_test.py general_research_memory.py general_research_memory_test.py general_sealed_evaluation.py general_nvidia_guard.py
 
       - name: Run offline recovery and regression suites
         run: |
-          python3 -m unittest -v general_recovery_20261105_test general_open_research_test general_sealed_evaluation_test general_autonomous_research_test general_research_memory_test
+          python3 -m unittest -v general_recovery_20261105_test general_open_research_test general_sealed_evaluation_test general_autonomous_research_test general_cycle55_recovery_test general_research_memory_test

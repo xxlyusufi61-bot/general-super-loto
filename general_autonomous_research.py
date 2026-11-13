@@ -24,6 +24,13 @@ RESEARCH_SCOPE_START = date(2020, 8, 2)
 AUTO_CONFIRMATION_PHRASE = "I_AUTHORIZE_AUTONOMOUS_FREE_ONLY_NVIDIA_RESEARCH_NO_BILLING"
 MAX_AUTHORIZATION_DAYS = 30
 MAX_ATTEMPTS_PER_TARGET = 3
+CYCLE55_RECOVERY_TARGET_DATE = "2026-11-10"
+CYCLE55_RECOVERY_ARCHIVE_SHA256 = "ae7b79e4922d4178a86c7d7880af3e4758d1a5e7f78d6cc3d2595fbb4fd66596"
+CYCLE55_RECOVERY_ARCHIVE_RECORD_COUNT = 983
+CYCLE55_RECOVERY_CURRENT_GENERATION = 52
+CYCLE55_RECOVERY_CURRENT_COMMIT_SHA = "0c9e5bbbe0cbafea188f941b0408e068080c1e68"
+CYCLE55_RECOVERY_SNAPSHOT_GENERATION = 51
+CYCLE55_RECOVERY_SNAPSHOT_COMMIT_SHA = "6197bfadb8af22633dcb22c5490d32c9ffbd52c7"
 RETRYABLE_FAILURE_REASON_CODES = {
     "NO_PROVIDER_REQUEST_SENT",
     "PROVIDER_DELIVERY_UNCERTAIN",
@@ -84,7 +91,7 @@ def _is_sha256(value: Any) -> bool:
 
 def initial_state() -> dict[str, Any]:
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "project": PROJECT,
         "authorization": {
             "enabled": False,
@@ -98,21 +105,29 @@ def initial_state() -> dict[str, Any]:
         "attempts": [],
         "events": [],
         "target_queue": target_queue.initial_queue(),
+        "recovery_history": [],
     }
 
 
 def validate_state(value: Any) -> dict[str, Any]:
-    legacy_keys = {"schema_version", "project", "authorization", "attempts", "events"}
-    if isinstance(value, dict) and set(value) == legacy_keys and value.get("schema_version") == 1:
-        # Upgrade the legacy scheduler document in memory only. The caller persists
-        # it only through the ordinary, separately authorized state-store workflow.
-        value["schema_version"] = 2
+    legacy_v1_keys = {"schema_version", "project", "authorization", "attempts", "events"}
+    legacy_v2_keys = legacy_v1_keys | {"target_queue"}
+    if isinstance(value, dict) and set(value) == legacy_v1_keys and value.get("schema_version") == 1:
+        # Upgrade legacy v1 state in memory only; persistence remains a separate,
+        # generation-guarded state-store operation.
+        value["schema_version"] = 3
         value["target_queue"] = target_queue.initial_queue()
+        value["recovery_history"] = []
+    elif isinstance(value, dict) and set(value) == legacy_v2_keys and value.get("schema_version") == 2:
+        # Schema v3 adds an append-only, metadata-only recovery journal.
+        value["schema_version"] = 3
+        value["recovery_history"] = []
     if not isinstance(value, dict) or set(value) != {
-        "schema_version", "project", "authorization", "attempts", "events", "target_queue"
+        "schema_version", "project", "authorization", "attempts", "events",
+        "target_queue", "recovery_history"
     }:
         raise AutonomousResearchError("Autonomous scheduler state has an invalid schema.")
-    if type(value.get("schema_version")) is not int or value["schema_version"] != 2:
+    if type(value.get("schema_version")) is not int or value["schema_version"] != 3:
         raise AutonomousResearchError("Unsupported autonomous scheduler schema version.")
     try:
         target_queue.validate_queue(value["target_queue"])
@@ -223,6 +238,144 @@ def validate_state(value: Any) -> dict[str, Any]:
                     raise AutonomousResearchError(
                         "Repeated target attempts require a recorded retryable failure; uncertain provider delivery remains blocked."
                     )
+
+    recovery_history = value.get("recovery_history")
+    if not isinstance(recovery_history, list) or len(recovery_history) > 256:
+        raise AutonomousResearchError("Recovery journal is not a valid bounded list.")
+    recovery_ids: set[str] = set()
+    recovered_attempt_ids: set[str] = set()
+    required_recovery = {
+        "schema_version", "recovery_id", "recovery_type", "recorded_at_utc",
+        "attempt_id", "target_date", "archive_sha256", "archive_record_count",
+        "failure_at_utc", "reason_code", "source_state", "snapshot_source",
+        "archived_terminal_event", "archived_completed_record",
+        "restored_snapshot_item_sha256",
+    }
+    source_keys = {"generation", "commit_sha", "blob_sha", "content_sha256"}
+    for entry in recovery_history:
+        if not isinstance(entry, dict) or set(entry) != required_recovery:
+            raise AutonomousResearchError("Recovery journal entry has an invalid schema.")
+        if type(entry["schema_version"]) is not int or entry["schema_version"] != 1:
+            raise AutonomousResearchError("Unsupported recovery journal entry version.")
+        recovery_id = entry["recovery_id"]
+        attempt_id = entry["attempt_id"]
+        if not _is_sha256(recovery_id) or recovery_id in recovery_ids:
+            raise AutonomousResearchError("Recovery journal identifier is invalid or duplicated.")
+        if not isinstance(attempt_id, str) or len(attempt_id) != 64 or attempt_id not in attempt_ids:
+            raise AutonomousResearchError("Recovery journal references an unknown attempt.")
+        if attempt_id in recovered_attempt_ids:
+            raise AutonomousResearchError("An attempt cannot have multiple recovery journal entries.")
+        recovery_ids.add(recovery_id)
+        recovered_attempt_ids.add(attempt_id)
+        if entry["recovery_type"] != "CYCLE55_FALSE_TERMINAL_COMPLETION":
+            raise AutonomousResearchError("Recovery journal type is not allowed.")
+        if entry["reason_code"] != "POST_PROVIDER_MEMORY_APPEND_FAILURE":
+            raise AutonomousResearchError("Recovery journal reason code is not allowed.")
+        target = _canonical_date(entry["target_date"], "recovery.target_date")
+        if not _is_sha256(entry["archive_sha256"]):
+            raise AutonomousResearchError("Recovery archive hash is invalid.")
+        if type(entry["archive_record_count"]) is not int or entry["archive_record_count"] < 1:
+            raise AutonomousResearchError("Recovery archive record count is invalid.")
+        if not _is_sha256(entry["restored_snapshot_item_sha256"]):
+            raise AutonomousResearchError("Recovery snapshot item hash is invalid.")
+        _timestamp(entry["recorded_at_utc"], "recovery.recorded_at_utc")
+        _timestamp(entry["failure_at_utc"], "recovery.failure_at_utc")
+        for field in ("source_state", "snapshot_source"):
+            provenance = entry[field]
+            if not isinstance(provenance, dict) or set(provenance) != source_keys:
+                raise AutonomousResearchError("Recovery source provenance has an invalid schema.")
+            if type(provenance["generation"]) is not int or provenance["generation"] < 1:
+                raise AutonomousResearchError("Recovery source generation is invalid.")
+            if not isinstance(provenance["commit_sha"], str) or len(provenance["commit_sha"]) != 40 or any(c not in "0123456789abcdef" for c in provenance["commit_sha"]):
+                raise AutonomousResearchError("Recovery source commit SHA is invalid.")
+            if not isinstance(provenance["blob_sha"], str) or len(provenance["blob_sha"]) != 40 or any(c not in "0123456789abcdef" for c in provenance["blob_sha"]):
+                raise AutonomousResearchError("Recovery source blob SHA is invalid.")
+            if not _is_sha256(provenance["content_sha256"]):
+                raise AutonomousResearchError("Recovery source content SHA-256 is invalid.")
+        if entry["snapshot_source"]["generation"] >= entry["source_state"]["generation"]:
+            raise AutonomousResearchError("Recovery snapshot source must predate the faulty state.")
+        if (
+            entry["source_state"]["generation"] != CYCLE55_RECOVERY_CURRENT_GENERATION
+            or entry["source_state"]["commit_sha"] != CYCLE55_RECOVERY_CURRENT_COMMIT_SHA
+            or entry["snapshot_source"]["generation"] != CYCLE55_RECOVERY_SNAPSHOT_GENERATION
+            or entry["snapshot_source"]["commit_sha"] != CYCLE55_RECOVERY_SNAPSHOT_COMMIT_SHA
+            or target != CYCLE55_RECOVERY_TARGET_DATE
+            or entry["archive_sha256"] != CYCLE55_RECOVERY_ARCHIVE_SHA256
+            or entry["archive_record_count"] != CYCLE55_RECOVERY_ARCHIVE_RECORD_COUNT
+        ):
+            raise AutonomousResearchError("Recovery journal does not match the pinned Cycle #55 provenance.")
+        failure_time = _timestamp(entry["failure_at_utc"], "recovery.failure_at_utc")
+        attempt = next(item for item in attempts if item["attempt_id"] == attempt_id)
+        if (
+            attempt["target_date"] != target
+            or attempt["archive_sha256"] != entry["archive_sha256"]
+            or attempt["archive_record_count"] != entry["archive_record_count"]
+        ):
+            raise AutonomousResearchError("Recovery journal does not match its attempt metadata.")
+        archived_event = entry["archived_terminal_event"]
+        if (
+            not isinstance(archived_event, dict)
+            or set(archived_event) != required_event
+            or archived_event["attempt_id"] != attempt_id
+            or archived_event["outcome"] != "NO_ELIGIBLE_CANDIDATE"
+            or archived_event["reason_code"] != "NO_FROZEN_DIRECTIONAL_CANDIDATE"
+        ):
+            raise AutonomousResearchError("Archived terminal event is not the expected false completion.")
+        archived_event_time = _timestamp(
+            archived_event["recorded_at_utc"], "recovery.archived_terminal_event.recorded_at_utc"
+        )
+        if archived_event_time > failure_time:
+            raise AutonomousResearchError("Archived terminal event postdates the recorded provider failure.")
+        archived_completed = entry["archived_completed_record"]
+        if (
+            not isinstance(archived_completed, dict)
+            or set(archived_completed) != {
+                "target_date", "archive_sha256", "archive_record_count",
+                "completed_at_utc", "outcome",
+            }
+            or archived_completed["target_date"] != target
+            or archived_completed["archive_sha256"] != entry["archive_sha256"]
+            or archived_completed["archive_record_count"] != entry["archive_record_count"]
+            or archived_completed["outcome"] != "NO_ELIGIBLE_CANDIDATE"
+        ):
+            raise AutonomousResearchError("Archived FIFO completion record is invalid.")
+        archived_completed_time = _timestamp(
+            archived_completed["completed_at_utc"],
+            "recovery.archived_completed_record.completed_at_utc",
+        )
+        if archived_completed_time > failure_time:
+            raise AutonomousResearchError("Archived FIFO completion postdates the recorded provider failure.")
+
+        recovery_payload = {key: val for key, val in entry.items() if key != "recovery_id"}
+        expected_recovery_id = hashlib.sha256(
+            json.dumps(recovery_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+        ).hexdigest()
+        if recovery_id != expected_recovery_id:
+            raise AutonomousResearchError("Recovery journal digest does not match its metadata.")
+
+    for entry in recovery_history:
+        active_event = event_by_attempt.get(entry["attempt_id"])
+        if (
+            active_event is None
+            or active_event["outcome"] != "FAILED"
+            or active_event["reason_code"] != "WORKFLOW_FAILED"
+            or active_event["recorded_at_utc"] != entry["failure_at_utc"]
+        ):
+            raise AutonomousResearchError("Recovered attempt is not actively classified as WORKFLOW_FAILED.")
+        queue_items = value["target_queue"]["items"]
+        if not queue_items:
+            raise AutonomousResearchError("Recovered WORKFLOW_FAILED target must remain at the FIFO head.")
+        queue_head = queue_items[0]
+        queue_head_sha = hashlib.sha256(
+            json.dumps(queue_head, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+        ).hexdigest()
+        if (
+            queue_head["target_date"] != entry["target_date"]
+            or queue_head["archive_sha256"] != entry["archive_sha256"]
+            or queue_head["archive_record_count"] != entry["archive_record_count"]
+            or queue_head_sha != entry["restored_snapshot_item_sha256"]
+        ):
+            raise AutonomousResearchError("Recovered Cycle #55 snapshot is no longer the exact FIFO head.")
     return value
 
 

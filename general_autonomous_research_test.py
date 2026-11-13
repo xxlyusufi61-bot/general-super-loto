@@ -604,6 +604,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
     def test_legacy_state_schema_is_upgraded_in_memory_without_losing_history(self):
         state = auto.initial_state()
         state.pop("target_queue")
+        state.pop("recovery_history")
         state["schema_version"] = 1
         state["attempts"].append({
             "attempt_id": "e" * 64,
@@ -614,8 +615,9 @@ class AutonomousResearchStateTests(unittest.TestCase):
             "github_run_id": "98765",
         })
         upgraded = auto.validate_state(state)
-        self.assertEqual(upgraded["schema_version"], 2)
+        self.assertEqual(upgraded["schema_version"], 3)
         self.assertEqual(upgraded["target_queue"], auto.target_queue.initial_queue())
+        self.assertEqual(upgraded["recovery_history"], [])
         self.assertEqual(upgraded["attempts"][0]["attempt_id"], "e" * 64)
 
     def test_prepare_requires_the_persisted_fifo_head_snapshot(self):

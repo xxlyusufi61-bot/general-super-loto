@@ -261,3 +261,30 @@ The command-line `--non-blocking-delivery` option is accepted only when
 combination is rejected during argument validation, before the report is loaded
 or a Telegram request is attempted. Other report kinds and non-success
 notifications therefore retain their fail-closed delivery behavior.
+
+
+## Scheduler state schema v3 and Cycle #55 recovery
+
+Scheduler state schema v3 adds a bounded, append-only `recovery_history` journal.
+Legacy v1 and v2 state documents are upgraded in memory with an empty journal;
+the normal generation-guarded state writer remains the only way to publish a
+state document. A journal entry retains the exact superseded terminal event and
+FIFO completion metadata, source generations and Git object identities, the
+failure classification, and a digest of the restored snapshot item. It stores
+no draw rows, target numbers, per-draw hits, or rankings.
+
+Cycle #55 exposed a finalization-order defect: a false
+`NO_ELIGIBLE_CANDIDATE` event and FIFO completion were staged before the
+research-memory append had succeeded. The Cycle #55 recovery utility therefore
+requires both the pinned generation-52 state and the pinned generation-51
+source state. It verifies the exact attempt, event, completed entry, FIFO
+cursor, unchanged pending tail, and the original compressed snapshot before
+constructing a v3 preview. The restored attempt is classified as
+`FAILED / WORKFLOW_FAILED`; PR #103 prohibits automatic retry after a provider
+response has been received and a later workflow stage fails.
+
+`general_cycle55_recovery.py` is an offline preview tool only. It has no
+GitHub, NVIDIA, or Telegram client and does not publish state. It refuses to
+overwrite either input and writes a separate local preview. A production
+state-store publication, any change to FIFO eligibility, and any future
+research execution require separate explicit authorization.
