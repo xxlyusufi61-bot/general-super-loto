@@ -229,6 +229,25 @@ a terminal SUCCEEDED, NO_ELIGIBLE_CANDIDATE, or FAILED outcome. A valid empty
 hypothesis response is a terminal scientific NO_ELIGIBLE_CANDIDATE. A sent or
 uncertain provider request remains blocked for manual recovery.
 
+## Atomic terminal finalization
+
+A claimed target is not marked SUCCEEDED or NO_ELIGIBLE_CANDIDATE until its
+sanitized directional research-memory append has passed validation. The
+successful terminal event is then staged locally and published in the same
+generation-guarded state-store commit as the research-memory object. This keeps
+memory persistence and FIFO completion atomic: the queue head is released only
+when both records are accepted by the authoritative state store.
+
+If research-memory validation fails after a provider request was sent and
+returned, the claimed attempt is recorded as FAILED with WORKFLOW_FAILED. The
+FIFO head remains pending and is not automatically retried, preserving PR #103.
+A failed or ambiguous final state-store publication leaves the authoritative
+attempt in progress, which also blocks the FIFO; it is not treated as a
+successful completion and is never retried automatically. Telegram success
+messages are sent only after the final state-store publication succeeds.
+Failure notifications cover memory-append, terminal-outcome, and final
+state-store publication errors.
+
 Before checking hosted-research authorization, the scheduled cycle
 materializes only the current FIFO head in the job workspace and runs the
 bounded offline symbolic discovery/evaluation task (up to sixteen safe-DSL candidates screened using only the earlier training prefix). A successful exploratory

@@ -361,8 +361,40 @@ jobs:
           expected_generation: ${{ steps.persist_claim.outputs.generation }}
           objects: evaluation_ledger
           message: "Record autonomous sealed evaluation completion"
+      - name: Append sanitized GENERAL research memory
+        id: research_memory
+        if: ${{ always() && steps.attempt_reservation.outputs.attempt_id != '' }}
+        env:
+          CLAIM_OUTCOME: ${{ steps.sealed_claim.outcome }}
+          CLAIM_PERSIST_OUTCOME: ${{ steps.persist_claim.outcome }}
+          EVALUATION_OUTCOME: ${{ steps.evaluation.outcome }}
+          RESEARCH_OUTCOME: ${{ steps.research.outcome }}
+        run: |
+          failure_stage=""
+          if [ "$RESEARCH_OUTCOME" = "failure" ]; then
+            echo "The research runner records the failed direction and stage."
+          elif [ "$CLAIM_OUTCOME" = "failure" ]; then
+            failure_stage="sealed_claim"
+          elif [ "$CLAIM_PERSIST_OUTCOME" = "failure" ]; then
+            failure_stage="sealed_claim_persistence"
+          elif [ "$EVALUATION_OUTCOME" = "failure" ]; then
+            failure_stage="sealed_evaluation"
+          fi
+          if python3 general_research_memory.py record-cycle \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --failure-stage "$failure_stage" \
+            --error-type "WorkflowStepFailure"; then
+            :
+          else
+            echo "GENERAL research-memory append failed; the existing ledger and target isolation were not modified."
+            exit 1
+          fi
+          echo "Research memory is staged for the dedicated state-store commit."
+
       - name: Record successful evaluation outcome
-        if: ${{ always() && steps.attempt_reservation.outputs.attempt_id != '' && steps.sealed_claim.outputs.claim_created == 'true' && steps.evaluation.outcome == 'success' && steps.persist_eval.outcome == 'success' }}
+        id: finish_evaluation
+        if: ${{ always() && steps.attempt_reservation.outputs.attempt_id != '' && steps.sealed_claim.outputs.claim_created == 'true' && steps.evaluation.outcome == 'success' && steps.persist_eval.outcome == 'success' && steps.research_memory.outcome == 'success' }}
         env:
           ATTEMPT_ID: ${{ steps.attempt_reservation.outputs.attempt_id }}
         run: |
@@ -371,7 +403,8 @@ jobs:
             --outcome SUCCEEDED \
             --reason-code EVALUATION_COMPLETED
       - name: Record no-candidate outcome without scoring the archive
-        if: ${{ always() && steps.attempt_reservation.outputs.attempt_id != '' && steps.research.outcome == 'success' && steps.sealed_claim.outcome == 'success' && steps.sealed_claim.outputs.claim_created != 'true' }}
+        id: finish_no_candidate
+        if: ${{ always() && steps.attempt_reservation.outputs.attempt_id != '' && steps.research.outcome == 'success' && steps.sealed_claim.outcome == 'success' && steps.sealed_claim.outputs.claim_created != 'true' && steps.research_memory.outcome == 'success' }}
         env:
           ATTEMPT_ID: ${{ steps.attempt_reservation.outputs.attempt_id }}
         run: |
@@ -380,7 +413,8 @@ jobs:
             --outcome NO_ELIGIBLE_CANDIDATE \
             --reason-code NO_FROZEN_DIRECTIONAL_CANDIDATE
       - name: Record failed claimed cycle
-        if: ${{ always() && steps.attempt_reservation.outputs.attempt_id != '' && (steps.persist_attempt.outcome == 'failure' || steps.persist_claim_snapshot.outcome == 'failure' || steps.research.outcome == 'failure' || steps.sealed_claim.outcome == 'failure' || steps.persist_claim.outcome == 'failure' || steps.evaluation.outcome == 'failure' || steps.persist_eval.outcome == 'failure') }}
+        id: finish_failed
+        if: ${{ always() && steps.attempt_reservation.outputs.attempt_id != '' && (steps.persist_attempt.outcome == 'failure' || steps.persist_claim_snapshot.outcome == 'failure' || steps.research.outcome == 'failure' || steps.sealed_claim.outcome == 'failure' || steps.persist_claim.outcome == 'failure' || steps.evaluation.outcome == 'failure' || steps.persist_eval.outcome == 'failure' || steps.research_memory.outcome == 'failure') }}
         env:
           ATTEMPT_ID: ${{ steps.attempt_reservation.outputs.attempt_id }}
         run: |
@@ -411,36 +445,6 @@ jobs:
             --attempt-id "$ATTEMPT_ID" \
             --outcome FAILED \
             --reason-code "$reason_code"
-      - name: Append sanitized GENERAL research memory
-        if: ${{ always() && steps.attempt_reservation.outputs.attempt_id != '' }}
-        env:
-          CLAIM_OUTCOME: ${{ steps.sealed_claim.outcome }}
-          CLAIM_PERSIST_OUTCOME: ${{ steps.persist_claim.outcome }}
-          EVALUATION_OUTCOME: ${{ steps.evaluation.outcome }}
-          RESEARCH_OUTCOME: ${{ steps.research.outcome }}
-        run: |
-          failure_stage=""
-          if [ "$RESEARCH_OUTCOME" = "failure" ]; then
-            echo "The research runner records the failed direction and stage."
-          elif [ "$CLAIM_OUTCOME" = "failure" ]; then
-            failure_stage="sealed_claim"
-          elif [ "$CLAIM_PERSIST_OUTCOME" = "failure" ]; then
-            failure_stage="sealed_claim_persistence"
-          elif [ "$EVALUATION_OUTCOME" = "failure" ]; then
-            failure_stage="sealed_evaluation"
-          fi
-          if python3 general_research_memory.py record-cycle \
-            --run-id "$GITHUB_RUN_ID" \
-            --run-attempt "$GITHUB_RUN_ATTEMPT" \
-            --failure-stage "$failure_stage" \
-            --error-type "WorkflowStepFailure"; then
-            :
-          else
-            echo "GENERAL research-memory append failed; the existing ledger and target isolation were not modified."
-            exit 1
-          fi
-          echo "Research memory is staged for the dedicated state-store commit."
-
       - name: Persist final scheduler state and sanitized research memory
         id: persist_final_state
         if: ${{ always() && steps.attempt_reservation.outputs.attempt_id != '' }}
@@ -452,7 +456,7 @@ jobs:
           message: "Persist autonomous cycle outcome and sanitized research memory"
 
       - name: Send separate forward and reverse Telegram reports
-        if: ${{ steps.evaluation.outcome == 'success' }}
+        if: ${{ steps.evaluation.outcome == 'success' && steps.persist_final_state.outcome == 'success' }}
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -465,7 +469,7 @@ jobs:
             --kind research \
             --report-log open_research_evaluation_report.json
       - name: Notify Telegram when no directional DSL candidate was eligible
-        if: ${{ steps.attempt_reservation.outputs.attempt_id != '' && steps.research.outcome == 'success' && steps.sealed_claim.outcome == 'success' && steps.sealed_claim.outputs.claim_created != 'true' }}
+        if: ${{ steps.attempt_reservation.outputs.attempt_id != '' && steps.research.outcome == 'success' && steps.sealed_claim.outcome == 'success' && steps.sealed_claim.outputs.claim_created != 'true' && steps.persist_final_state.outcome == 'success' }}
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -476,7 +480,7 @@ jobs:
             --branch general-automation-state \
             --run-url "https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
       - name: Notify Telegram after a failed claimed cycle
-        if: ${{ always() && steps.attempt_reservation.outputs.attempt_id != '' && (steps.persist_attempt.outcome == 'failure' || steps.research.outcome == 'failure' || steps.sealed_claim.outcome == 'failure' || steps.persist_claim.outcome == 'failure' || steps.evaluation.outcome == 'failure' || steps.persist_eval.outcome == 'failure') }}
+        if: ${{ always() && steps.attempt_reservation.outputs.attempt_id != '' && (steps.persist_attempt.outcome == 'failure' || steps.research.outcome == 'failure' || steps.sealed_claim.outcome == 'failure' || steps.persist_claim.outcome == 'failure' || steps.evaluation.outcome == 'failure' || steps.persist_eval.outcome == 'failure' || steps.research_memory.outcome == 'failure' || steps.finish_evaluation.outcome == 'failure' || steps.finish_no_candidate.outcome == 'failure' || steps.finish_failed.outcome == 'failure' || steps.persist_final_state.outcome == 'failure') }}
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
