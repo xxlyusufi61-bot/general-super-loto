@@ -263,28 +263,53 @@ or a Telegram request is attempted. Other report kinds and non-success
 notifications therefore retain their fail-closed delivery behavior.
 
 
-## Scheduler state schema v3 and Cycle #55 recovery
+## Scheduler state schema v4 and Cycle #55 recovery
 
-Scheduler state schema v3 adds a bounded, append-only `recovery_history` journal.
-Legacy v1 and v2 state documents are upgraded in memory with an empty journal;
-the normal generation-guarded state writer remains the only way to publish a
-state document. A journal entry retains the exact superseded terminal event and
-FIFO completion metadata, source generations and Git object identities, the
-failure classification, and a digest of the restored snapshot item. It stores
-no draw rows, target numbers, per-draw hits, or rankings.
+Scheduler state schema v3 introduced the bounded, append-only `recovery_history`
+journal. Schema v4 adds a separate, bounded `manual_retry_history` journal for
+one narrowly scoped exception approved on 2026-11-13. Legacy v1, v2, and v3
+documents are upgraded in memory; the existing generation-guarded state writer
+remains the only way to publish state. Both journals store metadata and
+cryptographic digests only, never draw rows, target numbers, per-draw hits, or
+rankings.
 
 Cycle #55 exposed a finalization-order defect: a false
 `NO_ELIGIBLE_CANDIDATE` event and FIFO completion were staged before the
 research-memory append had succeeded. The Cycle #55 recovery utility therefore
 requires both the pinned generation-52 state and the pinned generation-51
 source state. It verifies the exact attempt, event, completed entry, FIFO
-cursor, unchanged pending tail, and the original compressed snapshot before
-constructing a v3 preview. The restored attempt is classified as
-`FAILED / WORKFLOW_FAILED`; PR #103 prohibits automatic retry after a provider
-response has been received and a later workflow stage fails.
+cursor, unchanged pending tail, and original compressed snapshot before
+constructing the v4 preview. The restored attempt remains
+`FAILED / WORKFLOW_FAILED`.
 
-`general_cycle55_recovery.py` is an offline preview tool only. It has no
-GitHub, NVIDIA, or Telegram client and does not publish state. It refuses to
-overwrite either input and writes a separate local preview. A production
-state-store publication, any change to FIFO eligibility, and any future
-research execution require separate explicit authorization.
+### One-time Cycle #55 exception to PR #103
+
+PR #103's three-attempt limit and non-retryable `WORKFLOW_FAILED` rule remain
+unchanged for every other target. A separate explicit approval authorizes only
+one additional attempt for the exact 2026-11-10 FIFO snapshot:
+- Target date: `2026-11-10`
+- Archive SHA-256: `ae7b79e4922d4178a86c7d7880af3e4758d1a5e7f78d6cc3d2595fbb4fd66596`
+- Archive records: `983`
+- Existing attempts: exactly the three pinned Cycle #55 attempts.
+- Prior terminal failure: `WORKFLOW_FAILED` at `2026-11-12T19:29:11.330937+00:00`.
+
+The manual path is available only through the existing autonomous workflow's
+`workflow_dispatch` action `cycle55-manual-retry`. It requires the fixed
+one-time confirmation phrase, a first-attempt dispatch on `main`, the pinned
+workflow identity and authorized repository actor. Before reserving the fourth
+attempt it revalidates the current free-only authorization and clear global
+NVIDIA lock, exact FIFO snapshot, target isolation, minimum discovery history,
+and fresh disjoint forward/reverse sealed windows. Previously consumed
+holdouts cannot be reused. The exception is consumed atomically with the
+fourth-attempt reservation in the state store and cannot be replayed.
+
+No other target, the authorization period, or the global NVIDIA lock is changed.
+If any identity, state, archive, lock, or sealed-preflight check fails, the
+manual action stops before a provider request. A terminal result for the
+journaled fourth attempt may release only the exact 2026-11-10 FIFO item; the
+next queued target remains in chronological order.
+
+The manual workflow still uses the existing provider limiter, research,
+validation, evaluation, memory, and Telegram paths. The exception itself does
+not unlock or make an NVIDIA request. The one-time retry is not a waiver of
+target isolation or a guarantee that an eligible candidate will exist.

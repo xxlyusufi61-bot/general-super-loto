@@ -243,7 +243,7 @@ def _recover_cycle55_state_from_verified_documents(
     try:
         return autonomous.validate_state(recovered)
     except autonomous.AutonomousResearchError as exc:
-        raise Cycle55RecoveryError("Recovered preview failed schema v3 validation: " + str(exc)) from None
+        raise Cycle55RecoveryError("Recovered preview failed schema v4 validation: " + str(exc)) from None
 
 
 def build_preview_files(
@@ -253,7 +253,7 @@ def build_preview_files(
     *,
     recorded_at_utc: str,
 ) -> dict[str, Any]:
-    """Verify pinned state blobs and write only a new local v3 preview file."""
+    """Verify pinned state blobs and write only a new local v4 preview file."""
     current_path = Path(current_state_path).resolve()
     source_path = Path(snapshot_source_path).resolve()
     output = Path(output_path).resolve()

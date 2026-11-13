@@ -66,6 +66,9 @@ class Cycle55RecoveryTests(unittest.TestCase):
     def setUp(self):
         self.original_target_hash = recovery.TARGET_ARCHIVE_SHA256
         self.original_autonomous_target_hash = autonomous.CYCLE55_RECOVERY_ARCHIVE_SHA256
+        self.original_manual_archive_hash = autonomous.CYCLE55_MANUAL_RETRY_ARCHIVE_SHA256
+        self.original_manual_attempt_ids = autonomous.CYCLE55_MANUAL_RETRY_PRIOR_ATTEMPT_IDS
+        self.original_manual_failure_at = autonomous.CYCLE55_MANUAL_RETRY_PRIOR_FAILURE_AT_UTC
         rows_10 = synthetic_rows(983, recovery.TARGET_DATE)
         rows_12 = rows_10 + synthetic_rows(
             1, "2026-11-12"
@@ -82,9 +85,11 @@ class Cycle55RecoveryTests(unittest.TestCase):
         )
         recovery.TARGET_ARCHIVE_SHA256 = self.head_item["archive_sha256"]
         autonomous.CYCLE55_RECOVERY_ARCHIVE_SHA256 = self.head_item["archive_sha256"]
+        autonomous.CYCLE55_MANUAL_RETRY_ARCHIVE_SHA256 = self.head_item["archive_sha256"]
 
         state = autonomous.initial_state()
         state.pop("recovery_history")
+        state.pop("manual_retry_history")
         state["schema_version"] = 2
         state["authorization"] = {
             "enabled": True,
@@ -107,6 +112,10 @@ class Cycle55RecoveryTests(unittest.TestCase):
             self.head_item, recovery.TARGET_GITHUB_RUN_ID, "cycle55-attempt-3",
             "2026-11-12T19:18:00.576351+00:00",
         )
+        autonomous.CYCLE55_MANUAL_RETRY_PRIOR_ATTEMPT_IDS = (
+            first["attempt_id"], second["attempt_id"], third["attempt_id"],
+        )
+        autonomous.CYCLE55_MANUAL_RETRY_PRIOR_FAILURE_AT_UTC = recovery.PROVIDER_FAILURE_AT_UTC
         state["attempts"] = [first, second, third]
         state["events"] = [
             {
@@ -151,6 +160,9 @@ class Cycle55RecoveryTests(unittest.TestCase):
     def tearDown(self):
         recovery.TARGET_ARCHIVE_SHA256 = self.original_target_hash
         autonomous.CYCLE55_RECOVERY_ARCHIVE_SHA256 = self.original_autonomous_target_hash
+        autonomous.CYCLE55_MANUAL_RETRY_ARCHIVE_SHA256 = self.original_manual_archive_hash
+        autonomous.CYCLE55_MANUAL_RETRY_PRIOR_ATTEMPT_IDS = self.original_manual_attempt_ids
+        autonomous.CYCLE55_MANUAL_RETRY_PRIOR_FAILURE_AT_UTC = self.original_manual_failure_at
 
     def recover(self):
         return _recover_preview(
@@ -161,7 +173,7 @@ class Cycle55RecoveryTests(unittest.TestCase):
 
     def test_recovery_archives_false_terminal_records_and_restores_exact_fifo_snapshot(self):
         recovered = self.recover()
-        self.assertEqual(recovered["schema_version"], 3)
+        self.assertEqual(recovered["schema_version"], 4)
         self.assertEqual(recovered["events"][-1]["outcome"], "FAILED")
         self.assertEqual(recovered["events"][-1]["reason_code"], "WORKFLOW_FAILED")
         self.assertEqual(
@@ -187,6 +199,133 @@ class Cycle55RecoveryTests(unittest.TestCase):
         self.recover()
         self.assertEqual(self.current_state, current_before)
         self.assertEqual(self.source_state, source_before)
+
+    def _manual_retry_inputs(self, recovered):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root / "target-10.json"
+            ledger = root / "ledger.json"
+            lock = root / "lock.json"
+            raw, _ = target_queue._decode_item(recovered["target_queue"]["items"][0])
+            archive.write_bytes(raw)
+            ledger.write_text(
+                json.dumps({"schema_version": 1, "purpose": "test append-only ledger", "entries": []}),
+                encoding="utf-8",
+            )
+            lock.write_text(json.dumps(general_nvidia_guard.initial_lock_state()), encoding="utf-8")
+            plan = autonomous.prepare_cycle55_manual_retry(
+                recovered,
+                archive_path=archive,
+                ledger_path=ledger,
+                global_lock_path=lock,
+                now=datetime.fromisoformat(STAMP),
+            )
+        return plan
+
+    def _manual_dispatch_run(self, *, actor_login=None, actor_id=None, run_id="500001"):
+        return {
+            "id": run_id,
+            "event": "workflow_dispatch",
+            "status": "in_progress",
+            "run_attempt": 1,
+            "head_branch": "main",
+            "head_sha": "a" * 40,
+            "workflow_id": autonomous.CYCLE55_MANUAL_RETRY_WORKFLOW_ID,
+            "path": autonomous.CYCLE55_MANUAL_RETRY_WORKFLOW_PATH,
+            "actor_login": actor_login or autonomous.CYCLE55_MANUAL_RETRY_ACTOR_LOGIN,
+            "actor_id": autonomous.CYCLE55_MANUAL_RETRY_ACTOR_ID if actor_id is None else actor_id,
+            "created_at": "2026-11-13T11:59:00+00:00",
+        }
+
+    def test_one_time_manual_exception_claims_exactly_one_fourth_attempt(self):
+        recovered = self.recover()
+        plan = self._manual_retry_inputs(recovered)
+        self.assertTrue(plan["eligible"])
+        self.assertEqual(plan["status"], "READY_MANUAL_ONE_TIME_EXCEPTION")
+        self.assertEqual(plan["target_date"], recovery.TARGET_DATE)
+        self.assertEqual(plan["retry_number"], 4)
+        self.assertIs(plan["target_numbers_exposed"], False)
+        self.assertTrue(plan["forward_reverse_holdouts_disjoint"])
+        self.assertIs(plan["previously_consumed_holdout_dates_reused"], False)
+        self.assertNotIn("forward_validation_dates", plan)
+        self.assertNotIn("reverse_validation_dates", plan)
+
+        claimed = autonomous.claim_cycle55_manual_retry(
+            recovered,
+            plan,
+            github_run=self._manual_dispatch_run(),
+            confirmation=autonomous.CYCLE55_MANUAL_RETRY_CONFIRMATION,
+            now=datetime.fromisoformat(STAMP),
+        )
+        self.assertEqual(claimed["status"], "CYCLE55_ONE_TIME_MANUAL_RETRY_CLAIMED")
+        self.assertTrue(claimed["exception_consumed"])
+        self.assertEqual(len([x for x in recovered["attempts"] if x["target_date"] == recovery.TARGET_DATE]), 4)
+        self.assertEqual(len(recovered["manual_retry_history"]), 1)
+        self.assertEqual(recovered["manual_retry_history"][0]["attempt_id"], claimed["attempt_id"])
+        self.assertEqual(recovered["target_queue"]["items"][0]["target_date"], recovery.TARGET_DATE)
+        autonomous.validate_state(recovered)
+
+        before = copy.deepcopy(recovered)
+        with self.assertRaisesRegex(autonomous.AutonomousResearchError, "already been consumed"):
+            autonomous.claim_cycle55_manual_retry(
+                recovered,
+                plan,
+                github_run=self._manual_dispatch_run(run_id="500002"),
+                confirmation=autonomous.CYCLE55_MANUAL_RETRY_CONFIRMATION,
+                now=datetime.fromisoformat(STAMP),
+            )
+        self.assertEqual(recovered, before)
+
+        autonomous.record_outcome(
+            recovered,
+            claimed["attempt_id"],
+            outcome="SUCCEEDED",
+            reason_code="EVALUATION_COMPLETED",
+            now=datetime.fromisoformat(STAMP),
+        )
+        autonomous.validate_state(recovered)
+        self.assertEqual(recovered["target_queue"]["items"][0]["target_date"], "2026-11-12")
+        self.assertEqual(recovered["target_queue"]["completed"][-1]["target_date"], recovery.TARGET_DATE)
+
+    def test_manual_exception_rejects_wrong_actor_or_confirmation_without_mutation(self):
+        recovered = self.recover()
+        plan = self._manual_retry_inputs(recovered)
+        before = copy.deepcopy(recovered)
+        with self.assertRaisesRegex(autonomous.AutonomousResearchError, "identity"):
+            autonomous.claim_cycle55_manual_retry(
+                recovered,
+                plan,
+                github_run=self._manual_dispatch_run(actor_login="untrusted-user"),
+                confirmation=autonomous.CYCLE55_MANUAL_RETRY_CONFIRMATION,
+                now=datetime.fromisoformat(STAMP),
+            )
+        self.assertEqual(recovered, before)
+        with self.assertRaisesRegex(autonomous.AutonomousResearchError, "confirmation"):
+            autonomous.claim_cycle55_manual_retry(
+                recovered,
+                plan,
+                github_run=self._manual_dispatch_run(),
+                confirmation="NO",
+                now=datetime.fromisoformat(STAMP),
+            )
+        self.assertEqual(recovered, before)
+
+    def test_fourth_attempt_without_one_time_journal_is_rejected(self):
+        recovered = self.recover()
+        fourth_id = __import__("hashlib").sha256(
+            ("GENERAL-AUTO-RESEARCH-V2|" + recovery.TARGET_DATE + "|"
+             + autonomous.CYCLE55_MANUAL_RETRY_ARCHIVE_SHA256 + "|4").encode("utf-8")
+        ).hexdigest()
+        recovered["attempts"].append({
+            "attempt_id": fourth_id,
+            "target_date": recovery.TARGET_DATE,
+            "archive_sha256": autonomous.CYCLE55_MANUAL_RETRY_ARCHIVE_SHA256,
+            "archive_record_count": 983,
+            "claimed_at_utc": STAMP,
+            "github_run_id": "500003",
+        })
+        with self.assertRaisesRegex(autonomous.AutonomousResearchError, "three-attempt limit"):
+            autonomous.validate_state(recovered)
 
     def test_provider_post_response_failure_blocks_same_target_retry(self):
         recovered = self.recover()
@@ -342,7 +481,7 @@ class Cycle55RecoveryTests(unittest.TestCase):
                 )
                 self.assertTrue(output_path.exists())
                 self.assertEqual(result["status"], "LOCAL_RECOVERY_PREVIEW_CREATED")
-                self.assertEqual(result["schema_version"], 3)
+                self.assertEqual(result["schema_version"], 4)
                 self.assertFalse(result["production_state_written"])
                 self.assertEqual(current_path.read_bytes(), current_raw)
                 self.assertEqual(source_path.read_bytes(), source_raw)

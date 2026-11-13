@@ -25,7 +25,7 @@ without printing or copying draw values into the report.
 
 ## Migration result
 
-The v3 preview:
+The original v3 preview:
 1. Archives the incorrect `NO_ELIGIBLE_CANDIDATE` event and matching FIFO
    completion record in `recovery_history`.
 2. Replaces the active Cycle #55 event with `FAILED / WORKFLOW_FAILED`, using
@@ -35,11 +35,37 @@ The v3 preview:
    authorization, and unrelated events unchanged.
 5. Adds a digest over the complete restored FIFO item to the recovery journal.
 
-PR #103 remains authoritative: `WORKFLOW_FAILED` is not automatically
-retryable. The restored target blocks later FIFO targets and itself cannot be
-automatically retried. This recovery changes the correctness of the persisted
-history; it does not grant permission to repeat Cycle #55.
+That migration was a history correction only. PR #103's three-attempt cap and
+`WORKFLOW_FAILED` block remained in force when Generation 53 was published.
+A later, separately approved one-time exception is documented below; it does
+not alter the original recovery's provenance or rewrite the global retry rule.
 
+
+## Subsequent one-time Cycle #55 retry exception
+
+On 2026-11-13, a separate explicit approval authorized one additional attempt
+only for the exact 2026-11-10 FIFO target (archive SHA-256
+`ae7b79e4922d4178a86c7d7880af3e4758d1a5e7f78d6cc3d2595fbb4fd66596`, 983
+records), after its three existing pinned attempts and final
+`WORKFLOW_FAILED` event. The one-time exception is implemented in scheduler
+state schema v4 in `manual_retry_history`; it does not make any other
+`WORKFLOW_FAILED` target retryable or raise the normal three-attempt limit.
+
+The guarded `cycle55-manual-retry` workflow_dispatch path requires the pinned
+target and FIFO snapshot, the exact one-time confirmation, a first-attempt
+dispatch on `main`, and the pinned authorized GitHub actor/workflow identity.
+It rechecks existing authorization, the clear global NVIDIA lock, fresh
+disjoint forward/reverse sealed windows, chronology, minimum discovery history,
+and target isolation before reserving attempt four. It cannot unlock the
+provider, modify free-only authorization, consume or reuse prior holdouts, or
+skip the FIFO head. The one-time journal is append-only and cannot be replayed.
+
+A terminal result from that exact fourth attempt may release only the matching
+2026-11-10 FIFO item, after the existing memory/evaluation/state-store
+finalization gates succeed. The subsequent 2026-11-12 FIFO target remains
+next. The manual exception is not itself a provider request; normal shared
+NVIDIA rate limits, lock checks, evaluation, memory, and Telegram reporting
+remain in force.
 
 ## Scheduled-work pause and controlled migration workflow
 
