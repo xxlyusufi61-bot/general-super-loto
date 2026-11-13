@@ -253,7 +253,7 @@ def build_preview_files(
     *,
     recorded_at_utc: str,
 ) -> dict[str, Any]:
-    """Verify pinned state blobs and write only a new local v3 preview file."""
+    """Verify pinned state blobs and write only a new local v4 preview file."""
     current_path = Path(current_state_path).resolve()
     source_path = Path(snapshot_source_path).resolve()
     output = Path(output_path).resolve()
