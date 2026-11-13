@@ -13,7 +13,13 @@ name: GENERAL Autonomous Research Cycle
           - status
           - activate
           - pause
+          - cycle55-manual-retry
         default: status
+      cycle55_manual_confirmation:
+        description: "One-time Cycle #55 retry confirmation. Applies only to the fixed 2026-11-10 FIFO target."
+        required: false
+        type: string
+        default: "NO"
       authorization_phrase:
         description: "For activation only, enter the exact autonomous free-only authorization phrase."
         required: false
@@ -129,12 +135,13 @@ jobs:
           message: "Refresh validated Super Loto archive"
 
   scheduled-cycle:
-    if: ${{ github.event_name == 'schedule' }}
+    if: ${{ always() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.action == 'cycle55-manual-retry')) && (github.event_name != 'schedule' || needs.archive-refresh.result == 'success') }}
     needs: archive-refresh
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
       contents: write
+      actions: read
     steps:
       - name: Checkout default branch
         uses: actions/checkout@v7
@@ -158,6 +165,7 @@ jobs:
         run: python3 general_automation_state_integrity_audit.py
       - name: Capture every unseen canonical draw in the durable FIFO
         id: queue_capture
+        if: ${{ github.event_name == 'schedule' }}
         run: |
           python3 general_autonomous_research.py queue-capture \
             --archive super_loto_archive.json \
@@ -165,7 +173,7 @@ jobs:
           cat "$GITHUB_OUTPUT"
       - name: Persist FIFO snapshots without changing protected archive or ledger objects
         id: persist_queue
-        if: ${{ steps.queue_capture.outputs.changed == 'true' }}
+        if: ${{ github.event_name == 'schedule' && steps.queue_capture.outputs.changed == 'true' }}
         uses: ./.github/actions/publish-automation-state
         with:
           token: ${{ github.token }}
@@ -175,13 +183,13 @@ jobs:
 
       - name: Materialize oldest FIFO snapshot for offline mathematical research
         id: offline_materialize
-        if: ${{ steps.queue_capture.outputs.has_pending == 'true' }}
+        if: ${{ github.event_name == 'schedule' && steps.queue_capture.outputs.has_pending == 'true' }}
         run: |
           python3 general_autonomous_research.py queue-materialize \
             --output super_loto_archive.json
       - name: Run bounded offline hypothesis discovery and evaluation
         id: offline_discovery
-        if: ${{ steps.queue_capture.outputs.has_pending == 'true' }}
+        if: ${{ github.event_name == 'schedule' && steps.queue_capture.outputs.has_pending == 'true' }}
         continue-on-error: true
         run: |
           python3 general_offline_hypothesis_discovery.py run \
@@ -240,29 +248,57 @@ jobs:
           python3 general_nvidia_guard.py check
           echo "GENERAL_NVIDIA_GUARD_PASSED=1" >> "$GITHUB_ENV"
       - name: Materialize only the oldest queued target snapshot
-        if: ${{ steps.status.outputs.authorized == 'true' && steps.status.outputs.lock_clear == 'true' && steps.queue_capture.outputs.has_pending == 'true' }}
+        if: ${{ steps.status.outputs.authorized == 'true' && steps.status.outputs.lock_clear == 'true' && ((github.event_name == 'schedule' && steps.queue_capture.outputs.has_pending == 'true') || (github.event_name == 'workflow_dispatch' && inputs.action == 'cycle55-manual-retry')) }}
         run: |
           python3 general_autonomous_research.py queue-materialize \
             --output super_loto_archive.json
 
       - name: Prepare one cycle for the oldest queued target and fresh sealed windows
         id: prepare
-        if: ${{ steps.status.outputs.authorized == 'true' && steps.status.outputs.lock_clear == 'true' && steps.queue_capture.outputs.has_pending == 'true' }}
+        if: ${{ steps.status.outputs.authorized == 'true' && steps.status.outputs.lock_clear == 'true' && ((github.event_name == 'schedule' && steps.queue_capture.outputs.has_pending == 'true') || (github.event_name == 'workflow_dispatch' && inputs.action == 'cycle55-manual-retry')) }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          CYCLE55_MANUAL_RETRY: ${{ inputs.action == 'cycle55-manual-retry' && 'true' || 'false' }}
+          CYCLE55_CONFIRMATION: ${{ inputs.cycle55_manual_confirmation }}
         run: |
-          python3 general_autonomous_research.py prepare \
-            --archive super_loto_archive.json \
-            --ledger general_evaluation_ledger.json \
-            --github-output "$GITHUB_OUTPUT"
+          if [ "$CYCLE55_MANUAL_RETRY" = "true" ]; then
+            python3 general_cycle55_manual_retry.py prepare \
+              --confirmation "$CYCLE55_CONFIRMATION" \
+              --action "cycle55-manual-retry" \
+              --archive super_loto_archive.json \
+              --ledger general_evaluation_ledger.json \
+              --github-output "$GITHUB_OUTPUT"
+          else
+            python3 general_autonomous_research.py prepare \
+              --archive super_loto_archive.json \
+              --ledger general_evaluation_ledger.json \
+              --github-output "$GITHUB_OUTPUT"
+          fi
           cat "$GITHUB_OUTPUT"
       - name: Claim this target before any provider request
         id: attempt_reservation
         if: ${{ steps.prepare.outputs.eligible == 'true' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          CYCLE55_MANUAL_RETRY: ${{ inputs.action == 'cycle55-manual-retry' && 'true' || 'false' }}
+          CYCLE55_CONFIRMATION: ${{ inputs.cycle55_manual_confirmation }}
         run: |
-          python3 general_autonomous_research.py claim \
-            --archive super_loto_archive.json \
-            --ledger general_evaluation_ledger.json \
-            --run-id "$GITHUB_RUN_ID" \
-            --github-output "$GITHUB_OUTPUT"
+          if [ "$CYCLE55_MANUAL_RETRY" = "true" ]; then
+            python3 general_cycle55_manual_retry.py claim \
+              --confirmation "$CYCLE55_CONFIRMATION" \
+              --action "cycle55-manual-retry" \
+              --archive super_loto_archive.json \
+              --ledger general_evaluation_ledger.json \
+              --github-output "$GITHUB_OUTPUT"
+          else
+            python3 general_autonomous_research.py claim \
+              --archive super_loto_archive.json \
+              --ledger general_evaluation_ledger.json \
+              --run-id "$GITHUB_RUN_ID" \
+              --github-output "$GITHUB_OUTPUT"
+          fi
           cat "$GITHUB_OUTPUT"
       - name: Persist the target-attempt reservation in the state store
         id: persist_attempt
