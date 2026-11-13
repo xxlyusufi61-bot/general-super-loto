@@ -69,6 +69,9 @@ class Cycle55RecoveryTests(unittest.TestCase):
         self.original_manual_archive_hash = autonomous.CYCLE55_MANUAL_RETRY_ARCHIVE_SHA256
         self.original_manual_attempt_ids = autonomous.CYCLE55_MANUAL_RETRY_PRIOR_ATTEMPT_IDS
         self.original_manual_failure_at = autonomous.CYCLE55_MANUAL_RETRY_PRIOR_FAILURE_AT_UTC
+        self.original_cycle57_prior_attempt_id = autonomous.CYCLE57_RETRY_PRIOR_ATTEMPT_ID
+        self.original_cycle57_failure_at = autonomous.CYCLE57_RETRY_FAILURE_AT_UTC
+        self.original_cycle57_attempt_id = autonomous.CYCLE57_RETRY_ATTEMPT_ID
         rows_10 = synthetic_rows(983, recovery.TARGET_DATE)
         rows_12 = rows_10 + synthetic_rows(
             1, "2026-11-12"
@@ -163,6 +166,9 @@ class Cycle55RecoveryTests(unittest.TestCase):
         autonomous.CYCLE55_MANUAL_RETRY_ARCHIVE_SHA256 = self.original_manual_archive_hash
         autonomous.CYCLE55_MANUAL_RETRY_PRIOR_ATTEMPT_IDS = self.original_manual_attempt_ids
         autonomous.CYCLE55_MANUAL_RETRY_PRIOR_FAILURE_AT_UTC = self.original_manual_failure_at
+        autonomous.CYCLE57_RETRY_PRIOR_ATTEMPT_ID = self.original_cycle57_prior_attempt_id
+        autonomous.CYCLE57_RETRY_FAILURE_AT_UTC = self.original_cycle57_failure_at
+        autonomous.CYCLE57_RETRY_ATTEMPT_ID = self.original_cycle57_attempt_id
 
     def recover(self):
         return _recover_preview(
@@ -286,6 +292,112 @@ class Cycle55RecoveryTests(unittest.TestCase):
         autonomous.validate_state(recovered)
         self.assertEqual(recovered["target_queue"]["items"][0]["target_date"], "2026-11-12")
         self.assertEqual(recovered["target_queue"]["completed"][-1]["target_date"], recovery.TARGET_DATE)
+
+    def test_cycle57_allows_only_one_pinned_fifth_scheduled_attempt_after_later_unlock(self):
+        recovered = self.recover()
+        archive_hash = autonomous.CYCLE55_MANUAL_RETRY_ARCHIVE_SHA256
+        target = autonomous.CYCLE55_MANUAL_RETRY_TARGET_DATE
+        autonomous.CYCLE57_RETRY_PRIOR_ATTEMPT_ID = hashlib.sha256(
+            ("GENERAL-AUTO-RESEARCH-V2|" + target + "|" + archive_hash + "|4").encode("utf-8")
+        ).hexdigest()
+        autonomous.CYCLE57_RETRY_FAILURE_AT_UTC = "2026-11-13T12:10:00+00:00"
+        autonomous.CYCLE57_RETRY_ATTEMPT_ID = hashlib.sha256(
+            ("GENERAL-AUTO-RESEARCH-V2|" + target + "|" + archive_hash + "|5").encode("utf-8")
+        ).hexdigest()
+        self.assertFalse(autonomous.cycle57_fifth_retry_available(recovered, "2026-11-12"))
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root / "target-10.json"
+            ledger = root / "ledger.json"
+            lock = root / "lock.json"
+            raw, _ = target_queue._decode_item(recovered["target_queue"]["items"][0])
+            archive.write_bytes(raw)
+            ledger.write_text(
+                json.dumps({"schema_version": 1, "purpose": "test append-only ledger", "entries": []}),
+                encoding="utf-8",
+            )
+            lock.write_text(json.dumps(general_nvidia_guard.initial_lock_state()), encoding="utf-8")
+            manual_plan = autonomous.prepare_cycle55_manual_retry(
+                recovered,
+                archive_path=archive,
+                ledger_path=ledger,
+                global_lock_path=lock,
+                now=datetime.fromisoformat(STAMP),
+            )
+            fourth = autonomous.claim_cycle55_manual_retry(
+                recovered,
+                manual_plan,
+                github_run=self._manual_dispatch_run(run_id="43403558067"),
+                confirmation=autonomous.CYCLE55_MANUAL_RETRY_CONFIRMATION,
+                now=datetime.fromisoformat(STAMP),
+            )
+            self.assertEqual(fourth["attempt_id"], autonomous.CYCLE57_RETRY_PRIOR_ATTEMPT_ID)
+            failure_at = datetime.fromisoformat(autonomous.CYCLE57_RETRY_FAILURE_AT_UTC)
+            autonomous.record_outcome(
+                recovered,
+                fourth["attempt_id"],
+                outcome="FAILED",
+                reason_code="PROVIDER_DELIVERY_UNCERTAIN",
+                now=failure_at,
+            )
+            self.assertTrue(autonomous.cycle57_fifth_retry_available(recovered, target))
+
+            active_lock = general_nvidia_guard.make_locked_state(
+                general_nvidia_guard.initial_lock_state(),
+                "Cycle #57 provider delivery was uncertain",
+                stamp=failure_at.isoformat(),
+            )
+            lock.write_text(json.dumps(active_lock), encoding="utf-8")
+            still_locked = autonomous.prepare_cycle(
+                recovered, archive_path=archive, ledger_path=ledger,
+                global_lock_path=lock, now=failure_at + timedelta(minutes=1),
+            )
+            self.assertEqual(still_locked["status"], "GLOBAL_NVIDIA_LOCK_ACTIVE")
+
+            unlock_at = failure_at + timedelta(minutes=2)
+            lock.write_text(
+                json.dumps(general_nvidia_guard.make_unlocked_state(active_lock, stamp=unlock_at.isoformat())),
+                encoding="utf-8",
+            )
+            fifth_plan = autonomous.prepare_cycle(
+                recovered, archive_path=archive, ledger_path=ledger,
+                global_lock_path=lock, now=unlock_at + timedelta(minutes=1),
+            )
+            self.assertTrue(fifth_plan["eligible"])
+            self.assertEqual(fifth_plan["target_date"], target)
+            self.assertEqual(fifth_plan["retry_number"], 5)
+            self.assertTrue(fifth_plan["manual_recovery_confirmed"])
+            fifth = autonomous.claim_attempt(
+                recovered, fifth_plan, github_run_id="500004",
+                now=unlock_at + timedelta(minutes=1),
+            )
+            self.assertEqual(fifth["attempt_id"], autonomous.CYCLE57_RETRY_ATTEMPT_ID)
+            self.assertEqual(len([x for x in recovered["attempts"] if x["target_date"] == target]), 5)
+            autonomous.validate_state(recovered)
+
+            fifth_failure_at = unlock_at + timedelta(minutes=3)
+            autonomous.record_outcome(
+                recovered, fifth["attempt_id"], outcome="FAILED",
+                reason_code="PROVIDER_DELIVERY_UNCERTAIN", now=fifth_failure_at,
+            )
+            locked_again = general_nvidia_guard.make_locked_state(
+                general_nvidia_guard.initial_lock_state(),
+                "Fifth-attempt delivery was uncertain",
+                stamp=fifth_failure_at.isoformat(),
+            )
+            second_unlock_at = fifth_failure_at + timedelta(minutes=1)
+            lock.write_text(
+                json.dumps(general_nvidia_guard.make_unlocked_state(locked_again, stamp=second_unlock_at.isoformat())),
+                encoding="utf-8",
+            )
+            sixth_plan = autonomous.prepare_cycle(
+                recovered, archive_path=archive, ledger_path=ledger,
+                global_lock_path=lock, now=second_unlock_at + timedelta(minutes=1),
+            )
+            self.assertFalse(sixth_plan["eligible"])
+            self.assertEqual(sixth_plan["status"], "TARGET_RETRY_LIMIT_REACHED")
+            self.assertEqual(len([x for x in recovered["attempts"] if x["target_date"] == target]), 5)
 
     def test_manual_exception_rejects_wrong_actor_or_confirmation_without_mutation(self):
         recovered = self.recover()

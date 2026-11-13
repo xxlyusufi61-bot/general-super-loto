@@ -39,6 +39,11 @@ CYCLE55_MANUAL_RETRY_PRIOR_ATTEMPT_IDS = (
     "6ab3c502b6a74c16de8443c30ed7a8ecd589616c61804a0a8093a127ce27dce5",
 )
 CYCLE55_MANUAL_RETRY_PRIOR_FAILURE_AT_UTC = "2026-11-12T19:29:11.330937+00:00"
+# One additional scheduled attempt is limited to the immutable 2026-11-10
+# snapshot and the exact fourth-attempt 504 delivery failure from Cycle #57.
+CYCLE57_RETRY_PRIOR_ATTEMPT_ID = "25135d06049ee281e793b792b5b1ae6f344418fc1038ea55b1524cfd8c3fdf4f"
+CYCLE57_RETRY_FAILURE_AT_UTC = "2026-11-13T09:47:58.660638+00:00"
+CYCLE57_RETRY_ATTEMPT_ID = "50c89cdfbb465f47491c6bfd67f709387fb1caf00ed9157651e99652cf2f3e6f"
 RETRYABLE_FAILURE_REASON_CODES = {
     "NO_PROVIDER_REQUEST_SENT",
     "PROVIDER_DELIVERY_UNCERTAIN",
@@ -459,7 +464,7 @@ def validate_state(value: Any) -> dict[str, Any]:
             if type(count) is not int or count < minimum:
                 raise AutonomousResearchError("Manual retry journal does not prove minimum fresh sealed windows.")
         target_attempts = [item for item in attempts if item["target_date"] == CYCLE55_MANUAL_RETRY_TARGET_DATE]
-        if len(target_attempts) != 4 or [item["attempt_id"] for item in target_attempts[:3]] != list(CYCLE55_MANUAL_RETRY_PRIOR_ATTEMPT_IDS):
+        if len(target_attempts) not in (4, 5) or [item["attempt_id"] for item in target_attempts[:3]] != list(CYCLE55_MANUAL_RETRY_PRIOR_ATTEMPT_IDS):
             raise AutonomousResearchError("Manual retry journal is not bound to exactly the three pinned prior attempts.")
         fourth = target_attempts[3]
         if (
@@ -470,6 +475,19 @@ def validate_state(value: Any) -> dict[str, Any]:
             or fourth["claimed_at_utc"] != manual_retry["claimed_at_utc"]
         ):
             raise AutonomousResearchError("The fourth attempt does not match its consumed one-time authorization.")
+        if len(target_attempts) == 5:
+            fifth = target_attempts[4]
+            fourth_event = event_by_attempt.get(fourth["attempt_id"])
+            if (
+                fifth["attempt_id"] != CYCLE57_RETRY_ATTEMPT_ID
+                or fifth["archive_sha256"] != CYCLE55_MANUAL_RETRY_ARCHIVE_SHA256
+                or fifth["archive_record_count"] != CYCLE55_MANUAL_RETRY_ARCHIVE_RECORD_COUNT
+                or fourth_event is None
+                or fourth_event["outcome"] != "FAILED"
+                or fourth_event["reason_code"] != "PROVIDER_DELIVERY_UNCERTAIN"
+                or fourth_event["recorded_at_utc"] != CYCLE57_RETRY_FAILURE_AT_UTC
+            ):
+                raise AutonomousResearchError("The fifth attempt does not match the one-time Cycle #57 scheduled retry authorization.")
         prior_event = event_by_attempt.get(manual_retry["prior_attempt_id"])
         if (
             prior_event is None
@@ -490,17 +508,32 @@ def validate_state(value: Any) -> dict[str, Any]:
         target_counts[target] = target_counts.get(target, 0) + 1
     for target, count in target_counts.items():
         if count > MAX_ATTEMPTS_PER_TARGET:
+            target_attempts = [item for item in attempts if item["target_date"] == target]
             permitted_manual_fourth = (
                 target == CYCLE55_MANUAL_RETRY_TARGET_DATE
                 and count == MAX_ATTEMPTS_PER_TARGET + 1
                 and manual_retry is not None
-                and manual_retry["attempt_id"] == next(
-                    item["attempt_id"] for item in reversed(attempts)
-                    if item["target_date"] == target
-                )
+                and len(target_attempts) == 4
+                and manual_retry["attempt_id"] == target_attempts[3]["attempt_id"]
             )
-            if not permitted_manual_fourth:
-                raise AutonomousResearchError("A target exceeded the existing three-attempt limit outside the single Cycle #55 exception.")
+            fourth_event = (
+                event_by_attempt.get(target_attempts[3]["attempt_id"])
+                if len(target_attempts) == 5 else None
+            )
+            permitted_cycle57_fifth = (
+                target == CYCLE55_MANUAL_RETRY_TARGET_DATE
+                and count == MAX_ATTEMPTS_PER_TARGET + 2
+                and manual_retry is not None
+                and len(target_attempts) == 5
+                and manual_retry["attempt_id"] == target_attempts[3]["attempt_id"]
+                and target_attempts[4]["attempt_id"] == CYCLE57_RETRY_ATTEMPT_ID
+                and fourth_event is not None
+                and fourth_event["outcome"] == "FAILED"
+                and fourth_event["reason_code"] == "PROVIDER_DELIVERY_UNCERTAIN"
+                and fourth_event["recorded_at_utc"] == CYCLE57_RETRY_FAILURE_AT_UTC
+            )
+            if not (permitted_manual_fourth or permitted_cycle57_fifth):
+                raise AutonomousResearchError("A target exceeded the three-attempt limit outside the two exact, one-time 2026-11-10 exceptions.")
 
     attempts_by_target: dict[str, list[dict[str, Any]]] = {}
     for item in attempts:
@@ -516,7 +549,7 @@ def validate_state(value: Any) -> dict[str, Any]:
                 )
                 approved_cycle55_exception = (
                     target == CYCLE55_MANUAL_RETRY_TARGET_DATE
-                    and len(target_attempts) == 4
+                    and len(target_attempts) in (4, 5)
                     and manual_retry is not None
                     and index == 2
                     and prior_attempt["attempt_id"] == manual_retry["prior_attempt_id"]
@@ -580,6 +613,46 @@ def manual_recovery_confirmed(lock_state: dict[str, Any], failed_event: dict[str
         )
     except AutonomousResearchError:
         return False
+
+
+def cycle57_fifth_retry_available(state: dict[str, Any], target_date: str) -> bool:
+    """Permit only attempt five after the exact pinned Cycle #57 504 failure."""
+    if target_date != CYCLE55_MANUAL_RETRY_TARGET_DATE:
+        return False
+    manual_history = state.get("manual_retry_history")
+    if not isinstance(manual_history, list) or len(manual_history) != 1:
+        return False
+    target_attempts = [
+        item for item in state.get("attempts", [])
+        if item.get("target_date") == CYCLE55_MANUAL_RETRY_TARGET_DATE
+    ]
+    if (
+        len(target_attempts) != 4
+        or not state.get("attempts")
+        or state["attempts"][-1].get("attempt_id") != CYCLE57_RETRY_PRIOR_ATTEMPT_ID
+    ):
+        return False
+    fourth = target_attempts[3]
+    manual_retry = manual_history[0]
+    if (
+        fourth.get("attempt_id") != CYCLE57_RETRY_PRIOR_ATTEMPT_ID
+        or fourth.get("github_run_id") != "43403558067"
+        or fourth.get("archive_sha256") != CYCLE55_MANUAL_RETRY_ARCHIVE_SHA256
+        or fourth.get("archive_record_count") != CYCLE55_MANUAL_RETRY_ARCHIVE_RECORD_COUNT
+        or manual_retry.get("attempt_id") != CYCLE57_RETRY_PRIOR_ATTEMPT_ID
+        or manual_retry.get("consumed") is not True
+    ):
+        return False
+    fourth_event = next(
+        (event for event in state.get("events", []) if event.get("attempt_id") == CYCLE57_RETRY_PRIOR_ATTEMPT_ID),
+        None,
+    )
+    return bool(
+        fourth_event is not None
+        and fourth_event.get("outcome") == "FAILED"
+        and fourth_event.get("reason_code") == "PROVIDER_DELIVERY_UNCERTAIN"
+        and fourth_event.get("recorded_at_utc") == CYCLE57_RETRY_FAILURE_AT_UTC
+    )
 
 
 def activate_state(
@@ -1010,7 +1083,10 @@ def prepare_cycle(
                     reason_code in RETRYABLE_FAILURE_REASON_CODES
                     and (reason_code != "PROVIDER_DELIVERY_UNCERTAIN" or recovered_after_uncertain_delivery)
                 ):
-                    if same_target_attempts >= MAX_ATTEMPTS_PER_TARGET:
+                    retry_limit = MAX_ATTEMPTS_PER_TARGET
+                    if cycle57_fifth_retry_available(state, target_date):
+                        retry_limit = MAX_ATTEMPTS_PER_TARGET + 2
+                    if same_target_attempts >= retry_limit:
                         return {
                             "status": "TARGET_RETRY_LIMIT_REACHED",
                             "eligible": False,
@@ -1194,8 +1270,11 @@ def claim_attempt(
                 raise AutonomousResearchError(
                     "Uncertain provider delivery requires a manual unlock after the failed attempt."
                 )
-            if previous_count >= MAX_ATTEMPTS_PER_TARGET:
-                raise AutonomousResearchError("The existing three-attempt target limit is exhausted.")
+            retry_limit = MAX_ATTEMPTS_PER_TARGET
+            if cycle57_fifth_retry_available(state, target_date):
+                retry_limit = MAX_ATTEMPTS_PER_TARGET + 2
+            if previous_count >= retry_limit:
+                raise AutonomousResearchError("The target retry limit is exhausted; no further exception is available.")
             attempt_number = previous_count + 1
         else:
             if last_event is None:
