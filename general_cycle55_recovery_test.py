@@ -481,7 +481,7 @@ class Cycle55RecoveryTests(unittest.TestCase):
                 )
                 self.assertTrue(output_path.exists())
                 self.assertEqual(result["status"], "LOCAL_RECOVERY_PREVIEW_CREATED")
-                self.assertEqual(result["schema_version"], 3)
+                self.assertEqual(result["schema_version"], 4)
                 self.assertFalse(result["production_state_written"])
                 self.assertEqual(current_path.read_bytes(), current_raw)
                 self.assertEqual(source_path.read_bytes(), source_raw)
