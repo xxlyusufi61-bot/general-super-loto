@@ -474,6 +474,63 @@ def filter_usage_headers(headers: Mapping[str, Any] | None) -> dict[str, str]:
             safe[str(key)] = str(value)
     return safe
 
+
+def _safe_provider_error_token(value: Any) -> str | None:
+    """Keep only short provider error identifiers; never persist free-form text."""
+    if not isinstance(value, str):
+        return None
+    token = value.strip()
+    if (
+        not token
+        or len(token) > 80
+        or not token.isascii()
+        or not token[0].isalnum()
+        or any(not (character.isalnum() or character in "._-") for character in token)
+    ):
+        return None
+    return token
+
+
+def extract_provider_error_metadata(
+    error: Exception,
+    status_code: int | None,
+) -> dict[str, str | None]:
+    """Extract allowlisted identifiers without storing provider messages or bodies."""
+    category = None
+    if isinstance(status_code, int) and not isinstance(status_code, bool):
+        if status_code == 404:
+            category = "HTTP_404_NOT_FOUND"
+        elif status_code == 401:
+            category = "HTTP_401_UNAUTHORIZED"
+        elif status_code == 403:
+            category = "HTTP_403_FORBIDDEN"
+        elif status_code == 402:
+            category = "HTTP_402_PROVIDER_REJECTION"
+        elif status_code == 429:
+            category = "HTTP_429_RATE_LIMIT"
+        elif 400 <= status_code < 500:
+            category = "HTTP_4XX_CLIENT_ERROR"
+        elif 500 <= status_code < 600:
+            category = "HTTP_5XX_SERVER_ERROR"
+        else:
+            category = "HTTP_OTHER"
+
+    provider_error_type = None
+    provider_error_code = None
+    body = getattr(error, "body", None)
+    if isinstance(body, Mapping):
+        details = body.get("error", body)
+        if isinstance(details, Mapping):
+            provider_error_type = _safe_provider_error_token(details.get("type"))
+            provider_error_code = _safe_provider_error_token(details.get("code"))
+
+    return {
+        "provider_error_category": category,
+        "provider_error_type": provider_error_type,
+        "provider_error_code": provider_error_code,
+    }
+
+
 def build_usage_observation(
     status_code: int | None,
     headers: Mapping[str, Any] | None,
@@ -486,6 +543,9 @@ def build_usage_observation(
     stream_finish_reason: str | None = None,
     failure_stage: str | None = None,
     error_type: str | None = None,
+    provider_error_category: str | None = None,
+    provider_error_type: str | None = None,
+    provider_error_code: str | None = None,
     network_error_chain: list[str] | None = None,
     stream_requested: bool = False,
     response_complete: bool | None = None,
@@ -499,6 +559,9 @@ def build_usage_observation(
     system_prompt_bytes: int | None = None,
     user_prompt_bytes: int | None = None,
     request_delivery_state: str | None = None,
+    provider_http_response_received: bool | None = None,
+    model_stream_events_received: bool | None = None,
+    model_response_validated: bool | None = None,
     tcp_tls_establishment_seconds: float | None = None,
     request_send_seconds: float | None = None,
     response_header_wait_seconds: float | None = None,
@@ -544,6 +607,9 @@ def build_usage_observation(
         "system_prompt_bytes": system_prompt_bytes,
         "user_prompt_bytes": user_prompt_bytes,
         "request_delivery_state": request_delivery_state,
+        "provider_http_response_received": provider_http_response_received,
+        "model_stream_events_received": model_stream_events_received,
+        "model_response_validated": model_response_validated,
         "tcp_tls_establishment_seconds": tcp_tls_establishment_seconds,
         "request_send_seconds": request_send_seconds,
         "response_header_wait_seconds": response_header_wait_seconds,
@@ -561,6 +627,9 @@ def build_usage_observation(
         "model_finish_reason": model_finish_reason,
         "failure_stage": failure_stage,
         "network_error_type": error_type,
+        "provider_error_category": provider_error_category,
+        "provider_error_type": provider_error_type,
+        "provider_error_code": provider_error_code,
         "network_error_chain": (
             [name for name in network_error_chain if isinstance(name, str)][:5]
             if isinstance(network_error_chain, list)
@@ -1285,6 +1354,7 @@ def call_model(
             else "provider_stream" if stream_state["stream_event_count"] > 0
             else "provider_call"
         )
+        provider_error_metadata = extract_provider_error_metadata(failure, status_code)
         save_usage_observation(
             build_usage_observation(
                 status_code,
@@ -1304,10 +1374,16 @@ def call_model(
                     if response_received
                     else "unknown_after_sdk_request_started"
                 ),
+                provider_http_response_received=status_code is not None,
+                model_stream_events_received=stream_state["stream_event_count"] > 0,
+                model_response_validated=False,
                 system_prompt_bytes=system_prompt_bytes,
                 user_prompt_bytes=user_prompt_bytes,
                 failure_stage=failure_stage,
                 error_type=type(failure).__name__,
+                provider_error_category=provider_error_metadata["provider_error_category"],
+                provider_error_type=provider_error_metadata["provider_error_type"],
+                provider_error_code=provider_error_metadata["provider_error_code"],
                 network_error_chain=_exception_chain_types(failure),
                 stream_requested=True,
             ),
@@ -1353,6 +1429,9 @@ def call_model(
             max_tokens_requested=request_max_tokens,
             request_timeout_seconds=request_timeout_seconds,
             request_delivery_state="response_received",
+            provider_http_response_received=status_code is not None,
+            model_stream_events_received=stream_state["stream_event_count"] > 0,
+            model_response_validated=True,
             system_prompt_bytes=system_prompt_bytes,
             user_prompt_bytes=user_prompt_bytes,
             model_finish_reason=(

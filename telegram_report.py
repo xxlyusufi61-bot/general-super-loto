@@ -527,13 +527,21 @@ def format_offline_research_messages(report, run_url="", branch="general-automat
 
 
 def format_message(title, status, run_url, branch, kind="status", report=None):
-    basarili = status.lower() == "success"
+    normalized_status = status.lower()
+    basarili = normalized_status == "success"
+    atlandi = normalized_status == "skipped"
+    status_label = "ATLANDI" if atlandi else "BAŞARILI" if basarili else "BAŞARISIZ"
+    status_icon = "⏭" if atlandi else "✅" if basarili else "❌"
     lines = [
-        f"{'✅ BAŞARILI' if basarili else '❌ BAŞARISIZ'} — GENERAL: {title}",
-        f"Sonuç: {'BAŞARILI' if basarili else 'BAŞARISIZ'}",
+        f"{status_icon} {status_label} — GENERAL: {title}",
+        f"Sonuç: {status_label}",
         f"Dal: {branch or 'bilinmiyor'}",
     ]
-    if not basarili:
+    if atlandi:
+        lines.append(
+            "Araştırma çalıştırılmadı; global NVIDIA güvenlik kilidi etkin."
+        )
+    elif not basarili:
         lines.append("Hata ayrıntıları için aşağıdaki GitHub Actions çalıştırmasını aç.")
     elif kind == "candidates" and report:
         lines.append("İleriye dönük kronolojik test — deneysel yöntemler:")
