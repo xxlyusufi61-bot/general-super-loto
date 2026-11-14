@@ -107,7 +107,7 @@ class DurableTargetQueueTests(unittest.TestCase):
             "items": [item],
             "completed": [],
         }
-        with self.assertRaisesRegex(queue.TargetQueueError, "Only approved terminal target outcomes"):
+        with self.assertRaisesRegex(queue.TargetQueueError, "Only terminal successful"):
             queue.complete_front(
                 q, target_date=rows[-1]["date"], archive_sha256=hashlib.sha256(raw).hexdigest(),
                 archive_record_count=len(rows), outcome="FAILED", now=NOW,
@@ -125,9 +125,14 @@ class DurableTargetQueueTests(unittest.TestCase):
         self.assertEqual(completed["completed"][0]["target_date"], rows[-1]["date"])
         self.assertEqual(completed["completed"][0]["outcome"], "NO_ELIGIBLE_CANDIDATE")
 
-        exhausted = queue.complete_front(
+        with self.assertRaisesRegex(queue.TargetQueueError, "fully failed attempts"):
+            queue.retire_exhausted_front(
+                q, target_date=rows[-1]["date"], archive_sha256=item["archive_sha256"],
+                archive_record_count=len(rows), attempt_count=3, failed_event_count=2, now=NOW,
+            )
+        exhausted = queue.retire_exhausted_front(
             q, target_date=rows[-1]["date"], archive_sha256=item["archive_sha256"],
-            archive_record_count=len(rows), outcome="EXHAUSTED_RETRY_BUDGET", now=NOW,
+            archive_record_count=len(rows), attempt_count=3, failed_event_count=3, now=NOW,
         )
         self.assertEqual(exhausted["items"], [])
         self.assertEqual(exhausted["completed"][0]["outcome"], "EXHAUSTED_RETRY_BUDGET")
