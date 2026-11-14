@@ -1438,12 +1438,16 @@ def retire_exhausted_target(
         raise AutonomousResearchError("The successor target already has an attempt and cannot be promoted as untouched.")
 
     try:
-        updated["target_queue"] = target_queue.complete_front(
+        updated["target_queue"] = target_queue.retire_exhausted_front(
             updated["target_queue"],
             target_date=target,
             archive_sha256=archive_sha256,
             archive_record_count=archive_record_count,
-            outcome="EXHAUSTED_RETRY_BUDGET",
+            attempt_count=len(target_attempts),
+            failed_event_count=sum(
+                1 for item in target_attempts
+                if events_by_attempt[item["attempt_id"]]["outcome"] == "FAILED"
+            ),
             now=now,
         )
     except target_queue.TargetQueueError as exc:
