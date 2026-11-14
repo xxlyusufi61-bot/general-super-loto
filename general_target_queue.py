@@ -24,6 +24,11 @@ MAX_PENDING_TARGETS = 128
 MAX_COMPLETED_TARGETS = 10_000
 MAX_SNAPSHOT_BYTES = 1_500_000
 MAX_COMPRESSED_QUEUE_BYTES = 5_000_000
+TERMINAL_TARGET_OUTCOMES = {
+    "SUCCEEDED",
+    "NO_ELIGIBLE_CANDIDATE",
+    "EXHAUSTED_RETRY_BUDGET",
+}
 
 
 class TargetQueueError(ValueError):
@@ -231,8 +236,8 @@ def validate_queue(value: Any) -> dict[str, Any]:
         if type(count) is not int or count < 1:
             raise TargetQueueError("Completed target record count is invalid.")
         _timestamp(item.get("completed_at_utc"), "queue.completed.completed_at_utc")
-        if item.get("outcome") not in {"SUCCEEDED", "NO_ELIGIBLE_CANDIDATE"}:
-            raise TargetQueueError("Completed target outcome is not terminal-success metadata.")
+        if item.get("outcome") not in TERMINAL_TARGET_OUTCOMES:
+            raise TargetQueueError("Completed target outcome is not an approved terminal target outcome.")
     if completed_dates != sorted(completed_dates) or len(set(completed_dates)) != len(completed_dates):
         raise TargetQueueError("Completed target history must be unique and chronological.")
     if completed_dates and items and items[0]["target_date"] <= completed_dates[-1]:
@@ -424,10 +429,10 @@ def complete_front(
     outcome: str,
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    """Remove the FIFO head only after a valid terminal scientific outcome."""
+    """Remove the FIFO head only after an approved terminal target outcome."""
     queue = copy.deepcopy(validate_queue(queue_value))
-    if outcome not in {"SUCCEEDED", "NO_ELIGIBLE_CANDIDATE"}:
-        raise TargetQueueError("Only terminal successful outcomes may release a FIFO target.")
+    if outcome not in TERMINAL_TARGET_OUTCOMES:
+        raise TargetQueueError("Only approved terminal target outcomes may release a FIFO target.")
     target = _canonical_date(target_date, "completed.target_date")
     if not queue["items"]:
         raise TargetQueueError("Cannot complete a target when the FIFO is empty.")
