@@ -429,10 +429,57 @@ def complete_front(
     outcome: str,
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    """Remove the FIFO head only after an approved terminal target outcome."""
+    """Remove the FIFO head only after a valid terminal scientific outcome."""
+    if outcome not in {"SUCCEEDED", "NO_ELIGIBLE_CANDIDATE"}:
+        raise TargetQueueError("Only terminal successful outcomes may release a FIFO target.")
+    return _record_terminal_front(
+        queue_value,
+        target_date=target_date,
+        archive_sha256=archive_sha256,
+        archive_record_count=archive_record_count,
+        outcome=outcome,
+        now=now,
+    )
+
+
+def retire_exhausted_front(
+    queue_value: Any,
+    *,
+    target_date: str,
+    archive_sha256: str,
+    archive_record_count: int,
+    attempt_count: int,
+    failed_event_count: int,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Close a FIFO head as exhausted only when every expected attempt failed."""
+    if (
+        type(attempt_count) is not int
+        or attempt_count < 3
+        or type(failed_event_count) is not int
+        or failed_event_count != attempt_count
+    ):
+        raise TargetQueueError("Retry-budget exhaustion requires at least three fully failed attempts.")
+    return _record_terminal_front(
+        queue_value,
+        target_date=target_date,
+        archive_sha256=archive_sha256,
+        archive_record_count=archive_record_count,
+        outcome="EXHAUSTED_RETRY_BUDGET",
+        now=now,
+    )
+
+
+def _record_terminal_front(
+    queue_value: Any,
+    *,
+    target_date: str,
+    archive_sha256: str,
+    archive_record_count: int,
+    outcome: str,
+    now: datetime | None = None,
+) -> dict[str, Any]:
     queue = copy.deepcopy(validate_queue(queue_value))
-    if outcome not in TERMINAL_TARGET_OUTCOMES:
-        raise TargetQueueError("Only approved terminal target outcomes may release a FIFO target.")
     target = _canonical_date(target_date, "completed.target_date")
     if not queue["items"]:
         raise TargetQueueError("Cannot complete a target when the FIFO is empty.")
