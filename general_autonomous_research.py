@@ -7,6 +7,7 @@ and records number-free attempt metadata before the existing research workflow r
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import sys
@@ -394,16 +395,34 @@ def validate_state(value: Any) -> dict[str, Any]:
                 and item.get("archive_sha256") == entry["archive_sha256"]
                 and item.get("archive_record_count") == entry["archive_record_count"]
             ]
-            if (
-                not isinstance(manual, dict)
-                or manual.get("prior_attempt_id") != entry["attempt_id"]
-                or manual.get("target_date") != entry["target_date"]
-                or manual_event is None
-                or manual_event.get("outcome") not in {"SUCCEEDED", "NO_ELIGIBLE_CANDIDATE"}
-                or len(completed) != 1
-                or completed[0].get("outcome") != manual_event["outcome"]
-            ):
-                raise AutonomousResearchError("Recovered Cycle #55 snapshot is neither the exact FIFO head nor a correctly completed one-time retry.")
+            manual_retry_completed = (
+                isinstance(manual, dict)
+                and manual.get("prior_attempt_id") == entry["attempt_id"]
+                and manual.get("target_date") == entry["target_date"]
+                and manual_event is not None
+                and manual_event.get("outcome") in {"SUCCEEDED", "NO_ELIGIBLE_CANDIDATE"}
+                and len(completed) == 1
+                and completed[0].get("outcome") == manual_event["outcome"]
+            )
+            exhausted_attempts = [
+                attempt for attempt in attempts
+                if attempt["target_date"] == entry["target_date"]
+            ]
+            exhausted_events_complete = (
+                len(exhausted_attempts) == MAX_ATTEMPTS_PER_TARGET + 2
+                and all(
+                    event_by_attempt.get(attempt["attempt_id"]) is not None
+                    and event_by_attempt[attempt["attempt_id"]]["outcome"] == "FAILED"
+                    for attempt in exhausted_attempts
+                )
+            )
+            exhausted_target_completed = (
+                len(completed) == 1
+                and completed[0].get("outcome") == "EXHAUSTED_RETRY_BUDGET"
+                and exhausted_events_complete
+            )
+            if not manual_retry_completed and not exhausted_target_completed:
+                raise AutonomousResearchError("Recovered Cycle #55 snapshot is neither the exact FIFO head, a correctly completed one-time retry, nor a fully failed exhausted target.")
     manual_retry_history = value.get("manual_retry_history")
     if not isinstance(manual_retry_history, list) or len(manual_retry_history) > 1:
         raise AutonomousResearchError("Cycle #55 one-time manual retry journal is not a valid single-use list.")
@@ -1341,6 +1360,115 @@ def record_outcome(
     return validate_state(state)
 
 
+def retire_exhausted_target(
+    state: dict[str, Any],
+    *,
+    target_date: str,
+    archive_sha256: str,
+    archive_record_count: int,
+    expected_attempt_count: int,
+    expected_next_target_date: str,
+    expected_next_archive_sha256: str,
+    expected_next_archive_record_count: int,
+    now: datetime | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Close one FIFO head only when its exact retry budget is fully failed."""
+    updated = copy.deepcopy(state)
+    validate_state(updated)
+
+    target = _canonical_date(target_date, "exhausted_target.target_date")
+    next_target = _canonical_date(
+        expected_next_target_date, "exhausted_target.expected_next_target_date"
+    )
+    if not _is_sha256(archive_sha256) or not _is_sha256(expected_next_archive_sha256):
+        raise AutonomousResearchError("Exhausted-target archive identity is invalid.")
+    if type(archive_record_count) is not int or archive_record_count < 1:
+        raise AutonomousResearchError("Exhausted-target archive record count is invalid.")
+    if (
+        type(expected_next_archive_record_count) is not int
+        or expected_next_archive_record_count < 1
+    ):
+        raise AutonomousResearchError("Next FIFO archive record count is invalid.")
+    if (
+        type(expected_attempt_count) is not int
+        or not MAX_ATTEMPTS_PER_TARGET <= expected_attempt_count <= MAX_ATTEMPTS_PER_TARGET + 2
+    ):
+        raise AutonomousResearchError("Expected attempt count is outside the existing bounded retry policy.")
+
+    target_attempts = [
+        item for item in updated["attempts"] if item["target_date"] == target
+    ]
+    if len(target_attempts) != expected_attempt_count:
+        raise AutonomousResearchError("Target attempt count does not match the approved exhaustion evidence.")
+    if any(
+        item["archive_sha256"] != archive_sha256
+        or item["archive_record_count"] != archive_record_count
+        for item in target_attempts
+    ):
+        raise AutonomousResearchError("Target attempts do not share the approved immutable archive identity.")
+
+    events_by_attempt = {
+        event["attempt_id"]: event for event in updated["events"]
+    }
+    if any(
+        events_by_attempt.get(item["attempt_id"]) is None
+        or events_by_attempt[item["attempt_id"]]["outcome"] != "FAILED"
+        for item in target_attempts
+    ):
+        raise AutonomousResearchError("Every target attempt must have a terminal FAILED event before exhaustion.")
+
+    pending = updated["target_queue"]["items"]
+    if len(pending) < 2:
+        raise AutonomousResearchError("The exhausted target and its expected successor must both be in the FIFO.")
+    front = pending[0]
+    successor = pending[1]
+    if (
+        front["target_date"] != target
+        or front["archive_sha256"] != archive_sha256
+        or front["archive_record_count"] != archive_record_count
+    ):
+        raise AutonomousResearchError("Exhausted target does not match the immutable FIFO head.")
+    if (
+        successor["target_date"] != next_target
+        or successor["archive_sha256"] != expected_next_archive_sha256
+        or successor["archive_record_count"] != expected_next_archive_record_count
+    ):
+        raise AutonomousResearchError("Next FIFO target does not match the explicitly approved successor.")
+    if any(item["target_date"] == next_target for item in updated["attempts"]):
+        raise AutonomousResearchError("The successor target already has an attempt and cannot be promoted as untouched.")
+
+    try:
+        updated["target_queue"] = target_queue.retire_exhausted_front(
+            updated["target_queue"],
+            target_date=target,
+            archive_sha256=archive_sha256,
+            archive_record_count=archive_record_count,
+            attempt_count=len(target_attempts),
+            failed_event_count=sum(
+                1 for item in target_attempts
+                if events_by_attempt[item["attempt_id"]]["outcome"] == "FAILED"
+            ),
+            now=now,
+        )
+    except target_queue.TargetQueueError as exc:
+        raise AutonomousResearchError(
+            "Exhausted target could not be closed in the FIFO: " + str(exc)
+        ) from None
+
+    validate_state(updated)
+    report = {
+        "status": "EXHAUSTED_TARGET_RETIRED",
+        "target_date": target,
+        "outcome": "EXHAUSTED_RETRY_BUDGET",
+        "attempts_preserved_count": len(target_attempts),
+        "next_target_date": updated["target_queue"]["items"][0]["target_date"],
+        "completed_target_count": len(updated["target_queue"]["completed"]),
+        "pending_target_count": len(updated["target_queue"]["items"]),
+        "target_values_rendered": False,
+    }
+    return updated, report
+
+
 def _write_github_output(path: str | None, values: dict[str, Any]) -> None:
     if not path:
         return
@@ -1408,6 +1536,16 @@ def main(argv: list[str] | None = None) -> int:
     queue_materialize.add_argument("--state", type=Path, default=Path("general_autonomous_research_state.json"))
     queue_materialize.add_argument("--output", type=Path, default=Path("super_loto_archive.json"))
 
+    retire_exhausted = sub.add_parser("retire-exhausted-target")
+    retire_exhausted.add_argument("--state", type=Path, default=Path("general_autonomous_research_state.json"))
+    retire_exhausted.add_argument("--target-date", required=True)
+    retire_exhausted.add_argument("--archive-sha256", required=True)
+    retire_exhausted.add_argument("--archive-record-count", type=int, required=True)
+    retire_exhausted.add_argument("--expected-attempt-count", type=int, required=True)
+    retire_exhausted.add_argument("--expected-next-target-date", required=True)
+    retire_exhausted.add_argument("--expected-next-archive-sha256", required=True)
+    retire_exhausted.add_argument("--expected-next-archive-record-count", type=int, required=True)
+
     args = parser.parse_args(argv)
     try:
         state = read_state(args.state)
@@ -1460,6 +1598,18 @@ def main(argv: list[str] | None = None) -> int:
             result = target_queue.materialize_front(
                 state["target_queue"], args.output
             )
+        elif args.command == "retire-exhausted-target":
+            state, result = retire_exhausted_target(
+                state,
+                target_date=args.target_date,
+                archive_sha256=args.archive_sha256,
+                archive_record_count=args.archive_record_count,
+                expected_attempt_count=args.expected_attempt_count,
+                expected_next_target_date=args.expected_next_target_date,
+                expected_next_archive_sha256=args.expected_next_archive_sha256,
+                expected_next_archive_record_count=args.expected_next_archive_record_count,
+            )
+            write_state(args.state, state)
         elif args.command == "prepare":
             result = prepare_cycle(
                 state,
