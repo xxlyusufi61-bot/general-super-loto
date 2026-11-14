@@ -1138,38 +1138,57 @@ def prepare_cycle(
                     **status,
                 }
         else:
-            if last_event is None:
-                return {
-                    "status": "PREVIOUS_TARGET_INCOMPLETE",
-                    "eligible": False,
-                    "target_date": target_date,
-                    "pending_target_date": last_target,
-                    **status,
-                }
-            if last_event["outcome"] == "FAILED":
-                previous_retry_is_ready = (
-                    last_event["reason_code"] == "NO_PROVIDER_REQUEST_SENT"
-                )
-                if last_event["reason_code"] == "PROVIDER_DELIVERY_UNCERTAIN":
-                    previous_retry_is_ready = manual_recovery_confirmed(lock, last_event)
-                previous_attempt_count = sum(
-                    1 for item in attempts if item["target_date"] == last_target
-                )
-                if previous_retry_is_ready and previous_attempt_count >= MAX_ATTEMPTS_PER_TARGET:
-                    blocking_status = "PREVIOUS_TARGET_RETRY_LIMIT_REACHED"
-                else:
-                    blocking_status = (
-                        "PREVIOUS_TARGET_RETRY_REQUIRED"
-                        if previous_retry_is_ready
-                        else "PREVIOUS_TARGET_MANUAL_RECOVERY_REQUIRED"
+            completed_previous_target = next(
+                (
+                    item
+                    for item in queue["completed"]
+                    if item["target_date"] == last_target
+                ),
+                None,
+            )
+            if completed_previous_target is not None:
+                if (
+                    completed_previous_target["archive_sha256"] != last_attempt["archive_sha256"]
+                    or completed_previous_target["archive_record_count"] != last_attempt["archive_record_count"]
+                ):
+                    raise AutonomousResearchError(
+                        "Completed previous FIFO target does not match its archived attempt identity."
                     )
-                return {
-                    "status": blocking_status,
-                    "eligible": False,
-                    "target_date": target_date,
-                    "pending_target_date": last_target,
-                    **status,
-                }
+                # A terminal FIFO record already closed this exact target. Its
+                # historical failures must not block preparation of the next head.
+            else:
+                if last_event is None:
+                    return {
+                        "status": "PREVIOUS_TARGET_INCOMPLETE",
+                        "eligible": False,
+                        "target_date": target_date,
+                        "pending_target_date": last_target,
+                        **status,
+                    }
+                if last_event["outcome"] == "FAILED":
+                    previous_retry_is_ready = (
+                        last_event["reason_code"] == "NO_PROVIDER_REQUEST_SENT"
+                    )
+                    if last_event["reason_code"] == "PROVIDER_DELIVERY_UNCERTAIN":
+                        previous_retry_is_ready = manual_recovery_confirmed(lock, last_event)
+                    previous_attempt_count = sum(
+                        1 for item in attempts if item["target_date"] == last_target
+                    )
+                    if previous_retry_is_ready and previous_attempt_count >= MAX_ATTEMPTS_PER_TARGET:
+                        blocking_status = "PREVIOUS_TARGET_RETRY_LIMIT_REACHED"
+                    else:
+                        blocking_status = (
+                            "PREVIOUS_TARGET_RETRY_REQUIRED"
+                            if previous_retry_is_ready
+                            else "PREVIOUS_TARGET_MANUAL_RECOVERY_REQUIRED"
+                        )
+                    return {
+                        "status": blocking_status,
+                        "eligible": False,
+                        "target_date": target_date,
+                        "pending_target_date": last_target,
+                        **status,
+                    }
 
     try:
         plan = sealed.preflight(archive_path, ledger_path)
