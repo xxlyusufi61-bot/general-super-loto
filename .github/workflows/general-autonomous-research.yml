@@ -238,7 +238,7 @@ jobs:
           cat "$GITHUB_OUTPUT"
       - name: Report scheduled cycle skipped by global NVIDIA lock
         id: skipped_global_lock
-        if: ${{ github.event_name == 'schedule' && steps.status.outcome == 'success' && steps.status.outputs.lock_clear == 'false' }}
+        if: ${{ github.event_name == 'schedule' && steps.queue_capture.outputs.has_pending == 'true' && steps.status.outcome == 'success' && steps.status.outputs.lock_clear == 'false' }}
         continue-on-error: true
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
