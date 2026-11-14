@@ -107,7 +107,7 @@ class DurableTargetQueueTests(unittest.TestCase):
             "items": [item],
             "completed": [],
         }
-        with self.assertRaisesRegex(queue.TargetQueueError, "Only terminal successful"):
+        with self.assertRaisesRegex(queue.TargetQueueError, "Only approved terminal target outcomes"):
             queue.complete_front(
                 q, target_date=rows[-1]["date"], archive_sha256=hashlib.sha256(raw).hexdigest(),
                 archive_record_count=len(rows), outcome="FAILED", now=NOW,
@@ -124,6 +124,13 @@ class DurableTargetQueueTests(unittest.TestCase):
         self.assertEqual(completed["items"], [])
         self.assertEqual(completed["completed"][0]["target_date"], rows[-1]["date"])
         self.assertEqual(completed["completed"][0]["outcome"], "NO_ELIGIBLE_CANDIDATE")
+
+        exhausted = queue.complete_front(
+            q, target_date=rows[-1]["date"], archive_sha256=item["archive_sha256"],
+            archive_record_count=len(rows), outcome="EXHAUSTED_RETRY_BUDGET", now=NOW,
+        )
+        self.assertEqual(exhausted["items"], [])
+        self.assertEqual(exhausted["completed"][0]["outcome"], "EXHAUSTED_RETRY_BUDGET")
         self.assertEqual(len(q["items"]), 1, "input queue must remain immutable")
 
     def test_archive_mutation_under_pending_snapshot_fails_closed_without_changing_queue(self):
