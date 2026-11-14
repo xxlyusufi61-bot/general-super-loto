@@ -63,6 +63,21 @@ class TelegramReportTests(unittest.TestCase):
         self.assertIn("https://github.com/example/run", message)
         self.assertNotIn("Result:", message)
 
+    def test_skipped_global_lock_message_is_not_success_or_failure(self):
+        message = format_message(
+            "SKIPPED_GLOBAL_LOCK: Global NVIDIA kilidi etkin",
+            "skipped",
+            "https://github.com/example/run",
+            "main",
+        )
+        self.assertIn("⏭ ATLANDI", message)
+        self.assertIn("Sonuç: ATLANDI", message)
+        self.assertIn("Araştırma çalıştırılmadı", message)
+        self.assertIn("global NVIDIA güvenlik kilidi etkin", message)
+        self.assertIn("https://github.com/example/run", message)
+        self.assertNotIn("BAŞARILI", message)
+        self.assertNotIn("BAŞARISIZ", message)
+
     def _offline_report_fixture(self):
         spec = {
             "schema_version": 1,
