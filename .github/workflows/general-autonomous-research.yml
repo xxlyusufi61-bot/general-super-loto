@@ -236,6 +236,26 @@ jobs:
         run: |
           python3 general_autonomous_research.py status --github-output "$GITHUB_OUTPUT"
           cat "$GITHUB_OUTPUT"
+      - name: Report scheduled cycle skipped by global NVIDIA lock
+        id: skipped_global_lock
+        if: ${{ github.event_name == 'schedule' && steps.status.outcome == 'success' && steps.status.outputs.authorized == 'true' && steps.status.outputs.lock_clear == 'false' }}
+        continue-on-error: true
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          {
+            echo "## SKIPPED_GLOBAL_LOCK"
+            echo ""
+            echo "Provider-backed autonomous research was skipped because the global NVIDIA safety lock is active."
+            echo "No NVIDIA API request was made by this cycle."
+          } >> "$GITHUB_STEP_SUMMARY"
+          python3 telegram_report.py \
+            --title "SKIPPED_GLOBAL_LOCK: Global NVIDIA kilidi etkin" \
+            --status skipped \
+            --branch main \
+            --run-url "https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --kind status
       - name: Verify remote global NVIDIA safety lock
         if: ${{ steps.status.outputs.authorized == 'true' && steps.status.outputs.lock_clear == 'true' }}
         env:
