@@ -731,5 +731,94 @@ class AutonomousResearchStateTests(unittest.TestCase):
         self.assertEqual(state["target_queue"]["completed"], [])
 
 
+    def _exhausted_target_fixture(self, *, omit_last_event=False):
+        rows_target = [
+            {"date": "2026-11-08", "numbers": [1, 2, 3, 4, 5, 6]},
+            {"date": "2026-11-10", "numbers": [1, 2, 3, 4, 5, 7]},
+        ]
+        rows_next = rows_target + [
+            {"date": "2026-11-12", "numbers": [1, 2, 3, 4, 5, 8]},
+        ]
+        item_target = auto.target_queue._make_item(
+            rows_target, source_archive_sha256="a" * 64,
+            enqueued_at_utc=NOW.isoformat(),
+        )
+        item_next = auto.target_queue._make_item(
+            rows_next, source_archive_sha256="b" * 64,
+            enqueued_at_utc=NOW.isoformat(),
+        )
+        state = auto.initial_state()
+        state["target_queue"] = {
+            "schema_version": 1,
+            "observed_through_date": "2026-11-12",
+            "items": [item_target, item_next],
+            "completed": [],
+        }
+        for index in range(3):
+            attempt_id = str(index + 1) * 64
+            claimed = NOW + timedelta(minutes=index * 10)
+            state["attempts"].append({
+                "attempt_id": attempt_id,
+                "target_date": "2026-11-10",
+                "archive_sha256": item_target["archive_sha256"],
+                "archive_record_count": len(rows_target),
+                "claimed_at_utc": claimed.isoformat(),
+                "github_run_id": str(7000 + index),
+            })
+            if not (omit_last_event and index == 2):
+                state["events"].append({
+                    "attempt_id": attempt_id,
+                    "outcome": "FAILED",
+                    "recorded_at_utc": (claimed + timedelta(minutes=2)).isoformat(),
+                    "reason_code": "PROVIDER_DELIVERY_UNCERTAIN",
+                })
+        return state, item_target, item_next
+
+    def test_exhausted_retry_target_is_closed_without_rewriting_attempt_history(self):
+        state, item_target, item_next = self._exhausted_target_fixture()
+        auto.validate_state(state)
+        attempts_before = json.loads(json.dumps(state["attempts"]))
+        events_before = json.loads(json.dumps(state["events"]))
+
+        updated, report = auto.retire_exhausted_target(
+            state,
+            target_date="2026-11-10",
+            archive_sha256=item_target["archive_sha256"],
+            archive_record_count=item_target["archive_record_count"],
+            expected_attempt_count=3,
+            expected_next_target_date="2026-11-12",
+            expected_next_archive_sha256=item_next["archive_sha256"],
+            expected_next_archive_record_count=item_next["archive_record_count"],
+            now=NOW,
+        )
+
+        self.assertEqual(report["outcome"], "EXHAUSTED_RETRY_BUDGET")
+        self.assertEqual(report["attempts_preserved_count"], 3)
+        self.assertEqual(report["next_target_date"], "2026-11-12")
+        self.assertEqual(updated["target_queue"]["items"][0]["target_date"], "2026-11-12")
+        self.assertEqual(updated["target_queue"]["completed"][0]["outcome"], "EXHAUSTED_RETRY_BUDGET")
+        self.assertEqual(updated["attempts"], attempts_before)
+        self.assertEqual(updated["events"], events_before)
+        self.assertEqual(state["target_queue"]["items"][0]["target_date"], "2026-11-10")
+        self.assertNotIn("numbers", report)
+        self.assertIs(report["target_values_rendered"], False)
+
+    def test_exhausted_retry_target_refuses_missing_terminal_failure_record(self):
+        state, item_target, item_next = self._exhausted_target_fixture(omit_last_event=True)
+        with self.assertRaisesRegex(auto.AutonomousResearchError, "terminal FAILED"):
+            auto.retire_exhausted_target(
+                state,
+                target_date="2026-11-10",
+                archive_sha256=item_target["archive_sha256"],
+                archive_record_count=item_target["archive_record_count"],
+                expected_attempt_count=3,
+                expected_next_target_date="2026-11-12",
+                expected_next_archive_sha256=item_next["archive_sha256"],
+                expected_next_archive_record_count=item_next["archive_record_count"],
+                now=NOW,
+            )
+        self.assertEqual(state["target_queue"]["items"][0]["target_date"], "2026-11-10")
+
+
 if __name__ == "__main__":
     unittest.main()
