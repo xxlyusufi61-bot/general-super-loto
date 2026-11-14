@@ -969,6 +969,71 @@ class NvidiaUsageObservationTests(unittest.TestCase):
         self.assertEqual(saved[0]["http_status"], 504)
         self.assertEqual(saved[0]["failure_stage"], "provider_http_error")
         self.assertEqual(saved[0]["request_delivery_state"], "response_received")
+        self.assertEqual(saved[0]["provider_error_category"], "HTTP_5XX_SERVER_ERROR")
+        self.assertFalse(Path("/tmp/general_nvidia_api_no_retry_forward").exists())
+        self.assertEqual(research._NVIDIA_REQUESTS_ATTEMPTED, 1)
+        client.close.assert_called_once()
+
+    def test_http_404_records_allowlisted_error_identifiers_without_body_or_retry_changes(self):
+        class SyntheticNotFoundError(Exception):
+            status_code = 404
+            response = SimpleNamespace(
+                status_code=404,
+                headers={
+                    "x-request-id": "nvidia-request-404",
+                    "Authorization": "Bearer DO_NOT_STORE_THIS_TOKEN",
+                    "Set-Cookie": "DO_NOT_STORE_THIS_COOKIE",
+                },
+            )
+            body = {
+                "error": {
+                    "type": "invalid_request_error",
+                    "code": "model_not_found",
+                    "message": "PRIVATE_PROVIDER_MESSAGE_DO_NOT_STORE",
+                    "param": "model",
+                },
+            }
+
+        client = self.client_with_response()
+        client.chat.completions.create.side_effect = SyntheticNotFoundError(
+            "PRIVATE_EXCEPTION_MESSAGE_DO_NOT_STORE"
+        )
+        saved = []
+        with patch.dict(os.environ, self.live_env(), clear=True), patch.object(
+            research, "reserve_nvidia_request"
+        ), patch.object(
+            research, "save_usage_observation",
+            side_effect=lambda observation, **kwargs: saved.append(observation),
+        ), patch(
+            "general_open_research._create_nvidia_client", return_value=client
+        ):
+            with self.assertRaisesRegex(RuntimeError, "SyntheticNotFoundError"):
+                research.call_model(
+                    [{"role": "user", "content": "synthetic 404 test"}],
+                    request_label="forward",
+                )
+
+        self.assertEqual(len(saved), 1)
+        observation = saved[0]
+        self.assertEqual(observation["http_status"], 404)
+        self.assertEqual(observation["provider_error_category"], "HTTP_404_NOT_FOUND")
+        self.assertEqual(observation["provider_error_type"], "invalid_request_error")
+        self.assertEqual(observation["provider_error_code"], "model_not_found")
+        self.assertEqual(
+            observation["rate_limit_headers_returned"]["x-request-id"],
+            "nvidia-request-404",
+        )
+        self.assertEqual(observation["request_delivery_state"], "response_received")
+        self.assertEqual(observation["automatic_retries"], 0)
+        self.assertEqual(observation["sdk_max_retries"], 0)
+        serialized = json.dumps(observation)
+        for secret in (
+            "DO_NOT_STORE_THIS_TOKEN",
+            "DO_NOT_STORE_THIS_COOKIE",
+            "PRIVATE_PROVIDER_MESSAGE_DO_NOT_STORE",
+            "PRIVATE_EXCEPTION_MESSAGE_DO_NOT_STORE",
+        ):
+            self.assertNotIn(secret, serialized)
         self.assertFalse(Path("/tmp/general_nvidia_api_no_retry_forward").exists())
         self.assertEqual(research._NVIDIA_REQUESTS_ATTEMPTED, 1)
         client.close.assert_called_once()
