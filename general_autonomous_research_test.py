@@ -820,5 +820,109 @@ class AutonomousResearchStateTests(unittest.TestCase):
         self.assertEqual(state["target_queue"]["items"][0]["target_date"], "2026-11-10")
 
 
+
+    def _retired_exhausted_state_for_prepare(self):
+        state, item_target, item_next = self._exhausted_target_fixture()
+        updated, _ = auto.retire_exhausted_target(
+            state,
+            target_date="2026-11-10",
+            archive_sha256=item_target["archive_sha256"],
+            archive_record_count=item_target["archive_record_count"],
+            expected_attempt_count=3,
+            expected_next_target_date="2026-11-12",
+            expected_next_archive_sha256=item_next["archive_sha256"],
+            expected_next_archive_record_count=item_next["archive_record_count"],
+            now=NOW,
+        )
+        updated["authorization"] = active_state()["authorization"]
+        auto.validate_state(updated)
+        return updated, item_next
+
+    def _prepare_next_fifo_target(self, state, item_next, root):
+        lock_path = root / "lock.json"
+        lock_path.write_text(json.dumps(initial_lock_state()), encoding="utf-8")
+        validation_count = max(2, auto.sealed.MIN_VALIDATION_DRAWS)
+        forward_dates = [
+            (date(2026, 9, 1) + timedelta(days=index)).isoformat()
+            for index in range(validation_count)
+        ]
+        reverse_dates = [
+            (date(2026, 10, 1) + timedelta(days=index)).isoformat()
+            for index in range(validation_count)
+        ]
+        discovery_count = max(40, auto.sealed.DEFAULT_MIN_TRAIN_DRAWS)
+        archive = {
+            "last_date": "2026-11-12",
+            "archive_sha256": item_next["archive_sha256"],
+            "record_count": item_next["archive_record_count"],
+        }
+        plan = {
+            "target_date": "2026-11-12",
+            "archive_sha256": item_next["archive_sha256"],
+            "target_numbers_exposed": False,
+            "target_in_discovery": False,
+            "target_in_validation": False,
+            "regimes": {
+                "R60": {
+                    "status": "READY",
+                    "discovery_count": discovery_count,
+                },
+            },
+            "forward_validation_dates": forward_dates,
+            "reverse_validation_dates": reverse_dates,
+            "pre_target_draw_count": discovery_count + 2 * validation_count,
+        }
+        with patch.object(auto.sealed, "load_archive", return_value=archive), patch.object(
+            auto.sealed, "preflight", return_value=plan
+        ):
+            return auto.prepare_cycle(
+                state,
+                archive_path=root / "archive.json",
+                ledger_path=root / "ledger.json",
+                global_lock_path=lock_path,
+                now=NOW,
+            )
+
+    def test_prepare_advances_after_exact_completed_exhausted_fifo_target(self):
+        state, item_next = self._retired_exhausted_state_for_prepare()
+        attempts_before = json.loads(json.dumps(state["attempts"]))
+        events_before = json.loads(json.dumps(state["events"]))
+
+        with tempfile.TemporaryDirectory() as directory:
+            result = self._prepare_next_fifo_target(state, item_next, Path(directory))
+
+        self.assertTrue(result["eligible"])
+        self.assertEqual(result["status"], "READY")
+        self.assertEqual(result["target_date"], "2026-11-12")
+        self.assertIs(result["target_numbers_exposed"], False)
+        self.assertFalse(result["retryable"])
+        self.assertEqual(result["retry_number"], 1)
+        self.assertEqual(state["attempts"], attempts_before)
+        self.assertEqual(state["events"], events_before)
+
+    def test_prepare_fails_closed_when_completed_predecessor_archive_identity_differs(self):
+        state, item_next = self._retired_exhausted_state_for_prepare()
+        state["target_queue"]["completed"][0]["archive_sha256"] = "f" * 64
+
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(
+                auto.AutonomousResearchError,
+                "Completed previous FIFO target does not match its archived attempt identity",
+            ):
+                self._prepare_next_fifo_target(state, item_next, Path(directory))
+
+    def test_prepare_does_not_skip_an_uncompleted_previous_target(self):
+        state, _, item_next = self._exhausted_target_fixture()
+        state["authorization"] = active_state()["authorization"]
+        state["target_queue"]["items"] = [item_next]
+        auto.validate_state(state)
+
+        with tempfile.TemporaryDirectory() as directory:
+            result = self._prepare_next_fifo_target(state, item_next, Path(directory))
+
+        self.assertFalse(result["eligible"])
+        self.assertEqual(result["status"], "PREVIOUS_TARGET_MANUAL_RECOVERY_REQUIRED")
+        self.assertEqual(result["pending_target_date"], "2026-11-10")
+
 if __name__ == "__main__":
     unittest.main()
