@@ -935,7 +935,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
         }
 
     def test_claim_advances_after_exact_completed_exhausted_fifo_target(self):
-        state, _, item_next = self._retired_exhausted_state_for_prepare()
+        state, item_next = self._retired_exhausted_state_for_prepare()
         plan = self._ready_claim_plan_for_item(item_next)
         attempts_before = json.loads(json.dumps(state["attempts"]))
         events_before = json.loads(json.dumps(state["events"]))
@@ -952,7 +952,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
         self.assertEqual(state["attempts"][-1], attempt)
 
     def test_claim_fails_closed_when_completed_predecessor_archive_hash_differs(self):
-        state, _, item_next = self._retired_exhausted_state_for_prepare()
+        state, item_next = self._retired_exhausted_state_for_prepare()
         state["target_queue"]["completed"][0]["archive_sha256"] = "f" * 64
         plan = self._ready_claim_plan_for_item(item_next)
         attempts_before = json.loads(json.dumps(state["attempts"]))
@@ -966,7 +966,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
         self.assertEqual(state["attempts"], attempts_before)
 
     def test_claim_fails_closed_when_completed_predecessor_record_count_differs(self):
-        state, _, item_next = self._retired_exhausted_state_for_prepare()
+        state, item_next = self._retired_exhausted_state_for_prepare()
         state["target_queue"]["completed"][0]["archive_record_count"] += 1
         plan = self._ready_claim_plan_for_item(item_next)
         attempts_before = json.loads(json.dumps(state["attempts"]))
