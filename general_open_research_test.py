@@ -1632,8 +1632,16 @@ class OpenResearchWorkflowRegressionTests(unittest.TestCase):
         self.assertIn("--status skipped", skipped_step)
         self.assertIn("--kind status", skipped_step)
 
+        prepare_step = self._workflow_step(
+            workflow, "Prepare one cycle for the oldest queued target and fresh sealed windows"
+        )
+        self.assertIn("steps.status.outputs.lock_clear == 'true'", prepare_step)
+        attempt_step = self._workflow_step(
+            workflow, "Claim this target before any provider request"
+        )
+        self.assertIn("steps.prepare.outputs.eligible == 'true'", attempt_step)
         research_step = self._workflow_step(
             workflow, "Run independent forward and reverse NVIDIA discovery"
         )
-        self.assertIn("steps.status.outputs.lock_clear == 'true'", research_step)
+        self.assertIn("steps.attempt_reservation.outputs.attempt_id != ''", research_step)
 
