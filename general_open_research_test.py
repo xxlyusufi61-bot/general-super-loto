@@ -4,6 +4,7 @@ import sys
 import tempfile
 import types
 import unittest
+from importlib.util import find_spec
 from datetime import date, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -676,23 +677,23 @@ class NvidiaUsageObservationTests(unittest.TestCase):
         fake_http_client = MagicMock()
         fake_openai_module = types.ModuleType("openai")
         fake_openai_module.OpenAI = MagicMock(return_value=fake_client)
-        fake_httpx_module = types.ModuleType("httpx")
-        fake_httpx_module.Client = MagicMock(return_value=fake_http_client)
+        fake_httpx2_module = types.ModuleType("httpx2")
+        fake_httpx2_module.Client = MagicMock(return_value=fake_http_client)
 
         with patch.dict(
             sys.modules,
-            {"openai": fake_openai_module, "httpx": fake_httpx_module},
+            {"openai": fake_openai_module, "httpx2": fake_httpx2_module},
         ):
             result = research._create_nvidia_client("test-secret", 123)
 
         network_trace = result._general_network_phase_trace
         self.assertIsInstance(network_trace, research.NvidiaNetworkPhaseTrace)
         self.assertIs(result, fake_client)
-        httpx_kwargs = fake_httpx_module.Client.call_args.kwargs
-        self.assertEqual(httpx_kwargs["timeout"], 123)
-        self.assertTrue(httpx_kwargs["follow_redirects"])
-        self.assertIs(httpx_kwargs["event_hooks"]["request"][0].__self__, network_trace)
-        self.assertIs(httpx_kwargs["event_hooks"]["response"][0].__self__, network_trace)
+        httpx2_kwargs = fake_httpx2_module.Client.call_args.kwargs
+        self.assertEqual(httpx2_kwargs["timeout"], 123)
+        self.assertTrue(httpx2_kwargs["follow_redirects"])
+        self.assertIs(httpx2_kwargs["event_hooks"]["request"][0].__self__, network_trace)
+        self.assertIs(httpx2_kwargs["event_hooks"]["response"][0].__self__, network_trace)
         fake_openai_module.OpenAI.assert_called_once_with(
             base_url="https://integrate.api.nvidia.com/v1",
             api_key="test-secret",
@@ -700,6 +701,26 @@ class NvidiaUsageObservationTests(unittest.TestCase):
             http_client=fake_http_client,
             max_retries=0,
         )
+
+    @unittest.skipUnless(
+        find_spec("openai") is not None and find_spec("httpx2") is not None,
+        "requires the pinned OpenAI SDK and HTTPX2 installed by provider test jobs",
+    )
+    def test_pinned_openai_sdk_constructs_with_real_httpx2_without_network(self):
+        from importlib.metadata import version
+        import httpx2
+
+        self.assertEqual(version("openai"), "3.45.0")
+        client = research._create_nvidia_client("test-secret", 123)
+        try:
+            self.assertIsInstance(client._client, httpx2.Client)
+            self.assertIsInstance(
+                client._general_network_phase_trace,
+                research.NvidiaNetworkPhaseTrace,
+            )
+            self.assertEqual(research._NVIDIA_REQUESTS_ATTEMPTED, 0)
+        finally:
+            client.close()
 
     def test_network_phase_trace_records_httpcore_timings_only(self):
         trace = research.NvidiaNetworkPhaseTrace()
