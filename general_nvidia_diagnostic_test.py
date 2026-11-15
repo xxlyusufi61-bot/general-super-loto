@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import general_nvidia_diagnostic as diagnostic
 import general_open_research as research
-from general_live_consent import DIAGNOSTIC_CONFIRMATION_PHRASE
+from general_live_consent import CONFIRMATION_PHRASE, DIAGNOSTIC_CONFIRMATION_PHRASE
 
 
 class SingleRequestDiagnosticTests(unittest.TestCase):
@@ -71,6 +71,32 @@ class SingleRequestDiagnosticTests(unittest.TestCase):
             "GENERAL_CONFIRM_LIVE_CALLS": DIAGNOSTIC_CONFIRMATION_PHRASE,
             "GENERAL_NVIDIA_GUARD_PASSED": "1",
         }
+
+    def test_default_model_remains_existing_glm_and_alternative_is_allowlisted(self):
+        with patch.dict(os.environ, self._environment(), clear=True):
+            self.assertEqual(diagnostic.resolve_diagnostic_model(), research.MODEL)
+        with patch.dict(
+            os.environ,
+            self._environment() | {"GENERAL_DIAGNOSTIC_MODEL": diagnostic.ALTERNATIVE_DIAGNOSTIC_MODEL},
+            clear=True,
+        ):
+            self.assertEqual(
+                diagnostic.resolve_diagnostic_model(),
+                diagnostic.ALTERNATIVE_DIAGNOSTIC_MODEL,
+            )
+
+    def test_unsupported_diagnostic_model_fails_before_preflight_or_request(self):
+        with patch.dict(
+            os.environ,
+            self._environment() | {"GENERAL_DIAGNOSTIC_MODEL": "unlisted/model"},
+            clear=True,
+        ), patch.object(diagnostic.sealed, "preflight") as preflight, patch.object(
+            diagnostic.research, "call_model"
+        ) as call_model:
+            with self.assertRaisesRegex(RuntimeError, "Unsupported one-request diagnostic model"):
+                diagnostic.run_diagnostic()
+        preflight.assert_not_called()
+        call_model.assert_not_called()
 
     def test_compact_diagnostic_prompt_rejects_nonchronological_history(self):
         reversed_rows = list(reversed(self.discovery_rows))
@@ -136,13 +162,17 @@ class SingleRequestDiagnosticTests(unittest.TestCase):
     def test_one_forward_call_receives_only_discovery_rows_and_saves_safe_metadata(self):
         calls = []
 
-        def fake_call_model(messages, *, request_label=None):
-            calls.append((messages, request_label))
+        def fake_call_model(messages, *, request_label=None, diagnostic_model=None):
+            calls.append((messages, request_label, diagnostic_model))
             research._NVIDIA_REQUESTS_ATTEMPTED += 1
             research._NVIDIA_REQUEST_LABELS_ATTEMPTED.add(request_label)
             return "synthetic completed model response"
 
-        with patch.dict(os.environ, self._environment(), clear=True), patch.object(
+        with patch.dict(
+            os.environ,
+            self._environment() | {"GENERAL_DIAGNOSTIC_MODEL": diagnostic.ALTERNATIVE_DIAGNOSTIC_MODEL},
+            clear=True,
+        ), patch.object(
             diagnostic.research, "BASE", self.root
         ), patch.object(
             diagnostic.research, "ARCHIVE", self.root / "super_loto_archive.json"
@@ -173,6 +203,7 @@ class SingleRequestDiagnosticTests(unittest.TestCase):
 
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0][1], "forward")
+        self.assertEqual(calls[0][2], diagnostic.ALTERNATIVE_DIAGNOSTIC_MODEL)
         preflight.assert_called_once()
         self.assertEqual(research._NVIDIA_REQUESTS_ATTEMPTED, 1)
         self.assertEqual(research._NVIDIA_REQUEST_LABELS_ATTEMPTED, {"forward"})
@@ -201,6 +232,7 @@ class SingleRequestDiagnosticTests(unittest.TestCase):
         self.assertNotIn(self.target, sent_dates)
 
         self.assertEqual(result["status"], "RESPONSE_RECEIVED")
+        self.assertEqual(result["model"], diagnostic.ALTERNATIVE_DIAGNOSTIC_MODEL)
         self.assertEqual(result["response_mode"], "sse")
         self.assertTrue(result["response_streaming"])
         self.assertEqual(result["provider_requests_attempted"], 1)
@@ -338,6 +370,7 @@ class SingleRequestDiagnosticTests(unittest.TestCase):
             answer = research.call_model(
                 [{"role": "user", "content": "synthetic diagnostic"}],
                 request_label="forward",
+                diagnostic_model=diagnostic.ALTERNATIVE_DIAGNOSTIC_MODEL,
             )
             self.assertEqual(answer, "synthetic final response")
             client_factory.assert_called_once_with(
@@ -346,13 +379,15 @@ class SingleRequestDiagnosticTests(unittest.TestCase):
             )
             client.chat.completions.create.assert_called_once()
             sent = client.chat.completions.create.call_args.kwargs
+            self.assertEqual(sent["model"], diagnostic.ALTERNATIVE_DIAGNOSTIC_MODEL)
             self.assertEqual(sent["max_tokens"], research.DIAGNOSTIC_MAX_COMPLETION_TOKENS)
             self.assertIs(sent["stream"], True)
-            self.assertEqual(sent["reasoning_effort"] if "reasoning_effort" in sent else sent["extra_body"]["reasoning_effort"], "low")
+            self.assertEqual(sent["extra_body"], {"reasoning_effort": "none"})
             client.close.assert_called_once()
             self.assertEqual(len(saved_observations), 1)
             observation = saved_observations[0]
             self.assertEqual(observation["response_mode"], "sse")
+            self.assertEqual(observation["model"], diagnostic.ALTERNATIVE_DIAGNOSTIC_MODEL)
             self.assertEqual(observation["transport"], "openai-python-sdk")
             self.assertTrue(observation["stream_requested"])
             self.assertEqual(observation["sdk_max_retries"], 0)
@@ -433,6 +468,26 @@ class SingleRequestDiagnosticTests(unittest.TestCase):
         self.assertEqual(observation["failure_stage"], "provider_call")
         self.assertEqual(observation["network_error_type"], "TimeoutError")
 
+    def test_production_request_cannot_override_the_configured_model(self):
+        env = {
+            "GENERAL_CONFIRM_LIVE_CALLS": CONFIRMATION_PHRASE,
+            "GENERAL_NVIDIA_GUARD_PASSED": "1",
+            "GENERAL_ALLOW_NVIDIA_CALL": "true",
+            "GENERAL_NVIDIA_FREE_USAGE_VERIFIED": "true",
+            "NVIDIA_API_KEY": "test-secret",
+        }
+        with patch.dict(os.environ, env, clear=True), patch(
+            "general_open_research._create_nvidia_client"
+        ) as client_factory:
+            with self.assertRaisesRegex(RuntimeError, "only in diagnostic mode"):
+                research.call_model(
+                    [{"role": "user", "content": "production override must be blocked"}],
+                    request_label="forward",
+                    diagnostic_model=diagnostic.ALTERNATIVE_DIAGNOSTIC_MODEL,
+                )
+            client_factory.assert_not_called()
+        self.assertEqual(research._NVIDIA_REQUESTS_ATTEMPTED, 0)
+
     def test_reverse_label_is_rejected_in_diagnostic_mode_before_network(self):
         env = self._environment() | {
             "GENERAL_ALLOW_NVIDIA_CALL": "true",
@@ -460,6 +515,7 @@ class DiagnosticWorkflowBudgetTests(unittest.TestCase):
         self.assertIn(job_marker, workflow)
         diagnostic_job = workflow.split(job_marker, 1)[1]
         self.assertIn("    timeout-minutes: 35" + newline, diagnostic_job)
+        self.assertIn("        GENERAL_DIAGNOSTIC_MODEL: ${{ inputs.diagnostic_model }}" + newline, diagnostic_job)
 
         request_step_marker = "      - name: Run exactly one forward diagnostic request" + newline
         self.assertIn(request_step_marker, diagnostic_job)
@@ -468,6 +524,9 @@ class DiagnosticWorkflowBudgetTests(unittest.TestCase):
         )[0]
         self.assertIn("        timeout-minutes: 32" + newline, request_step)
         self.assertGreater(35, 32)
+        self.assertIn("      diagnostic_model:" + newline, workflow)
+        self.assertIn("          - mistralai/mistral-large-4-1t-a52b" + newline, workflow)
+        self.assertIn("workflow_dispatch", diagnostic_job)
 
 
 if __name__ == "__main__":

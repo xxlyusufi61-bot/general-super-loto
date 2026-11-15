@@ -35,6 +35,8 @@ import general_research_memory as research_memory
 
 VERSION = "0.8.2"
 MODEL = "z-ai/glm-5.3-flash"
+DIAGNOSTIC_ALTERNATIVE_MODEL = "mistralai/mistral-large-4-1t-a52b"
+DIAGNOSTIC_ALLOWED_MODELS = frozenset({MODEL, DIAGNOSTIC_ALTERNATIVE_MODEL})
 BASE = Path(__file__).resolve().parent
 ARCHIVE = BASE / os.environ.get("GENERAL_ARCHIVE_FILE", "super_loto_archive.json")
 REPORT = BASE / "open_research_report.md"
@@ -597,6 +599,7 @@ def build_usage_observation(
     payload: Mapping[str, Any] | None,
     *,
     response_mode: str = "json",
+    model: str | None = None,
     request_duration_seconds: float | None = None,
     first_sse_event_seconds: float | None = None,
     stream_event_count: int | None = None,
@@ -638,7 +641,7 @@ def build_usage_observation(
     return {
         "schema_version": 1,
         "observed_at_utc": datetime.now(timezone.utc).isoformat(),
-        "model": MODEL,
+        "model": MODEL if model is None else model,
         "endpoint": API_URL,
         "transport": "openai-python-sdk",
         "client_library": "openai",
@@ -1203,6 +1206,7 @@ def call_model(
     messages: list[dict[str, str]],
     *,
     request_label: str | None = None,
+    diagnostic_model: str | None = None,
 ) -> str:
     global _NVIDIA_REQUESTS_ATTEMPTED
     if request_label not in {None, "forward", "reverse", "forward_critique", "between_draws"}:
@@ -1214,6 +1218,21 @@ def call_model(
     )
     diagnostic_mode = os.environ.get("GENERAL_DIAGNOSTIC_MODE", "").strip().lower() == "true"
     single_request_mode = os.environ.get("GENERAL_SINGLE_REQUEST_MODE", "").strip().lower() == "true"
+    if diagnostic_model is not None:
+        if not diagnostic_mode:
+            raise RuntimeError(
+                "A diagnostic model override is permitted only in diagnostic mode; no provider request was sent."
+            )
+        if request_label != "forward" or diagnostic_model not in DIAGNOSTIC_ALLOWED_MODELS:
+            raise RuntimeError(
+                "The requested diagnostic model or direction is not allowlisted; no provider request was sent."
+            )
+    request_model = MODEL if diagnostic_model is None else diagnostic_model
+    request_extra_body = (
+        {"reasoning_effort": "low", "chat_template_kwargs": {"clear_thinking": True}}
+        if request_model == MODEL
+        else {"reasoning_effort": "none"}
+    )
     if diagnostic_mode and single_request_mode:
         raise RuntimeError("Diagnostic and normal single-request modes cannot be combined; no provider request was sent.")
     if diagnostic_mode or single_request_mode:
@@ -1353,14 +1372,11 @@ def call_model(
     )
     request_body_bytes = len(json.dumps(
         {
-            "model": MODEL,
+            "model": request_model,
             "messages": messages,
             "max_tokens": request_max_tokens,
             "temperature": 0.2,
-            "extra_body": {
-                "reasoning_effort": "low",
-                "chat_template_kwargs": {"clear_thinking": True},
-            },
+            "extra_body": request_extra_body,
             "stream": True,
         },
         ensure_ascii=False,
@@ -1385,14 +1401,11 @@ def call_model(
 
     try:
         completion = client.chat.completions.create(
-            model=MODEL,
+            model=request_model,
             messages=messages,
             max_tokens=request_max_tokens,
             temperature=0.2,
-            extra_body={
-                "reasoning_effort": "low",
-                "chat_template_kwargs": {"clear_thinking": True},
-            },
+            extra_body=request_extra_body,
             stream=True,
         )
         raw_response = getattr(completion, "_response", None)
@@ -1469,6 +1482,7 @@ def call_model(
                 response_headers,
                 failure_payload,
                 response_mode="sse",
+                model=request_model,
                 request_duration_seconds=duration,
                 first_sse_event_seconds=stream_state["first_sse_event_seconds"],
                 stream_event_count=stream_state["stream_event_count"],
@@ -1537,6 +1551,7 @@ def call_model(
             response_headers,
             result,
             response_mode="sse",
+            model=request_model,
             request_duration_seconds=duration,
             first_sse_event_seconds=stream_state["first_sse_event_seconds"],
             stream_event_count=stream_state["stream_event_count"],

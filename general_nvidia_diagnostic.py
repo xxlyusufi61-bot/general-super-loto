@@ -19,8 +19,21 @@ import general_sealed_evaluation as sealed
 from general_live_consent import has_explicit_diagnostic_consent
 
 RESULT_PATH = Path(__file__).resolve().parent / "general_nvidia_diagnostic_result.json"
-DIAGNOSTIC_VERSION = "1.2.0"
+DEFAULT_DIAGNOSTIC_MODEL = research.MODEL
+ALTERNATIVE_DIAGNOSTIC_MODEL = research.DIAGNOSTIC_ALTERNATIVE_MODEL
+SUPPORTED_DIAGNOSTIC_MODELS = research.DIAGNOSTIC_ALLOWED_MODELS
+DIAGNOSTIC_VERSION = "1.3.0"
 RESEARCH_SCOPE_START = date(2020, 8, 2)
+
+
+def resolve_diagnostic_model() -> str:
+    """Resolve only explicitly supported models; never change production defaults."""
+    candidate = os.environ.get("GENERAL_DIAGNOSTIC_MODEL", DEFAULT_DIAGNOSTIC_MODEL)
+    if candidate not in SUPPORTED_DIAGNOSTIC_MODELS:
+        raise RuntimeError(
+            "Unsupported one-request diagnostic model; no provider request was sent."
+        )
+    return candidate
 
 
 def build_diagnostic_messages(
@@ -153,6 +166,7 @@ def _validate_partition(
 def run_diagnostic() -> dict[str, Any]:
     """Run one direction-isolated request and save metadata, never raw model text."""
     _validate_environment()
+    diagnostic_model = resolve_diagnostic_model()
     RESULT_PATH.unlink(missing_ok=True)
 
     ledger_path = research.BASE / "general_evaluation_ledger.json"
@@ -209,7 +223,11 @@ def run_diagnostic() -> dict[str, Any]:
     if set(supplied_dates).intersection(forward_dates + reverse_dates):
         raise RuntimeError("A sealed holdout date was found in the outbound model payload.")
 
-    response_text = research.call_model(messages, request_label="forward")
+    response_text = research.call_model(
+        messages,
+        request_label="forward",
+        diagnostic_model=diagnostic_model,
+    )
     if not isinstance(response_text, str) or not response_text.strip():
         raise RuntimeError("The provider returned no usable text response.")
     if research._NVIDIA_REQUESTS_ATTEMPTED != 1:
@@ -222,7 +240,7 @@ def run_diagnostic() -> dict[str, Any]:
         "diagnostic_version": DIAGNOSTIC_VERSION,
         "status": "RESPONSE_RECEIVED",
         "mode": "single_request_forward_only",
-        "model": research.MODEL,
+        "model": diagnostic_model,
         "response_mode": "sse",
         "response_streaming": True,
         "completed_at_utc": datetime.now(timezone.utc).isoformat(),
