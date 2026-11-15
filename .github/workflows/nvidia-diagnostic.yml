@@ -37,6 +37,14 @@ name: GENERAL NVIDIA One-Request Diagnostic
         required: false
         type: string
         default: "Explore the pre-target archive from scratch and propose testable hypotheses."
+      diagnostic_model:
+        description: "Select the model for this one-request diagnostic only; production research remains unchanged."
+        required: true
+        type: choice
+        options:
+          - z-ai/glm-5.3-flash
+          - mistralai/mistral-large-4-1t-a52b
+        default: z-ai/glm-5.3-flash
       confirm_single_request:
         description: "Enter the exact approval phrase to authorize one diagnostic request. Leave NO to run tests only."
         required: true
@@ -118,6 +126,7 @@ jobs:
           GENERAL_DEFAULT_BRANCH: main
           GENERAL_ARCHIVE_FILE: super_loto_archive.json
           TASK_TEXT: ${{ inputs.task }}
+          GENERAL_DIAGNOSTIC_MODEL: ${{ inputs.diagnostic_model }}
           GENERAL_CONFIRM_LIVE_CALLS: ${{ inputs.confirm_single_request }}
           GENERAL_ALLOW_NVIDIA_CALL: "true"
           GENERAL_NVIDIA_FREE_USAGE_VERIFIED: "true"
