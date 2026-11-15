@@ -1342,6 +1342,21 @@ def call_model(
         for item in messages
         if item.get("role") == "user"
     )
+    request_body_bytes = len(json.dumps(
+        {
+            "model": MODEL,
+            "messages": messages,
+            "max_tokens": request_max_tokens,
+            "temperature": 0.2,
+            "extra_body": {
+                "reasoning_effort": "low",
+                "chat_template_kwargs": {"clear_thinking": True},
+            },
+            "stream": True,
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8"))
     request_started = time.monotonic()
     completion = None
     result = None
@@ -1451,6 +1466,9 @@ def call_model(
                 response_complete=False,
                 max_tokens_requested=request_max_tokens,
                 request_timeout_seconds=request_timeout_seconds,
+                request_body_bytes=request_body_bytes,
+                system_prompt_bytes=system_prompt_bytes,
+                user_prompt_bytes=user_prompt_bytes,
                 request_delivery_state=(
                     "response_received"
                     if response_received
@@ -1520,6 +1538,9 @@ def call_model(
             response_complete=True,
             max_tokens_requested=request_max_tokens,
             request_timeout_seconds=request_timeout_seconds,
+            request_body_bytes=request_body_bytes,
+            system_prompt_bytes=system_prompt_bytes,
+            user_prompt_bytes=user_prompt_bytes,
             request_delivery_state="response_received",
             provider_http_response_received=status_code is not None,
             model_stream_events_received=stream_state["stream_event_count"] > 0,
