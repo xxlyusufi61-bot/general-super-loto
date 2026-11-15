@@ -33,7 +33,7 @@ from general_execution_spec_parser import parse_execution_spec_block
 import general_sealed_evaluation as sealed
 import general_research_memory as research_memory
 
-VERSION = "0.8.1"
+VERSION = "0.8.2"
 MODEL = "z-ai/glm-5.3-flash"
 BASE = Path(__file__).resolve().parent
 ARCHIVE = BASE / os.environ.get("GENERAL_ARCHIVE_FILE", "super_loto_archive.json")
@@ -65,6 +65,66 @@ DEFAULT_REQUEST_SEND_TIMEOUT_SECONDS = 30
 _NVIDIA_REQUESTS_ATTEMPTED = 0
 _NVIDIA_REQUEST_LABELS_ATTEMPTED: set[str] = set()
 _NVIDIA_REQUEST_LABELS_SUCCEEDED: set[str] = set()
+
+class NvidiaNetworkPhaseTrace:
+    """Collect HTTPX/httpcore phase timings without retaining trace payloads."""
+
+    _PHASE_METRICS = {
+        "connect_tcp": "tcp_tls_establishment_seconds",
+        "start_tls": "tcp_tls_establishment_seconds",
+        "send_request_headers": "request_send_seconds",
+        "send_request_body": "request_send_seconds",
+        "receive_response_headers": "response_header_wait_seconds",
+        "receive_response_body": "stream_read_seconds",
+    }
+
+    def __init__(self) -> None:
+        self._phase_starts: dict[str, list[float]] = {}
+        self._metrics: dict[str, float] = {}
+        self._request_started_at: float | None = None
+
+    def on_request(self, request: Any) -> None:
+        self._request_started_at = time.monotonic()
+        previous_trace = request.extensions.get("trace")
+
+        def record_trace_event(event_name: str, event_info: Any) -> None:
+            self._record_event(event_name)
+            if callable(previous_trace):
+                previous_trace(event_name, event_info)
+
+        request.extensions["trace"] = record_trace_event
+
+    def on_response(self, response: Any) -> None:
+        if self._request_started_at is None or "transport_open_seconds" in self._metrics:
+            return
+        self._metrics["transport_open_seconds"] = max(
+            0.0, time.monotonic() - self._request_started_at
+        )
+
+    def _record_event(self, event_name: str) -> None:
+        if not isinstance(event_name, str):
+            return
+        parts = event_name.rsplit(".", 2)
+        if len(parts) != 3:
+            return
+        phase, outcome = parts[-2], parts[-1]
+        metric = self._PHASE_METRICS.get(phase)
+        if metric is None:
+            return
+        if outcome == "started":
+            self._phase_starts.setdefault(phase, []).append(time.monotonic())
+            return
+        if outcome not in {"complete", "failed"}:
+            return
+        starts = self._phase_starts.get(phase)
+        if not starts:
+            return
+        elapsed = max(0.0, time.monotonic() - starts.pop())
+        self._metrics[metric] = self._metrics.get(metric, 0.0) + elapsed
+
+    def snapshot(self) -> dict[str, float]:
+        return {name: round(seconds, 3) for name, seconds in self._metrics.items()}
+
 
 QUOTA_LIMITATION_NOTE = (
     "No supported account-level remaining-quota API was identified in the NVIDIA "
@@ -538,6 +598,7 @@ def build_usage_observation(
     *,
     response_mode: str = "json",
     request_duration_seconds: float | None = None,
+    first_sse_event_seconds: float | None = None,
     stream_event_count: int | None = None,
     stream_completed: bool | None = None,
     stream_finish_reason: str | None = None,
@@ -591,6 +652,11 @@ def build_usage_observation(
         "request_duration_seconds": (
             round(request_duration_seconds, 3)
             if isinstance(request_duration_seconds, (int, float))
+            else None
+        ),
+        "first_sse_event_seconds": (
+            round(first_sse_event_seconds, 3)
+            if isinstance(first_sse_event_seconds, (int, float))
             else None
         ),
         "stream_event_count": stream_event_count,
@@ -1005,6 +1071,12 @@ def _consume_streaming_chat_completion(
     """Collect SDK-managed SSE chunks; accept only a complete final content answer."""
     content_parts: list[str] = []
     for chunk in stream:
+        if state.get("first_sse_event_seconds") is None:
+            request_started_at = state.get("request_started_at")
+            if isinstance(request_started_at, (int, float)):
+                state["first_sse_event_seconds"] = max(
+                    0.0, time.monotonic() - request_started_at
+                )
         state["stream_event_count"] += 1
         chunk_usage = _stream_usage_payload(_stream_field(chunk, "usage"))
         if chunk_usage is not None:
@@ -1078,24 +1150,39 @@ def _consume_streaming_chat_completion(
 
 
 def _create_nvidia_client(api_key: str, timeout_seconds: int):
-    """Create the official OpenAI Python client for NVIDIA's compatible endpoint.
+    """Create the official OpenAI client with timing-only HTTPX trace hooks.
 
-    SDK-level retries are explicitly disabled. This is important because even a
-    timeout can occur after NVIDIA has received the request.
+    SDK-level retries remain disabled. The custom HTTPX client preserves the
+    normal SDK transport while exposing httpcore's connect, TLS, send, header,
+    and response-body timing events.
     """
     try:
         from openai import OpenAI
+        import httpx
     except ImportError:
         raise RuntimeError(
-            "The pinned OpenAI Python SDK is missing; NVIDIA inference was not started."
+            "The pinned OpenAI SDK/HTTPX dependencies are missing; "
+            "NVIDIA inference was not started."
         ) from None
 
-    return OpenAI(
+    trace = NvidiaNetworkPhaseTrace()
+    http_client = httpx.Client(
+        timeout=timeout_seconds,
+        follow_redirects=True,
+        event_hooks={
+            "request": [trace.on_request],
+            "response": [trace.on_response],
+        },
+    )
+    client = OpenAI(
         base_url=API_BASE_URL,
         api_key=api_key,
         timeout=timeout_seconds,
+        http_client=http_client,
         max_retries=0,
     )
+    client._general_network_phase_trace = trace
+    return client
 
 
 def _chat_completion_payload(completion: Any) -> dict[str, Any]:
@@ -1212,6 +1299,9 @@ def call_model(
     # reserving quota or writing the attempted marker, so a missing dependency
     # cannot be mistaken for an ambiguous network delivery.
     client = _create_nvidia_client(key, request_timeout_seconds)
+    network_trace = getattr(client, "_general_network_phase_trace", None)
+    if not isinstance(network_trace, NvidiaNetworkPhaseTrace):
+        network_trace = NvidiaNetworkPhaseTrace()
     try:
         if diagnostic_mode:
             reserve_nvidia_request(
@@ -1261,6 +1351,21 @@ def call_model(
         for item in messages
         if item.get("role") == "user"
     )
+    request_body_bytes = len(json.dumps(
+        {
+            "model": MODEL,
+            "messages": messages,
+            "max_tokens": request_max_tokens,
+            "temperature": 0.2,
+            "extra_body": {
+                "reasoning_effort": "low",
+                "chat_template_kwargs": {"clear_thinking": True},
+            },
+            "stream": True,
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8"))
     request_started = time.monotonic()
     completion = None
     result = None
@@ -1274,6 +1379,8 @@ def call_model(
         "stream_completed": False,
         "stream_finish_reason": None,
         "usage": None,
+        "request_started_at": request_started,
+        "first_sse_event_seconds": None,
     }
 
     try:
@@ -1330,6 +1437,7 @@ def call_model(
                 pass
 
     duration = time.monotonic() - request_started
+    network_metrics = network_trace.snapshot()
     if status_code in {402, 429}:
         # Persist the no-retry classification before usage-report I/O.
         no_retry_marker.write_text(
@@ -1362,6 +1470,7 @@ def call_model(
                 failure_payload,
                 response_mode="sse",
                 request_duration_seconds=duration,
+                first_sse_event_seconds=stream_state["first_sse_event_seconds"],
                 stream_event_count=stream_state["stream_event_count"],
                 stream_completed=stream_state["stream_completed"],
                 stream_finish_reason=stream_state["stream_finish_reason"],
@@ -1369,6 +1478,9 @@ def call_model(
                 response_complete=False,
                 max_tokens_requested=request_max_tokens,
                 request_timeout_seconds=request_timeout_seconds,
+                request_body_bytes=request_body_bytes,
+                system_prompt_bytes=system_prompt_bytes,
+                user_prompt_bytes=user_prompt_bytes,
                 request_delivery_state=(
                     "response_received"
                     if response_received
@@ -1377,14 +1489,18 @@ def call_model(
                 provider_http_response_received=status_code is not None,
                 model_stream_events_received=stream_state["stream_event_count"] > 0,
                 model_response_validated=False,
-                system_prompt_bytes=system_prompt_bytes,
-                user_prompt_bytes=user_prompt_bytes,
                 failure_stage=failure_stage,
                 error_type=type(failure).__name__,
                 provider_error_category=provider_error_metadata["provider_error_category"],
                 provider_error_type=provider_error_metadata["provider_error_type"],
                 provider_error_code=provider_error_metadata["provider_error_code"],
                 network_error_chain=_exception_chain_types(failure),
+                tcp_tls_establishment_seconds=network_metrics.get("tcp_tls_establishment_seconds"),
+                request_send_seconds=network_metrics.get("request_send_seconds"),
+                response_header_wait_seconds=network_metrics.get("response_header_wait_seconds"),
+                stream_read_seconds=network_metrics.get("stream_read_seconds"),
+                transport_open_seconds=network_metrics.get("transport_open_seconds"),
+                response_body_read_seconds=network_metrics.get("stream_read_seconds"),
                 stream_requested=True,
             ),
             request_label=request_label,
@@ -1422,21 +1538,29 @@ def call_model(
             result,
             response_mode="sse",
             request_duration_seconds=duration,
+            first_sse_event_seconds=stream_state["first_sse_event_seconds"],
             stream_event_count=stream_state["stream_event_count"],
             stream_completed=stream_state["stream_completed"],
             stream_finish_reason=stream_state["stream_finish_reason"],
             response_complete=True,
             max_tokens_requested=request_max_tokens,
             request_timeout_seconds=request_timeout_seconds,
+            request_body_bytes=request_body_bytes,
+            system_prompt_bytes=system_prompt_bytes,
+            user_prompt_bytes=user_prompt_bytes,
             request_delivery_state="response_received",
             provider_http_response_received=status_code is not None,
             model_stream_events_received=stream_state["stream_event_count"] > 0,
             model_response_validated=True,
-            system_prompt_bytes=system_prompt_bytes,
-            user_prompt_bytes=user_prompt_bytes,
             model_finish_reason=(
                 json_metadata.get("finish_reason") if isinstance(json_metadata, dict) else None
             ),
+            tcp_tls_establishment_seconds=network_metrics.get("tcp_tls_establishment_seconds"),
+            request_send_seconds=network_metrics.get("request_send_seconds"),
+            response_header_wait_seconds=network_metrics.get("response_header_wait_seconds"),
+            stream_read_seconds=network_metrics.get("stream_read_seconds"),
+            transport_open_seconds=network_metrics.get("transport_open_seconds"),
+            response_body_read_seconds=network_metrics.get("stream_read_seconds"),
             stream_requested=True,
         ),
         request_label=request_label,

@@ -587,6 +587,7 @@ class NvidiaUsageObservationTests(unittest.TestCase):
     def setUp(self):
         research._NVIDIA_REQUESTS_ATTEMPTED = 0
         research._NVIDIA_REQUEST_LABELS_ATTEMPTED.clear()
+        research._NVIDIA_REQUEST_LABELS_SUCCEEDED.clear()
         for label in ("forward", "reverse", "forward_critique", "between_draws", "unlabelled"):
             Path("/tmp/general_nvidia_api_no_retry_" + label).unlink(missing_ok=True)
 
@@ -672,19 +673,94 @@ class NvidiaUsageObservationTests(unittest.TestCase):
 
     def test_openai_sdk_client_uses_nvidia_base_url_timeout_and_zero_retries(self):
         fake_client = MagicMock()
+        fake_http_client = MagicMock()
         fake_openai_module = types.ModuleType("openai")
         fake_openai_module.OpenAI = MagicMock(return_value=fake_client)
+        fake_httpx_module = types.ModuleType("httpx")
+        fake_httpx_module.Client = MagicMock(return_value=fake_http_client)
 
-        with patch.dict(sys.modules, {"openai": fake_openai_module}):
+        with patch.dict(
+            sys.modules,
+            {"openai": fake_openai_module, "httpx": fake_httpx_module},
+        ):
             result = research._create_nvidia_client("test-secret", 123)
 
+        network_trace = result._general_network_phase_trace
+        self.assertIsInstance(network_trace, research.NvidiaNetworkPhaseTrace)
         self.assertIs(result, fake_client)
+        httpx_kwargs = fake_httpx_module.Client.call_args.kwargs
+        self.assertEqual(httpx_kwargs["timeout"], 123)
+        self.assertTrue(httpx_kwargs["follow_redirects"])
+        self.assertIs(httpx_kwargs["event_hooks"]["request"][0].__self__, network_trace)
+        self.assertIs(httpx_kwargs["event_hooks"]["response"][0].__self__, network_trace)
         fake_openai_module.OpenAI.assert_called_once_with(
             base_url="https://integrate.api.nvidia.com/v1",
             api_key="test-secret",
             timeout=123,
+            http_client=fake_http_client,
             max_retries=0,
         )
+
+    def test_network_phase_trace_records_httpcore_timings_only(self):
+        trace = research.NvidiaNetworkPhaseTrace()
+        request = SimpleNamespace(extensions={})
+        ticks = iter([
+            0.0, 0.1, 0.3, 0.3, 0.6, 0.7, 0.8,
+            0.8, 1.1, 1.1, 3.1, 3.2, 3.2, 8.2,
+        ])
+
+        with patch("general_open_research.time.monotonic", side_effect=lambda: next(ticks)):
+            trace.on_request(request)
+            record = request.extensions["trace"]
+            record("connection.connect_tcp.started", {"host": "sensitive.example"})
+            record("connection.connect_tcp.complete", {"return_value": "sensitive-socket"})
+            record("connection.start_tls.started", {"server_hostname": "sensitive.example"})
+            record("connection.start_tls.complete", {"return_value": "sensitive-stream"})
+            record("http11.send_request_headers.started", {})
+            record("http11.send_request_headers.complete", {})
+            record("http11.send_request_body.started", {})
+            record("http11.send_request_body.complete", {})
+            record("http11.receive_response_headers.started", {})
+            record("http11.receive_response_headers.complete", {})
+            trace.on_response(SimpleNamespace())
+            record("http11.receive_response_body.started", {})
+            record("http11.receive_response_body.complete", {})
+
+        self.assertEqual(trace.snapshot(), {
+            "tcp_tls_establishment_seconds": 0.5,
+            "request_send_seconds": 0.4,
+            "response_header_wait_seconds": 2.0,
+            "transport_open_seconds": 3.2,
+            "stream_read_seconds": 5.0,
+        })
+        self.assertNotIn("sensitive.example", json.dumps(trace.snapshot()))
+        self.assertNotIn("sensitive-socket", json.dumps(trace.snapshot()))
+
+    def test_first_sse_event_latency_is_measured_from_request_start(self):
+        stream = self.sdk_response()
+        state = {
+            "stream_event_count": 0,
+            "stream_completed": False,
+            "stream_finish_reason": None,
+            "usage": None,
+            "request_started_at": 100.0,
+            "first_sse_event_seconds": None,
+        }
+        with patch("general_open_research.time.monotonic", return_value=101.375):
+            payload, metadata = research._consume_streaming_chat_completion(stream, state)
+
+        self.assertEqual(metadata["stream_event_count"], 2)
+        self.assertEqual(state["first_sse_event_seconds"], 1.375)
+        observed = research.build_usage_observation(
+            200,
+            {"x-request-id": "first-event-test"},
+            payload,
+            response_mode="sse",
+            request_duration_seconds=3.0,
+            first_sse_event_seconds=state["first_sse_event_seconds"],
+            stream_requested=True,
+        )
+        self.assertEqual(observed["first_sse_event_seconds"], 1.375)
 
     def test_only_safe_rate_limit_headers_are_recorded(self):
         observed = research.build_usage_observation(
@@ -976,6 +1052,99 @@ class NvidiaUsageObservationTests(unittest.TestCase):
         self.assertFalse(Path("/tmp/general_nvidia_api_no_retry_forward").exists())
         self.assertEqual(research._NVIDIA_REQUESTS_ATTEMPTED, 1)
         client.close.assert_called_once()
+
+    def test_forward_success_then_reverse_504_records_phases_without_retry(self):
+        class SyntheticGatewayTimeout(Exception):
+            status_code = 504
+            response = SimpleNamespace(headers={"x-request-id": "reverse-gateway-504"})
+
+        clients = [
+            self.client_with_response(self.sdk_response("forward completed")),
+            self.client_with_response(),
+        ]
+        clients[1].chat.completions.create.side_effect = SyntheticGatewayTimeout(
+            "synthetic reverse gateway timeout"
+        )
+        saved = []
+
+        def client_factory(_api_key, _timeout):
+            network_trace = research.NvidiaNetworkPhaseTrace()
+            request = SimpleNamespace(extensions={})
+            network_trace.on_request(request)
+            record = request.extensions["trace"]
+            for phase in (
+                "connection.connect_tcp", "connection.start_tls",
+                "http11.send_request_headers", "http11.send_request_body",
+                "http11.receive_response_headers",
+            ):
+                record(phase + ".started", {})
+                record(phase + ".complete", {})
+            network_trace.on_response(SimpleNamespace())
+            client = clients.pop(0)
+            client._general_network_phase_trace = network_trace
+            return client
+
+        with patch.dict(os.environ, self.live_env(), clear=True), patch.object(
+            research, "reserve_nvidia_request"
+        ), patch.object(
+            research, "save_usage_observation",
+            side_effect=lambda observation, **kwargs: saved.append(
+                (observation, kwargs["request_label"])
+            ),
+        ), patch(
+            "general_open_research._create_nvidia_client", side_effect=client_factory
+        ):
+            self.assertEqual(
+                research.call_model(
+                    [
+                        {"role": "system", "content": "synthetic system prompt"},
+                        {"role": "user", "content": "synthetic forward request"},
+                    ],
+                    request_label="forward",
+                ),
+                "forward completed",
+            )
+            with self.assertRaisesRegex(RuntimeError, "SyntheticGatewayTimeout"):
+                research.call_model(
+                    [
+                        {"role": "system", "content": "synthetic system prompt"},
+                        {"role": "user", "content": "synthetic reverse request"},
+                    ],
+                    request_label="reverse",
+                )
+            with self.assertRaisesRegex(RuntimeError, "already attempted"):
+                research.call_model(
+                    [{"role": "user", "content": "duplicate reverse must be blocked"}],
+                    request_label="reverse",
+                )
+
+        self.assertEqual(len(saved), 2)
+        forward_observation, forward_label = saved[0]
+        reverse_observation, reverse_label = saved[1]
+        self.assertEqual((forward_label, reverse_label), ("forward", "reverse"))
+        self.assertTrue(forward_observation["model_response_validated"])
+        self.assertIsNotNone(forward_observation["first_sse_event_seconds"])
+        self.assertEqual(forward_observation["http_status"], 200)
+        self.assertEqual(reverse_observation["http_status"], 504)
+        self.assertEqual(reverse_observation["failure_stage"], "provider_http_error")
+        self.assertEqual(reverse_observation["provider_error_category"], "HTTP_5XX_SERVER_ERROR")
+        self.assertEqual(reverse_observation["stream_event_count"], 0)
+        self.assertIsNone(reverse_observation["first_sse_event_seconds"])
+        self.assertFalse(reverse_observation["model_stream_events_received"])
+        self.assertFalse(reverse_observation["model_response_validated"])
+        self.assertEqual(reverse_observation["automatic_retries"], 0)
+        self.assertEqual(reverse_observation["sdk_max_retries"], 0)
+        self.assertGreater(reverse_observation["request_body_bytes"], 0)
+        self.assertGreater(reverse_observation["system_prompt_bytes"], 0)
+        self.assertGreater(reverse_observation["user_prompt_bytes"], 0)
+        for metric in (
+            "tcp_tls_establishment_seconds", "request_send_seconds",
+            "response_header_wait_seconds", "transport_open_seconds",
+        ):
+            self.assertIsNotNone(reverse_observation[metric])
+        self.assertEqual(research._NVIDIA_REQUESTS_ATTEMPTED, 2)
+        self.assertEqual(research._NVIDIA_REQUEST_LABELS_SUCCEEDED, {"forward"})
+        self.assertEqual(clients, [])
 
     def test_http_404_records_allowlisted_error_identifiers_without_body_or_retry_changes(self):
         class SyntheticNotFoundError(Exception):
@@ -1328,4 +1497,151 @@ class NvidiaUsageObservationTests(unittest.TestCase):
             )
             self.assertEqual(summary["account_level_quota_status"], "UNKNOWN")
             self.assertEqual(summary["billing_or_paid_entitlement_status"], "NOT_VERIFIED_BY_THIS_RUN")
+
+
+
+class OpenResearchOrchestrationFailureTests(unittest.TestCase):
+    def test_reverse_504_after_forward_success_stops_before_parse_or_promotion(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            target = "2026-11-12"
+            rows = [
+                {"date": "2026-11-10", "numbers": [1, 2, 3, 4, 5, 6]},
+                {"date": target, "numbers": [7, 8, 9, 10, 11, 12]},
+            ]
+            train = [rows[0]]
+            archive_proof = {"archive_sha256": "a" * 64, "rows": rows}
+            partition = {"target_date": target, "discovery_rows": train}
+            paths = {
+                "BASE": root,
+                "ARCHIVE": root / "super_loto_archive.json",
+                "REPORT": root / "open_research_report.md",
+                "FORWARD_REPORT": root / "open_research_forward_report.md",
+                "REVERSE_REPORT": root / "open_research_reverse_report.md",
+                "PROPOSALS": root / "open_research_proposals.json",
+                "EXECUTION_SPECS": root / "open_research_execution_specs.json",
+                "USAGE_REPORT": root / "open_research_usage.json",
+                "RUN_STATUS": root / "open_research_run_status.json",
+            }
+            with (
+                patch.multiple(research, **paths),
+                patch.object(research.sealed, "preflight"),
+                patch.object(research, "parse_archive", return_value=rows),
+                patch.object(research, "isolate_discovery_only", return_value=(target, train, {})),
+                patch.object(research.sealed, "load_archive", return_value=archive_proof),
+                patch.object(research.sealed, "load_ledger", return_value={}),
+                patch.object(research.sealed, "get_used_validation_dates", return_value=set()),
+                patch.object(research.sealed, "split_archive", return_value=partition),
+                patch.object(research.sealed, "public_plan", return_value={"target_date": target}),
+                patch.object(research.research_memory, "direction_context", return_value=[]),
+                patch.object(
+                    research, "build_messages",
+                    return_value=[{"role": "user", "content": "synthetic isolated request"}],
+                ),
+                patch.object(
+                    research, "call_model",
+                    side_effect=["forward report", RuntimeError("synthetic reverse HTTP 504")],
+                ) as call_model,
+                patch.object(research, "write_run_status") as write_run_status,
+                patch.object(research, "parse_directional_result") as parse_result,
+                patch.object(research, "combine_directional_results") as combine_results,
+                patch.object(research, "write_combined_usage_summary") as usage_summary,
+            ):
+                result = research.main()
+
+            self.assertEqual(result, 1)
+            self.assertEqual(call_model.call_count, 2)
+            parse_result.assert_not_called()
+            combine_results.assert_not_called()
+            usage_summary.assert_not_called()
+            self.assertTrue(paths["FORWARD_REPORT"].is_file())
+            self.assertFalse(paths["REVERSE_REPORT"].exists())
+            self.assertFalse(paths["PROPOSALS"].exists())
+            self.assertFalse(paths["EXECUTION_SPECS"].exists())
+            failed_status = write_run_status.call_args_list[-1]
+            self.assertEqual(failed_status.args[:2], ("FAILED", "reverse_inference"))
+            self.assertEqual(failed_status.kwargs["failed_direction"], "reverse")
+
+
+
+
+class OpenResearchWorkflowRegressionTests(unittest.TestCase):
+    @staticmethod
+    def _workflow_step(path, name):
+        workflow_path = Path(__file__).resolve().parent / ".github" / "workflows" / path
+        lines = workflow_path.read_text(encoding="utf-8").splitlines()
+        marker = "      - name: " + name
+        start = next((index for index, line in enumerate(lines) if line == marker), None)
+        if start is None:
+            raise AssertionError("Workflow step is missing: " + name)
+        end = next(
+            (
+                index for index in range(start + 1, len(lines))
+                if lines[index].startswith("      - name: ")
+            ),
+            len(lines),
+        )
+        return "\n".join(lines[start:end])
+
+    def test_reverse_504_path_activates_lock_and_never_retries_or_claims_holdout(self):
+        workflow = "open-research.yml"
+        lock_step = self._workflow_step(
+            workflow, "Activate global lock after an incomplete NVIDIA research request"
+        )
+        self.assertIn(
+            "if: ${{ failure() && steps.nvidia-research.outcome == 'failure' }}",
+            lock_step,
+        )
+        self.assertIn('/tmp/general_nvidia_api_attempted_${request_label}', lock_step)
+        self.assertIn('/tmp/general_nvidia_api_succeeded_${request_label}', lock_step)
+        self.assertIn("python3 general_nvidia_guard.py lock --reason", lock_step)
+        self.assertNotIn("rerun", lock_step.lower())
+        self.assertNotIn("--retry", lock_step.lower())
+
+        claim_step = self._workflow_step(
+            workflow, "Claim one sealed interval before real-archive scoring"
+        )
+        self.assertIn("if: ${{ success() }}", claim_step)
+        evaluation_step = self._workflow_step(
+            workflow, "Run one-shot chronological evaluation"
+        )
+        self.assertIn("steps.sealed-claim.outputs.claim_created == 'true'", evaluation_step)
+
+    def test_failed_research_memory_record_is_not_a_formula_promotion(self):
+        memory_step = self._workflow_step(
+            "open-research.yml", "Append sanitized GENERAL research memory"
+        )
+        self.assertIn("steps.nvidia-research.outcome == 'failure'", memory_step)
+        self.assertIn("python3 general_research_memory.py record-cycle", memory_step)
+        self.assertNotIn("general_method_registry", memory_step)
+        self.assertNotIn("promote-candidate", memory_step.lower())
+
+        rule_change_step = self._workflow_step(
+            "open-research.yml",
+            "Submit a structured rule-change request for Telegram approval if proposed",
+        )
+        self.assertIn("if: ${{ success() }}", rule_change_step)
+
+    def test_active_global_lock_skips_research_and_wires_telegram_skipped_report(self):
+        workflow = "general-autonomous-research.yml"
+        skipped_step = self._workflow_step(
+            workflow, "Report scheduled cycle skipped by global NVIDIA lock"
+        )
+        self.assertIn("steps.status.outputs.lock_clear == 'false'", skipped_step)
+        self.assertIn("SKIPPED_GLOBAL_LOCK", skipped_step)
+        self.assertIn("--status skipped", skipped_step)
+        self.assertIn("--kind status", skipped_step)
+
+        prepare_step = self._workflow_step(
+            workflow, "Prepare one cycle for the oldest queued target and fresh sealed windows"
+        )
+        self.assertIn("steps.status.outputs.lock_clear == 'true'", prepare_step)
+        attempt_step = self._workflow_step(
+            workflow, "Claim this target before any provider request"
+        )
+        self.assertIn("steps.prepare.outputs.eligible == 'true'", attempt_step)
+        research_step = self._workflow_step(
+            workflow, "Run independent forward and reverse NVIDIA discovery"
+        )
+        self.assertIn("steps.attempt_reservation.outputs.attempt_id != ''", research_step)
 
