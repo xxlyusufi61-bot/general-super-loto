@@ -1137,12 +1137,7 @@ def _consume_streaming_chat_completion(
     }
 
 
-def _create_nvidia_client(
-    api_key: str,
-    timeout_seconds: int,
-    *,
-    network_trace: NvidiaNetworkPhaseTrace | None = None,
-):
+def _create_nvidia_client(api_key: str, timeout_seconds: int):
     """Create the official OpenAI client with timing-only HTTPX trace hooks.
 
     SDK-level retries remain disabled. The custom HTTPX client preserves the
@@ -1158,7 +1153,7 @@ def _create_nvidia_client(
             "NVIDIA inference was not started."
         ) from None
 
-    trace = network_trace if network_trace is not None else NvidiaNetworkPhaseTrace()
+    trace = NvidiaNetworkPhaseTrace()
     http_client = httpx.Client(
         timeout=timeout_seconds,
         follow_redirects=True,
@@ -1167,13 +1162,15 @@ def _create_nvidia_client(
             "response": [trace.on_response],
         },
     )
-    return OpenAI(
+    client = OpenAI(
         base_url=API_BASE_URL,
         api_key=api_key,
         timeout=timeout_seconds,
         http_client=http_client,
         max_retries=0,
     )
+    client._general_network_phase_trace = trace
+    return client
 
 
 def _chat_completion_payload(completion: Any) -> dict[str, Any]:
@@ -1289,10 +1286,10 @@ def call_model(
     # Constructing the SDK client performs no inference request. Do this before
     # reserving quota or writing the attempted marker, so a missing dependency
     # cannot be mistaken for an ambiguous network delivery.
-    network_trace = NvidiaNetworkPhaseTrace()
-    client = _create_nvidia_client(
-        key, request_timeout_seconds, network_trace=network_trace
-    )
+    client = _create_nvidia_client(key, request_timeout_seconds)
+    network_trace = getattr(client, "_general_network_phase_trace", None)
+    if not isinstance(network_trace, NvidiaNetworkPhaseTrace):
+        network_trace = NvidiaNetworkPhaseTrace()
     try:
         if diagnostic_mode:
             reserve_nvidia_request(
