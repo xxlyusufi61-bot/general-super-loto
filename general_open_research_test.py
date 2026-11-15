@@ -678,16 +678,15 @@ class NvidiaUsageObservationTests(unittest.TestCase):
         fake_openai_module.OpenAI = MagicMock(return_value=fake_client)
         fake_httpx_module = types.ModuleType("httpx")
         fake_httpx_module.Client = MagicMock(return_value=fake_http_client)
-        network_trace = research.NvidiaNetworkPhaseTrace()
 
         with patch.dict(
             sys.modules,
             {"openai": fake_openai_module, "httpx": fake_httpx_module},
         ):
-            result = research._create_nvidia_client(
-                "test-secret", 123, network_trace=network_trace
-            )
+            result = research._create_nvidia_client("test-secret", 123)
 
+        network_trace = result._general_network_phase_trace
+        self.assertIsInstance(network_trace, research.NvidiaNetworkPhaseTrace)
         self.assertIs(result, fake_client)
         httpx_kwargs = fake_httpx_module.Client.call_args.kwargs
         self.assertEqual(httpx_kwargs["timeout"], 123)
@@ -1042,7 +1041,8 @@ class NvidiaUsageObservationTests(unittest.TestCase):
         )
         saved = []
 
-        def client_factory(_api_key, _timeout, *, network_trace):
+        def client_factory(_api_key, _timeout):
+            network_trace = research.NvidiaNetworkPhaseTrace()
             request = SimpleNamespace(extensions={})
             network_trace.on_request(request)
             record = request.extensions["trace"]
@@ -1054,7 +1054,9 @@ class NvidiaUsageObservationTests(unittest.TestCase):
                 record(phase + ".started", {})
                 record(phase + ".complete", {})
             network_trace.on_response(SimpleNamespace())
-            return clients.pop(0)
+            client = clients.pop(0)
+            client._general_network_phase_trace = network_trace
+            return client
 
         with patch.dict(os.environ, self.live_env(), clear=True), patch.object(
             research, "reserve_nvidia_request"
@@ -1068,14 +1070,20 @@ class NvidiaUsageObservationTests(unittest.TestCase):
         ):
             self.assertEqual(
                 research.call_model(
-                    [{"role": "user", "content": "synthetic forward request"}],
+                    [
+                        {"role": "system", "content": "synthetic system prompt"},
+                        {"role": "user", "content": "synthetic forward request"},
+                    ],
                     request_label="forward",
                 ),
                 "forward completed",
             )
             with self.assertRaisesRegex(RuntimeError, "SyntheticGatewayTimeout"):
                 research.call_model(
-                    [{"role": "user", "content": "synthetic reverse request"}],
+                    [
+                        {"role": "system", "content": "synthetic system prompt"},
+                        {"role": "user", "content": "synthetic reverse request"},
+                    ],
                     request_label="reverse",
                 )
             with self.assertRaisesRegex(RuntimeError, "already attempted"):
