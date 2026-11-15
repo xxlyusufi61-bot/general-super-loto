@@ -587,6 +587,7 @@ class NvidiaUsageObservationTests(unittest.TestCase):
     def setUp(self):
         research._NVIDIA_REQUESTS_ATTEMPTED = 0
         research._NVIDIA_REQUEST_LABELS_ATTEMPTED.clear()
+        research._NVIDIA_REQUEST_LABELS_SUCCEEDED.clear()
         for label in ("forward", "reverse", "forward_critique", "between_draws", "unlabelled"):
             Path("/tmp/general_nvidia_api_no_retry_" + label).unlink(missing_ok=True)
 
@@ -1097,6 +1098,9 @@ class NvidiaUsageObservationTests(unittest.TestCase):
         self.assertFalse(reverse_observation["model_response_validated"])
         self.assertEqual(reverse_observation["automatic_retries"], 0)
         self.assertEqual(reverse_observation["sdk_max_retries"], 0)
+        self.assertGreater(reverse_observation["request_body_bytes"], 0)
+        self.assertGreater(reverse_observation["system_prompt_bytes"], 0)
+        self.assertGreater(reverse_observation["user_prompt_bytes"], 0)
         for metric in (
             "tcp_tls_establishment_seconds", "request_send_seconds",
             "response_header_wait_seconds", "transport_open_seconds",
