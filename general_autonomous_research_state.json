@@ -74,6 +74,14 @@
       "archive_record_count": 983,
       "claimed_at_utc": "2026-11-13T13:29:54.439068+00:00",
       "github_run_id": "43434020255"
+    },
+    {
+      "attempt_id": "53635c21c20b873504e2608ee8e77eb78294a4fd65546ee43a2c6190bcff0e96",
+      "target_date": "2026-11-12",
+      "archive_sha256": "e85b8b5de47355b83f2c070f9ffbfe8dc97541ec52b93a849c3e285f776d781e",
+      "archive_record_count": 984,
+      "claimed_at_utc": "2026-11-15T01:28:46.120433+00:00",
+      "github_run_id": "43663207616"
     }
   ],
   "events": [
