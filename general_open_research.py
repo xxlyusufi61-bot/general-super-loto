@@ -598,6 +598,7 @@ def build_usage_observation(
     *,
     response_mode: str = "json",
     request_duration_seconds: float | None = None,
+    first_sse_event_seconds: float | None = None,
     stream_event_count: int | None = None,
     stream_completed: bool | None = None,
     stream_finish_reason: str | None = None,
@@ -651,6 +652,11 @@ def build_usage_observation(
         "request_duration_seconds": (
             round(request_duration_seconds, 3)
             if isinstance(request_duration_seconds, (int, float))
+            else None
+        ),
+        "first_sse_event_seconds": (
+            round(first_sse_event_seconds, 3)
+            if isinstance(first_sse_event_seconds, (int, float))
             else None
         ),
         "stream_event_count": stream_event_count,
@@ -1065,6 +1071,12 @@ def _consume_streaming_chat_completion(
     """Collect SDK-managed SSE chunks; accept only a complete final content answer."""
     content_parts: list[str] = []
     for chunk in stream:
+        if state.get("first_sse_event_seconds") is None:
+            request_started_at = state.get("request_started_at")
+            if isinstance(request_started_at, (int, float)):
+                state["first_sse_event_seconds"] = max(
+                    0.0, time.monotonic() - request_started_at
+                )
         state["stream_event_count"] += 1
         chunk_usage = _stream_usage_payload(_stream_field(chunk, "usage"))
         if chunk_usage is not None:
@@ -1367,6 +1379,8 @@ def call_model(
         "stream_completed": False,
         "stream_finish_reason": None,
         "usage": None,
+        "request_started_at": request_started,
+        "first_sse_event_seconds": None,
     }
 
     try:
@@ -1456,6 +1470,7 @@ def call_model(
                 failure_payload,
                 response_mode="sse",
                 request_duration_seconds=duration,
+                first_sse_event_seconds=stream_state["first_sse_event_seconds"],
                 stream_event_count=stream_state["stream_event_count"],
                 stream_completed=stream_state["stream_completed"],
                 stream_finish_reason=stream_state["stream_finish_reason"],
@@ -1523,6 +1538,7 @@ def call_model(
             result,
             response_mode="sse",
             request_duration_seconds=duration,
+            first_sse_event_seconds=stream_state["first_sse_event_seconds"],
             stream_event_count=stream_state["stream_event_count"],
             stream_completed=stream_state["stream_completed"],
             stream_finish_reason=stream_state["stream_finish_reason"],
