@@ -1315,10 +1315,29 @@ def claim_attempt(
                 raise AutonomousResearchError("The target retry limit is exhausted; no further exception is available.")
             attempt_number = previous_count + 1
         else:
-            if last_event is None:
-                raise AutonomousResearchError("The previous target is incomplete; new target activation is blocked.")
-            if last_event["outcome"] == "FAILED":
-                raise AutonomousResearchError("The previous target must be resolved before a new target is activated.")
+            completed_previous_target = next(
+                (
+                    item
+                    for item in queue["completed"]
+                    if item["target_date"] == last_target
+                ),
+                None,
+            )
+            if completed_previous_target is not None:
+                if (
+                    completed_previous_target["archive_sha256"] != last_attempt["archive_sha256"]
+                    or completed_previous_target["archive_record_count"] != last_attempt["archive_record_count"]
+                ):
+                    raise AutonomousResearchError(
+                        "Completed previous FIFO target does not match its archived attempt identity."
+                    )
+                # A validated terminal FIFO record closes this exact prior target.
+                # Historical FAILED attempts for it must not block the next FIFO head.
+            else:
+                if last_event is None:
+                    raise AutonomousResearchError("The previous target is incomplete; new target activation is blocked.")
+                if last_event["outcome"] == "FAILED":
+                    raise AutonomousResearchError("The previous target must be resolved before a new target is activated.")
     if github_run_id is not None and (not github_run_id.isdigit() or len(github_run_id) > 32):
         raise AutonomousResearchError("GitHub run identifier is invalid.")
 

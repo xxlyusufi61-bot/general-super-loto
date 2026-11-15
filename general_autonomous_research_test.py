@@ -924,5 +924,86 @@ class AutonomousResearchStateTests(unittest.TestCase):
         self.assertEqual(result["status"], "PREVIOUS_TARGET_MANUAL_RECOVERY_REQUIRED")
         self.assertEqual(result["pending_target_date"], "2026-11-10")
 
+    def _ready_claim_plan_for_item(self, item):
+        return {
+            "status": "READY",
+            "eligible": True,
+            "target_date": item["target_date"],
+            "archive_sha256": item["archive_sha256"],
+            "archive_record_count": item["archive_record_count"],
+            "manual_recovery_confirmed": False,
+        }
+
+    def test_claim_advances_after_exact_completed_exhausted_fifo_target(self):
+        state, item_next = self._retired_exhausted_state_for_prepare()
+        plan = self._ready_claim_plan_for_item(item_next)
+        attempts_before = json.loads(json.dumps(state["attempts"]))
+        events_before = json.loads(json.dumps(state["events"]))
+
+        attempt = auto.claim_attempt(
+            state, plan, github_run_id="445578", now=NOW + timedelta(hours=1),
+        )
+
+        self.assertEqual(attempt["target_date"], "2026-11-12")
+        self.assertEqual(attempt["archive_sha256"], item_next["archive_sha256"])
+        self.assertEqual(attempt["archive_record_count"], item_next["archive_record_count"])
+        self.assertEqual(state["attempts"][:-1], attempts_before)
+        self.assertEqual(state["events"], events_before)
+        self.assertEqual(state["attempts"][-1], attempt)
+
+    def test_claim_fails_closed_when_completed_predecessor_archive_hash_differs(self):
+        state, item_next = self._retired_exhausted_state_for_prepare()
+        state["target_queue"]["completed"][0]["archive_sha256"] = "f" * 64
+        plan = self._ready_claim_plan_for_item(item_next)
+        attempts_before = json.loads(json.dumps(state["attempts"]))
+
+        with self.assertRaisesRegex(
+            auto.AutonomousResearchError,
+            "Completed previous FIFO target does not match its archived attempt identity",
+        ):
+            auto.claim_attempt(state, plan, github_run_id="445579", now=NOW + timedelta(hours=1))
+
+        self.assertEqual(state["attempts"], attempts_before)
+
+    def test_claim_fails_closed_when_completed_predecessor_record_count_differs(self):
+        state, item_next = self._retired_exhausted_state_for_prepare()
+        state["target_queue"]["completed"][0]["archive_record_count"] += 1
+        plan = self._ready_claim_plan_for_item(item_next)
+        attempts_before = json.loads(json.dumps(state["attempts"]))
+
+        with self.assertRaisesRegex(
+            auto.AutonomousResearchError,
+            "Completed previous FIFO target does not match its archived attempt identity",
+        ):
+            auto.claim_attempt(state, plan, github_run_id="445580", now=NOW + timedelta(hours=1))
+
+        self.assertEqual(state["attempts"], attempts_before)
+
+    def test_claim_does_not_skip_an_uncompleted_failed_previous_target(self):
+        state, _, item_next = self._exhausted_target_fixture()
+        state["authorization"] = active_state()["authorization"]
+        state["target_queue"]["items"] = [item_next]
+        auto.validate_state(state)
+        plan = self._ready_claim_plan_for_item(item_next)
+
+        with self.assertRaisesRegex(
+            auto.AutonomousResearchError,
+            "The previous target must be resolved before a new target is activated",
+        ):
+            auto.claim_attempt(state, plan, github_run_id="445581", now=NOW + timedelta(hours=1))
+
+    def test_claim_does_not_skip_an_uncompleted_previous_target_without_terminal_event(self):
+        state, _, item_next = self._exhausted_target_fixture(omit_last_event=True)
+        state["authorization"] = active_state()["authorization"]
+        state["target_queue"]["items"] = [item_next]
+        auto.validate_state(state)
+        plan = self._ready_claim_plan_for_item(item_next)
+
+        with self.assertRaisesRegex(
+            auto.AutonomousResearchError,
+            "The previous target is incomplete; new target activation is blocked",
+        ):
+            auto.claim_attempt(state, plan, github_run_id="445582", now=NOW + timedelta(hours=1))
+
 if __name__ == "__main__":
     unittest.main()
