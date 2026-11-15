@@ -1153,23 +1153,23 @@ def _consume_streaming_chat_completion(
 
 
 def _create_nvidia_client(api_key: str, timeout_seconds: int):
-    """Create the official OpenAI client with timing-only HTTPX trace hooks.
+    """Create the official OpenAI client with HTTPX2 timing trace hooks.
 
-    SDK-level retries remain disabled. The custom HTTPX client preserves the
-    normal SDK transport while exposing httpcore's connect, TLS, send, header,
-    and response-body timing events.
+    SDK-level retries remain disabled. The custom HTTPX2 client preserves the
+    configured timeout and redirect behavior while exposing request/response
+    timing events.
     """
     try:
         from openai import OpenAI
-        import httpx
+        import httpx2
     except ImportError:
         raise RuntimeError(
-            "The pinned OpenAI SDK/HTTPX dependencies are missing; "
+            "The pinned OpenAI SDK/HTTPX2 dependencies are missing; "
             "NVIDIA inference was not started."
         ) from None
 
     trace = NvidiaNetworkPhaseTrace()
-    http_client = httpx.Client(
+    http_client = httpx2.Client(
         timeout=timeout_seconds,
         follow_redirects=True,
         event_hooks={
