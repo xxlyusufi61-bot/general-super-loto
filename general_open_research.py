@@ -1480,10 +1480,6 @@ def call_model(
                 provider_error_type=provider_error_metadata["provider_error_type"],
                 provider_error_code=provider_error_metadata["provider_error_code"],
                 network_error_chain=_exception_chain_types(failure),
-                connect_timeout_seconds=request_timeout_seconds,
-                request_send_timeout_seconds=request_timeout_seconds,
-                response_header_timeout_seconds=request_timeout_seconds,
-                stream_idle_timeout_seconds=request_timeout_seconds,
                 tcp_tls_establishment_seconds=network_metrics.get("tcp_tls_establishment_seconds"),
                 request_send_seconds=network_metrics.get("request_send_seconds"),
                 response_header_wait_seconds=network_metrics.get("response_header_wait_seconds"),
@@ -1543,10 +1539,6 @@ def call_model(
             model_finish_reason=(
                 json_metadata.get("finish_reason") if isinstance(json_metadata, dict) else None
             ),
-            connect_timeout_seconds=request_timeout_seconds,
-            request_send_timeout_seconds=request_timeout_seconds,
-            response_header_timeout_seconds=request_timeout_seconds,
-            stream_idle_timeout_seconds=request_timeout_seconds,
             tcp_tls_establishment_seconds=network_metrics.get("tcp_tls_establishment_seconds"),
             request_send_seconds=network_metrics.get("request_send_seconds"),
             response_header_wait_seconds=network_metrics.get("response_header_wait_seconds"),
