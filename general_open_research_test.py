@@ -736,6 +736,32 @@ class NvidiaUsageObservationTests(unittest.TestCase):
         self.assertNotIn("sensitive.example", json.dumps(trace.snapshot()))
         self.assertNotIn("sensitive-socket", json.dumps(trace.snapshot()))
 
+    def test_first_sse_event_latency_is_measured_from_request_start(self):
+        stream = self.sdk_response()
+        state = {
+            "stream_event_count": 0,
+            "stream_completed": False,
+            "stream_finish_reason": None,
+            "usage": None,
+            "request_started_at": 100.0,
+            "first_sse_event_seconds": None,
+        }
+        with patch("general_open_research.time.monotonic", return_value=101.375):
+            payload, metadata = research._consume_streaming_chat_completion(stream, state)
+
+        self.assertEqual(metadata["stream_event_count"], 2)
+        self.assertEqual(state["first_sse_event_seconds"], 1.375)
+        observed = research.build_usage_observation(
+            200,
+            {"x-request-id": "first-event-test"},
+            payload,
+            response_mode="sse",
+            request_duration_seconds=3.0,
+            first_sse_event_seconds=state["first_sse_event_seconds"],
+            stream_requested=True,
+        )
+        self.assertEqual(observed["first_sse_event_seconds"], 1.375)
+
     def test_only_safe_rate_limit_headers_are_recorded(self):
         observed = research.build_usage_observation(
             200,
@@ -1097,11 +1123,13 @@ class NvidiaUsageObservationTests(unittest.TestCase):
         reverse_observation, reverse_label = saved[1]
         self.assertEqual((forward_label, reverse_label), ("forward", "reverse"))
         self.assertTrue(forward_observation["model_response_validated"])
+        self.assertIsNotNone(forward_observation["first_sse_event_seconds"])
         self.assertEqual(forward_observation["http_status"], 200)
         self.assertEqual(reverse_observation["http_status"], 504)
         self.assertEqual(reverse_observation["failure_stage"], "provider_http_error")
         self.assertEqual(reverse_observation["provider_error_category"], "HTTP_5XX_SERVER_ERROR")
         self.assertEqual(reverse_observation["stream_event_count"], 0)
+        self.assertIsNone(reverse_observation["first_sse_event_seconds"])
         self.assertFalse(reverse_observation["model_stream_events_received"])
         self.assertFalse(reverse_observation["model_response_validated"])
         self.assertEqual(reverse_observation["automatic_retries"], 0)
@@ -1533,3 +1561,79 @@ class OpenResearchOrchestrationFailureTests(unittest.TestCase):
             failed_status = write_run_status.call_args_list[-1]
             self.assertEqual(failed_status.args[:2], ("FAILED", "reverse_inference"))
             self.assertEqual(failed_status.kwargs["failed_direction"], "reverse")
+
+
+
+
+class OpenResearchWorkflowRegressionTests(unittest.TestCase):
+    @staticmethod
+    def _workflow_step(path, name):
+        workflow_path = Path(__file__).resolve().parent / ".github" / "workflows" / path
+        lines = workflow_path.read_text(encoding="utf-8").splitlines()
+        marker = "      - name: " + name
+        start = next((index for index, line in enumerate(lines) if line == marker), None)
+        if start is None:
+            raise AssertionError("Workflow step is missing: " + name)
+        end = next(
+            (
+                index for index in range(start + 1, len(lines))
+                if lines[index].startswith("      - name: ")
+            ),
+            len(lines),
+        )
+        return "\n".join(lines[start:end])
+
+    def test_reverse_504_path_activates_lock_and_never_retries_or_claims_holdout(self):
+        workflow = "open-research.yml"
+        lock_step = self._workflow_step(
+            workflow, "Activate global lock after an incomplete NVIDIA research request"
+        )
+        self.assertIn(
+            "if: ${{ failure() && steps.nvidia-research.outcome == 'failure' }}",
+            lock_step,
+        )
+        self.assertIn('/tmp/general_nvidia_api_attempted_${request_label}', lock_step)
+        self.assertIn('/tmp/general_nvidia_api_succeeded_${request_label}', lock_step)
+        self.assertIn("python3 general_nvidia_guard.py lock --reason", lock_step)
+        self.assertNotIn("rerun", lock_step.lower())
+        self.assertNotIn("--retry", lock_step.lower())
+
+        claim_step = self._workflow_step(
+            workflow, "Claim one sealed interval before real-archive scoring"
+        )
+        self.assertIn("if: ${{ success() }}", claim_step)
+        evaluation_step = self._workflow_step(
+            workflow, "Run one-shot chronological evaluation"
+        )
+        self.assertIn("steps.sealed-claim.outputs.claim_created == 'true'", evaluation_step)
+
+    def test_failed_research_memory_record_is_not_a_formula_promotion(self):
+        memory_step = self._workflow_step(
+            "open-research.yml", "Append sanitized GENERAL research memory"
+        )
+        self.assertIn("steps.nvidia-research.outcome == 'failure'", memory_step)
+        self.assertIn("python3 general_research_memory.py record-cycle", memory_step)
+        self.assertNotIn("general_method_registry", memory_step)
+        self.assertNotIn("promote-candidate", memory_step.lower())
+
+        rule_change_step = self._workflow_step(
+            "open-research.yml",
+            "Submit a structured rule-change request for Telegram approval if proposed",
+        )
+        self.assertIn("if: ${{ success() }}", rule_change_step)
+
+    def test_active_global_lock_skips_research_and_wires_telegram_skipped_report(self):
+        workflow = "general-autonomous-research.yml"
+        skipped_step = self._workflow_step(
+            workflow, "Report scheduled cycle skipped by global NVIDIA lock"
+        )
+        self.assertIn("steps.status.outputs.lock_clear == 'false'", skipped_step)
+        self.assertIn("SKIPPED_GLOBAL_LOCK", skipped_step)
+        self.assertIn("--status skipped", skipped_step)
+        self.assertIn("--kind status", skipped_step)
+
+        research_step = self._workflow_step(
+            workflow, "Run independent forward and reverse NVIDIA discovery"
+        )
+        self.assertIn("steps.status.outputs.lock_clear == 'true'", research_step)
+
