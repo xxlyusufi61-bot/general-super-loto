@@ -1477,8 +1477,6 @@ def call_model(
                 provider_http_response_received=status_code is not None,
                 model_stream_events_received=stream_state["stream_event_count"] > 0,
                 model_response_validated=False,
-                system_prompt_bytes=system_prompt_bytes,
-                user_prompt_bytes=user_prompt_bytes,
                 failure_stage=failure_stage,
                 error_type=type(failure).__name__,
                 provider_error_category=provider_error_metadata["provider_error_category"],
@@ -1545,8 +1543,6 @@ def call_model(
             provider_http_response_received=status_code is not None,
             model_stream_events_received=stream_state["stream_event_count"] > 0,
             model_response_validated=True,
-            system_prompt_bytes=system_prompt_bytes,
-            user_prompt_bytes=user_prompt_bytes,
             model_finish_reason=(
                 json_metadata.get("finish_reason") if isinstance(json_metadata, dict) else None
             ),
