@@ -4,6 +4,7 @@ import sys
 import tempfile
 import types
 import unittest
+from importlib.util import find_spec
 from datetime import date, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -701,6 +702,10 @@ class NvidiaUsageObservationTests(unittest.TestCase):
             max_retries=0,
         )
 
+    @unittest.skipUnless(
+        find_spec("openai") is not None and find_spec("httpx2") is not None,
+        "requires the pinned OpenAI SDK and HTTPX2 installed by provider test jobs",
+    )
     def test_pinned_openai_sdk_constructs_with_real_httpx2_without_network(self):
         from importlib.metadata import version
         import httpx2
