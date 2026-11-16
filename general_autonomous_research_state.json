@@ -160,6 +160,12 @@
       "outcome": "FAILED",
       "recorded_at_utc": "2026-11-16T01:56:29.315959+00:00",
       "reason_code": "PROVIDER_DELIVERY_UNCERTAIN"
+    },
+    {
+      "attempt_id": "0bb17995d5ced2d7a32687b4f52c5181aa7596e0a4d5c3551a5a3a94efe756c2",
+      "outcome": "FAILED",
+      "recorded_at_utc": "2026-11-16T15:37:05.530450+00:00",
+      "reason_code": "DIRECTIONAL_CANDIDATE_SET_INCOMPLETE"
     }
   ],
   "target_queue": {

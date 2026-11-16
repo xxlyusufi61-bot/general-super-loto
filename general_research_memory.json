@@ -440,6 +440,135 @@
         "archive_rows_copied": false
       },
       "content_sha256": "e516bc1f2843a09ac5c5566b2688314a8e0f8f405c614471971ab3130ea4b947"
+    },
+    {
+      "entry_id": 11,
+      "cycle_id": "90e6ad42731098de5529730e63c29306c3e2a7201982219c31c0ac0dc3d8bb24",
+      "source": "GENERAL/open-research",
+      "research_epoch": "general-open-research-memory-v2",
+      "direction": "forward",
+      "created_at_utc": "2026-11-16T15:37:05.405232+00:00",
+      "target_date": "2026-11-12",
+      "archive_sha256": "e85b8b5de47355b83f2c070f9ffbfe8dc97541ec52b93a849c3e285f776d781e",
+      "runner_version": "0.9.0",
+      "status": "NO_VALID_HYPOTHESIS",
+      "research_report_sha256": "cda6ee8b2f221ad3588c621dc7465a7c5fc3726ab8ad6f1b91b329a33ecb5e02",
+      "research_report_content": null,
+      "research_report_content_sha256": null,
+      "research_report_content_status": "OMITTED_SENSITIVE_CONTENT",
+      "proposal_status": "REJECTED",
+      "proposals": [],
+      "execution_spec_status": "REJECTED",
+      "execution_spec": null,
+      "execution_spec_sha256": null,
+      "learning_notes": {
+        "failed_approaches": [
+          "Full-history A/B/C triple membership counting: forward means 0.1-0.6, no advantage (prior memory).",
+          "Recent exact-frequency windows and neighbourhood radii: forward means 0.4-0.7, no advantage (prior memory).",
+          "Modulo-residue frequency scoring (MOD2/5/10): forward means 0.4-0.8 with wide SEs, no reliable advantage, and not DSL-representable now."
+        ],
+        "observations": [
+          "913-draw pre-target R60 archive passed structural inspection; no formal uniformity test run this pass.",
+          "All 16 prior same-direction GENERAL records scored at or below the 0.6/6 random baseline on 10-draw forward windows; none showed forward advantage.",
+          "Current DSL lacks a modulo node, so MOD5-family hypotheses cannot be faithfully represented and remain text-only.",
+          "Prior 10-draw evaluation windows are too small (SE ~0.16-0.3) to separate candidates from noise."
+        ],
+        "next_tests": [
+          "Evaluate the proposed recent-membership score with forward walk-forward on a pre-registered window of at least 50 draws versus the uniform-random 6-of-60 baseline.",
+          "Run chi-square and KS uniformity tests on per-number frequencies over the discovery prefix.",
+          "Test membership-indicator autocorrelation at lags 1-5 to check whether any short-memory repeat structure exists at all."
+        ]
+      },
+      "evaluation_feedback": null,
+      "failure": {
+        "stage": "directional_candidate_pairing",
+        "error_type": "IncompleteDirectionalCandidateSet",
+        "failure_metadata_only": true
+      },
+      "discovery_window": {
+        "start_date": "2020-10-11",
+        "end_date": "2026-09-01",
+        "draw_count": 913,
+        "holdout_dates_copied": false,
+        "archive_rows_copied": false
+      },
+      "content_sha256": "8fe551755edaab521d9c305724605e1a7d1ef3d8bafe0789964c9d9ca7243391"
+    },
+    {
+      "entry_id": 12,
+      "cycle_id": "571ae3172eac5ead49fe8ceda334bf66b485a5f24edb4afd918bed0fe61dbafd",
+      "source": "GENERAL/open-research",
+      "research_epoch": "general-open-research-memory-v2",
+      "direction": "reverse",
+      "created_at_utc": "2026-11-16T15:37:05.414121+00:00",
+      "target_date": "2026-11-12",
+      "archive_sha256": "e85b8b5de47355b83f2c070f9ffbfe8dc97541ec52b93a849c3e285f776d781e",
+      "runner_version": "0.9.0",
+      "status": "HYPOTHESES_CAPTURED",
+      "research_report_sha256": "b2ae2df299509b3a59ed88061137ffd6bfdcfa5ea532509ecea6abd7421d210f",
+      "research_report_content": null,
+      "research_report_content_sha256": null,
+      "research_report_content_status": "OMITTED_SENSITIVE_CONTENT",
+      "proposal_status": "VALID_PROPOSALS",
+      "proposals": [
+        {
+          "inputs": "Only direction-isolated 6-of-60 records strictly later than each retrospective cutoff; reverse results are stress tests only and never forward predictive evidence.",
+          "hypothesis": "This research idea has no faithful representation in the current safe DSL and therefore makes no executable scoring claim.",
+          "formal_execution_spec": null,
+          "selection_policy": "The formal DSL definition is fixed before sealed evaluation. Discovery and time-ordered development data may be used for selection; sealed outcomes and post-target records may not be used.",
+          "discovery_direction": "reverse",
+          "evaluation_protocols": [
+            "forward_walk_forward",
+            "reverse_retrospective_stress_test",
+            "time_ordered_cross_validation",
+            "uniform_random_6_of_N"
+          ],
+          "exact_definition": "No faithful safe-DSL mathematical definition is available; this proposal is non-executable and cannot be scored.",
+          "output_rule": "No candidate ranking is emitted and no execution specification is permitted.",
+          "hypothesis_id": "HYP-501",
+          "research_rationale": "Discovery-only: quantify how many numbers repeat between the two visible consecutive reverse states (B earlier, C later). Under a uniform 6-of-60 null the expected overlap is 0.6; a reproducible deviation would be the first candidate signal. Reverse results are retrospective stress testing only.",
+          "known_risks": [
+            "single-statistic multiple-testing risk across future candidates",
+            "reverse overlap cannot be treated as forward predictive evidence",
+            "small expected effect size requires large-sample baseline comparison"
+          ],
+          "parameter_policy": "Not applicable because no executable formal definition is available.",
+          "falsification_criterion": "Reject the hypothesis if chronological forward evaluation and time-ordered cross-validation do not outperform the uniform-random 6-of-60 baseline within reported uncertainty. Reverse results remain retrospective stress tests only.",
+          "proposed_family": "consecutive-state overlap descriptive statistic"
+        }
+      ],
+      "execution_spec_status": "REJECTED",
+      "execution_spec": null,
+      "execution_spec_sha256": null,
+      "learning_notes": {
+        "failed_approaches": [
+          "No computational tests were run in this pass; no approach failed or succeeded empirically."
+        ],
+        "observations": [
+          "913 eligible R60 rows validated, all on or after the [reserved validation date omitted] regime boundary; target values absent as required.",
+          "Prior same-direction GENERAL memory held only two failed-run records with no proposals or metrics, so no prior approach was repeatable or contradicted.",
+          "A parameter-free consecutive-state overlap statistic (|B∩C|) is fully expressible in the reverse DSL and falsifiable against a hypergeometric baseline with mean 0.6."
+        ],
+        "next_tests": [
+          "Compute |B∩C| across all consecutive reverse pairs and compare with the hypergeometric 6-of-60 null via a reproducible script.",
+          "Run forward walk-forward evaluation of the overlap statistic on a frozen chronological interval, clearly separated from discovery data.",
+          "If overlap shows no signal, test a MOD5 residue-count feature only after fixing an explicit residue and ordering convention in text."
+        ]
+      },
+      "evaluation_feedback": null,
+      "failure": {
+        "stage": "directional_candidate_pairing",
+        "error_type": "IncompleteDirectionalCandidateSet",
+        "failure_metadata_only": true
+      },
+      "discovery_window": {
+        "start_date": "2020-10-11",
+        "end_date": "2026-09-01",
+        "draw_count": 913,
+        "holdout_dates_copied": false,
+        "archive_rows_copied": false
+      },
+      "content_sha256": "b4242a242d055d043b0279325eba59e93100928b78cf8c6f48b7c31f77a1bd5e"
     }
   ],
   "offline_research": {
