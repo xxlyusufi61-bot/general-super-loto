@@ -57,13 +57,13 @@ scheduler does not expose target values to discovery.
 - A known HTTP 5xx response does not, by itself, activate the global uncertainty
   lock. If the single retry also returns an explicit 5xx, the target is recorded
   as PROVIDER_HTTP_5XX_RETRYABLE and may be retried by a later scheduled cycle,
-  while the target remains unconsumed at the FIFO head. There is no per-target
-  attempt limit; only the explicit per-request and provider-safety controls apply.
-  These are provider-error retries, not permission to unlock or bypass a lock.
+  subject to the normal three-attempt target budget and the two exact, pinned
+  2026-11-10 exceptions. These are provider-error retries, not permission to
+  unlock or bypass a lock.
 - A failed target remains at the FIFO head. NO_PROVIDER_REQUEST_SENT and
-  PROVIDER_HTTP_5XX_RETRYABLE permit a same-target retry within the existing
-  unlimited same-target retry policy. A valid directional hypothesis set that is still
-  missing its matching second-direction candidate/specification is recorded as
+  PROVIDER_HTTP_5XX_RETRYABLE permit same-target retries within that existing
+  budget. A valid directional hypothesis set that is still missing its matching
+  second-direction candidate/specification is recorded as
   DIRECTIONAL_CANDIDATE_SET_INCOMPLETE and also retains the same FIFO target.
   Each later cycle first checks the persisted candidate memory before asking
   the provider for a direction again.
