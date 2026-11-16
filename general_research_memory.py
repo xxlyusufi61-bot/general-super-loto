@@ -24,7 +24,10 @@ from general_hypothesis_proposals import (
     parse_hypothesis_proposals,
 )
 from general_execution_spec_parser import parse_execution_spec_block
-from general_execution_spec_dispatch import validate_execution_spec
+from general_execution_spec_dispatch import (
+    run_synthetic_contract_tests,
+    validate_execution_spec,
+)
 
 VERSION = "0.2.0"
 SCHEMA_VERSION = 3
@@ -1507,12 +1510,14 @@ def find_pending_candidate(
         try:
             checked_spec = validate_execution_spec(specification)
             checked_proposal = _validate_proposal(proposal, canonical=True)
+            synthetic_result = run_synthetic_contract_tests(checked_spec)
         except (TypeError, ValueError):
             continue
         if (
             checked_spec != specification
             or checked_proposal != proposal
             or not execution_spec_matches_proposal(proposal, specification)
+            or synthetic_result.get("status") != "PASS"
             or entry["execution_spec_sha256"] != _sha(_canonical(specification))
         ):
             continue
