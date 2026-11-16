@@ -1256,6 +1256,8 @@ def prepare_cycle(
         "retryable": retryable,
         "retry_number": retry_number,
         "manual_recovery_confirmed": recovered_after_uncertain_delivery,
+        "pending_claim_resume_available": plan.get("pending_claim_resume_available") is True,
+        "pending_claim_id": plan.get("pending_claim_id"),
     }
 
 
