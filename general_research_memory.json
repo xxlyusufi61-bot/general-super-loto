@@ -342,6 +342,104 @@
         "archive_rows_copied": false
       },
       "content_sha256": "fcfb4d0624f6b41c48f788980226932ef9225db5c56cce35e7a29392c25dcc1d"
+    },
+    {
+      "entry_id": 9,
+      "cycle_id": "8507d81344d6ff4e1d02e3adb0da15639a7bec42551bee4c1be34421d9912481",
+      "source": "GENERAL/open-research",
+      "research_epoch": "general-open-research-memory-v2",
+      "direction": "forward",
+      "created_at_utc": "2026-11-16T01:56:29.141381+00:00",
+      "target_date": "2026-11-12",
+      "archive_sha256": "e85b8b5de47355b83f2c070f9ffbfe8dc97541ec52b93a849c3e285f776d781e",
+      "runner_version": "0.9.0",
+      "status": "NO_VALID_HYPOTHESIS",
+      "research_report_sha256": "7b23277dd83bbdbe1ac363cf4c58bc36f670c2824fd14f51f22643bcd18ff63b",
+      "research_report_content": null,
+      "research_report_content_sha256": null,
+      "research_report_content_status": "OMITTED_SENSITIVE_CONTENT",
+      "proposal_status": "REJECTED",
+      "proposals": [],
+      "execution_spec_status": "REJECTED",
+      "execution_spec": null,
+      "execution_spec_sha256": null,
+      "learning_notes": {
+        "observations": [
+          "All 16 prior same-direction GENERAL records scored at or below the 0.6/6 uniform-random baseline on 10-draw forward windows; none showed forward advantage.",
+          "Prior modulo-residue templates are not representable in the current DSL (no modulo node); only state/set/contains_candidate constructs are available.",
+          "The supplied 913-draw pre-target archive passed structural review; no formal uniformity test was executed this pass."
+        ],
+        "failed_approaches": [
+          "Full-history A/B/C triple membership counting: forward means 0.1-0.6, no advantage.",
+          "Recent exact-frequency windows (ages <=4/9/19) and neighbourhood radii: forward means 0.4-0.7, no advantage.",
+          "Modulo-residue frequency scoring (MOD2/5/10): forward means 0.4-0.8 with wide SEs, no reliable advantage."
+        ],
+        "next_tests": [
+          "Evaluate HYP-F-001 (recent two-state membership) with forward walk-forward on a pre-registered window of at least 50 draws versus the uniform-random 6-of-60 baseline.",
+          "Run chi-square and KS uniformity tests on per-number frequencies over the discovery prefix.",
+          "Test membership-indicator autocorrelation at lags 1-5 to check whether any short-memory repeat structure exists at all."
+        ]
+      },
+      "evaluation_feedback": null,
+      "failure": {
+        "stage": "response_contract_validation",
+        "error_type": "StructuredOutputRejected",
+        "proposal_reasons": [
+          "hypothesis_id must use HYP-001..HYP-999 or HYP-1000+ canonical numbering."
+        ],
+        "execution_spec_reasons": [
+          "hypothesis_id must use HYP-001..HYP-999 or HYP-1000+ canonical numbering."
+        ],
+        "failure_metadata_only": true
+      },
+      "discovery_window": {
+        "start_date": "2020-10-11",
+        "end_date": "2026-09-01",
+        "draw_count": 913,
+        "holdout_dates_copied": false,
+        "archive_rows_copied": false
+      },
+      "content_sha256": "3f5c95932b15b4c559288a86da61fed7dc25d6390d01dd469917e4ac72c00719"
+    },
+    {
+      "entry_id": 10,
+      "cycle_id": "9106323dbabeea805bb4c312c03fc2013a497ad7230e9c511f19958408f54906",
+      "source": "GENERAL/open-research",
+      "research_epoch": "general-open-research-memory-v2",
+      "direction": "reverse",
+      "created_at_utc": "2026-11-16T01:56:29.145047+00:00",
+      "target_date": "2026-11-12",
+      "archive_sha256": "e85b8b5de47355b83f2c070f9ffbfe8dc97541ec52b93a849c3e285f776d781e",
+      "runner_version": "0.9.0",
+      "status": "REQUEST_FAILED",
+      "research_report_sha256": null,
+      "research_report_content": null,
+      "research_report_content_sha256": null,
+      "research_report_content_status": "NOT_AVAILABLE",
+      "proposal_status": "NOT_RUN",
+      "proposals": [],
+      "execution_spec_status": "NOT_RUN",
+      "execution_spec": null,
+      "execution_spec_sha256": null,
+      "learning_notes": {
+        "observations": [],
+        "failed_approaches": [],
+        "next_tests": []
+      },
+      "evaluation_feedback": null,
+      "failure": {
+        "stage": "reverse_inference",
+        "error_type": "RuntimeError",
+        "failure_metadata_only": true
+      },
+      "discovery_window": {
+        "start_date": "2020-10-11",
+        "end_date": "2026-09-01",
+        "draw_count": 913,
+        "holdout_dates_copied": false,
+        "archive_rows_copied": false
+      },
+      "content_sha256": "e516bc1f2843a09ac5c5566b2688314a8e0f8f405c614471971ab3130ea4b947"
     }
   ],
   "offline_research": {
