@@ -239,10 +239,11 @@ class RecoveryArchiveTests(unittest.TestCase):
 
     def test_model_discovery_messages_exclude_fixed_target_and_later_draws(self):
         self.output.write_bytes(self.source_raw)
-        target, discovery, plan = research.isolate_discovery_only(
-            self.rows,
-            ledger_path=self.ledger,
-        )
+        with patch.object(research, "ARCHIVE", self.source):
+            target, discovery, plan = research.isolate_discovery_only(
+                self.rows,
+                ledger_path=self.ledger,
+            )
         self.assertEqual(target, recovery.RECOVERY_TARGET_DATE)
         messages = research.build_messages(target, discovery, direction="forward")
         payload = json.loads(messages[1]["content"])
