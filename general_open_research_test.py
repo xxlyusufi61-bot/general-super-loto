@@ -1096,6 +1096,49 @@ class NvidiaUsageObservationTests(unittest.TestCase):
         self.assertEqual(audit["automatic_retries_reserved"], 1)
         self.assertFalse(audit["provider_response_bodies_stored"])
 
+    def test_retry_budget_failure_preserves_known_5xx_classification_without_second_send(self):
+        class SyntheticGatewayTimeout(Exception):
+            status_code = 504
+            response = SimpleNamespace(headers={"x-request-id": "reserve-failure-504"})
+
+        first = self.client_with_response()
+        first.chat.completions.create.side_effect = SyntheticGatewayTimeout(
+            "synthetic first HTTP 504"
+        )
+        second = self.client_with_response()
+        clients = [first, second]
+        saved = []
+
+        def client_factory(_api_key, _timeout):
+            return clients.pop(0)
+
+        with patch.dict(os.environ, self.live_env(), clear=True), patch.object(
+            research, "reserve_nvidia_request",
+            side_effect=[None, RuntimeError("synthetic retry reserve exhausted")],
+        ) as reserve, patch.object(
+            research, "save_usage_observation",
+            side_effect=lambda observation, **kwargs: saved.append(observation),
+        ), patch(
+            "general_open_research._create_nvidia_client", side_effect=client_factory
+        ):
+            with self.assertRaisesRegex(RuntimeError, "retry reserve exhausted"):
+                research.call_model(
+                    [{"role": "user", "content": "synthetic reserve failure"}],
+                    request_label="forward",
+                )
+
+        self.assertEqual(len(saved), 1)
+        self.assertEqual(saved[0]["http_status"], 504)
+        self.assertEqual(research._NVIDIA_REQUESTS_ATTEMPTED, 1)
+        self.assertEqual(reserve.call_count, 2)
+        first.chat.completions.create.assert_called_once()
+        second.chat.completions.create.assert_not_called()
+        first.close.assert_called_once()
+        second.close.assert_called_once()
+        self.assertTrue(Path("/tmp/general_nvidia_api_attempted_forward").exists())
+        self.assertTrue(Path("/tmp/general_nvidia_api_known_http_5xx_forward").exists())
+        self.assertFalse(Path("/tmp/general_nvidia_api_no_retry_forward").exists())
+
     def test_forward_success_then_reverse_504_retries_once_then_stops(self):
         class SyntheticGatewayTimeout(Exception):
             status_code = 504
