@@ -251,7 +251,7 @@ class SealedEvaluationTests(unittest.TestCase):
             snapshot_directory=self.snapshot_directory,
         )
         changed = json.loads(specs.read_text(encoding="utf-8"))
-        changed["specifications"][0]["execution_spec"]["score_expression"]["aggregate"] = "sum"
+        changed["specifications"][0]["execution_spec"]["score_expression"]["expression"]["right"]["name"] = "value"
         specs.write_text(json.dumps(changed), encoding="utf-8")
         with self.assertRaisesRegex(sealed.SealedEvaluationError, "exact original directional candidates"):
             sealed.create_claim(
