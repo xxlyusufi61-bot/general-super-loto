@@ -4,10 +4,10 @@
 
 The scheduler reuses the existing blank-slate research runner, safe JSON DSL,
 sealed evaluation ledger, and Telegram reporting. It does not replace or loosen
-their validation rules. A target work package remains at the FIFO head until its sealed
-evaluation ledger records EVALUATED. Empty but valid research results are not
-target completion and do not consume the target. Retryable failures do not
-consume the target or create a new target claim.
+their validation rules. A target work package remains at the FIFO head until it is either
+successfully evaluated or explicitly retired after its retry budget is fully
+exhausted. Empty or incomplete research results do not consume the target.
+Retryable failures do not consume the target or create a new target claim.
 
 A scheduled check refreshes and validates the canonical 6-of-60 archive
 independently of AI authorization and NVIDIA lock state. The research job checks
@@ -244,15 +244,29 @@ command independently verifies that ledger evidence before releasing the FIFO
 head. NO_ELIGIBLE_CANDIDATE is not target completion: it remains in the FIFO
 and may be researched again on a later scheduled cycle.
 
-There is no fixed per-target attempt count. Every retryable failure and every
-NO_ELIGIBLE_CANDIDATE result may be retried while the same FIFO head remains
-unconsumed. Retries are individually recorded and always reuse the same
-immutable target snapshot. WORKFLOW_FAILED after provider delivery is not
-automatically retried. PROVIDER_DELIVERY_UNCERTAIN remains blocked until the
-global lock is manually unlocked after the failure timestamp. HTTP 402/429
-remain non-retryable, and existing bounded HTTP 5xx retry semantics are
-unchanged. A target already being processed is never replaced by the latest
-archive head. Retry-cap exhaustion can no longer consume or retire a target.
+The normal retry budget is three attempts per target. The only exceptions
+are the previously approved, provenance-pinned fourth and fifth attempts for
+the 2026-11-10 target. A TARGET_RETRY_LIMIT_REACHED response only means that no
+additional automatic attempt is eligible. It does not retire or consume the
+target.
+
+An exhausted target may leave the FIFO only through an explicit
+EXHAUSTED_RETRY_BUDGET record created by the separate manually dispatched
+retirement workflow. The operation requires every recorded attempt for the
+exact FIFO head to have a terminal FAILED event, the exact attempt count, and
+the exact immutable archive SHA-256 and record count. It also pins the
+successor's date, archive SHA-256, and record count. The attempt and event
+histories are preserved unchanged. No target is silently skipped.
+
+NO_ELIGIBLE_CANDIDATE is not target completion: it remains in the FIFO and
+may be retried within the established budget. If a direction is missing, the
+target is not marked EVALUATED. A SUCCEEDED attempt is accepted only after
+exactly one matching sealed-evaluation ledger entry is persisted as EVALUATED.
+WORKFLOW_FAILED after provider delivery is not automatically retried.
+PROVIDER_DELIVERY_UNCERTAIN remains blocked until the global lock is manually
+unlocked after the failure timestamp. HTTP 402/429 remain non-retryable, and
+existing bounded HTTP 5xx retry semantics are unchanged. A target already
+being processed is never replaced by the latest archive head.
 
 When the queue is first introduced to a scheduler state with no prior attempts,
 the bootstrap cursor starts immediately before the latest canonical draw, so
