@@ -213,6 +213,7 @@ jobs:
             --proposals open_research_proposals.json \
             --specs open_research_execution_specs.json \
             --output open_research_evaluation_claim.json \
+            --sealed-plan open_research_sealed_plan.json \
             --github-output "$GITHUB_OUTPUT"
       - name: Persist immutable sealed archive snapshot on main
         id: persist-sealed-snapshot
