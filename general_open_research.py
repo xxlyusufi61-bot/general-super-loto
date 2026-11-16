@@ -1957,13 +1957,9 @@ def main() -> int:
         archive_sha256 = archive_proof["archive_sha256"]
         if archive_proof["rows"] != rows:
             raise RuntimeError("Archive changed between validation and sealed split.")
-        current_ledger = sealed.load_ledger(ledger_path)
-        used_dates = sealed.get_used_validation_dates(current_ledger)
-        partition = sealed.split_archive(
-            rows,
-            archive_sha256=archive_proof["archive_sha256"],
-            used_validation_dates=used_dates,
-        )
+        # Reuse the exact original discovery/holdout split when this target
+        # has a pending CLAIMED evaluation; otherwise use the fresh split.
+        partition = sealed.split_for_research(ARCHIVE, ledger_path)
         sealed_plan = sealed.public_plan(partition)
         if partition["target_date"] != target or partition["discovery_rows"] != train:
             raise RuntimeError("Sealed discovery split changed before prompt construction.")
