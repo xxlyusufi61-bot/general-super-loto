@@ -422,11 +422,16 @@ def validate_state(value: Any) -> dict[str, Any]:
                 attempt for attempt in attempts
                 if attempt["target_date"] == entry["target_date"]
             ]
-            # Validate historical retirement evidence without re-applying the current retry budget.
-            exhausted_events_complete = bool(exhausted_attempts) and all(
-                event_by_attempt.get(attempt["attempt_id"]) is not None
-                and event_by_attempt[attempt["attempt_id"]]["outcome"] == "FAILED"
-                for attempt in exhausted_attempts
+            # Cycle #55's recovery journal points to the already-retired historical
+            # five-attempt record. Keep that exact audit shape independent of the
+            # new ten-attempt policy used for all future targets.
+            exhausted_events_complete = (
+                len(exhausted_attempts) == 5
+                and all(
+                    event_by_attempt.get(attempt["attempt_id"]) is not None
+                    and event_by_attempt[attempt["attempt_id"]]["outcome"] == "FAILED"
+                    for attempt in exhausted_attempts
+                )
             )
             exhausted_target_completed = (
                 len(completed) == 1
@@ -434,7 +439,7 @@ def validate_state(value: Any) -> dict[str, Any]:
                 and exhausted_events_complete
             )
             if not manual_retry_completed and not exhausted_target_completed:
-                raise AutonomousResearchError("Recovered Cycle #55 snapshot is neither the exact FIFO head, a correctly completed one-time retry, nor a fully failed exhausted target.")
+                raise AutonomousResearchError("Recovered Cycle #55 snapshot is neither the exact FIFO head nor a valid historical completion record.")
     manual_retry_history = value.get("manual_retry_history")
     if not isinstance(manual_retry_history, list) or len(manual_retry_history) > 1:
         raise AutonomousResearchError("Cycle #55 one-time manual retry journal is not a valid single-use list.")
