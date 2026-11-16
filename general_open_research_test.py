@@ -274,7 +274,7 @@ class OpenResearchIsolationTests(unittest.TestCase):
             self.assertIn('"proposal":{', system)
             self.assertIn("formal_execution_spec field inside the proposal is the sole authoritative", system)
             self.assertIn("do not emit <hypothesis_execution_specs_json>", system)
-            self.assertNotIn("execution_spec must use schema_version 2", system)
+            self.assertIn("nested execution_spec inside formal_execution_spec must use schema_version 2", system)
             self.assertIn("its direction must equal this isolated request", system)
             self.assertIn("state_ref", system)
             self.assertIn("set_union", system)

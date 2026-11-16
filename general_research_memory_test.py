@@ -933,15 +933,15 @@ class DirectionalMemoryContextTests(unittest.TestCase):
 
 def directional_report(direction):
     source_id = "HYP-001"
+    slot = "A" if direction == "forward" else "C"
     spec = {
-        "schema_version": 1,
+        "schema_version": 2,
+        "direction": direction,
         "score_expression": {
-            "op": "aggregate_history_numbers",
-            "aggregate": "count",
-            "expression": {
-                "op": "eq",
-                "left": {"op": "var", "name": "value"},
-                "right": {"op": "var", "name": "candidate"},
+            "op": "bool_to_number",
+            "arg": {
+                "op": "contains_candidate",
+                "state": {"op": "state_ref", "slot": slot},
             },
         },
     }
@@ -1142,12 +1142,19 @@ class ResearchMemoryPersistenceTests(unittest.TestCase):
             write_json(root / "sealed-plan.json", sealed_plan)
             write_json(root / "claim.json", {"claim_created": True, "claim_id": claim_id})
 
-            spec = json.loads(
+            forward_spec = json.loads(
                 directional_report("forward").split("<HYPOTHESIS_PROPOSALS_JSON>")[1]
                 .split("</HYPOTHESIS_PROPOSALS_JSON>")[0]
             )["proposal"]["formal_execution_spec"]
-            spec_hash = hashlib.sha256(
-                json.dumps(spec, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+            reverse_spec = json.loads(
+                directional_report("reverse").split("<HYPOTHESIS_PROPOSALS_JSON>")[1]
+                .split("</HYPOTHESIS_PROPOSALS_JSON>")[0]
+            )["proposal"]["formal_execution_spec"]
+            forward_spec_hash = hashlib.sha256(
+                json.dumps(forward_spec, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+            ).hexdigest()
+            reverse_spec_hash = hashlib.sha256(
+                json.dumps(reverse_spec, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
             ).hexdigest()
             evaluation = {
                 "status": "EVALUATED_EXPLORATORY_FIXED_SPEC",
@@ -1161,9 +1168,9 @@ class ResearchMemoryPersistenceTests(unittest.TestCase):
                 "candidate_rankings_reported": False,
                 "candidate_selection": {
                     "forward_hypothesis_id": "HYP-001",
-                    "forward_spec_sha256": spec_hash,
+                    "forward_spec_sha256": forward_spec_hash,
                     "reverse_hypothesis_id": "HYP-501",
-                    "reverse_spec_sha256": spec_hash,
+                    "reverse_spec_sha256": reverse_spec_hash,
                     "selection_used_validation_scores": False,
                 },
                 "forward_walk_forward": {

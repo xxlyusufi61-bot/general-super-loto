@@ -342,6 +342,7 @@ def build_messages(
         "If no rule change is needed, omit the entire rule-change block. Rule-change requests are submitted "
         "separately for user approval; malformed or incomplete blocks are rejected.\n"
         "Include exactly one structured hypothesis-proposal block. It is a research queue only, "
+        "and follows a whole-block fail-closed contract: malformed or contradictory proposal data rejects the entire candidate. "
         "not an approved or executable formula. Return one proposal object or null; never return an array "
         "or a list of alternatives. The singular object keeps the JSON shape shallow and avoids an outer "
         "proposal-array delimiter.\n"
@@ -373,7 +374,7 @@ def build_messages(
         "as a non-executable hypothesis and cannot enter sealed evaluation.\n"
         "Do not use sealed validation rows, validation outcomes, or post-target records to define or order "
         "the proposal.\n"
-        "A nested formal_execution_spec must use schema_version 2 and include score_expression; "
+        "The nested execution_spec inside formal_execution_spec must use schema_version 2 and include score_expression; "
         "its direction must equal this isolated request ("
         + direction
         + "). It is a typed expression tree, not source code.\n"
