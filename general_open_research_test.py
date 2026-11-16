@@ -1829,6 +1829,26 @@ class OpenResearchWorkflowRegressionTests(unittest.TestCase):
         )
         self.assertIn("steps.sealed-claim.outputs.claim_created == 'true'", evaluation_step)
 
+    def test_autonomous_scheduler_preserves_known_5xx_and_incomplete_candidate_targets(self):
+        workflow = "general-autonomous-research.yml"
+        lock_step = self._workflow_step(
+            workflow, "Activate global lock after an incomplete provider request"
+        )
+        self.assertIn('/tmp/general_nvidia_api_no_retry_${request_label}', lock_step)
+        self.assertIn('/tmp/general_nvidia_api_known_http_5xx_${request_label}', lock_step)
+        self.assertIn("uncertain_request=true", lock_step)
+
+        finish_step = self._workflow_step(workflow, "Record failed claimed cycle")
+        self.assertIn('/tmp/general_directional_candidates_incomplete', finish_step)
+        self.assertIn('reason_code="DIRECTIONAL_CANDIDATE_SET_INCOMPLETE"', finish_step)
+        self.assertIn('reason_code="PROVIDER_HTTP_5XX_RETRYABLE"', finish_step)
+        self.assertIn('reason_code="PROVIDER_DELIVERY_UNCERTAIN"', finish_step)
+        self.assertIn('reason_code="PROVIDER_HTTP_REJECTION_NO_RETRY"', finish_step)
+
+        upload_step = self._workflow_step(workflow, "Upload number-safe autonomous cycle artifacts")
+        self.assertIn("open_research_retry_audit.json", upload_step)
+
+
     def test_failed_research_memory_record_is_not_a_formula_promotion(self):
         memory_step = self._workflow_step(
             "open-research.yml", "Append sanitized GENERAL research memory"
