@@ -39,12 +39,16 @@ def candidate(**overrides):
     return item
 
 
-def wrapped(proposals, schema_version=3):
+def wrapped(proposals, schema_version=4):
+    if isinstance(proposals, list):
+        proposal = proposals[0] if len(proposals) == 1 else (None if not proposals else proposals)
+    else:
+        proposal = proposals
     return (
         "Report text.\n"
         + START_MARKER
         + "\n"
-        + json.dumps({"schema_version": schema_version, "proposals": proposals})
+        + json.dumps({"schema_version": schema_version, "proposal": proposal})
         + "\n"
         + END_MARKER
         + "\nEnd text."
@@ -83,7 +87,7 @@ class HypothesisProposalContractTests(unittest.TestCase):
             parse_hypothesis_proposals("A prose-only report with no structured block.")["status"],
             "MISSING_BLOCK",
         )
-        old_schema = parse_hypothesis_proposals(wrapped([], schema_version=2))
+        old_schema = parse_hypothesis_proposals(wrapped([], schema_version=3))
         self.assertEqual(old_schema["status"], "REJECTED")
         self.assertEqual(old_schema["proposals"], [])
 

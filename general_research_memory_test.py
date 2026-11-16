@@ -956,11 +956,8 @@ def directional_report(direction):
     return (
         "Complete narrative report for " + direction + " direction.\n\n"
         "<HYPOTHESIS_PROPOSALS_JSON>"
-        + json.dumps({"schema_version": 3, "proposals": [proposal]})
+        + json.dumps({"schema_version": 4, "proposal": proposal})
         + "</HYPOTHESIS_PROPOSALS_JSON>"
-        + "<HYPOTHESIS_EXECUTION_SPECS_JSON>"
-        + json.dumps({"schema_version": 1, "specifications": [{"hypothesis_id": source_id, "execution_spec": spec}]})
-        + "</HYPOTHESIS_EXECUTION_SPECS_JSON>"
         + memory.LESSONS_START
         + json.dumps({
             "schema_version": 1,
@@ -1146,9 +1143,9 @@ class ResearchMemoryPersistenceTests(unittest.TestCase):
             write_json(root / "claim.json", {"claim_created": True, "claim_id": claim_id})
 
             spec = json.loads(
-                directional_report("forward").split("<HYPOTHESIS_EXECUTION_SPECS_JSON>")[1]
-                .split("</HYPOTHESIS_EXECUTION_SPECS_JSON>")[0]
-            )["specifications"][0]["execution_spec"]
+                directional_report("forward").split("<HYPOTHESIS_PROPOSALS_JSON>")[1]
+                .split("</HYPOTHESIS_PROPOSALS_JSON>")[0]
+            )["proposal"]["formal_execution_spec"]
             spec_hash = hashlib.sha256(
                 json.dumps(spec, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
             ).hexdigest()

@@ -13,10 +13,8 @@ from general_execution_spec_dispatch import validate_execution_spec
 
 START_MARKER = "<HYPOTHESIS_PROPOSALS_JSON>"
 END_MARKER = "</HYPOTHESIS_PROPOSALS_JSON>"
-SCHEMA_VERSION = 3
-# One proposal per isolated direction prevents mixed-quality lists from
-# invalidating unrelated candidates while retaining atomic block rejection.
-MAX_PROPOSALS = 1
+SCHEMA_VERSION = 4
+# One object (or null) per isolated direction avoids a redundant outer array.
 ALLOWED_EVALUATION_PROTOCOLS = {
     "forward_walk_forward",
     "reverse_retrospective_stress_test",
@@ -29,7 +27,7 @@ REQUIRED_PROTOCOLS = [
     "time_ordered_cross_validation",
     "uniform_random_6_of_N",
 ]
-TOP_LEVEL_KEYS = {"schema_version", "proposals"}
+TOP_LEVEL_KEYS = {"schema_version", "proposal"}
 MODEL_PROPOSAL_KEYS = {
     "hypothesis_id",
     "discovery_direction",
@@ -321,24 +319,18 @@ def parse_hypothesis_proposals(report: str) -> dict[str, Any]:
     if type(payload.get("schema_version")) is not int or payload["schema_version"] != SCHEMA_VERSION:
         base["rejection_reasons"] = ["Unsupported proposal schema version."]
         return base
-    proposals = payload.get("proposals")
-    if not isinstance(proposals, list) or len(proposals) > MAX_PROPOSALS:
-        base["rejection_reasons"] = ["proposals must be a list containing at most one entry per direction."]
+    raw_proposal = payload.get("proposal")
+    if raw_proposal is None:
+        validated: list[dict[str, Any]] = []
+    elif not isinstance(raw_proposal, dict):
+        base["rejection_reasons"] = ["proposal must be one object or null; arrays and alternatives are not allowed."]
         return base
-
-    validated: list[dict[str, Any]] = []
-    try:
-        seen: set[str] = set()
-        for raw_proposal in proposals:
-            proposal = _validate_proposal(raw_proposal)
-            if proposal["hypothesis_id"] in seen:
-                raise ValueError("Duplicate hypothesis_id.")
-            seen.add(proposal["hypothesis_id"])
-            validated.append(proposal)
-    except ValueError as exc:
-        # Reject the entire block; do not silently accept a partial subset.
-        base["rejection_reasons"] = [str(exc)]
-        return base
+    else:
+        try:
+            validated = [_validate_proposal(raw_proposal)]
+        except ValueError as exc:
+            base["rejection_reasons"] = [str(exc)]
+            return base
 
     base["proposals"] = validated
     base["status"] = "VALID_EMPTY" if not validated else "VALID_PROPOSALS"
