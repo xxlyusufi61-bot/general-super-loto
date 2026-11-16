@@ -1515,7 +1515,7 @@ def find_pending_candidate(
             continue
         if (
             checked_spec != specification
-            or checked_proposal != proposal
+            or {key: checked_proposal[key] for key in PROPOSAL_KEYS} != proposal
             or not execution_spec_matches_proposal(proposal, specification)
             or synthetic_result.get("status") != "PASS"
             or entry["execution_spec_sha256"] != _sha(_canonical(specification))
