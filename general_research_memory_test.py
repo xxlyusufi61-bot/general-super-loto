@@ -1506,6 +1506,25 @@ class AutonomousResearchMemoryIntegrationTests(unittest.TestCase):
             "sealed_plan_path": sealed_plan_path,
         }
 
+    def _record_evaluated_ledger_entry(self, cycle):
+        import hashlib
+
+        ledger = json.loads(cycle["ledger_path"].read_text(encoding="utf-8"))
+        rows = cycle["archive"]["rows"]
+        entry = {
+            "claim_id": hashlib.sha256(
+                ("synthetic-evaluated|" + cycle["archive"]["archive_sha256"]).encode("utf-8")
+            ).hexdigest(),
+            "state": "EVALUATED",
+            "target_date": cycle["archive"]["last_date"],
+            "archive_sha256": cycle["archive"]["archive_sha256"],
+            "archive_record_count": cycle["archive"]["record_count"],
+            "validation_dates": [rows[-4]["date"]],
+            "reverse_validation_dates": [rows[-3]["date"]],
+        }
+        ledger["entries"].append(entry)
+        write_json(cycle["ledger_path"], ledger)
+
     def _finish_attempt(self, cycle, *, outcome, reason_code):
         stdout = io.StringIO()
         stderr = io.StringIO()
@@ -1516,6 +1535,7 @@ class AutonomousResearchMemoryIntegrationTests(unittest.TestCase):
                 "--attempt-id", cycle["attempt"]["attempt_id"],
                 "--outcome", outcome,
                 "--reason-code", reason_code,
+                "--ledger", str(cycle["ledger_path"]),
             ])
         self.assertEqual(exit_code, 0, stderr.getvalue() or stdout.getvalue())
         saved_state = autonomous.read_state(cycle["scheduler_state_path"])
@@ -1573,6 +1593,7 @@ class AutonomousResearchMemoryIntegrationTests(unittest.TestCase):
                 directional_report("reverse"), encoding="utf-8"
             )
 
+            self._record_evaluated_ledger_entry(cycle)
             scheduler_state = self._finish_attempt(
                 cycle,
                 outcome="SUCCEEDED",
