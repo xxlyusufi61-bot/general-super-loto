@@ -1258,6 +1258,8 @@ def prepare_cycle(
         "manual_recovery_confirmed": recovered_after_uncertain_delivery,
         "pending_claim_resume_available": plan.get("pending_claim_resume_available") is True,
         "pending_claim_id": plan.get("pending_claim_id"),
+        "forward_validation_dates": plan.get("forward_validation_dates", []),
+        "reverse_validation_dates": plan.get("reverse_validation_dates", []),
     }
 
 
