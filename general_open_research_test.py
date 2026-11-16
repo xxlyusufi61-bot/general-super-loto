@@ -1609,6 +1609,181 @@ class OpenResearchOrchestrationFailureTests(unittest.TestCase):
 
 
 
+class PendingCandidateResumeOrchestrationTests(unittest.TestCase):
+    @staticmethod
+    def _main_paths(root):
+        return {
+            "BASE": root,
+            "ARCHIVE": root / "super_loto_archive.json",
+            "REPORT": root / "open_research_report.md",
+            "FORWARD_REPORT": root / "open_research_forward_report.md",
+            "REVERSE_REPORT": root / "open_research_reverse_report.md",
+            "PROPOSALS": root / "open_research_proposals.json",
+            "EXECUTION_SPECS": root / "open_research_execution_specs.json",
+            "USAGE_REPORT": root / "open_research_usage.json",
+            "RUN_STATUS": root / "open_research_run_status.json",
+            "RETRY_AUDIT": root / "open_research_retry_audit.json",
+        }
+
+    @staticmethod
+    def _candidate(direction, archive_sha):
+        parsed = research.parse_directional_result(make_directional_report(direction), direction)
+        proposal = parsed["proposal_document"]["proposals"][0]
+        proposal = {
+            key: value for key, value in proposal.items()
+            if key in research.research_memory.PROPOSAL_KEYS
+        }
+        specification = parsed["execution_spec_document"]["specifications"][0]["execution_spec"]
+        return {
+            "direction": direction,
+            "target_date": "2026-11-12",
+            "archive_sha256": archive_sha,
+            "proposal": proposal,
+            "execution_spec": specification,
+            "learning_notes": {
+                "observations": ["The fixed definition is reproducible."],
+                "failed_approaches": ["A moving threshold was not stable."],
+                "next_tests": ["Compare against a uniform random baseline."],
+            },
+        }
+
+    @staticmethod
+    def _patch_preflight(rows, root, paths):
+        target = rows[-1]["date"]
+        train = rows[:-1]
+        partition = {"target_date": target, "discovery_rows": train}
+        archive_proof = {"archive_sha256": "a" * 64, "rows": rows}
+        sealed_plan = {
+            "target_date": target,
+            "regimes": {
+                "R60": {
+                    "validation_start_date": "2026-11-01",
+                    "validation_end_date": "2026-11-02",
+                    "validation_count": 2,
+                    "reverse_validation_start_date": "2026-10-30",
+                    "reverse_validation_end_date": "2026-10-31",
+                    "reverse_validation_count": 2,
+                },
+            },
+        }
+        return target, train, partition, archive_proof, sealed_plan
+
+    def test_main_reuses_exact_target_pending_candidates_without_provider_calls(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            target = "2026-11-12"
+            rows = [
+                {"date": "2026-11-10", "numbers": [1, 2, 3, 4, 5, 6]},
+                {"date": target, "numbers": [7, 8, 9, 10, 11, 12]},
+            ]
+            paths = self._main_paths(root)
+            target, train, partition, archive_proof, sealed_plan = self._patch_preflight(rows, root, paths)
+            candidates = [
+                self._candidate("forward", archive_proof["archive_sha256"]),
+                self._candidate("reverse", archive_proof["archive_sha256"]),
+            ]
+            with (
+                patch.multiple(research, **paths),
+                patch.object(research.sealed, "preflight"),
+                patch.object(research, "parse_archive", return_value=rows),
+                patch.object(research, "isolate_discovery_only", return_value=(target, train, {})),
+                patch.object(research.sealed, "load_archive", return_value=archive_proof),
+                patch.object(research.sealed, "load_ledger", return_value={}),
+                patch.object(research.sealed, "get_used_validation_dates", return_value=set()),
+                patch.object(research.sealed, "split_archive", return_value=partition),
+                patch.object(research.sealed, "public_plan", return_value=sealed_plan),
+                patch.object(research.research_memory, "direction_context", return_value=[]),
+                patch.object(
+                    research.research_memory, "find_pending_candidate",
+                    side_effect=candidates,
+                ) as find_pending,
+                patch.object(research, "build_messages", side_effect=AssertionError("reused candidates must not prompt discovery")),
+                patch.object(research, "call_model") as call_model,
+                patch.object(
+                    research, "write_combined_usage_summary",
+                    return_value={"inference_requests_made_by_this_run": 0, "automatic_retries": 0},
+                ),
+                patch.object(research, "write_run_status") as write_status,
+            ):
+                result = research.main()
+
+            self.assertEqual(result, 0)
+            call_model.assert_not_called()
+            self.assertEqual(find_pending.call_count, 2)
+            self.assertTrue(paths["FORWARD_REPORT"].is_file())
+            self.assertTrue(paths["REVERSE_REPORT"].is_file())
+            proposals = json.loads(paths["PROPOSALS"].read_text(encoding="utf-8"))
+            specifications = json.loads(paths["EXECUTION_SPECS"].read_text(encoding="utf-8"))
+            self.assertEqual(len(proposals["proposals"]), 2)
+            self.assertEqual(specifications["status"], "VALIDATED_SPECS")
+            self.assertTrue(specifications["execution_ready"])
+            self.assertEqual(research._NVIDIA_REQUESTS_ATTEMPTED, 0)
+            self.assertEqual(research._NVIDIA_REQUEST_ATTEMPT_COUNTS, {})
+            self.assertEqual(research._NVIDIA_DIRECTIONAL_COMPLETED, {"forward", "reverse"})
+            self.assertEqual(write_status.call_args.args[:2], ("RESEARCH_COMPLETE", "research_complete"))
+
+    def test_valid_candidate_is_not_terminally_discarded_when_other_direction_is_empty(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            target = "2026-11-12"
+            rows = [
+                {"date": "2026-11-10", "numbers": [1, 2, 3, 4, 5, 6]},
+                {"date": target, "numbers": [7, 8, 9, 10, 11, 12]},
+            ]
+            paths = self._main_paths(root)
+            target, train, partition, archive_proof, sealed_plan = self._patch_preflight(rows, root, paths)
+            empty_reverse = (
+                "<HYPOTHESIS_PROPOSALS_JSON>\n"
+                + json.dumps({"schema_version": 3, "proposals": []})
+                + "\n</HYPOTHESIS_PROPOSALS_JSON>\n"
+                + "<HYPOTHESIS_EXECUTION_SPECS_JSON>\n"
+                + json.dumps({"schema_version": 1, "specifications": []})
+                + "\n</HYPOTHESIS_EXECUTION_SPECS_JSON>\n"
+            )
+            marker = Path("/tmp/general_directional_candidates_incomplete")
+            marker.unlink(missing_ok=True)
+            with (
+                patch.multiple(research, **paths),
+                patch.object(research.sealed, "preflight"),
+                patch.object(research, "parse_archive", return_value=rows),
+                patch.object(research, "isolate_discovery_only", return_value=(target, train, {})),
+                patch.object(research.sealed, "load_archive", return_value=archive_proof),
+                patch.object(research.sealed, "load_ledger", return_value={}),
+                patch.object(research.sealed, "get_used_validation_dates", return_value=set()),
+                patch.object(research.sealed, "split_archive", return_value=partition),
+                patch.object(research.sealed, "public_plan", return_value=sealed_plan),
+                patch.object(research.research_memory, "direction_context", return_value=[]),
+                patch.object(research.research_memory, "find_pending_candidate", return_value=None),
+                patch.object(
+                    research, "build_messages",
+                    return_value=[{"role": "user", "content": "synthetic isolated request"}],
+                ),
+                patch.object(
+                    research, "call_model",
+                    side_effect=[make_directional_report("forward"), empty_reverse],
+                ) as call_model,
+                patch.object(
+                    research, "write_combined_usage_summary",
+                    return_value={"inference_requests_made_by_this_run": 2, "automatic_retries": 0},
+                ),
+                patch.object(research, "write_run_status") as write_status,
+            ):
+                result = research.main()
+
+            self.assertEqual(result, 2)
+            self.assertEqual(call_model.call_count, 2)
+            self.assertTrue(marker.is_file())
+            proposals = json.loads(paths["PROPOSALS"].read_text(encoding="utf-8"))
+            specifications = json.loads(paths["EXECUTION_SPECS"].read_text(encoding="utf-8"))
+            self.assertEqual(len(proposals["proposals"]), 1)
+            self.assertFalse(specifications["execution_ready"])
+            self.assertEqual(
+                write_status.call_args.args[:2],
+                ("FAILED", "directional_candidate_pairing"),
+            )
+            marker.unlink(missing_ok=True)
+
+
 class OpenResearchWorkflowRegressionTests(unittest.TestCase):
     @staticmethod
     def _workflow_step(path, name):
