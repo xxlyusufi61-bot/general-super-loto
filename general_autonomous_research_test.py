@@ -271,7 +271,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
                     reason_code="WORKFLOW_FAILED", now=NOW,
                 )
 
-    def test_proven_no_send_failures_allow_same_target_retries_with_existing_cap(self):
+    def test_proven_no_send_failures_allow_same_target_retries_with_ten_attempt_cap(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             archive = root / "archive.json"
@@ -294,7 +294,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
                 reason_code="NO_PROVIDER_REQUEST_SENT", now=NOW,
             )
 
-            for number in range(2, 4):
+            for number in range(2, auto.MAX_ATTEMPTS_PER_TARGET + 1):
                 at = NOW + timedelta(minutes=number - 1)
                 retry_plan = auto.prepare_cycle(
                     state, archive_path=archive, ledger_path=ledger,
@@ -314,11 +314,11 @@ class AutonomousResearchStateTests(unittest.TestCase):
                 )
                 previous = current
 
-            self.assertEqual(len(state["attempts"]), 3)
+            self.assertEqual(len(state["attempts"]), auto.MAX_ATTEMPTS_PER_TARGET)
             auto.validate_state(state)
             blocked = auto.prepare_cycle(
                 state, archive_path=archive, ledger_path=ledger,
-                global_lock_path=lock, now=NOW + timedelta(minutes=4),
+                global_lock_path=lock, now=NOW + timedelta(minutes=auto.MAX_ATTEMPTS_PER_TARGET),
             )
             self.assertFalse(blocked["eligible"])
             self.assertEqual(blocked["status"], "TARGET_RETRY_LIMIT_REACHED")
@@ -906,7 +906,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
             "items": [item_target, item_next],
             "completed": [],
         }
-        for index in range(3):
+        for index in range(auto.MAX_ATTEMPTS_PER_TARGET):
             attempt_id = str(index + 1) * 64
             claimed = NOW + timedelta(minutes=index * 10)
             state["attempts"].append({
@@ -937,7 +937,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
             target_date="2026-11-10",
             archive_sha256=item_target["archive_sha256"],
             archive_record_count=item_target["archive_record_count"],
-            expected_attempt_count=3,
+            expected_attempt_count=auto.MAX_ATTEMPTS_PER_TARGET,
             expected_next_target_date="2026-11-12",
             expected_next_archive_sha256=item_next["archive_sha256"],
             expected_next_archive_record_count=item_next["archive_record_count"],
@@ -945,7 +945,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
         )
 
         self.assertEqual(report["outcome"], "EXHAUSTED_RETRY_BUDGET")
-        self.assertEqual(report["attempts_preserved_count"], 3)
+        self.assertEqual(report["attempts_preserved_count"], auto.MAX_ATTEMPTS_PER_TARGET)
         self.assertEqual(report["next_target_date"], "2026-11-12")
         self.assertEqual(updated["target_queue"]["items"][0]["target_date"], "2026-11-12")
         self.assertEqual(updated["target_queue"]["completed"][0]["outcome"], "EXHAUSTED_RETRY_BUDGET")
@@ -963,7 +963,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
                 target_date="2026-11-10",
                 archive_sha256=item_target["archive_sha256"],
                 archive_record_count=item_target["archive_record_count"],
-                expected_attempt_count=3,
+                expected_attempt_count=auto.MAX_ATTEMPTS_PER_TARGET,
                 expected_next_target_date="2026-11-12",
                 expected_next_archive_sha256=item_next["archive_sha256"],
                 expected_next_archive_record_count=item_next["archive_record_count"],
@@ -980,7 +980,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
             target_date="2026-11-10",
             archive_sha256=item_target["archive_sha256"],
             archive_record_count=item_target["archive_record_count"],
-            expected_attempt_count=3,
+            expected_attempt_count=auto.MAX_ATTEMPTS_PER_TARGET,
             expected_next_target_date="2026-11-12",
             expected_next_archive_sha256=item_next["archive_sha256"],
             expected_next_archive_record_count=item_next["archive_record_count"],
