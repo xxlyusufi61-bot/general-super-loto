@@ -951,6 +951,19 @@ class AutonomousResearchStateTests(unittest.TestCase):
         attempts_before = json.loads(json.dumps(state["attempts"]))
         events_before = json.loads(json.dumps(state["events"]))
 
+        with self.assertRaisesRegex(auto.AutonomousResearchError, "exactly ten failed attempts"):
+            auto.retire_exhausted_target(
+                state,
+                target_date="2026-11-10",
+                archive_sha256=item_target["archive_sha256"],
+                archive_record_count=item_target["archive_record_count"],
+                expected_attempt_count=auto.MAX_ATTEMPTS_PER_TARGET - 1,
+                expected_next_target_date="2026-11-12",
+                expected_next_archive_sha256=item_next["archive_sha256"],
+                expected_next_archive_record_count=item_next["archive_record_count"],
+                now=NOW,
+            )
+
         updated, report = auto.retire_exhausted_target(
             state,
             target_date="2026-11-10",
