@@ -1905,7 +1905,16 @@ class OpenResearchWorkflowRegressionTests(unittest.TestCase):
         self.assertIn('/tmp/general_nvidia_api_known_http_5xx_${request_label}', lock_step)
         self.assertIn("uncertain_request=true", lock_step)
 
+        pending_check = self._workflow_step(workflow, "Detect pending sealed claim before offline discovery")
+        self.assertIn("general_sealed_evaluation.py pending-claim", pending_check)
+        offline_step = self._workflow_step(workflow, "Run bounded offline hypothesis discovery and evaluation")
+        self.assertIn("steps.pending_claim_check.outputs.pending_claim != 'true'", offline_step)
+        claim_step = self._workflow_step(workflow, "Create the frozen sealed evaluation claim")
+        self.assertIn("--sealed-plan open_research_sealed_plan.json", claim_step)
+
         finish_step = self._workflow_step(workflow, "Record failed claimed cycle")
+        self.assertIn("SEALED_EVALUATION_INCOMPLETE", finish_step)
+        self.assertIn('RESEARCH_MEMORY_OUTCOME" = "success"', finish_step)
         self.assertIn('/tmp/general_directional_candidates_incomplete', finish_step)
         self.assertIn('reason_code="DIRECTIONAL_CANDIDATE_SET_INCOMPLETE"', finish_step)
         self.assertIn('reason_code="PROVIDER_HTTP_5XX_RETRYABLE"', finish_step)
