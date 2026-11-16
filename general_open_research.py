@@ -26,6 +26,7 @@ from general_live_consent import (
     has_explicit_single_request_consent,
 )
 from general_hypothesis_proposals import (
+    MODEL_PROPOSAL_KEYS,
     execution_spec_matches_proposal,
     parse_hypothesis_proposals,
 )
@@ -1753,8 +1754,9 @@ def call_model(
             )
         raise RuntimeError(
             failure_summary +
-            ". OpenAI SDK retries are disabled. No retry is permitted for ambiguous delivery, "
-            "incomplete streaming, or response-validation failure; inspect " +
+            ". OpenAI SDK retries are disabled. No automatic retry was attempted; "
+            "ambiguous delivery, incomplete streaming, and response-validation failures "
+            "remain non-retryable. Inspect " +
             request_usage_name + "."
         ) from None
 
@@ -1832,7 +1834,11 @@ def render_pending_candidate_report(candidate: dict[str, Any], direction: str) -
         raise RuntimeError("Saved candidate DSL no longer matches its formal mathematical definition.")
     # Parsing this reconstructed machine-readable report re-runs the canonical
     # proposal validator, DSL validator, and synthetic contract tests.
-    proposal_block = {"schema_version": 3, "proposals": [proposal]}
+    # Stored memory includes coordinator-generated fields. The original
+    # parser accepts only the model-controlled input schema; strip all derived
+    # fields and let the parser regenerate them canonically.
+    model_proposal = {key: proposal[key] for key in MODEL_PROPOSAL_KEYS}
+    proposal_block = {"schema_version": 3, "proposals": [model_proposal]}
     execution_block = {
         "schema_version": 1,
         "specifications": [{
