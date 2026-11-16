@@ -363,8 +363,9 @@ def build_messages(
         "schema_version 2 execution_spec object whose direction matches this isolated call. The coordinator "
         "validates and synthetic-tests this exact AST, then derives the execution-spec artifact locally from "
         "the same object. Never rewrite or duplicate the AST in another block.\n"
-        "The coordinator derives hypothesis, exact_definition, inputs, output_rule, parameter policy, "
-        "selection policy, and falsification criterion locally after validating the formal AST. Proposed family "
+        "The coordinator assigns the four mandatory evaluation protocols and derives all mathematical "
+        "explanation fields (hypothesis, exact_definition, inputs, output_rule, parameter policy, selection "
+        "policy, and falsification criterion) locally after validating the formal AST. Proposed family "
         "names are descriptive only and never change the method registry. The research_rationale field is "
         "commentary only and cannot override the formal definition.\n"
         "If no faithful safe-DSL definition exists, set formal_execution_spec to null. Do not output a "
@@ -372,9 +373,10 @@ def build_messages(
         "as a non-executable hypothesis and cannot enter sealed evaluation.\n"
         "Do not use sealed validation rows, validation outcomes, or post-target records to define or order "
         "the proposal.\n"
-        "The direction-sealed DSL v2 definition must include score_expression and direction="
+        "A nested formal_execution_spec must use schema_version 2 and include score_expression; "
+        "its direction must equal this isolated request ("
         + direction
-        + ". It is a typed expression tree, not source code.\n"
+        + "). It is a typed expression tree, not source code.\n"
         "The direction-sealed slot contract is mandatory: forward may reference A and B only; C is the "
         "hidden current target. Reverse may reference B and C only; A is the hidden historical target, "
         "and reverse output is retrospective stress testing only, never predictive evidence.\n"
@@ -899,7 +901,7 @@ def parse_directional_result(
     if direction not in {"forward", "reverse"}:
         raise ValueError("Directional output must be forward or reverse.")
 
-    proposals = parse_hypothesis_proposals(report)
+    proposals = parse_hypothesis_proposals(report, required_schema_version=4)
     if proposals["status"] in {"VALID_PROPOSALS", "VALID_EMPTY"}:
         wrong_direction = [
             item.get("hypothesis_id")

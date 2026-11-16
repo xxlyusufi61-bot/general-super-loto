@@ -40,15 +40,19 @@ def candidate(**overrides):
 
 
 def wrapped(proposals, schema_version=4):
-    if isinstance(proposals, list):
-        proposal = proposals[0] if len(proposals) == 1 else (None if not proposals else proposals)
+    if schema_version == 3:
+        payload = {"schema_version": 3, "proposals": proposals if isinstance(proposals, list) else [proposals]}
     else:
-        proposal = proposals
+        if isinstance(proposals, list):
+            proposal = proposals[0] if len(proposals) == 1 else (None if not proposals else proposals)
+        else:
+            proposal = proposals
+        payload = {"schema_version": schema_version, "proposal": proposal}
     return (
         "Report text.\n"
         + START_MARKER
         + "\n"
-        + json.dumps({"schema_version": schema_version, "proposal": proposal})
+        + json.dumps(payload)
         + "\n"
         + END_MARKER
         + "\nEnd text."
@@ -87,9 +91,18 @@ class HypothesisProposalContractTests(unittest.TestCase):
             parse_hypothesis_proposals("A prose-only report with no structured block.")["status"],
             "MISSING_BLOCK",
         )
-        old_schema = parse_hypothesis_proposals(wrapped([], schema_version=3))
+        old_schema = parse_hypothesis_proposals(wrapped([], schema_version=2))
         self.assertEqual(old_schema["status"], "REJECTED")
         self.assertEqual(old_schema["proposals"], [])
+
+    def test_legacy_v3_offline_singleton_remains_supported_but_not_for_fresh_directional_calls(self):
+        report = wrapped([candidate()], schema_version=3)
+        legacy = parse_hypothesis_proposals(report)
+        self.assertEqual(legacy["status"], "VALID_PROPOSALS")
+        self.assertEqual(len(legacy["proposals"]), 1)
+        fresh_directional = parse_hypothesis_proposals(report, required_schema_version=4)
+        self.assertEqual(fresh_directional["status"], "REJECTED")
+        self.assertEqual(fresh_directional["proposals"], [])
 
     def test_invalid_json_rejected(self):
         result = parse_hypothesis_proposals(
@@ -229,7 +242,7 @@ class HypothesisProposalContractTests(unittest.TestCase):
     def test_duplicate_json_keys_and_nonstandard_numbers_fail_closed(self):
         duplicate = (
             START_MARKER
-            + '\\n{"schema_version":3,"schema_version":3,"proposals":[]}\\n'
+            + '\\n{"schema_version":4,"schema_version":4,"proposal":null}\\n'
             + END_MARKER
         )
         duplicate_result = parse_hypothesis_proposals(duplicate)
@@ -238,10 +251,10 @@ class HypothesisProposalContractTests(unittest.TestCase):
 
         nonstandard = (
             START_MARKER
-            + '\\n{"schema_version":3,"proposals":[{"hypothesis_id":"HYP-001",'
+            + '\\n{"schema_version":4,"proposal":{"hypothesis_id":"HYP-001",'
             + '"discovery_direction":"forward","proposed_family":"candidate",'
             + '"research_rationale":"A plausible hypothesis rationale.","known_risks":["overfitting"],'
-            + '"formal_execution_spec":{"schema_version":1,"score_expression":{"op":"const","value":NaN}}}]}\\n'
+            + '"formal_execution_spec":{"schema_version":1,"score_expression":{"op":"const","value":NaN}}}}\\n'
             + END_MARKER
         )
         nonstandard_result = parse_hypothesis_proposals(nonstandard)

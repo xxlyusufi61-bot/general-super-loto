@@ -14,7 +14,8 @@ from general_execution_spec_dispatch import validate_execution_spec
 START_MARKER = "<HYPOTHESIS_PROPOSALS_JSON>"
 END_MARKER = "</HYPOTHESIS_PROPOSALS_JSON>"
 SCHEMA_VERSION = 4
-# One object (or null) per isolated direction avoids a redundant outer array.
+LEGACY_SCHEMA_VERSION = 3
+# One object (or null) per isolated model response avoids a redundant outer array.
 ALLOWED_EVALUATION_PROTOCOLS = {
     "forward_walk_forward",
     "reverse_retrospective_stress_test",
@@ -266,8 +267,12 @@ def _reject_nonstandard_json_constant(value: str) -> None:
     raise ValueError("Non-standard JSON numeric constant: " + value)
 
 
-def parse_hypothesis_proposals(report: str) -> dict[str, Any]:
-    """Extract one bounded proposal block; malformed proposals fail closed."""
+def parse_hypothesis_proposals(
+    report: str,
+    *,
+    required_schema_version: int | None = None,
+) -> dict[str, Any]:
+    """Validate fresh v4 proposals and retain the bounded v3 internal offline contract."""
     base: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "status": "REJECTED",
@@ -296,8 +301,6 @@ def parse_hypothesis_proposals(report: str) -> dict[str, Any]:
         base["rejection_reasons"] = ["Proposal block markers are out of order."]
         return base
     raw = report[start:end].strip()
-    # The contract asks for raw JSON. This wrapper allowance only strips a
-    # conventional Markdown fence; it does not relax JSON/schema validation.
     if raw.startswith("```"):
         lines = raw.splitlines()
         if len(lines) >= 3 and lines[-1].strip() == "```":
@@ -313,24 +316,49 @@ def parse_hypothesis_proposals(report: str) -> dict[str, Any]:
             "Proposal block is invalid JSON, contains duplicate keys, or uses non-standard numeric constants."
         ]
         return base
-    if not isinstance(payload, dict) or set(payload) != TOP_LEVEL_KEYS:
-        base["rejection_reasons"] = ["Top-level proposal JSON keys do not match the allowed schema."]
+    if not isinstance(payload, dict):
+        base["rejection_reasons"] = ["Top-level proposal JSON must be an object."]
         return base
-    if type(payload.get("schema_version")) is not int or payload["schema_version"] != SCHEMA_VERSION:
-        base["rejection_reasons"] = ["Unsupported proposal schema version."]
+
+    version = payload.get("schema_version")
+    if type(version) is not int:
+        base["rejection_reasons"] = ["Proposal schema_version must be an integer."]
         return base
-    raw_proposal = payload.get("proposal")
-    if raw_proposal is None:
-        validated: list[dict[str, Any]] = []
-    elif not isinstance(raw_proposal, dict):
-        base["rejection_reasons"] = ["proposal must be one object or null; arrays and alternatives are not allowed."]
+    if required_schema_version is not None and version != required_schema_version:
+        base["rejection_reasons"] = [
+            "This parser entry point requires proposal schema version "
+            + str(required_schema_version) + "."
+        ]
         return base
-    else:
-        try:
-            validated = [_validate_proposal(raw_proposal)]
-        except ValueError as exc:
-            base["rejection_reasons"] = [str(exc)]
+
+    if version == SCHEMA_VERSION and set(payload) == TOP_LEVEL_KEYS:
+        raw_proposal = payload.get("proposal")
+        if raw_proposal is not None and not isinstance(raw_proposal, dict):
+            base["rejection_reasons"] = [
+                "proposal must be one object or null; arrays and alternatives are not allowed."
+            ]
             return base
+        raw_proposals = [] if raw_proposal is None else [raw_proposal]
+    elif version == LEGACY_SCHEMA_VERSION and set(payload) == {"schema_version", "proposals"}:
+        # Schema v3 is retained only for the pre-existing local offline catalogue.
+        # The hosted direction parser below requires v4 and cannot accept this form.
+        raw_proposals = payload.get("proposals")
+        if not isinstance(raw_proposals, list) or len(raw_proposals) > 1:
+            base["rejection_reasons"] = [
+                "Legacy offline proposals must contain zero or one validated entry."
+            ]
+            return base
+    else:
+        base["rejection_reasons"] = ["Unsupported proposal schema or top-level key set."]
+        return base
+
+    validated: list[dict[str, Any]] = []
+    try:
+        for raw_proposal in raw_proposals:
+            validated.append(_validate_proposal(raw_proposal))
+    except ValueError as exc:
+        base["rejection_reasons"] = [str(exc)]
+        return base
 
     base["proposals"] = validated
     base["status"] = "VALID_EMPTY" if not validated else "VALID_PROPOSALS"
