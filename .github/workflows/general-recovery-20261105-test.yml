@@ -24,6 +24,7 @@ name: GENERAL 2026-11-05 Recovery Offline Tests
       - "general_nvidia_guard.py"
       - "docs/autonomous-research-scheduler.md"
       - ".github/workflows/general-autonomous-research.yml"
+      - ".github/workflows/retire-exhausted-fifo-target.yml"
   pull_request:
     paths:
       - "general_recovery_20261105.py"
@@ -47,6 +48,7 @@ name: GENERAL 2026-11-05 Recovery Offline Tests
       - "general_nvidia_guard.py"
       - "docs/autonomous-research-scheduler.md"
       - ".github/workflows/general-autonomous-research.yml"
+      - ".github/workflows/retire-exhausted-fifo-target.yml"
   workflow_dispatch:
 
 permissions:
@@ -67,7 +69,7 @@ jobs:
 
       - name: Validate workflow YAML syntax
         run: |
-          ruby -e 'require "yaml"; %w[.github/workflows/general-recovery-20261105.yml .github/workflows/general-recovery-20261105-test.yml .github/workflows/general-autonomous-research.yml .github/workflows/general-cycle55-migration.yml].each { |path| YAML.parse_file(path) }'
+          ruby -e 'require "yaml"; %w[.github/workflows/general-recovery-20261105.yml .github/workflows/general-recovery-20261105-test.yml .github/workflows/general-autonomous-research.yml .github/workflows/general-cycle55-migration.yml .github/workflows/retire-exhausted-fifo-target.yml].each { |path| YAML.parse_file(path) }'
           echo "Recovery workflow YAML syntax: PASS"
 
       - name: Compile recovery and existing safety modules
