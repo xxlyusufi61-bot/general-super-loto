@@ -320,6 +320,86 @@ class AutonomousResearchStateTests(unittest.TestCase):
             self.assertTrue(next_retry["retryable"])
             self.assertEqual(next_retry["retry_number"], 6)
 
+    def test_no_eligible_candidate_keeps_fifo_head_and_allows_next_attempt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root / "archive.json"
+            ledger = root / "ledger.json"
+            lock = root / "lock.json"
+            archive.write_text(
+                json.dumps({"draws": synthetic_rows(90)}), encoding="utf-8",
+            )
+            ledger.write_text(
+                json.dumps({"schema_version": 1, "purpose": "test", "entries": []}),
+                encoding="utf-8",
+            )
+            lock.write_text(json.dumps(initial_lock_state()), encoding="utf-8")
+            state = active_state()
+            plan = auto.prepare_cycle(
+                state, archive_path=archive, ledger_path=ledger,
+                global_lock_path=lock, now=NOW,
+            )
+            first = auto.claim_attempt(
+                state, plan, github_run_id="420000101", now=NOW,
+            )
+            before_queue = json.loads(json.dumps(state["target_queue"]))
+            auto.record_outcome(
+                state, first["attempt_id"],
+                outcome="NO_ELIGIBLE_CANDIDATE",
+                reason_code="NO_FROZEN_DIRECTIONAL_CANDIDATE",
+                now=NOW + timedelta(minutes=1),
+            )
+            self.assertEqual(state["target_queue"], before_queue)
+            self.assertEqual(state["target_queue"]["completed"], [])
+            retry_plan = auto.prepare_cycle(
+                state, archive_path=archive, ledger_path=ledger,
+                global_lock_path=lock, now=NOW + timedelta(minutes=2),
+            )
+            self.assertTrue(retry_plan["eligible"])
+            self.assertTrue(retry_plan["retryable"])
+            self.assertEqual(retry_plan["retry_number"], 2)
+            second = auto.claim_attempt(
+                state, retry_plan, github_run_id="420000102",
+                now=NOW + timedelta(minutes=2),
+            )
+            self.assertNotEqual(first["attempt_id"], second["attempt_id"])
+            self.assertEqual(len(state["target_queue"]["items"]), 1)
+            self.assertEqual(state["target_queue"]["completed"], [])
+
+    def test_success_without_matching_evaluated_ledger_is_rejected_atomically(self):
+        state = active_state()
+        rows = synthetic_rows(90)
+        item = auto.target_queue._make_item(
+            rows, source_archive_sha256="c" * 64,
+            enqueued_at_utc=NOW.isoformat(),
+        )
+        state["target_queue"] = {
+            "schema_version": 1,
+            "observed_through_date": rows[-1]["date"],
+            "items": [item],
+            "completed": [],
+        }
+        state["attempts"].append({
+            "attempt_id": "e" * 64,
+            "target_date": item["target_date"],
+            "archive_sha256": item["archive_sha256"],
+            "archive_record_count": item["archive_record_count"],
+            "claimed_at_utc": NOW.isoformat(),
+            "github_run_id": "420000103",
+        })
+        before = json.loads(json.dumps(state))
+        with self.assertRaisesRegex(
+            auto.AutonomousResearchError,
+            "Successful completion requires an exact persisted EVALUATED",
+        ):
+            auto.record_outcome(
+                state, "e" * 64,
+                outcome="SUCCEEDED",
+                reason_code="EVALUATION_COMPLETED",
+                now=NOW + timedelta(minutes=1),
+            )
+        self.assertEqual(state, before)
+
     def test_workflow_failed_after_provider_delivery_is_not_automatically_retried(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -858,37 +938,6 @@ class AutonomousResearchStateTests(unittest.TestCase):
         self.assertEqual(state["target_queue"]["items"][0]["target_date"], "2026-11-10")
         self.assertEqual(state["target_queue"]["completed"], [])
 
-    def test_evaluated_predecessor_state_for_fifo_progression(self):
-        state, item_target, item_next = self._exhausted_target_fixture()
-        state["authorization"] = active_state()["authorization"]
-        attempt_id = "4" * 64
-        attempt = {
-            "attempt_id": attempt_id,
-            "target_date": item_target["target_date"],
-            "archive_sha256": item_target["archive_sha256"],
-            "archive_record_count": item_target["archive_record_count"],
-            "claimed_at_utc": (NOW + timedelta(minutes=40)).isoformat(),
-            "github_run_id": "7004",
-        }
-        state["attempts"].append(attempt)
-        state["events"].append({
-            "attempt_id": attempt_id,
-            "outcome": "SUCCEEDED",
-            "recorded_at_utc": (NOW + timedelta(minutes=42)).isoformat(),
-            "reason_code": "EVALUATION_COMPLETED",
-        })
-        state["target_queue"] = auto.target_queue.complete_front(
-            state["target_queue"],
-            target_date=item_target["target_date"],
-            archive_sha256=item_target["archive_sha256"],
-            archive_record_count=item_target["archive_record_count"],
-            outcome="EVALUATED",
-            now=NOW + timedelta(minutes=42),
-        )
-        auto.validate_state(state)
-        self.assertEqual(state["target_queue"]["completed"][0]["outcome"], "EVALUATED")
-        return state, item_next
-
     def _evaluated_predecessor_state_for_prepare(self):
         state, item_target, item_next = self._exhausted_target_fixture()
         state["authorization"] = active_state()["authorization"]
@@ -917,6 +966,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
             now=NOW + timedelta(minutes=42),
         )
         auto.validate_state(state)
+        self.assertEqual(state["target_queue"]["completed"][0]["outcome"], "EVALUATED")
         return state, item_next
 
     def _prepare_next_fifo_target(self, state, item_next, root):
