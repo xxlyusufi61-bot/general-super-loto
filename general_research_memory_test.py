@@ -576,6 +576,7 @@ class PendingCandidateResumeTests(unittest.TestCase):
             value = memory.empty_memory()
             value["entries"] = [entry]
             write_json(path, value)
+            original_memory_bytes = path.read_bytes()
 
             pending = memory.find_pending_candidate(
                 "forward", "2026-11-04", "a" * 64, memory_path=path
@@ -593,6 +594,7 @@ class PendingCandidateResumeTests(unittest.TestCase):
             self.assertIsNone(memory.find_pending_candidate(
                 "reverse", "2026-11-04", "a" * 64, memory_path=path
             ))
+            self.assertEqual(path.read_bytes(), original_memory_bytes)
 
     def test_evaluated_candidate_is_not_resumed_again(self):
         with tempfile.TemporaryDirectory() as directory:
