@@ -165,10 +165,12 @@ fetch or push failure blocks the corresponding NVIDIA request.
   WORKFLOW_FAILED is not automatically replayed after a provider request has
   been sent. A PROVIDER_DELIVERY_UNCERTAIN failure allows retry only after a
   later manual unlock is recorded; no automatic unlock or same-run retry occurs.
-- A previously claimed target may be researched again after a retryable failure
-  when fresh sealed windows remain available. The sealed evaluator excludes all
-  previously consumed dates and must create new, disjoint holdouts; it never
-  reuses an earlier claim's validation dates.
+- A previously claimed target with an incomplete persisted evaluation is
+  resumed only through its exact pending claim. That recovery reuses the original
+  claim ID, archive snapshot, frozen forward/reverse definitions, and unchanged
+  directional holdout dates. Those dates stay reserved from every other
+  candidate. A new claim and new disjoint holdouts are allowed only after the
+  prior claim is completed or the FIFO target is otherwise formally resolved.
 - A directional proposal/specification captured in the append-only GENERAL
   research memory is not consumed merely because its workflow ended in failure.
   The next attempt may reuse it only when direction, target date, and exact
