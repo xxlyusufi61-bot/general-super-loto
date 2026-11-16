@@ -339,7 +339,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(
                 auto.AutonomousResearchError,
-                "exact persisted EVALUATED",
+                "matching sealed claim persisted as EVALUATED",
             ):
                 auto.record_outcome(
                     state, attempt_id, outcome="SUCCEEDED",
