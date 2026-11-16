@@ -46,6 +46,7 @@ PROPOSALS = BASE / "open_research_proposals.json"
 EXECUTION_SPECS = BASE / "open_research_execution_specs.json"
 USAGE_REPORT = BASE / "open_research_usage.json"
 RUN_STATUS = BASE / "open_research_run_status.json"
+RETRY_AUDIT = BASE / "open_research_retry_audit.json"
 LESSONS_START = research_memory.LESSONS_START
 LESSONS_END = research_memory.LESSONS_END
 API_BASE_URL = "https://integrate.api.nvidia.com/v1"
@@ -67,6 +68,9 @@ DEFAULT_REQUEST_SEND_TIMEOUT_SECONDS = 30
 _NVIDIA_REQUESTS_ATTEMPTED = 0
 _NVIDIA_REQUEST_LABELS_ATTEMPTED: set[str] = set()
 _NVIDIA_REQUEST_LABELS_SUCCEEDED: set[str] = set()
+_NVIDIA_DIRECTIONAL_COMPLETED: set[str] = set()
+_NVIDIA_REQUEST_ATTEMPT_COUNTS: dict[str, int] = {}
+_RETRY_AUDIT_EVENTS: list[dict[str, Any]] = []
 
 class NvidiaNetworkPhaseTrace:
     """Collect HTTPX/httpcore phase timings without retaining trace payloads."""
@@ -744,34 +748,129 @@ def save_usage_observation(
         raise RuntimeError("Could not write NVIDIA usage observation report.") from exc
 
 
-def write_combined_usage_summary() -> dict[str, Any]:
+def record_retry_audit_event(
+    direction: str,
+    *,
+    attempt_number: int,
+    http_status: int | None,
+    provider_response_received: bool,
+    request_delivery_state: str,
+    model_response_validated: bool,
+    decision: str,
+    budget_category: str,
+) -> bool:
+    """Persist only allowlisted retry telemetry; never retain prompts or provider bodies."""
+    if direction not in {"forward", "reverse", "forward_critique", "between_draws", "unlabelled"}:
+        return False
+    if type(attempt_number) is not int or not 0 <= attempt_number <= MAX_NVIDIA_REQUESTS_PER_RUN:
+        return False
+    if http_status is not None and (type(http_status) is not int or not 100 <= http_status <= 599):
+        return False
+    if type(provider_response_received) is not bool or type(model_response_validated) is not bool:
+        return False
+    if request_delivery_state not in {
+        "not_started", "response_received", "unknown_after_sdk_request_started"
+    }:
+        return False
+    if decision not in {
+        "REQUEST_RESERVED", "RESPONSE_VALIDATED", "HTTP_5XX_RETRY_SCHEDULED",
+        "HTTP_5XX_RETRY_RESERVED", "HTTP_5XX_RETRY_EXHAUSTED",
+        "HTTP_REJECTION_NO_RETRY", "RESPONSE_VALIDATION_FAILED",
+        "DELIVERY_UNCERTAIN", "PROVIDER_ERROR_STOPPED",
+        "REUSED_PERSISTED_CANDIDATE",
+    }:
+        return False
+    if budget_category not in {"normal", "retry_reserve", "none"}:
+        return False
+    event = {
+        "direction": direction,
+        "attempt_number": attempt_number,
+        "automatic_retry": attempt_number > 1,
+        "http_status": http_status,
+        "provider_response_received": provider_response_received,
+        "request_delivery_state": request_delivery_state,
+        "model_response_validated": model_response_validated,
+        "decision": decision,
+        "budget_category": budget_category,
+    }
+    candidate_events = _RETRY_AUDIT_EVENTS + [event]
+    payload = {
+        "schema_version": 1,
+        "policy": "At most one retry per directional call, only after an explicit received HTTP 5xx response.",
+        "events": candidate_events,
+        "automatic_retries_reserved": sum(
+            1 for item in candidate_events if item["decision"] == "HTTP_5XX_RETRY_RESERVED"
+        ),
+        "provider_response_bodies_stored": False,
+        "prompt_or_archive_rows_stored": False,
+        "target_or_predicted_numbers_stored": False,
+    }
+    temporary = RETRY_AUDIT.with_name(RETRY_AUDIT.name + ".tmp")
+    try:
+        temporary.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
+            encoding="utf-8",
+        )
+        temporary.replace(RETRY_AUDIT)
+    except OSError:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return False
+    _RETRY_AUDIT_EVENTS.append(event)
+    return True
+
+
+def write_combined_usage_summary(
+    *,
+    reused_directions: set[str] | None = None,
+) -> dict[str, Any]:
+    reused = set(reused_directions or ())
+    if reused - {"forward", "reverse"}:
+        raise RuntimeError("Invalid saved-candidate usage direction.")
     directional = []
     for direction in ("forward", "reverse"):
         path = USAGE_REPORT.with_name(
             USAGE_REPORT.stem + "_" + direction + USAGE_REPORT.suffix
         )
-        if not path.is_file():
+        if path.is_file():
+            try:
+                observation = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                raise RuntimeError("Unreadable " + direction + " usage observation.") from None
+            if not isinstance(observation, dict):
+                raise RuntimeError("Invalid " + direction + " usage observation.")
+        elif direction in reused:
+            observation = {
+                "request_status": "REUSED_PERSISTED_VALIDATED_CANDIDATE",
+                "requests_made_this_run": 0,
+                "provider_usage_available": False,
+            }
+        else:
             raise RuntimeError("Missing " + direction + " usage observation; run is incomplete.")
-        try:
-            observation = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            raise RuntimeError("Unreadable " + direction + " usage observation.") from None
-        if not isinstance(observation, dict):
-            raise RuntimeError("Invalid " + direction + " usage observation.")
-        directional.append({"direction": direction, "observation": observation})
+        directional.append({
+            "direction": direction,
+            "requests_made_this_run": _NVIDIA_REQUEST_ATTEMPT_COUNTS.get(direction, 0),
+            "candidate_source": "PERSISTED_GENERAL_MEMORY" if direction in reused else "NEW_PROVIDER_RESPONSE",
+            "observation": observation,
+        })
+    request_count = sum(_NVIDIA_REQUEST_ATTEMPT_COUNTS.values())
+    retry_count = sum(max(0, count - 1) for count in _NVIDIA_REQUEST_ATTEMPT_COUNTS.values())
     summary = {
-        "schema_version": 1,
-        "inference_requests_made_by_this_run": 2,
-        "automatic_retries": 0,
+        "schema_version": 2,
+        "inference_requests_made_by_this_run": request_count,
+        "automatic_retries": retry_count,
         "request_direction_order": ["forward", "reverse"],
         "account_level_quota_status": "UNKNOWN",
         "billing_or_paid_entitlement_status": "NOT_VERIFIED_BY_THIS_RUN",
         "requests": directional,
         "interpretation": (
-            "Two separate hosted requests were made only after the explicit free-only/no-billing "
-            "confirmation, global safety-lock preflight, and independent free-use verification. "
-            "Each direction's data was isolated to its own request. Token usage and rate-limit headers "
-            "do not prove remaining quota, free entitlement, or absence of billing risk."
+            "Forward and reverse discovery remain direction-isolated. A previously validated "
+            "GENERAL candidate may be resumed from append-only memory without a new provider request. "
+            "Each explicit HTTP 5xx retry consumes a separately reserved retry-budget slot. "
+            "Token usage and rate-limit headers do not prove remaining quota, free entitlement, "
+            "or absence of billing risk."
         ),
     }
     try:
@@ -1207,6 +1306,7 @@ def call_model(
     *,
     request_label: str | None = None,
     diagnostic_model: str | None = None,
+    _retry_attempt: int = 0,
 ) -> str:
     global _NVIDIA_REQUESTS_ATTEMPTED
     if request_label not in {None, "forward", "reverse", "forward_critique", "between_draws"}:
@@ -1286,19 +1386,25 @@ def call_model(
             "Autonomous research request cap reached (4 per job package); no additional provider request was sent."
         )
     request_key = request_label or "unlabelled"
-    if request_key in _NVIDIA_REQUEST_LABELS_ATTEMPTED:
+    if type(_retry_attempt) is not int or _retry_attempt not in {0, 1}:
+        raise RuntimeError("Only one bounded internal retry is supported.")
+    if _retry_attempt == 1 and (
+        diagnostic_mode or single_request_mode or request_key not in _NVIDIA_REQUEST_LABELS_ATTEMPTED
+    ):
+        raise RuntimeError("The bounded retry is unavailable in this request mode or without an original attempt.")
+    if request_key in _NVIDIA_REQUEST_LABELS_ATTEMPTED and _retry_attempt == 0:
         raise RuntimeError(
             "This directional NVIDIA request was already attempted; no duplicate request was sent."
         )
-    if request_label in {"forward", "reverse"}:
-        directional_attempts = [
+    if request_label in {"forward", "reverse"} and _retry_attempt == 0:
+        directional_completed = [
             label for label in ("forward", "reverse")
-            if label in _NVIDIA_REQUEST_LABELS_ATTEMPTED
+            if label in _NVIDIA_DIRECTIONAL_COMPLETED
         ]
-        expected_direction = "forward" if not directional_attempts else "reverse"
+        expected_direction = "forward" if "forward" not in directional_completed else "reverse"
         if request_label != expected_direction:
             raise RuntimeError(
-                "Primary directional NVIDIA requests must run once each in forward-then-reverse order."
+                "Primary directional NVIDIA requests must complete in forward-then-reverse order."
             )
     if request_label == "forward_critique" and "forward" not in _NVIDIA_REQUEST_LABELS_SUCCEEDED:
         raise RuntimeError("Forward critique requires a completed forward discovery request.")
@@ -1322,7 +1428,26 @@ def call_model(
     if not isinstance(network_trace, NvidiaNetworkPhaseTrace):
         network_trace = NvidiaNetworkPhaseTrace()
     try:
-        if diagnostic_mode:
+        if _retry_attempt == 1:
+            reserve_nvidia_request(
+                "open-research-" + request_key.replace("_", "-"),
+                budget_category="retry_reserve",
+            )
+            # Keep the first known-5xx marker until the retry reservation is
+            # durably committed. From this point onward, a new failed request
+            # must be treated as potentially ambiguous.
+            if not record_retry_audit_event(
+                safe_request_key if "safe_request_key" in locals() else request_key,
+                attempt_number=2,
+                http_status=None,
+                provider_response_received=False,
+                request_delivery_state="not_started",
+                model_response_validated=False,
+                decision="HTTP_5XX_RETRY_RESERVED",
+                budget_category="retry_reserve",
+            ):
+                raise RuntimeError("Retry reservation committed but its audit record could not be persisted; retry request was not sent.")
+        elif diagnostic_mode:
             reserve_nvidia_request(
                 "open-research-" + request_key,
                 diagnostic_exception=True,
@@ -1350,12 +1475,16 @@ def call_model(
     attempt_marker = Path("/tmp/general_nvidia_api_attempted_" + safe_request_key)
     success_marker = Path("/tmp/general_nvidia_api_succeeded_" + safe_request_key)
     no_retry_marker = Path("/tmp/general_nvidia_api_no_retry_" + safe_request_key)
+    http_5xx_marker = Path("/tmp/general_nvidia_api_known_http_5xx_" + safe_request_key)
+    if _retry_attempt == 1:
+        http_5xx_marker.unlink(missing_ok=True)
     run_attempt_marker = Path("/tmp/general_nvidia_api_attempted")
     run_attempt_marker.write_text(
         datetime.now(timezone.utc).isoformat(), encoding="utf-8"
     )
     _NVIDIA_REQUESTS_ATTEMPTED += 1
     _NVIDIA_REQUEST_LABELS_ATTEMPTED.add(request_key)
+    _NVIDIA_REQUEST_ATTEMPT_COUNTS[request_key] = _NVIDIA_REQUEST_ATTEMPT_COUNTS.get(request_key, 0) + 1
     attempt_marker.write_text(
         datetime.now(timezone.utc).isoformat(), encoding="utf-8"
     )
@@ -1463,6 +1592,18 @@ def call_model(
 
     if failure is not None:
         incomplete_model_response = isinstance(failure, IncompleteModelResponseError)
+        error_response = getattr(failure, "response", None)
+        known_http_5xx = (
+            isinstance(status_code, int)
+            and 500 <= status_code <= 599
+            and error_response is not None
+            and response_received
+            and not isinstance(failure, (IncompleteModelResponseError, InvalidModelResponseError))
+        )
+        if known_http_5xx:
+            http_5xx_marker.write_text(
+                datetime.now(timezone.utc).isoformat(), encoding="utf-8"
+            )
         failure_payload: dict[str, Any] | None = None
         if incomplete_model_response and failure.usage is not None:
             failure_payload = {"usage": failure.usage}
@@ -1519,27 +1660,98 @@ def call_model(
             ),
             request_label=request_label,
         )
-        if status_code == 429:
-            raise RuntimeError(
-                "NVIDIA returned HTTP 429 (rate limit). OpenAI SDK retries are disabled. "
-                "No automatic retry was attempted. Inspect " + request_usage_name + "."
-            ) from None
-        if status_code == 402:
+        if status_code in {402, 429}:
+            record_retry_audit_event(
+                safe_request_key,
+                attempt_number=_retry_attempt + 1,
+                http_status=status_code,
+                provider_response_received=True,
+                request_delivery_state="response_received",
+                model_response_validated=False,
+                decision="HTTP_REJECTION_NO_RETRY",
+                budget_category="retry_reserve" if _retry_attempt == 1 else "normal",
+            )
+            if status_code == 429:
+                raise RuntimeError(
+                    "NVIDIA returned HTTP 429 (rate limit). SDK retries are disabled; no retry was attempted. "
+                    "Inspect " + request_usage_name + "."
+                ) from None
             raise RuntimeError(
                 "NVIDIA returned HTTP 402 (provider reported insufficient credits/access). "
-                "OpenAI SDK retries are disabled. No automatic retry was attempted."
+                "SDK retries are disabled; no retry was attempted."
             ) from None
+
+        if known_http_5xx:
+            retry_allowed = (
+                _retry_attempt == 0
+                and not diagnostic_mode
+                and not single_request_mode
+                and request_label in {"forward", "reverse", "forward_critique", "between_draws"}
+            )
+            audit_saved = record_retry_audit_event(
+                safe_request_key,
+                attempt_number=_retry_attempt + 1,
+                http_status=status_code,
+                provider_response_received=True,
+                request_delivery_state="response_received",
+                model_response_validated=False,
+                decision="HTTP_5XX_RETRY_SCHEDULED" if retry_allowed else "HTTP_5XX_RETRY_EXHAUSTED",
+                budget_category="retry_reserve" if _retry_attempt == 1 else "normal",
+            )
+            if retry_allowed and audit_saved:
+                return call_model(
+                    messages,
+                    request_label=request_label,
+                    diagnostic_model=diagnostic_model,
+                    _retry_attempt=1,
+                )
+            if retry_allowed and not audit_saved:
+                decision_note = "Retry audit could not be persisted; no retry request was sent."
+            else:
+                decision_note = "The one-retry allowance was exhausted or unavailable."
+            raise RuntimeError(
+                "NVIDIA returned explicit HTTP " + str(status_code) +
+                " (provider server error). " + decision_note +
+                " This response was received; it is not classified as ambiguous delivery. "
+                "Inspect " + request_usage_name + "."
+            ) from None
+
         if isinstance(failure, (IncompleteModelResponseError, InvalidModelResponseError)):
             failure_summary = str(failure)
+            record_retry_audit_event(
+                safe_request_key,
+                attempt_number=_retry_attempt + 1,
+                http_status=status_code,
+                provider_response_received=response_received,
+                request_delivery_state=(
+                    "response_received" if response_received else "unknown_after_sdk_request_started"
+                ),
+                model_response_validated=False,
+                decision="RESPONSE_VALIDATION_FAILED",
+                budget_category="retry_reserve" if _retry_attempt == 1 else "normal",
+            )
         else:
             failure_summary = (
                 "Research model OpenAI-SDK request failed during " + failure_stage +
                 " (" + type(failure).__name__ + "). Request delivery state: " +
                 ("response_received" if response_received else "unknown_after_sdk_request_started")
             )
+            record_retry_audit_event(
+                safe_request_key,
+                attempt_number=_retry_attempt + 1,
+                http_status=status_code,
+                provider_response_received=response_received,
+                request_delivery_state=(
+                    "response_received" if response_received else "unknown_after_sdk_request_started"
+                ),
+                model_response_validated=False,
+                decision="DELIVERY_UNCERTAIN" if not response_received else "PROVIDER_ERROR_STOPPED",
+                budget_category="retry_reserve" if _retry_attempt == 1 else "normal",
+            )
         raise RuntimeError(
             failure_summary +
-            ". OpenAI SDK retries are disabled. No automatic retry was attempted; inspect " +
+            ". OpenAI SDK retries are disabled. No retry is permitted for ambiguous delivery, "
+            "incomplete streaming, or response-validation failure; inspect " +
             request_usage_name + "."
         ) from None
 
@@ -1585,10 +1797,63 @@ def call_model(
         datetime.now(timezone.utc).isoformat(), encoding="utf-8"
     )
     _NVIDIA_REQUEST_LABELS_SUCCEEDED.add(request_key)
+    if request_key in {"forward", "reverse"}:
+        _NVIDIA_DIRECTIONAL_COMPLETED.add(request_key)
+    record_retry_audit_event(
+        safe_request_key,
+        attempt_number=_retry_attempt + 1,
+        http_status=status_code,
+        provider_response_received=True,
+        request_delivery_state="response_received",
+        model_response_validated=True,
+        decision="RESPONSE_VALIDATED",
+        budget_category="retry_reserve" if _retry_attempt == 1 else "normal",
+    )
     Path("/tmp/general_nvidia_api_succeeded").write_text(
         datetime.now(timezone.utc).isoformat(), encoding="utf-8"
     )
     return content.strip()
+
+
+def render_pending_candidate_report(candidate: dict[str, Any], direction: str) -> str:
+    """Reconstitute a validated candidate from append-only memory for its original target."""
+    if not isinstance(candidate, dict) or candidate.get("direction") != direction:
+        raise RuntimeError("Saved candidate direction is invalid.")
+    proposal = candidate.get("proposal")
+    specification = candidate.get("execution_spec")
+    if not isinstance(proposal, dict) or not isinstance(specification, dict):
+        raise RuntimeError("Saved candidate is missing its validated proposal or DSL specification.")
+    if proposal.get("discovery_direction") != direction:
+        raise RuntimeError("Saved candidate proposal direction does not match its isolated channel.")
+    if not execution_spec_matches_proposal(proposal, specification):
+        raise RuntimeError("Saved candidate DSL no longer matches its formal mathematical definition.")
+    # Parsing this reconstructed machine-readable report re-runs the canonical
+    # proposal validator, DSL validator, and synthetic contract tests.
+    proposal_block = {"schema_version": 3, "proposals": [proposal]}
+    execution_block = {
+        "schema_version": 1,
+        "specifications": [{
+            "hypothesis_id": proposal["hypothesis_id"],
+            "execution_spec": specification,
+        }],
+    }
+    lessons = candidate.get("learning_notes")
+    if not isinstance(lessons, dict) or set(lessons) != research_memory.LESSON_KEYS:
+        lessons = {"observations": [], "failed_approaches": [], "next_tests": []}
+    learning_block = {"schema_version": 1, **lessons}
+    return (
+        "This is a previously captured GENERAL candidate resumed from append-only research memory. "
+        "It is not a new model discovery and has not been evaluated on the sealed interval.\n\n"
+        + "<HYPOTHESIS_PROPOSALS_JSON>\n"
+        + json.dumps(proposal_block, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+        + "\n</HYPOTHESIS_PROPOSALS_JSON>\n"
+        + "<HYPOTHESIS_EXECUTION_SPECS_JSON>\n"
+        + json.dumps(execution_block, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+        + "\n</HYPOTHESIS_EXECUTION_SPECS_JSON>\n"
+        + LESSONS_START
+        + json.dumps(learning_block, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+        + LESSONS_END
+    )
 
 
 def write_run_status(
@@ -1622,6 +1887,7 @@ def main() -> int:
     archive_sha256 = None
     stage = "archive_preflight"
     failed_direction = None
+    global _RETRY_AUDIT_EVENTS
     marker_labels = ("forward", "reverse", "forward_critique", "between_draws", "unlabelled")
     for marker in (
         Path("/tmp/general_nvidia_api_attempted"),
@@ -1633,8 +1899,12 @@ def main() -> int:
                 Path("/tmp/general_nvidia_api_attempted_" + label),
                 Path("/tmp/general_nvidia_api_succeeded_" + label),
                 Path("/tmp/general_nvidia_api_no_retry_" + label),
+                Path("/tmp/general_nvidia_api_known_http_5xx_" + label),
             )
         ),
+        RETRY_AUDIT,
+        RETRY_AUDIT.with_name(RETRY_AUDIT.name + ".tmp"),
+        Path("/tmp/general_directional_candidates_incomplete"),
     ):
         try:
             marker.unlink()
@@ -1643,6 +1913,9 @@ def main() -> int:
     _NVIDIA_REQUESTS_ATTEMPTED = 0
     _NVIDIA_REQUEST_LABELS_ATTEMPTED.clear()
     _NVIDIA_REQUEST_LABELS_SUCCEEDED.clear()
+    _NVIDIA_DIRECTIONAL_COMPLETED.clear()
+    _NVIDIA_REQUEST_ATTEMPT_COUNTS.clear()
+    _RETRY_AUDIT_EVENTS = []
     write_run_status("RUNNING", stage)
     try:
         ledger_path = BASE / "general_evaluation_ledger.json"
@@ -1671,19 +1944,42 @@ def main() -> int:
             encoding="utf-8",
         )
 
-        # Each direction receives only its own history and its own prior GENERAL memory.
+        # Resume a previously validated, unevaluated candidate only when both
+        # target date and exact archive bytes match. Otherwise discover afresh.
+        reused_directions: set[str] = set()
+        memory_path = BASE / "general_research_memory.json"
+        pending_forward = research_memory.find_pending_candidate(
+            "forward", target, archive_sha256, memory_path=memory_path
+        )
+        pending_reverse = research_memory.find_pending_candidate(
+            "reverse", target, archive_sha256, memory_path=memory_path
+        )
+
         stage = "forward_inference"
         failed_direction = "forward"
         write_run_status("RUNNING", stage, target=target, archive_sha256=archive_sha256, failed_direction=failed_direction)
         forward_memory = research_memory.direction_context(
-            "forward", target, memory_path=BASE / "general_research_memory.json"
+            "forward", target, memory_path=memory_path
         )
-        forward_messages = build_messages(
-            target, train, os.environ.get("TASK_TEXT", ""),
-            direction="forward", prior_memory=forward_memory
-        )
-        report_forward = call_model(forward_messages, request_label="forward")
-        FORWARD_REPORT.write_text(report_forward.strip() + "\n", encoding="utf-8")
+        if pending_forward is not None:
+            report_forward = render_pending_candidate_report(pending_forward, "forward")
+            FORWARD_REPORT.write_text(report_forward + "\n", encoding="utf-8")
+            reused_directions.add("forward")
+            _NVIDIA_DIRECTIONAL_COMPLETED.add("forward")
+            _NVIDIA_REQUEST_LABELS_SUCCEEDED.add("forward")
+            record_retry_audit_event(
+                "forward", attempt_number=0, http_status=None,
+                provider_response_received=False, request_delivery_state="not_started",
+                model_response_validated=False, decision="REUSED_PERSISTED_CANDIDATE",
+                budget_category="none",
+            )
+        else:
+            forward_messages = build_messages(
+                target, train, os.environ.get("TASK_TEXT", ""),
+                direction="forward", prior_memory=forward_memory
+            )
+            report_forward = call_model(forward_messages, request_label="forward")
+            FORWARD_REPORT.write_text(report_forward.strip() + "\n", encoding="utf-8")
         failed_direction = None
         stage = "forward_complete"
         write_run_status("RUNNING", stage, target=target, archive_sha256=archive_sha256)
@@ -1692,14 +1988,27 @@ def main() -> int:
         failed_direction = "reverse"
         write_run_status("RUNNING", stage, target=target, archive_sha256=archive_sha256, failed_direction=failed_direction)
         reverse_memory = research_memory.direction_context(
-            "reverse", target, memory_path=BASE / "general_research_memory.json"
+            "reverse", target, memory_path=memory_path
         )
-        reverse_messages = build_messages(
-            target, train, os.environ.get("TASK_TEXT", ""),
-            direction="reverse", prior_memory=reverse_memory
-        )
-        report_reverse = call_model(reverse_messages, request_label="reverse")
-        REVERSE_REPORT.write_text(report_reverse.strip() + "\n", encoding="utf-8")
+        if pending_reverse is not None:
+            report_reverse = render_pending_candidate_report(pending_reverse, "reverse")
+            REVERSE_REPORT.write_text(report_reverse + "\n", encoding="utf-8")
+            reused_directions.add("reverse")
+            _NVIDIA_DIRECTIONAL_COMPLETED.add("reverse")
+            _NVIDIA_REQUEST_LABELS_SUCCEEDED.add("reverse")
+            record_retry_audit_event(
+                "reverse", attempt_number=0, http_status=None,
+                provider_response_received=False, request_delivery_state="not_started",
+                model_response_validated=False, decision="REUSED_PERSISTED_CANDIDATE",
+                budget_category="none",
+            )
+        else:
+            reverse_messages = build_messages(
+                target, train, os.environ.get("TASK_TEXT", ""),
+                direction="reverse", prior_memory=reverse_memory
+            )
+            report_reverse = call_model(reverse_messages, request_label="reverse")
+            REVERSE_REPORT.write_text(report_reverse.strip() + "\n", encoding="utf-8")
         failed_direction = None
         stage = "directional_parse"
         write_run_status("RUNNING", stage, target=target, archive_sha256=archive_sha256)
@@ -1709,7 +2018,7 @@ def main() -> int:
         proposal_document, execution_spec_document = combine_directional_results(
             forward_result, reverse_result
         )
-        usage_summary = write_combined_usage_summary()
+        usage_summary = write_combined_usage_summary(reused_directions=reused_directions)
 
         PROPOSALS.write_text(
             json.dumps(proposal_document, ensure_ascii=False, indent=2) + "\n",
@@ -1756,9 +2065,10 @@ def main() -> int:
             "\n\n## NVIDIA usage observation\n\n"
             "- Provider account-level quota was not queried; remaining quota is UNKNOWN.\n"
             "- Directional requests made by this run: "
-            f"{usage_summary['inference_requests_made_by_this_run']}; automatic retries: 0.\n"
-            "- Forward/reverse response usage and safe headers are recorded separately in "
-            "open_research_usage_forward.json and open_research_usage_reverse.json.\n"
+            f"{usage_summary['inference_requests_made_by_this_run']}; automatic retries: "
+            f"{usage_summary['automatic_retries']}.\n"
+            "- Forward/reverse response usage is recorded per direction; a resumed candidate is "
+            "labelled as a persisted-memory reuse with zero new provider requests.\n"
             "- Combined metadata is in open_research_usage.json.\n"
             "- Missing usage/limit data is UNKNOWN, not unlimited or proof of free use.\n"
         )
@@ -1768,7 +2078,7 @@ def main() -> int:
             f"- Generated (UTC): {datetime.now(timezone.utc).isoformat()}\n"
             f"- Isolated target date: {target}\n"
             f"- Pre-target discovery rows available before directional partitioning: {len(train)}\n"
-            "- Hosted discovery requests: two separate direction-isolated calls.\n"
+            "- Forward and reverse results are direction-isolated; a previously validated pending candidate may be resumed from GENERAL memory without another provider call.\n"
             "- Sealed validation rows sent to either model request: NO.\n"
             "- Target numbers sent to either model request: NO.\n"
             "- Target/future records sent to either model request: NO.\n"
@@ -1809,13 +2119,26 @@ def main() -> int:
         print("Target numbers exposed: NO")
         print("Reverse report is retrospective only: YES")
         print("Provider quota checked before request: NO; account-level quota remains UNKNOWN")
-        print("Requests:", usage_summary["inference_requests_made_by_this_run"], "| automatic retries: 0")
+        print("Requests:", usage_summary["inference_requests_made_by_this_run"], "| automatic retries:", usage_summary["automatic_retries"])
+        print("Resumed persisted candidate directions:", sorted(reused_directions))
         print("Usage observation:", USAGE_REPORT.name)
         print("Proposal status:", proposal_document["status"])
         print("Validated directional proposals:", len(proposal_document["proposals"]))
         print("Execution-spec status:", execution_spec_document["status"])
         print("DSL-validated directional specifications:", len(execution_spec_document["specifications"]))
         print("Both directional synthetic tests passed:", execution_spec_document["synthetic_tests_passed"])
+        if proposal_document["proposals"] and not execution_spec_document["execution_ready"]:
+            Path("/tmp/general_directional_candidates_incomplete").write_text(
+                datetime.now(timezone.utc).isoformat(), encoding="utf-8"
+            )
+            stage = "directional_candidate_pairing"
+            write_run_status(
+                "FAILED", stage, target=target, archive_sha256=archive_sha256,
+                error_type="IncompleteDirectionalCandidateSet",
+            )
+            print("OPEN RESEARCH: validated candidate(s) retained; directional candidate/specification pair is incomplete.")
+            print("Cycle remains retryable; no candidate was consumed or promoted.")
+            return 2
         print("Real-archive execution: NO | Execution approval: NO")
         print("Method registry modified: NO")
         print("Proposal file:", PROPOSALS.name)
