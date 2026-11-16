@@ -48,8 +48,12 @@ def _write_evaluated_test_ledger(path, attempt):
             "target_date": attempt["target_date"],
             "archive_sha256": attempt["archive_sha256"],
             "archive_record_count": attempt["archive_record_count"],
-            "validation_dates": ["2026-01-01"],
-            "reverse_validation_dates": ["2026-01-03"],
+            "validation_dates": [(
+                date.fromisoformat(attempt["target_date"]) - timedelta(days=4)
+            ).isoformat()],
+            "reverse_validation_dates": [(
+                date.fromisoformat(attempt["target_date"]) - timedelta(days=2)
+            ).isoformat()],
         }],
     }
     path.write_text(json.dumps(payload), encoding="utf-8")
