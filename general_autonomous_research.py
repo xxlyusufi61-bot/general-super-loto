@@ -1228,6 +1228,15 @@ def claim_attempt(
         raise AutonomousResearchError("Plan archive hash is invalid.")
     if type(plan.get("archive_record_count")) is not int or plan["archive_record_count"] < 1:
         raise AutonomousResearchError("Plan archive record count is invalid.")
+    queue = target_queue.validate_queue(state["target_queue"])
+    if queue["items"]:
+        front = queue["items"][0]
+        if (
+            target_date != front["target_date"]
+            or archive_sha != front["archive_sha256"]
+            or plan["archive_record_count"] != front["archive_record_count"]
+        ):
+            raise AutonomousResearchError("Attempt does not match the immutable FIFO head.")
     attempts = state["attempts"]
     event_by_attempt = {item["attempt_id"]: item for item in state["events"]}
     completed_by_date = {
@@ -1293,6 +1302,15 @@ def claim_attempt(
             raise AutonomousResearchError(
                 "Uncertain provider delivery requires a manual unlock after the failed attempt."
             )
+
+    if github_run_id is not None and (not github_run_id.isdigit() or len(github_run_id) > 32):
+        raise AutonomousResearchError("GitHub run identifier is invalid.")
+
+    attempt_id = hashlib.sha256(
+        ("GENERAL-AUTO-RESEARCH-V2|" + target_date + "|" + archive_sha + "|" + str(attempt_number)).encode("utf-8")
+    ).hexdigest()
+    if any(item["attempt_id"] == attempt_id for item in state["attempts"]):
+        raise AutonomousResearchError("This autonomous attempt was already claimed.")
 
     attempt = {
         "attempt_id": attempt_id,
