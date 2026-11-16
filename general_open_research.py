@@ -257,9 +257,12 @@ def isolate_discovery_only(
     """Return only fresh discovery rows; previously consumed holdouts stay excluded."""
     target, _pre_target = isolate_pre_target(rows)
     resolved_ledger = Path(ledger_path) if ledger_path is not None else BASE / "general_evaluation_ledger.json"
+    archive_proof = sealed.load_archive(ARCHIVE)
+    if archive_proof["rows"] != rows:
+        raise RuntimeError("Archive changed while reconstructing the sealed discovery partition.")
     ledger = sealed.load_ledger(resolved_ledger)
     used_dates = sealed.get_used_validation_dates(ledger)
-    split = sealed.split_archive(rows, used_validation_dates=used_dates)
+    split = sealed.split_for_research(ARCHIVE, resolved_ledger)
     if split.get("target_date") != target:
         raise RuntimeError("Sealed split target disagrees with Data Guard.")
     discovery = split.get("discovery_rows")
@@ -1979,6 +1982,14 @@ def main() -> int:
         pending_reverse = research_memory.find_pending_candidate(
             "reverse", target, archive_sha256, memory_path=memory_path
         )
+        pending_claim = sealed.pending_claim_for_archive(ARCHIVE, ledger_path)
+        if pending_claim is not None and not sealed.pending_claim_matches_candidates(
+            pending_claim, pending_forward, pending_reverse
+        ):
+            raise RuntimeError(
+                "A pending sealed claim exists, but its exact original directional candidates are unavailable; "
+                "no new provider request or replacement candidate is permitted."
+            )
 
         stage = "forward_inference"
         failed_direction = "forward"
