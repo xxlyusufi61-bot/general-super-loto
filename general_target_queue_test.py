@@ -112,30 +112,30 @@ class DurableTargetQueueTests(unittest.TestCase):
                 q, target_date=rows[-1]["date"], archive_sha256=hashlib.sha256(raw).hexdigest(),
                 archive_record_count=len(rows), outcome="FAILED", now=NOW,
             )
-        with self.assertRaisesRegex(queue.TargetQueueError, "does not match"):
+        with self.assertRaisesRegex(queue.TargetQueueError, "Only an EVALUATED"):
+            queue.complete_front(
+                q, target_date=rows[-1]["date"], archive_sha256=item["archive_sha256"],
+                archive_record_count=len(rows), outcome="NO_ELIGIBLE_CANDIDATE", now=NOW,
+            )
+        with self.assertRaisesRegex(queue.TargetQueueError, "Only an EVALUATED"):
             queue.complete_front(
                 q, target_date=rows[-2]["date"], archive_sha256=item["archive_sha256"],
-                archive_record_count=len(rows), outcome="SUCCEEDED", now=NOW,
+                archive_record_count=len(rows), outcome="EVALUATED", now=NOW,
             )
         completed = queue.complete_front(
             q, target_date=rows[-1]["date"], archive_sha256=item["archive_sha256"],
-            archive_record_count=len(rows), outcome="NO_ELIGIBLE_CANDIDATE", now=NOW,
+            archive_record_count=len(rows), outcome="EVALUATED", now=NOW,
         )
         self.assertEqual(completed["items"], [])
         self.assertEqual(completed["completed"][0]["target_date"], rows[-1]["date"])
-        self.assertEqual(completed["completed"][0]["outcome"], "NO_ELIGIBLE_CANDIDATE")
+        self.assertEqual(completed["completed"][0]["outcome"], "EVALUATED")
 
-        with self.assertRaisesRegex(queue.TargetQueueError, "fully failed attempts"):
-            queue.retire_exhausted_front(
-                q, target_date=rows[-1]["date"], archive_sha256=item["archive_sha256"],
-                archive_record_count=len(rows), attempt_count=3, failed_event_count=2, now=NOW,
-            )
-        exhausted = queue.retire_exhausted_front(
-            q, target_date=rows[-1]["date"], archive_sha256=item["archive_sha256"],
-            archive_record_count=len(rows), attempt_count=3, failed_event_count=3, now=NOW,
-        )
-        self.assertEqual(exhausted["items"], [])
-        self.assertEqual(exhausted["completed"][0]["outcome"], "EXHAUSTED_RETRY_BUDGET")
+        for attempts, failures in ((2, 2), (5, 5), (3, 2)):
+            with self.assertRaisesRegex(queue.TargetQueueError, "retirement is disabled"):
+                queue.retire_exhausted_front(
+                    q, target_date=rows[-1]["date"], archive_sha256=item["archive_sha256"],
+                    archive_record_count=len(rows), attempt_count=attempts, failed_event_count=failures, now=NOW,
+                )
         self.assertEqual(len(q["items"]), 1, "input queue must remain immutable")
 
     def test_archive_mutation_under_pending_snapshot_fails_closed_without_changing_queue(self):
