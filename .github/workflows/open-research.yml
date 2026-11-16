@@ -264,7 +264,7 @@ jobs:
         run: |
           uncertain_request=false
           for request_label in forward reverse forward_critique between_draws unlabelled; do
-            if [ -f "/tmp/general_nvidia_api_attempted_${request_label}" ] && [ ! -f "/tmp/general_nvidia_api_succeeded_${request_label}" ] && [ ! -f "/tmp/general_nvidia_api_no_retry_${request_label}" ] && [ ! -f "/tmp/general_nvidia_api_known_http_5xx_${request_label}" ]; then
+            if [ -f "/tmp/general_nvidia_api_attempted_${request_label}" ] && [ ! -f "/tmp/general_nvidia_api_succeeded_${request_label}" ] && [ ! -f "/tmp/general_nvidia_api_known_http_5xx_${request_label}" ]; then
               uncertain_request=true
             fi
           done
