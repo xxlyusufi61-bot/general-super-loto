@@ -957,10 +957,16 @@ def parse_directional_result(
             ]
         else:
             try:
-                if execution_spec_version(formal_spec) != 2:
-                    raise ValueError("Fresh isolated research requires direction-sealed DSL v2.")
+                spec_version = execution_spec_version(formal_spec)
+                resumed_from_memory = report.lstrip().startswith(
+                    "This is a previously captured GENERAL candidate resumed from append-only research memory."
+                )
+                if spec_version == 1 and not resumed_from_memory:
+                    raise ValueError(
+                        "Fresh isolated research requires direction-sealed DSL v2; DSL v1 is accepted only for an exact pending-memory resume."
+                    )
                 checked_spec = validate_execution_spec(formal_spec)
-                if checked_spec.get("direction") != direction:
+                if spec_version == 2 and checked_spec.get("direction") != direction:
                     raise ValueError("Formal execution-spec direction does not match the isolated request.")
                 synthetic = run_synthetic_contract_tests(checked_spec)
                 if synthetic.get("status") != "PASS":

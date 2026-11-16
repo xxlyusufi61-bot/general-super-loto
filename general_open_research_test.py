@@ -368,7 +368,7 @@ class OpenResearchIsolationTests(unittest.TestCase):
         self.assertFalse(specs["execution_ready"])
         self.assertFalse(specs["method_registry_modified"])
 
-    def test_single_proposal_ast_is_authoritative_and_legacy_spec_block_is_ignored(self):
+    def test_null_formal_definition_cannot_be_overridden_by_legacy_dsl_block(self):
         report = make_directional_report("forward")
         proposal = json.loads(
             report.split("<HYPOTHESIS_PROPOSALS_JSON>")[1]
