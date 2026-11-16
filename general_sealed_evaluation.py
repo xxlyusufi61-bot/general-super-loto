@@ -872,6 +872,20 @@ def create_claim(
             "real_archive_evaluation_performed": False,
             "reason": "Need one DSL-valid specification for the first eligible proposal in each direction, with no alternatives.",
         }
+    completed_match = next((
+        item for item in ledger["entries"]
+        if item.get("state") == "EVALUATED"
+        and item.get("target_date") == archive["last_date"]
+        and item.get("archive_sha256") == archive["archive_sha256"]
+        and item.get("hypothesis_id") == candidate["hypothesis_id"]
+        and item.get("spec_sha256") == candidate["spec_sha256"]
+        and item.get("reverse_hypothesis_id") == candidate["reverse_hypothesis_id"]
+        and item.get("reverse_spec_sha256") == candidate["reverse_spec_sha256"]
+    ), None)
+    if completed_match is not None:
+        raise SealedEvaluationError(
+            "This exact directional candidate pair already completed its sealed evaluation; duplicate scoring is forbidden."
+        )
     used_dates = _used_validation_dates(ledger)
     split = split_archive(
         archive["rows"],
