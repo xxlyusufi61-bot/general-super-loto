@@ -9,8 +9,12 @@ name: GENERAL 2026-11-05 Recovery Offline Tests
       - ".github/workflows/general-recovery-20261105-test.yml"
       - "general_autonomous_research.py"
       - "general_autonomous_research_test.py"
+      - "general_cycle55_manual_retry.py"
+      - "general_cycle55_manual_retry_dispatch_test.py"
       - "general_cycle55_recovery.py"
       - "general_cycle55_recovery_test.py"
+      - "general_cycle55_manual_retry.py"
+      - "general_cycle55_manual_retry_dispatch_test.py"
       - "general_cycle55_migration.py"
       - "general_cycle55_migration_test.py"
       - ".github/workflows/general-cycle55-migration.yml"
@@ -33,8 +37,12 @@ name: GENERAL 2026-11-05 Recovery Offline Tests
       - ".github/workflows/general-recovery-20261105-test.yml"
       - "general_autonomous_research.py"
       - "general_autonomous_research_test.py"
+      - "general_cycle55_manual_retry.py"
+      - "general_cycle55_manual_retry_dispatch_test.py"
       - "general_cycle55_recovery.py"
       - "general_cycle55_recovery_test.py"
+      - "general_cycle55_manual_retry.py"
+      - "general_cycle55_manual_retry_dispatch_test.py"
       - "general_cycle55_migration.py"
       - "general_cycle55_migration_test.py"
       - ".github/workflows/general-cycle55-migration.yml"
@@ -74,7 +82,7 @@ jobs:
 
       - name: Compile recovery and existing safety modules
         run: |
-          python3 -m py_compile general_recovery_20261105.py general_recovery_20261105_test.py general_open_research.py general_autonomous_research.py general_cycle55_recovery.py general_cycle55_recovery_test.py general_cycle55_migration.py general_cycle55_migration_test.py general_research_memory.py general_research_memory_test.py general_sealed_evaluation.py general_nvidia_guard.py
+          python3 -m py_compile general_recovery_20261105.py general_recovery_20261105_test.py general_open_research.py general_autonomous_research.py general_cycle55_manual_retry.py general_cycle55_manual_retry_dispatch_test.py general_cycle55_recovery.py general_cycle55_recovery_test.py general_cycle55_migration.py general_cycle55_migration_test.py general_research_memory.py general_research_memory_test.py general_sealed_evaluation.py general_nvidia_guard.py
 
       - name: Run offline recovery and regression suites
         run: |
