@@ -253,7 +253,7 @@ class OpenResearchIsolationTests(unittest.TestCase):
         self.assertIn("falsification criterion", system.lower())
         self.assertNotIn('"forward_walk_forward"', system)
         self.assertIn("four mandatory evaluation protocols", system.lower())
-        self.assertIn("or return null", system)
+        self.assertIn("return one proposal object or null", system.lower())
         self.assertIn("one isolated forward discovery pass", lowered)
         self.assertIn('"discovery_direction":"forward"', system)
         self.assertNotIn('"discovery_direction":"forward|reverse|both"', system)
