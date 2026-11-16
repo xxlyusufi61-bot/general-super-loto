@@ -1506,25 +1506,6 @@ class AutonomousResearchMemoryIntegrationTests(unittest.TestCase):
             "sealed_plan_path": sealed_plan_path,
         }
 
-    def _record_evaluated_ledger_entry(self, cycle):
-        import hashlib
-
-        ledger = json.loads(cycle["ledger_path"].read_text(encoding="utf-8"))
-        rows = cycle["archive"]["rows"]
-        entry = {
-            "claim_id": hashlib.sha256(
-                ("synthetic-evaluated|" + cycle["archive"]["archive_sha256"]).encode("utf-8")
-            ).hexdigest(),
-            "state": "EVALUATED",
-            "target_date": cycle["archive"]["last_date"],
-            "archive_sha256": cycle["archive"]["archive_sha256"],
-            "archive_record_count": cycle["archive"]["record_count"],
-            "validation_dates": [rows[-4]["date"]],
-            "reverse_validation_dates": [rows[-3]["date"]],
-        }
-        ledger["entries"].append(entry)
-        write_json(cycle["ledger_path"], ledger)
-
     def _finish_attempt(self, cycle, *, outcome, reason_code):
         stdout = io.StringIO()
         stderr = io.StringIO()
@@ -1568,7 +1549,7 @@ class AutonomousResearchMemoryIntegrationTests(unittest.TestCase):
         self.assertEqual(exit_code, 0, stderr.getvalue() or stdout.getvalue())
         return json.loads(stdout.getvalue())
 
-    def test_successful_autonomous_finish_flows_into_two_directional_memory_entries(self):
+    def test_completed_but_unevaluated_research_is_captured_without_consuming_target(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             cycle = self._make_claimed_cycle(root)
@@ -1593,11 +1574,10 @@ class AutonomousResearchMemoryIntegrationTests(unittest.TestCase):
                 directional_report("reverse"), encoding="utf-8"
             )
 
-            self._record_evaluated_ledger_entry(cycle)
             scheduler_state = self._finish_attempt(
                 cycle,
-                outcome="SUCCEEDED",
-                reason_code="EVALUATION_COMPLETED",
+                outcome="FAILED",
+                reason_code="WORKFLOW_FAILED",
             )
             result = self._record_memory_via_workflow_cli(cycle)
             saved = memory.load_memory(cycle["memory_path"])
@@ -1621,7 +1601,7 @@ class AutonomousResearchMemoryIntegrationTests(unittest.TestCase):
             attempt = scheduler_state["attempts"][0]
             self.assertEqual(attempt["target_date"], target)
             self.assertEqual(attempt["archive_sha256"], archive_sha)
-            self.assertEqual(scheduler_state["events"][0]["outcome"], "SUCCEEDED")
+            self.assertEqual(scheduler_state["events"][0]["outcome"], "FAILED")
 
             forward_context = memory.direction_context(
                 "forward", target, memory_path=cycle["memory_path"]
