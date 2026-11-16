@@ -353,14 +353,15 @@ class AutonomousResearchStateTests(unittest.TestCase):
             )
             self.assertTrue(first_plan["eligible"])
             self.assertEqual(first_plan["status"], "READY")
-            first_forward = list(first_plan["forward_validation_dates"])
-            first_reverse = list(first_plan["reverse_validation_dates"])
+            first_windows = auto.sealed.preflight(archive, ledger)
+            first_forward = list(first_windows["forward_validation_dates"])
+            first_reverse = list(first_windows["reverse_validation_dates"])
 
             attempt = auto.claim_attempt(
                 state, first_plan, github_run_id="420000007", now=NOW,
             )
             proposals, specs = write_candidate_documents(root)
-            sealed.create_claim(
+            auto.sealed.create_claim(
                 archive,
                 ledger,
                 proposals,
@@ -379,9 +380,10 @@ class AutonomousResearchStateTests(unittest.TestCase):
             self.assertTrue(retry_plan["eligible"])
             self.assertTrue(retry_plan["retryable"])
             self.assertTrue(retry_plan["pending_claim_resume_available"])
-            self.assertEqual(retry_plan["pending_claim_id"], sealed.load_ledger(ledger)["entries"][0]["claim_id"])
-            self.assertEqual(retry_plan["forward_validation_dates"], first_forward)
-            self.assertEqual(retry_plan["reverse_validation_dates"], first_reverse)
+            self.assertEqual(retry_plan["pending_claim_id"], auto.sealed.load_ledger(ledger)["entries"][0]["claim_id"])
+            resumed_windows = auto.sealed.preflight(archive, ledger)
+            self.assertEqual(resumed_windows["forward_validation_dates"], first_forward)
+            self.assertEqual(resumed_windows["reverse_validation_dates"], first_reverse)
             retry_attempt = auto.claim_attempt(
                 state, retry_plan, github_run_id="420000010", now=NOW + timedelta(minutes=2),
             )
