@@ -1490,8 +1490,6 @@ def call_model(
     success_marker = Path("/tmp/general_nvidia_api_succeeded_" + safe_request_key)
     no_retry_marker = Path("/tmp/general_nvidia_api_no_retry_" + safe_request_key)
     http_5xx_marker = Path("/tmp/general_nvidia_api_known_http_5xx_" + safe_request_key)
-    if _retry_attempt == 1:
-        http_5xx_marker.unlink(missing_ok=True)
     run_attempt_marker = Path("/tmp/general_nvidia_api_attempted")
     run_attempt_marker.write_text(
         datetime.now(timezone.utc).isoformat(), encoding="utf-8"
@@ -1502,6 +1500,11 @@ def call_model(
     attempt_marker.write_text(
         datetime.now(timezone.utc).isoformat(), encoding="utf-8"
     )
+    # Preserve the first explicit-5xx classification until the retry's own
+    # attempt marker is durably written. A reservation or audit failure must
+    # not be reclassified as ambiguous delivery when no retry request was sent.
+    if _retry_attempt == 1:
+        http_5xx_marker.unlink(missing_ok=True)
 
     system_prompt_bytes = sum(
         len(str(item.get("content", "")).encode("utf-8"))
