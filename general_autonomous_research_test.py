@@ -527,6 +527,51 @@ class AutonomousResearchStateTests(unittest.TestCase):
             self.assertFalse(blocked["eligible"])
             self.assertEqual(blocked["status"], "PROVIDER_HTTP_REJECTION_NO_RETRY")
 
+    def test_explicit_http_5xx_and_incomplete_candidate_pair_retry_without_manual_unlock(self):
+        for reason_code in (
+            "PROVIDER_HTTP_5XX_RETRYABLE",
+            "DIRECTIONAL_CANDIDATE_SET_INCOMPLETE",
+        ):
+            with self.subTest(reason_code=reason_code), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                archive = root / "archive.json"
+                ledger = root / "ledger.json"
+                lock = root / "lock.json"
+                archive.write_text(json.dumps({"draws": synthetic_rows(90)}), encoding="utf-8")
+                ledger.write_text(
+                    json.dumps({"schema_version": 1, "purpose": "test", "entries": []}),
+                    encoding="utf-8",
+                )
+                lock.write_text(json.dumps(initial_lock_state()), encoding="utf-8")
+                state = active_state()
+                first_plan = auto.prepare_cycle(
+                    state, archive_path=archive, ledger_path=ledger,
+                    global_lock_path=lock, now=NOW,
+                )
+                first_attempt = auto.claim_attempt(
+                    state, first_plan, github_run_id="420000020", now=NOW,
+                )
+                auto.record_outcome(
+                    state, first_attempt["attempt_id"], outcome="FAILED",
+                    reason_code=reason_code, now=NOW,
+                )
+
+                retry_plan = auto.prepare_cycle(
+                    state, archive_path=archive, ledger_path=ledger,
+                    global_lock_path=lock, now=NOW + timedelta(minutes=1),
+                )
+                self.assertTrue(retry_plan["eligible"])
+                self.assertTrue(retry_plan["retryable"])
+                self.assertFalse(retry_plan["manual_recovery_confirmed"])
+                retry_attempt = auto.claim_attempt(
+                    state, retry_plan, github_run_id="420000021",
+                    now=NOW + timedelta(minutes=2),
+                )
+                self.assertEqual(retry_attempt["target_date"], first_attempt["target_date"])
+                self.assertNotEqual(retry_attempt["attempt_id"], first_attempt["attempt_id"])
+                auto.validate_state(state)
+
+
     def test_new_target_cannot_skip_a_previous_proven_no_send_target(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
