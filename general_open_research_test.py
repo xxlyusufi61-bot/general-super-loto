@@ -1524,6 +1524,7 @@ class NvidiaUsageObservationTests(unittest.TestCase):
                 {"usage": {"prompt_tokens": 110, "completion_tokens": 35, "total_tokens": 145}},
             )
             with patch.object(research, "USAGE_REPORT", usage_path):
+                research._NVIDIA_REQUEST_ATTEMPT_COUNTS.update({"forward": 1, "reverse": 1})
                 research.save_usage_observation(forward_observation, request_label="forward")
                 research.save_usage_observation(reverse_observation, request_label="reverse")
                 summary = research.write_combined_usage_summary()
@@ -1543,7 +1544,7 @@ class NvidiaUsageObservationTests(unittest.TestCase):
 
 
 class OpenResearchOrchestrationFailureTests(unittest.TestCase):
-    def test_reverse_504_after_forward_success_stops_before_parse_or_promotion(self):
+    def test_reverse_provider_failure_after_forward_success_stops_before_parse_or_promotion(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             target = "2026-11-12"
@@ -1564,6 +1565,7 @@ class OpenResearchOrchestrationFailureTests(unittest.TestCase):
                 "EXECUTION_SPECS": root / "open_research_execution_specs.json",
                 "USAGE_REPORT": root / "open_research_usage.json",
                 "RUN_STATUS": root / "open_research_run_status.json",
+                "RETRY_AUDIT": root / "open_research_retry_audit.json",
             }
             with (
                 patch.multiple(research, **paths),
@@ -1625,7 +1627,7 @@ class OpenResearchWorkflowRegressionTests(unittest.TestCase):
         )
         return "\n".join(lines[start:end])
 
-    def test_reverse_504_path_activates_lock_and_never_retries_or_claims_holdout(self):
+    def test_known_http_5xx_is_excluded_from_uncertainty_lock_and_claim_gate_stays_fail_closed(self):
         workflow = "open-research.yml"
         lock_step = self._workflow_step(
             workflow, "Activate global lock after an incomplete NVIDIA research request"
@@ -1636,6 +1638,8 @@ class OpenResearchWorkflowRegressionTests(unittest.TestCase):
         )
         self.assertIn('/tmp/general_nvidia_api_attempted_${request_label}', lock_step)
         self.assertIn('/tmp/general_nvidia_api_succeeded_${request_label}', lock_step)
+        self.assertIn('/tmp/general_nvidia_api_no_retry_${request_label}', lock_step)
+        self.assertIn('/tmp/general_nvidia_api_known_http_5xx_${request_label}', lock_step)
         self.assertIn("python3 general_nvidia_guard.py lock --reason", lock_step)
         self.assertNotIn("rerun", lock_step.lower())
         self.assertNotIn("--retry", lock_step.lower())
