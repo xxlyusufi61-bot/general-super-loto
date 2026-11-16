@@ -936,7 +936,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
                 "claimed_at_utc": claimed.isoformat(),
                 "github_run_id": str(7000 + index),
             })
-            if not (omit_last_event and index == 2):
+            if not (omit_last_event and index == auto.MAX_ATTEMPTS_PER_TARGET - 1):
                 state["events"].append({
                     "attempt_id": attempt_id,
                     "outcome": "FAILED",
