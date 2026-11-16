@@ -107,7 +107,7 @@ class DurableTargetQueueTests(unittest.TestCase):
             "items": [item],
             "completed": [],
         }
-        with self.assertRaisesRegex(queue.TargetQueueError, "Only terminal successful"):
+        with self.assertRaisesRegex(queue.TargetQueueError, "Only an EVALUATED"):
             queue.complete_front(
                 q, target_date=rows[-1]["date"], archive_sha256=hashlib.sha256(raw).hexdigest(),
                 archive_record_count=len(rows), outcome="FAILED", now=NOW,
