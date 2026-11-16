@@ -1516,6 +1516,7 @@ class AutonomousResearchMemoryIntegrationTests(unittest.TestCase):
                 "--attempt-id", cycle["attempt"]["attempt_id"],
                 "--outcome", outcome,
                 "--reason-code", reason_code,
+                "--ledger", str(cycle["ledger_path"]),
             ])
         self.assertEqual(exit_code, 0, stderr.getvalue() or stdout.getvalue())
         saved_state = autonomous.read_state(cycle["scheduler_state_path"])
@@ -1548,7 +1549,7 @@ class AutonomousResearchMemoryIntegrationTests(unittest.TestCase):
         self.assertEqual(exit_code, 0, stderr.getvalue() or stdout.getvalue())
         return json.loads(stdout.getvalue())
 
-    def test_successful_autonomous_finish_flows_into_two_directional_memory_entries(self):
+    def test_completed_but_unevaluated_research_is_captured_without_consuming_target(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             cycle = self._make_claimed_cycle(root)
@@ -1575,8 +1576,8 @@ class AutonomousResearchMemoryIntegrationTests(unittest.TestCase):
 
             scheduler_state = self._finish_attempt(
                 cycle,
-                outcome="SUCCEEDED",
-                reason_code="EVALUATION_COMPLETED",
+                outcome="FAILED",
+                reason_code="WORKFLOW_FAILED",
             )
             result = self._record_memory_via_workflow_cli(cycle)
             saved = memory.load_memory(cycle["memory_path"])
@@ -1600,7 +1601,7 @@ class AutonomousResearchMemoryIntegrationTests(unittest.TestCase):
             attempt = scheduler_state["attempts"][0]
             self.assertEqual(attempt["target_date"], target)
             self.assertEqual(attempt["archive_sha256"], archive_sha)
-            self.assertEqual(scheduler_state["events"][0]["outcome"], "SUCCEEDED")
+            self.assertEqual(scheduler_state["events"][0]["outcome"], "FAILED")
 
             forward_context = memory.direction_context(
                 "forward", target, memory_path=cycle["memory_path"]

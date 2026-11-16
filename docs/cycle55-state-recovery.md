@@ -1,5 +1,12 @@
 # Cycle #55 state-store recovery
 
+> Historical record only: this document preserves the Cycle #55 false-terminal
+> recovery and attempts recorded under the policy in force at that time. Those
+> old exception records remain solely for audit and grant no active retry path.
+> The current scheduler uses a uniform ten-attempt budget per target. Explicit
+> EXHAUSTED_RETRY_BUDGET retirement remains separately confirmed and validated.
+> This document is not an authorization to repeat the Cycle #55 action.
+
 ## Scope
 
 This procedure prepares a local state preview for the Cycle #55 false terminal
@@ -49,11 +56,14 @@ only for the exact 2026-11-10 FIFO target (archive SHA-256
 records), after its three existing pinned attempts and final
 `WORKFLOW_FAILED` event. The one-time exception is implemented in scheduler
 state schema v4 in `manual_retry_history`; it does not make any other
-`WORKFLOW_FAILED` target retryable or raise the normal three-attempt limit.
+`WORKFLOW_FAILED` target retryable or change the retry policy then in force. That
+statement describes historical policy only; the current limit is ten attempts.
 
-The guarded `cycle55-manual-retry` workflow_dispatch path requires the pinned
-target and FIFO snapshot, the exact one-time confirmation, a first-attempt
-dispatch on `main`, and the pinned authorized GitHub actor/workflow identity.
+At the time of the incident, the guarded `cycle55-manual-retry` workflow_dispatch
+path required the pinned target and FIFO snapshot, a one-time confirmation,
+a first-attempt dispatch on `main`, and the pinned authorized actor/workflow
+identity. That execution path is now retired and is not exposed by the current
+workflow.
 It rechecks existing authorization, the clear global NVIDIA lock, fresh
 disjoint forward/reverse sealed windows, chronology, minimum discovery history,
 and target isolation before reserving attempt four. It cannot unlock the

@@ -38,6 +38,27 @@ def synthetic_rows(count, start="2021-01-01"):
     return rows
 
 
+def _write_evaluated_test_ledger(path, attempt):
+    payload = {
+        "schema_version": 1,
+        "purpose": "test",
+        "entries": [{
+            "claim_id": "f" * 64,
+            "state": "EVALUATED",
+            "target_date": attempt["target_date"],
+            "archive_sha256": attempt["archive_sha256"],
+            "archive_record_count": attempt["archive_record_count"],
+            "validation_dates": [(
+                date.fromisoformat(attempt["target_date"]) - timedelta(days=4)
+            ).isoformat()],
+            "reverse_validation_dates": [(
+                date.fromisoformat(attempt["target_date"]) - timedelta(days=2)
+            ).isoformat()],
+        }],
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+
 class AutonomousResearchStateTests(unittest.TestCase):
     def test_initial_state_is_disabled_and_has_no_attempts(self):
         state = auto.initial_state()
@@ -237,9 +258,11 @@ class AutonomousResearchStateTests(unittest.TestCase):
             self.assertEqual(skipped["status"], "TARGET_ATTEMPT_IN_PROGRESS")
             self.assertFalse(skipped["eligible"])
 
+            _write_evaluated_test_ledger(ledger, attempt)
             finished = auto.record_outcome(
                 state, attempt["attempt_id"], outcome="SUCCEEDED",
-                reason_code="EVALUATION_COMPLETED", now=NOW,
+                reason_code="EVALUATION_COMPLETED",
+                evaluation_ledger_path=ledger, now=NOW,
             )
             self.assertEqual(len(finished["events"]), 1)
             with self.assertRaisesRegex(auto.AutonomousResearchError, "terminal outcome"):
@@ -248,7 +271,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
                     reason_code="WORKFLOW_FAILED", now=NOW,
                 )
 
-    def test_proven_no_send_failures_allow_same_target_retries_with_existing_cap(self):
+    def test_proven_no_send_failures_allow_same_target_retries_with_ten_attempt_cap(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             archive = root / "archive.json"
@@ -271,7 +294,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
                 reason_code="NO_PROVIDER_REQUEST_SENT", now=NOW,
             )
 
-            for number in range(2, 4):
+            for number in range(2, auto.MAX_ATTEMPTS_PER_TARGET + 1):
                 at = NOW + timedelta(minutes=number - 1)
                 retry_plan = auto.prepare_cycle(
                     state, archive_path=archive, ledger_path=ledger,
@@ -291,14 +314,63 @@ class AutonomousResearchStateTests(unittest.TestCase):
                 )
                 previous = current
 
-            self.assertEqual(len(state["attempts"]), 3)
+            self.assertEqual(len(state["attempts"]), auto.MAX_ATTEMPTS_PER_TARGET)
             auto.validate_state(state)
             blocked = auto.prepare_cycle(
                 state, archive_path=archive, ledger_path=ledger,
-                global_lock_path=lock, now=NOW + timedelta(minutes=4),
+                global_lock_path=lock, now=NOW + timedelta(minutes=auto.MAX_ATTEMPTS_PER_TARGET),
             )
             self.assertFalse(blocked["eligible"])
             self.assertEqual(blocked["status"], "TARGET_RETRY_LIMIT_REACHED")
+
+            last = state["attempts"][-1]
+            eleventh_at = NOW + timedelta(minutes=auto.MAX_ATTEMPTS_PER_TARGET + 1)
+            state["attempts"].append({
+                "attempt_id": "f" * 64,
+                "target_date": last["target_date"],
+                "archive_sha256": last["archive_sha256"],
+                "archive_record_count": last["archive_record_count"],
+                "claimed_at_utc": eleventh_at.isoformat(),
+                "github_run_id": "420000011",
+            })
+            state["events"].append({
+                "attempt_id": "f" * 64,
+                "outcome": "FAILED",
+                "recorded_at_utc": (eleventh_at + timedelta(seconds=1)).isoformat(),
+                "reason_code": "NO_PROVIDER_REQUEST_SENT",
+            })
+            with self.assertRaisesRegex(auto.AutonomousResearchError, "ten-attempt limit"):
+                auto.validate_state(state)
+
+    def test_successful_target_cannot_be_recorded_without_exact_evaluated_ledger(self):
+        state = active_state()
+        attempt_id = "e" * 64
+        state["attempts"].append({
+            "attempt_id": attempt_id,
+            "target_date": "2026-11-01",
+            "archive_sha256": "a" * 64,
+            "archive_record_count": 90,
+            "claimed_at_utc": NOW.isoformat(),
+            "github_run_id": "98765",
+        })
+        before = json.loads(json.dumps(state))
+        with tempfile.TemporaryDirectory() as directory:
+            ledger = Path(directory) / "ledger.json"
+            ledger.write_text(
+                json.dumps({"schema_version": 1, "purpose": "test", "entries": []}),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(
+                auto.AutonomousResearchError,
+                "matching sealed claim persisted as EVALUATED",
+            ):
+                auto.record_outcome(
+                    state, attempt_id, outcome="SUCCEEDED",
+                    reason_code="EVALUATION_COMPLETED",
+                    evaluation_ledger_path=ledger, now=NOW + timedelta(minutes=1),
+                )
+        self.assertEqual(state, before)
+
 
     def test_workflow_failed_after_provider_delivery_is_not_automatically_retried(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -735,15 +807,71 @@ class AutonomousResearchStateTests(unittest.TestCase):
                 global_lock_path=lock, now=NOW,
             )
             attempt = auto.claim_attempt(state, plan, github_run_id="98766", now=NOW)
+            _write_evaluated_test_ledger(ledger, attempt)
             auto.record_outcome(
                 state, attempt["attempt_id"], outcome="SUCCEEDED",
-                reason_code="EVALUATION_COMPLETED", now=NOW,
+                reason_code="EVALUATION_COMPLETED",
+                evaluation_ledger_path=ledger, now=NOW,
             )
             self.assertEqual(state["target_queue"]["items"], [])
             self.assertEqual(len(state["target_queue"]["completed"]), 1)
             self.assertEqual(
                 state["target_queue"]["completed"][0]["target_date"], rows[-1]["date"]
             )
+
+    def test_no_eligible_candidate_keeps_fifo_head_and_allows_same_target_retry(self):
+        rows = synthetic_rows(90)
+        item = auto.target_queue._make_item(
+            rows, source_archive_sha256="d" * 64,
+            enqueued_at_utc=NOW.isoformat(),
+        )
+        state = active_state()
+        state["target_queue"] = {
+            "schema_version": 1,
+            "observed_through_date": rows[-1]["date"],
+            "items": [item],
+            "completed": [],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root / "archive.json"
+            ledger = root / "ledger.json"
+            lock = root / "lock.json"
+            archive.write_text(
+                json.dumps({"draws": rows}, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+                encoding="utf-8",
+            )
+            ledger.write_text(
+                json.dumps({"schema_version": 1, "purpose": "test", "entries": []}),
+                encoding="utf-8",
+            )
+            lock.write_text(json.dumps(initial_lock_state()), encoding="utf-8")
+            plan = auto.prepare_cycle(
+                state, archive_path=archive, ledger_path=ledger,
+                global_lock_path=lock, now=NOW,
+            )
+            first = auto.claim_attempt(state, plan, github_run_id="420000091", now=NOW)
+            auto.record_outcome(
+                state, first["attempt_id"], outcome="NO_ELIGIBLE_CANDIDATE",
+                reason_code="NO_FROZEN_DIRECTIONAL_CANDIDATE", now=NOW,
+            )
+            self.assertEqual(state["target_queue"]["items"][0]["target_date"], rows[-1]["date"])
+            self.assertEqual(state["target_queue"]["completed"], [])
+            auto.validate_state(state)
+
+            retry = auto.prepare_cycle(
+                state, archive_path=archive, ledger_path=ledger,
+                global_lock_path=lock, now=NOW + timedelta(minutes=1),
+            )
+            self.assertTrue(retry["eligible"])
+            self.assertTrue(retry["retryable"])
+            self.assertEqual(retry["retry_number"], 2)
+            second = auto.claim_attempt(
+                state, retry, github_run_id="420000092", now=NOW + timedelta(minutes=1),
+            )
+            self.assertNotEqual(first["attempt_id"], second["attempt_id"])
+            self.assertEqual(state["target_queue"]["items"][0]["target_date"], rows[-1]["date"])
+
 
     def test_no_send_failure_keeps_fifo_head_for_safe_same_target_retry(self):
         rows = synthetic_rows(90)
@@ -797,8 +925,8 @@ class AutonomousResearchStateTests(unittest.TestCase):
             "items": [item_target, item_next],
             "completed": [],
         }
-        for index in range(3):
-            attempt_id = str(index + 1) * 64
+        for index in range(auto.MAX_ATTEMPTS_PER_TARGET):
+            attempt_id = format(index + 1, "x") * 64
             claimed = NOW + timedelta(minutes=index * 10)
             state["attempts"].append({
                 "attempt_id": attempt_id,
@@ -808,7 +936,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
                 "claimed_at_utc": claimed.isoformat(),
                 "github_run_id": str(7000 + index),
             })
-            if not (omit_last_event and index == 2):
+            if not (omit_last_event and index == auto.MAX_ATTEMPTS_PER_TARGET - 1):
                 state["events"].append({
                     "attempt_id": attempt_id,
                     "outcome": "FAILED",
@@ -823,12 +951,25 @@ class AutonomousResearchStateTests(unittest.TestCase):
         attempts_before = json.loads(json.dumps(state["attempts"]))
         events_before = json.loads(json.dumps(state["events"]))
 
+        with self.assertRaisesRegex(auto.AutonomousResearchError, "exactly ten failed attempts"):
+            auto.retire_exhausted_target(
+                state,
+                target_date="2026-11-10",
+                archive_sha256=item_target["archive_sha256"],
+                archive_record_count=item_target["archive_record_count"],
+                expected_attempt_count=auto.MAX_ATTEMPTS_PER_TARGET - 1,
+                expected_next_target_date="2026-11-12",
+                expected_next_archive_sha256=item_next["archive_sha256"],
+                expected_next_archive_record_count=item_next["archive_record_count"],
+                now=NOW,
+            )
+
         updated, report = auto.retire_exhausted_target(
             state,
             target_date="2026-11-10",
             archive_sha256=item_target["archive_sha256"],
             archive_record_count=item_target["archive_record_count"],
-            expected_attempt_count=3,
+            expected_attempt_count=auto.MAX_ATTEMPTS_PER_TARGET,
             expected_next_target_date="2026-11-12",
             expected_next_archive_sha256=item_next["archive_sha256"],
             expected_next_archive_record_count=item_next["archive_record_count"],
@@ -836,7 +977,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
         )
 
         self.assertEqual(report["outcome"], "EXHAUSTED_RETRY_BUDGET")
-        self.assertEqual(report["attempts_preserved_count"], 3)
+        self.assertEqual(report["attempts_preserved_count"], auto.MAX_ATTEMPTS_PER_TARGET)
         self.assertEqual(report["next_target_date"], "2026-11-12")
         self.assertEqual(updated["target_queue"]["items"][0]["target_date"], "2026-11-12")
         self.assertEqual(updated["target_queue"]["completed"][0]["outcome"], "EXHAUSTED_RETRY_BUDGET")
@@ -854,7 +995,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
                 target_date="2026-11-10",
                 archive_sha256=item_target["archive_sha256"],
                 archive_record_count=item_target["archive_record_count"],
-                expected_attempt_count=3,
+                expected_attempt_count=auto.MAX_ATTEMPTS_PER_TARGET,
                 expected_next_target_date="2026-11-12",
                 expected_next_archive_sha256=item_next["archive_sha256"],
                 expected_next_archive_record_count=item_next["archive_record_count"],
@@ -871,7 +1012,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
             target_date="2026-11-10",
             archive_sha256=item_target["archive_sha256"],
             archive_record_count=item_target["archive_record_count"],
-            expected_attempt_count=3,
+            expected_attempt_count=auto.MAX_ATTEMPTS_PER_TARGET,
             expected_next_target_date="2026-11-12",
             expected_next_archive_sha256=item_next["archive_sha256"],
             expected_next_archive_record_count=item_next["archive_record_count"],

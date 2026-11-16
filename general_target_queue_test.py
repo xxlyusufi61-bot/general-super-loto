@@ -107,23 +107,28 @@ class DurableTargetQueueTests(unittest.TestCase):
             "items": [item],
             "completed": [],
         }
-        with self.assertRaisesRegex(queue.TargetQueueError, "Only terminal successful"):
+        with self.assertRaisesRegex(queue.TargetQueueError, "Only an EVALUATED"):
             queue.complete_front(
                 q, target_date=rows[-1]["date"], archive_sha256=hashlib.sha256(raw).hexdigest(),
                 archive_record_count=len(rows), outcome="FAILED", now=NOW,
             )
+        with self.assertRaisesRegex(queue.TargetQueueError, "Only an EVALUATED"):
+            queue.complete_front(
+                q, target_date=rows[-1]["date"], archive_sha256=item["archive_sha256"],
+                archive_record_count=len(rows), outcome="NO_ELIGIBLE_CANDIDATE", now=NOW,
+            )
         with self.assertRaisesRegex(queue.TargetQueueError, "does not match"):
             queue.complete_front(
                 q, target_date=rows[-2]["date"], archive_sha256=item["archive_sha256"],
-                archive_record_count=len(rows), outcome="SUCCEEDED", now=NOW,
+                archive_record_count=len(rows), outcome="EVALUATED", now=NOW,
             )
         completed = queue.complete_front(
             q, target_date=rows[-1]["date"], archive_sha256=item["archive_sha256"],
-            archive_record_count=len(rows), outcome="NO_ELIGIBLE_CANDIDATE", now=NOW,
+            archive_record_count=len(rows), outcome="EVALUATED", now=NOW,
         )
         self.assertEqual(completed["items"], [])
         self.assertEqual(completed["completed"][0]["target_date"], rows[-1]["date"])
-        self.assertEqual(completed["completed"][0]["outcome"], "NO_ELIGIBLE_CANDIDATE")
+        self.assertEqual(completed["completed"][0]["outcome"], "EVALUATED")
 
         with self.assertRaisesRegex(queue.TargetQueueError, "fully failed attempts"):
             queue.retire_exhausted_front(
