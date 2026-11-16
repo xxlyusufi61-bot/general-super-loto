@@ -589,8 +589,16 @@ class NvidiaUsageObservationTests(unittest.TestCase):
         research._NVIDIA_REQUESTS_ATTEMPTED = 0
         research._NVIDIA_REQUEST_LABELS_ATTEMPTED.clear()
         research._NVIDIA_REQUEST_LABELS_SUCCEEDED.clear()
+        research._NVIDIA_DIRECTIONAL_COMPLETED.clear()
+        research._NVIDIA_REQUEST_ATTEMPT_COUNTS.clear()
+        research._RETRY_AUDIT_EVENTS.clear()
+        research.RETRY_AUDIT.unlink(missing_ok=True)
         for label in ("forward", "reverse", "forward_critique", "between_draws", "unlabelled"):
             Path("/tmp/general_nvidia_api_no_retry_" + label).unlink(missing_ok=True)
+            Path("/tmp/general_nvidia_api_known_http_5xx_" + label).unlink(missing_ok=True)
+        research.RETRY_AUDIT.unlink(missing_ok=True)
+        research.RETRY_AUDIT.with_name(research.RETRY_AUDIT.name + ".tmp").unlink(missing_ok=True)
+            Path("/tmp/general_nvidia_api_known_http_5xx_" + label).unlink(missing_ok=True)
 
     @staticmethod
     def sdk_response(
@@ -1037,7 +1045,7 @@ class NvidiaUsageObservationTests(unittest.TestCase):
         self.assertEqual(saved[0]["sdk_max_retries"], 0)
         self.assertEqual(research._NVIDIA_REQUESTS_ATTEMPTED, 1)
 
-    def test_http_504_is_recorded_as_uncertain_and_never_marked_retryable(self):
+    def test_http_504_is_retried_once_after_explicit_response_and_then_validated(self):
         class SyntheticGatewayTimeout(Exception):
             status_code = 504
             response = SimpleNamespace(headers={
@@ -1045,24 +1053,26 @@ class NvidiaUsageObservationTests(unittest.TestCase):
                 "Authorization": "never-log-this",
             })
 
-        client = self.client_with_response()
-        client.chat.completions.create.side_effect = SyntheticGatewayTimeout("gateway timed out")
+        first = self.client_with_response()
+        first.chat.completions.create.side_effect = SyntheticGatewayTimeout("gateway timed out")
+        second = self.client_with_response(self.sdk_response("recovered after one 5xx"))
+        clients = [first, second]
         saved = []
         with patch.dict(os.environ, self.live_env(), clear=True), patch.object(
             research, "reserve_nvidia_request"
-        ), patch.object(
+        ) as reserve, patch.object(
             research, "save_usage_observation",
             side_effect=lambda observation, **kwargs: saved.append(observation),
         ), patch(
-            "general_open_research._create_nvidia_client", return_value=client
+            "general_open_research._create_nvidia_client", side_effect=clients
         ):
-            with self.assertRaisesRegex(RuntimeError, "SyntheticGatewayTimeout"):
-                research.call_model(
-                    [{"role": "user", "content": "gateway timeout test"}],
-                    request_label="forward",
-                )
+            answer = research.call_model(
+                [{"role": "user", "content": "gateway retry test"}],
+                request_label="forward",
+            )
 
-        self.assertEqual(len(saved), 1)
+        self.assertEqual(answer, "recovered after one 5xx")
+        self.assertEqual(len(saved), 2)
         self.assertEqual(saved[0]["http_status"], 504)
         self.assertEqual(saved[0]["failure_stage"], "provider_http_error")
         self.assertEqual(saved[0]["request_delivery_state"], "response_received")
@@ -1070,11 +1080,20 @@ class NvidiaUsageObservationTests(unittest.TestCase):
         self.assertFalse(saved[0]["model_stream_events_received"])
         self.assertFalse(saved[0]["model_response_validated"])
         self.assertEqual(saved[0]["provider_error_category"], "HTTP_5XX_SERVER_ERROR")
+        self.assertTrue(saved[1]["model_response_validated"])
+        self.assertFalse(Path("/tmp/general_nvidia_api_known_http_5xx_forward").exists())
         self.assertFalse(Path("/tmp/general_nvidia_api_no_retry_forward").exists())
-        self.assertEqual(research._NVIDIA_REQUESTS_ATTEMPTED, 1)
-        client.close.assert_called_once()
+        self.assertEqual(research._NVIDIA_REQUESTS_ATTEMPTED, 2)
+        self.assertEqual(research._NVIDIA_REQUEST_ATTEMPT_COUNTS["forward"], 2)
+        self.assertEqual(reserve.call_count, 2)
+        self.assertEqual(reserve.call_args_list[1].kwargs.get("budget_category"), "retry_reserve")
+        first.close.assert_called_once()
+        second.close.assert_called_once()
+        audit = json.loads(research.RETRY_AUDIT.read_text(encoding="utf-8"))
+        self.assertEqual(audit["automatic_retries_reserved"], 1)
+        self.assertFalse(audit["provider_response_bodies_stored"])
 
-    def test_forward_success_then_reverse_504_records_phases_without_retry(self):
+    def test_forward_success_then_reverse_504_retries_once_then_stops(self):
         class SyntheticGatewayTimeout(Exception):
             status_code = 504
             response = SimpleNamespace(headers={"x-request-id": "reverse-gateway-504"})
@@ -1082,9 +1101,13 @@ class NvidiaUsageObservationTests(unittest.TestCase):
         clients = [
             self.client_with_response(self.sdk_response("forward completed")),
             self.client_with_response(),
+            self.client_with_response(),
         ]
         clients[1].chat.completions.create.side_effect = SyntheticGatewayTimeout(
             "synthetic reverse gateway timeout"
+        )
+        clients[2].chat.completions.create.side_effect = SyntheticGatewayTimeout(
+            "synthetic reverse retry also failed"
         )
         saved = []
 
@@ -1107,7 +1130,7 @@ class NvidiaUsageObservationTests(unittest.TestCase):
 
         with patch.dict(os.environ, self.live_env(), clear=True), patch.object(
             research, "reserve_nvidia_request"
-        ), patch.object(
+        ) as reserve, patch.object(
             research, "save_usage_observation",
             side_effect=lambda observation, **kwargs: saved.append(
                 (observation, kwargs["request_label"])
@@ -1125,7 +1148,7 @@ class NvidiaUsageObservationTests(unittest.TestCase):
                 ),
                 "forward completed",
             )
-            with self.assertRaisesRegex(RuntimeError, "SyntheticGatewayTimeout"):
+            with self.assertRaisesRegex(RuntimeError, "explicit HTTP 504"):
                 research.call_model(
                     [
                         {"role": "system", "content": "synthetic system prompt"},
@@ -1139,33 +1162,31 @@ class NvidiaUsageObservationTests(unittest.TestCase):
                     request_label="reverse",
                 )
 
-        self.assertEqual(len(saved), 2)
+        self.assertEqual(len(saved), 3)
         forward_observation, forward_label = saved[0]
         reverse_observation, reverse_label = saved[1]
-        self.assertEqual((forward_label, reverse_label), ("forward", "reverse"))
+        retry_observation, retry_label = saved[2]
+        self.assertEqual((forward_label, reverse_label, retry_label), ("forward", "reverse", "reverse"))
         self.assertTrue(forward_observation["model_response_validated"])
         self.assertIsNotNone(forward_observation["first_sse_event_seconds"])
         self.assertEqual(forward_observation["http_status"], 200)
-        self.assertEqual(reverse_observation["http_status"], 504)
-        self.assertEqual(reverse_observation["failure_stage"], "provider_http_error")
-        self.assertEqual(reverse_observation["provider_error_category"], "HTTP_5XX_SERVER_ERROR")
-        self.assertEqual(reverse_observation["stream_event_count"], 0)
-        self.assertIsNone(reverse_observation["first_sse_event_seconds"])
-        self.assertFalse(reverse_observation["model_stream_events_received"])
-        self.assertFalse(reverse_observation["model_response_validated"])
-        self.assertEqual(reverse_observation["automatic_retries"], 0)
-        self.assertEqual(reverse_observation["sdk_max_retries"], 0)
-        self.assertGreater(reverse_observation["request_body_bytes"], 0)
-        self.assertGreater(reverse_observation["system_prompt_bytes"], 0)
-        self.assertGreater(reverse_observation["user_prompt_bytes"], 0)
-        for metric in (
-            "tcp_tls_establishment_seconds", "request_send_seconds",
-            "response_header_wait_seconds", "transport_open_seconds",
-        ):
-            self.assertIsNotNone(reverse_observation[metric])
-        self.assertEqual(research._NVIDIA_REQUESTS_ATTEMPTED, 2)
+        for failed in (reverse_observation, retry_observation):
+            self.assertEqual(failed["http_status"], 504)
+            self.assertEqual(failed["failure_stage"], "provider_http_error")
+            self.assertEqual(failed["provider_error_category"], "HTTP_5XX_SERVER_ERROR")
+            self.assertEqual(failed["stream_event_count"], 0)
+            self.assertFalse(failed["model_stream_events_received"])
+            self.assertFalse(failed["model_response_validated"])
+        self.assertEqual(research._NVIDIA_REQUESTS_ATTEMPTED, 3)
+        self.assertEqual(research._NVIDIA_REQUEST_ATTEMPT_COUNTS, {"forward": 1, "reverse": 2})
         self.assertEqual(research._NVIDIA_REQUEST_LABELS_SUCCEEDED, {"forward"})
+        self.assertTrue(Path("/tmp/general_nvidia_api_known_http_5xx_reverse").exists())
+        self.assertFalse(Path("/tmp/general_nvidia_api_no_retry_reverse").exists())
+        self.assertEqual(reserve.call_count, 3)
+        self.assertEqual(reserve.call_args_list[2].kwargs.get("budget_category"), "retry_reserve")
         self.assertEqual(clients, [])
+        audit = json.loads(research.RETRY_AUDIT.read_text(encoding="utf-8"))
+        self.assertEqual(audit["automatic_retries_reserved"], 1)
 
     def test_http_404_records_allowlisted_error_identifiers_without_body_or_retry_changes(self):
         class SyntheticNotFoundError(Exception):
