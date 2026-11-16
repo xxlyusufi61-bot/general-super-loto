@@ -282,13 +282,29 @@ class Cycle55RecoveryTests(unittest.TestCase):
             )
         self.assertEqual(recovered, before)
 
-        autonomous.record_outcome(
-            recovered,
-            claimed["attempt_id"],
-            outcome="SUCCEEDED",
-            reason_code="EVALUATION_COMPLETED",
-            now=datetime.fromisoformat(STAMP),
-        )
+        with tempfile.TemporaryDirectory() as directory:
+            ledger_path = Path(directory) / "evaluation-ledger.json"
+            ledger_path.write_text(json.dumps({
+                "schema_version": 1,
+                "purpose": "synthetic EVALUATED claim for the Cycle #55 regression test",
+                "entries": [{
+                    "claim_id": hashlib.sha256(b"cycle55-evaluated-test-claim").hexdigest(),
+                    "state": "EVALUATED",
+                    "target_date": recovery.TARGET_DATE,
+                    "archive_sha256": recovery.TARGET_ARCHIVE_SHA256,
+                    "archive_record_count": recovery.TARGET_ARCHIVE_RECORD_COUNT,
+                    "validation_dates": ["2026-11-02"],
+                    "reverse_validation_dates": ["2026-11-04"],
+                }],
+            }), encoding="utf-8")
+            autonomous.record_outcome(
+                recovered,
+                claimed["attempt_id"],
+                outcome="SUCCEEDED",
+                reason_code="EVALUATION_COMPLETED",
+                evaluation_ledger_path=ledger_path,
+                now=datetime.fromisoformat(STAMP),
+            )
         autonomous.validate_state(recovered)
         self.assertEqual(recovered["target_queue"]["items"][0]["target_date"], "2026-11-12")
         self.assertEqual(recovered["target_queue"]["completed"][-1]["target_date"], recovery.TARGET_DATE)
