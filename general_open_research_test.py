@@ -593,11 +593,9 @@ class NvidiaUsageObservationTests(unittest.TestCase):
         research._NVIDIA_REQUEST_ATTEMPT_COUNTS.clear()
         research._RETRY_AUDIT_EVENTS.clear()
         research.RETRY_AUDIT.unlink(missing_ok=True)
+        research.RETRY_AUDIT.with_name(research.RETRY_AUDIT.name + ".tmp").unlink(missing_ok=True)
         for label in ("forward", "reverse", "forward_critique", "between_draws", "unlabelled"):
             Path("/tmp/general_nvidia_api_no_retry_" + label).unlink(missing_ok=True)
-            Path("/tmp/general_nvidia_api_known_http_5xx_" + label).unlink(missing_ok=True)
-        research.RETRY_AUDIT.unlink(missing_ok=True)
-        research.RETRY_AUDIT.with_name(research.RETRY_AUDIT.name + ".tmp").unlink(missing_ok=True)
             Path("/tmp/general_nvidia_api_known_http_5xx_" + label).unlink(missing_ok=True)
 
     @staticmethod
@@ -677,8 +675,13 @@ class NvidiaUsageObservationTests(unittest.TestCase):
     def tearDown(self):
         Path("/tmp/general_nvidia_api_attempted").unlink(missing_ok=True)
         Path("/tmp/general_nvidia_api_succeeded").unlink(missing_ok=True)
+        research.RETRY_AUDIT.unlink(missing_ok=True)
+        research.RETRY_AUDIT.with_name(research.RETRY_AUDIT.name + ".tmp").unlink(missing_ok=True)
         for label in ("forward", "reverse", "forward_critique", "between_draws", "unlabelled"):
             Path("/tmp/general_nvidia_api_no_retry_" + label).unlink(missing_ok=True)
+            Path("/tmp/general_nvidia_api_known_http_5xx_" + label).unlink(missing_ok=True)
+            Path("/tmp/general_nvidia_api_attempted_" + label).unlink(missing_ok=True)
+            Path("/tmp/general_nvidia_api_succeeded_" + label).unlink(missing_ok=True)
 
     def test_openai_sdk_client_uses_nvidia_base_url_timeout_and_zero_retries(self):
         fake_client = MagicMock()
