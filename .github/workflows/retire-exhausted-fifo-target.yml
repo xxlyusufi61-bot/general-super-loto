@@ -116,9 +116,9 @@ jobs:
           exact_sha("ARCHIVE_SHA256")
           exact_sha("NEXT_ARCHIVE_SHA256")
           exact_int("ARCHIVE_RECORD_COUNT")
-          attempts = exact_int("EXPECTED_ATTEMPT_COUNT", 3)
-          if attempts > 5:
-              raise SystemExit("Attempt count exceeds the established exception ceiling.")
+          attempts = exact_int("EXPECTED_ATTEMPT_COUNT", 10)
+          if attempts != 10:
+              raise SystemExit("Exhaustion retirement requires exactly ten failed attempts.")
           exact_int("NEXT_ARCHIVE_RECORD_COUNT")
           print("Request identity and field formats validated. No provider call is permitted.")
           PY
