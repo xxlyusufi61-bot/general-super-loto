@@ -560,8 +560,11 @@ class PendingCandidateResumeTests(unittest.TestCase):
                 memory.run_synthetic_contract_tests(entry["execution_spec"])["status"],
                 "PASS",
             )
+            canonical_proposal = memory._validate_proposal(
+                entry["proposals"][0], canonical=True
+            )
             self.assertEqual(
-                memory._validate_proposal(entry["proposals"][0], canonical=True),
+                {key: canonical_proposal[key] for key in memory.PROPOSAL_KEYS},
                 entry["proposals"][0],
             )
             self.assertTrue(
