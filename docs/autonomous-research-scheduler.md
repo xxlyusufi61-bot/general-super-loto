@@ -4,10 +4,10 @@
 
 The scheduler reuses the existing blank-slate research runner, safe JSON DSL,
 sealed evaluation ledger, and Telegram reporting. It does not replace or loosen
-their validation rules. A target work package is finite: directional discovery,
-proposal validation, applicable chronological evaluation, memory/reporting, and
-an auditable terminal outcome. Empty but valid research results are scientific
-outcomes, not technical failures.
+their validation rules. A target work package remains at the FIFO head until its sealed
+evaluation ledger records EVALUATED. Empty but valid research results are not
+target completion and do not consume the target. Retryable failures do not
+consume the target or create a new target claim.
 
 A scheduled check refreshes and validates the canonical 6-of-60 archive
 independently of AI authorization and NVIDIA lock state. The research job checks
@@ -235,16 +235,23 @@ any target. A changed or missing historical archive prefix, corrupt snapshot,
 hash mismatch, missing cursor, or unprovable legacy active-target snapshot also
 blocks processing rather than silently repairing or skipping a draw.
 
-A target leaves the queue only after the scheduler records SUCCEEDED or
-NO_ELIGIBLE_CANDIDATE for the matching target date, snapshot hash, and row count.
-A NO_PROVIDER_REQUEST_SENT outcome retains the same FIFO head for retry on a
-later scheduled cycle, up to three total attempts for that target. WORKFLOW_FAILED
-does not trigger an automatic retry after a provider request has been sent.
-Retries are recorded. A PROVIDER_DELIVERY_UNCERTAIN outcome retains the head
-until the global lock is manually unlocked after the failure timestamp. A later
-scheduled cycle may then retry the same target. Any retry must pass sealed
-preflight with fresh, disjoint, previously unconsumed holdouts. A target already
-being processed is never replaced by the latest archive head.
+A target leaves the FIFO only after one exact sealed-evaluation ledger
+entry for the matching target date, archive SHA-256, and record count has
+persisted with state EVALUATED. The scheduler records SUCCEEDED only after
+the evaluation step and its state-store persistence both succeed; the finish
+command independently verifies that ledger evidence before releasing the FIFO
+head. NO_ELIGIBLE_CANDIDATE is not target completion: it remains in the FIFO
+and may be researched again on a later scheduled cycle.
+
+There is no fixed per-target attempt count. Every retryable failure and every
+NO_ELIGIBLE_CANDIDATE result may be retried while the same FIFO head remains
+unconsumed. Retries are individually recorded and always reuse the same
+immutable target snapshot. WORKFLOW_FAILED after provider delivery is not
+automatically retried. PROVIDER_DELIVERY_UNCERTAIN remains blocked until the
+global lock is manually unlocked after the failure timestamp. HTTP 402/429
+remain non-retryable, and existing bounded HTTP 5xx retry semantics are
+unchanged. A target already being processed is never replaced by the latest
+archive head. Retry-cap exhaustion can no longer consume or retire a target.
 
 When the queue is first introduced to a scheduler state with no prior attempts,
 the bootstrap cursor starts immediately before the latest canonical draw, so
