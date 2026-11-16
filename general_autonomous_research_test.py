@@ -926,7 +926,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
             "completed": [],
         }
         for index in range(auto.MAX_ATTEMPTS_PER_TARGET):
-            attempt_id = str(index + 1) * 64
+            attempt_id = format(index + 1, "x") * 64
             claimed = NOW + timedelta(minutes=index * 10)
             state["attempts"].append({
                 "attempt_id": attempt_id,
