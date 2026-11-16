@@ -76,9 +76,23 @@ pending-candidate lookup. If one valid directional candidate exists but the
 other direction still has no executable candidate, the target is recorded as
 DIRECTIONAL_CANDIDATE_SET_INCOMPLETE, not as a terminal no-candidate result.
 The FIFO head stays active so the next permitted attempt can resume the stored
-candidate while investigating the missing direction. This does not reuse any
-consumed holdout: the next sealed claim must still reserve new, disjoint dates
-using the existing ledger and immutable-snapshot rules.
+candidate while investigating the missing direction.
+
+If a sealed claim was durably persisted but evaluation failed before its ledger
+entry reached EVALUATED, its dates remain reserved exclusively for that exact
+claim. The next permitted attempt must resume the same claim ID, archive
+snapshot SHA-256, forward/reverse candidate IDs, specification hashes, and
+original directional holdout dates. It reconstructs the original
+discovery/holdout partition from the claim's immutable prior-consumption
+snapshot. It may not create a replacement claim, select a different candidate,
+or send new discovery requests for either direction. The scheduled workflow
+skips offline development in this state so the pinned offline-memory digest
+cannot drift between claim and evaluation.
+
+A CLAIMED interval is reserved, not discarded or available to another
+candidate. It becomes permanently consumed only when the append-only ledger
+moves that exact claim to EVALUATED. Other candidates and later claims continue
+to exclude those reserved dates throughout recovery.
 
 Candidates without an execution specification, with a rejected definition, or
 whose synthetic DSL tests no longer pass are not eligible for real-archive
@@ -104,7 +118,7 @@ PR #63 remains unchanged:
 - Such feedback is development history only. It is never a fresh independent validation result and must not be used to select the first frozen candidate for the current one-shot claim.
 - Reverse metrics are always marked `retrospective_only: true`; they are not predictive evidence.
 
-The memory writer checks that evaluation feedback matches the candidate/specification frozen for that direction and that the evaluation report is backed by an `EVALUATED` ledger entry for the current archive and target. If an evaluation report exists locally but the ledger is still only `CLAIMED`, its scores are discarded from memory. The claim remains consumed under the existing ledger rules.
+The memory writer checks that evaluation feedback matches the candidate/specification frozen for that direction and that the evaluation report is backed by an `EVALUATED` ledger entry for the current archive and target. If an evaluation report exists locally but the ledger is still only `CLAIMED`, its scores are discarded from memory. The claim remains reserved for its exact frozen candidate pair and can resume with the same immutable holdout; it is not treated as a completed evaluation until the ledger reaches `EVALUATED`.
 
 ## Persistence and immutability
 
