@@ -33,7 +33,7 @@ from general_execution_spec_parser import parse_execution_spec_block
 import general_sealed_evaluation as sealed
 import general_research_memory as research_memory
 
-VERSION = "0.8.2"
+VERSION = "0.9.0"
 MODEL = "z-ai/glm-5.3-flash"
 DIAGNOSTIC_ALTERNATIVE_MODEL = "mistralai/mistral-large-4-1t-a52b"
 DIAGNOSTIC_ALLOWED_MODELS = frozenset({MODEL, DIAGNOSTIC_ALTERNATIVE_MODEL})
@@ -1699,6 +1699,9 @@ def call_model(
                 budget_category="retry_reserve" if _retry_attempt == 1 else "normal",
             )
             if retry_allowed and audit_saved:
+                # One fixed short backoff is enough for a single bounded
+                # server-error retry; no unbounded exponential loop is used.
+                time.sleep(2)
                 return call_model(
                     messages,
                     request_label=request_label,
