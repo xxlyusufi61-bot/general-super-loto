@@ -1438,7 +1438,7 @@ def _require_evaluated_target(
     evaluated = [entry for entry in matches if entry.get("state") == "EVALUATED"]
     if not evaluated:
         raise AutonomousResearchError(
-            "A target can leave the FIFO only after at least one matching sealed claim is persisted as EVALUATED."
+            "A successful target requires a matching sealed claim persisted as EVALUATED before it can leave the FIFO."
         )
 
 
