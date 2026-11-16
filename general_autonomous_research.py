@@ -24,7 +24,7 @@ PROJECT = "GENERAL Super Loto"
 RESEARCH_SCOPE_START = date(2020, 8, 2)
 AUTO_CONFIRMATION_PHRASE = "I_AUTHORIZE_AUTONOMOUS_FREE_ONLY_NVIDIA_RESEARCH_NO_BILLING"
 MAX_AUTHORIZATION_DAYS = 30
-MAX_ATTEMPTS_PER_TARGET = 3
+LEGACY_CYCLE55_RETIRED_ATTEMPTS = 5
 CYCLE55_MANUAL_RETRY_TARGET_DATE = "2026-11-10"
 CYCLE55_MANUAL_RETRY_ARCHIVE_SHA256 = "ae7b79e4922d4178a86c7d7880af3e4758d1a5e7f78d6cc3d2595fbb4fd66596"
 CYCLE55_MANUAL_RETRY_ARCHIVE_RECORD_COUNT = 983
@@ -415,7 +415,7 @@ def validate_state(value: Any) -> dict[str, Any]:
                 if attempt["target_date"] == entry["target_date"]
             ]
             exhausted_events_complete = (
-                len(exhausted_attempts) == MAX_ATTEMPTS_PER_TARGET + 2
+                len(exhausted_attempts) == LEGACY_CYCLE55_RETIRED_ATTEMPTS
                 and all(
                     event_by_attempt.get(attempt["attempt_id"]) is not None
                     and event_by_attempt[attempt["attempt_id"]]["outcome"] == "FAILED"
@@ -528,38 +528,6 @@ def validate_state(value: Any) -> dict[str, Any]:
         if manual_retry["authorization_id"] != expected_id:
             raise AutonomousResearchError("Cycle #55 manual retry authorization digest does not match its immutable metadata.")
 
-    target_counts: dict[str, int] = {}
-    for target in attempt_dates:
-        target_counts[target] = target_counts.get(target, 0) + 1
-    for target, count in target_counts.items():
-        if count > MAX_ATTEMPTS_PER_TARGET:
-            target_attempts = [item for item in attempts if item["target_date"] == target]
-            permitted_manual_fourth = (
-                target == CYCLE55_MANUAL_RETRY_TARGET_DATE
-                and count == MAX_ATTEMPTS_PER_TARGET + 1
-                and manual_retry is not None
-                and len(target_attempts) == 4
-                and manual_retry["attempt_id"] == target_attempts[3]["attempt_id"]
-            )
-            fourth_event = (
-                event_by_attempt.get(target_attempts[3]["attempt_id"])
-                if len(target_attempts) == 5 else None
-            )
-            permitted_cycle57_fifth = (
-                target == CYCLE55_MANUAL_RETRY_TARGET_DATE
-                and count == MAX_ATTEMPTS_PER_TARGET + 2
-                and manual_retry is not None
-                and len(target_attempts) == 5
-                and manual_retry["attempt_id"] == target_attempts[3]["attempt_id"]
-                and target_attempts[4]["attempt_id"] == CYCLE57_RETRY_ATTEMPT_ID
-                and fourth_event is not None
-                and fourth_event["outcome"] == "FAILED"
-                and fourth_event["reason_code"] == "PROVIDER_DELIVERY_UNCERTAIN"
-                and fourth_event["recorded_at_utc"] == CYCLE57_RETRY_FAILURE_AT_UTC
-            )
-            if not (permitted_manual_fourth or permitted_cycle57_fifth):
-                raise AutonomousResearchError("A target exceeded the three-attempt limit outside the two exact, one-time 2026-11-10 exceptions.")
-
     attempts_by_target: dict[str, list[dict[str, Any]]] = {}
     for item in attempts:
         attempts_by_target.setdefault(item["target_date"], []).append(item)
@@ -569,8 +537,16 @@ def validate_state(value: Any) -> dict[str, Any]:
                 prior_event = event_by_attempt.get(prior_attempt["attempt_id"])
                 normal_retry = (
                     prior_event is not None
-                    and prior_event["outcome"] == "FAILED"
-                    and prior_event["reason_code"] in RETRYABLE_FAILURE_REASON_CODES
+                    and (
+                        (
+                            prior_event["outcome"] == "FAILED"
+                            and prior_event["reason_code"] in RETRYABLE_FAILURE_REASON_CODES
+                        )
+                        or (
+                            prior_event["outcome"] == "NO_ELIGIBLE_CANDIDATE"
+                            and prior_event["reason_code"] == "NO_FROZEN_DIRECTIONAL_CANDIDATE"
+                        )
+                    )
                 )
                 approved_cycle55_exception = (
                     target == CYCLE55_MANUAL_RETRY_TARGET_DATE
@@ -584,7 +560,7 @@ def validate_state(value: Any) -> dict[str, Any]:
                 )
                 if not (normal_retry or approved_cycle55_exception):
                     raise AutonomousResearchError(
-                        "Repeated target attempts require a recorded retryable failure; only the consumed Cycle #55 authorization permits its exact fourth attempt."
+                        "Repeated target attempts require a retryable failure or a recorded no-candidate outcome; only the consumed Cycle #55 authorization permits its exact fourth attempt."
                     )
 
     return value
@@ -638,46 +614,6 @@ def manual_recovery_confirmed(lock_state: dict[str, Any], failed_event: dict[str
         )
     except AutonomousResearchError:
         return False
-
-
-def cycle57_fifth_retry_available(state: dict[str, Any], target_date: str) -> bool:
-    """Permit only attempt five after the exact pinned Cycle #57 504 failure."""
-    if target_date != CYCLE55_MANUAL_RETRY_TARGET_DATE:
-        return False
-    manual_history = state.get("manual_retry_history")
-    if not isinstance(manual_history, list) or len(manual_history) != 1:
-        return False
-    target_attempts = [
-        item for item in state.get("attempts", [])
-        if item.get("target_date") == CYCLE55_MANUAL_RETRY_TARGET_DATE
-    ]
-    if (
-        len(target_attempts) != 4
-        or not state.get("attempts")
-        or state["attempts"][-1].get("attempt_id") != CYCLE57_RETRY_PRIOR_ATTEMPT_ID
-    ):
-        return False
-    fourth = target_attempts[3]
-    manual_retry = manual_history[0]
-    if (
-        fourth.get("attempt_id") != CYCLE57_RETRY_PRIOR_ATTEMPT_ID
-        or fourth.get("github_run_id") != "43403558067"
-        or fourth.get("archive_sha256") != CYCLE55_MANUAL_RETRY_ARCHIVE_SHA256
-        or fourth.get("archive_record_count") != CYCLE55_MANUAL_RETRY_ARCHIVE_RECORD_COUNT
-        or manual_retry.get("attempt_id") != CYCLE57_RETRY_PRIOR_ATTEMPT_ID
-        or manual_retry.get("consumed") is not True
-    ):
-        return False
-    fourth_event = next(
-        (event for event in state.get("events", []) if event.get("attempt_id") == CYCLE57_RETRY_PRIOR_ATTEMPT_ID),
-        None,
-    )
-    return bool(
-        fourth_event is not None
-        and fourth_event.get("outcome") == "FAILED"
-        and fourth_event.get("reason_code") == "PROVIDER_DELIVERY_UNCERTAIN"
-        and fourth_event.get("recorded_at_utc") == CYCLE57_RETRY_FAILURE_AT_UTC
-    )
 
 
 def activate_state(
@@ -1078,123 +1014,135 @@ def prepare_cycle(
                 "Prepared archive is not the immutable FIFO head snapshot."
             )
     attempts = state["attempts"]
+    events_by_attempt = {item["attempt_id"]: item for item in state["events"]}
+    completed_by_date = {
+        item["target_date"]: item
+        for item in queue["completed"]
+    }
+    for completed in queue["completed"]:
+        matching_attempts = [
+            item for item in attempts
+            if item["target_date"] == completed["target_date"]
+        ]
+        if matching_attempts and any(
+            item["archive_sha256"] != completed["archive_sha256"]
+            or item["archive_record_count"] != completed["archive_record_count"]
+            for item in matching_attempts
+        ):
+            raise AutonomousResearchError(
+                "Completed FIFO target does not match its archived attempt identity."
+            )
+
+    prior_uncompleted_dates = sorted({
+        item["target_date"]
+        for item in attempts
+        if item["target_date"] < target_date
+        and item["target_date"] not in completed_by_date
+    })
+    if prior_uncompleted_dates:
+        previous_target = prior_uncompleted_dates[0]
+        previous_attempts = [
+            item for item in attempts
+            if item["target_date"] == previous_target
+        ]
+        previous_attempt = previous_attempts[-1]
+        previous_event = events_by_attempt.get(previous_attempt["attempt_id"])
+        if previous_event is None:
+            blocking_status = "PREVIOUS_TARGET_INCOMPLETE"
+        else:
+            previous_retry_ready = (
+                previous_event["outcome"] == "NO_ELIGIBLE_CANDIDATE"
+                and previous_event["reason_code"] == "NO_FROZEN_DIRECTIONAL_CANDIDATE"
+            ) or (
+                previous_event["outcome"] == "FAILED"
+                and previous_event["reason_code"] in RETRYABLE_FAILURE_REASON_CODES
+            )
+            if previous_event["reason_code"] == "PROVIDER_DELIVERY_UNCERTAIN":
+                previous_retry_ready = manual_recovery_confirmed(lock, previous_event)
+            blocking_status = (
+                "PREVIOUS_TARGET_RETRY_REQUIRED"
+                if previous_retry_ready
+                else "PREVIOUS_TARGET_MANUAL_RECOVERY_REQUIRED"
+            )
+        return {
+            "status": blocking_status,
+            "eligible": False,
+            "target_date": target_date,
+            "pending_target_date": previous_target,
+            **status,
+        }
+
+    unfinished_other_attempts = [
+        item for item in attempts
+        if item["target_date"] != target_date
+        and item["attempt_id"] not in events_by_attempt
+    ]
+    if unfinished_other_attempts:
+        return {
+            "status": "OTHER_TARGET_ATTEMPT_IN_PROGRESS",
+            "eligible": False,
+            "target_date": target_date,
+            "pending_target_date": unfinished_other_attempts[0]["target_date"],
+            **status,
+        }
+
+    target_attempts = [
+        item for item in attempts
+        if item["target_date"] == target_date
+    ]
     retryable = False
     retry_number = 1
     recovered_after_uncertain_delivery = False
-    if attempts:
-        last_attempt = attempts[-1]
-        last_target = last_attempt["target_date"]
-        if target_date < last_target:
-            raise AutonomousResearchError("Archive target moved backwards relative to the attempt ledger.")
-        last_event = next(
-            (event for event in reversed(state["events"]) if event["attempt_id"] == last_attempt["attempt_id"]),
-            None,
-        )
-        same_target_attempts = sum(1 for item in attempts if item["target_date"] == target_date)
-        if target_date == last_target:
-            if last_event is None:
-                return {
-                    "status": "TARGET_ATTEMPT_IN_PROGRESS",
-                    "eligible": False,
-                    "target_date": target_date,
-                    "archive_sha256": archive["archive_sha256"],
-                    **status,
-                }
-            if last_event["outcome"] == "FAILED":
-                reason_code = last_event["reason_code"]
-                if reason_code == "PROVIDER_DELIVERY_UNCERTAIN":
-                    recovered_after_uncertain_delivery = manual_recovery_confirmed(lock, last_event)
-                if (
-                    reason_code in RETRYABLE_FAILURE_REASON_CODES
-                    and (reason_code != "PROVIDER_DELIVERY_UNCERTAIN" or recovered_after_uncertain_delivery)
-                ):
-                    retry_limit = MAX_ATTEMPTS_PER_TARGET
-                    if cycle57_fifth_retry_available(state, target_date):
-                        retry_limit = MAX_ATTEMPTS_PER_TARGET + 2
-                    if same_target_attempts >= retry_limit:
-                        return {
-                            "status": "TARGET_RETRY_LIMIT_REACHED",
-                            "eligible": False,
-                            "target_date": target_date,
-                            "archive_sha256": archive["archive_sha256"],
-                            **status,
-                        }
-                    retryable = True
-                    retry_number = same_target_attempts + 1
+    if target_attempts:
+        last_attempt = target_attempts[-1]
+        last_event = events_by_attempt.get(last_attempt["attempt_id"])
+        same_target_attempts = len(target_attempts)
+        if last_event is None:
+            return {
+                "status": "TARGET_ATTEMPT_IN_PROGRESS",
+                "eligible": False,
+                "target_date": target_date,
+                "archive_sha256": archive["archive_sha256"],
+                **status,
+            }
+        if last_event["outcome"] == "FAILED":
+            reason_code = last_event["reason_code"]
+            if reason_code == "PROVIDER_DELIVERY_UNCERTAIN":
+                recovered_after_uncertain_delivery = manual_recovery_confirmed(lock, last_event)
+            if (
+                reason_code in RETRYABLE_FAILURE_REASON_CODES
+                and (reason_code != "PROVIDER_DELIVERY_UNCERTAIN" or recovered_after_uncertain_delivery)
+            ):
+                retryable = True
+                retry_number = same_target_attempts + 1
+            else:
+                if reason_code == "PROVIDER_HTTP_REJECTION_NO_RETRY":
+                    blocked_status = "PROVIDER_HTTP_REJECTION_NO_RETRY"
+                elif reason_code == "WORKFLOW_FAILED":
+                    blocked_status = "WORKFLOW_FAILED_NO_AUTOMATIC_RETRY"
                 else:
-                    if reason_code == "PROVIDER_HTTP_REJECTION_NO_RETRY":
-                        blocked_status = "PROVIDER_HTTP_REJECTION_NO_RETRY"
-                    elif reason_code == "WORKFLOW_FAILED":
-                        blocked_status = "WORKFLOW_FAILED_NO_AUTOMATIC_RETRY"
-                    else:
-                        blocked_status = "PROVIDER_DELIVERY_UNCERTAIN_MANUAL_RECOVERY_REQUIRED"
-                    return {
-                        "status": blocked_status,
-                        "eligible": False,
-                        "target_date": target_date,
-                        "archive_sha256": archive["archive_sha256"],
-                        **status,
-                    }
-            else:
+                    blocked_status = "PROVIDER_DELIVERY_UNCERTAIN_MANUAL_RECOVERY_REQUIRED"
                 return {
-                    "status": "TARGET_ALREADY_COMPLETED",
+                    "status": blocked_status,
                     "eligible": False,
                     "target_date": target_date,
                     "archive_sha256": archive["archive_sha256"],
                     **status,
                 }
+        elif (
+            last_event["outcome"] == "NO_ELIGIBLE_CANDIDATE"
+            and last_event["reason_code"] == "NO_FROZEN_DIRECTIONAL_CANDIDATE"
+        ):
+            retryable = True
+            retry_number = same_target_attempts + 1
         else:
-            completed_previous_target = next(
-                (
-                    item
-                    for item in queue["completed"]
-                    if item["target_date"] == last_target
-                ),
-                None,
-            )
-            if completed_previous_target is not None:
-                if (
-                    completed_previous_target["archive_sha256"] != last_attempt["archive_sha256"]
-                    or completed_previous_target["archive_record_count"] != last_attempt["archive_record_count"]
-                ):
-                    raise AutonomousResearchError(
-                        "Completed previous FIFO target does not match its archived attempt identity."
-                    )
-                # A terminal FIFO record already closed this exact target. Its
-                # historical failures must not block preparation of the next head.
-            else:
-                if last_event is None:
-                    return {
-                        "status": "PREVIOUS_TARGET_INCOMPLETE",
-                        "eligible": False,
-                        "target_date": target_date,
-                        "pending_target_date": last_target,
-                        **status,
-                    }
-                if last_event["outcome"] == "FAILED":
-                    previous_retry_is_ready = (
-                        last_event["reason_code"] == "NO_PROVIDER_REQUEST_SENT"
-                    )
-                    if last_event["reason_code"] == "PROVIDER_DELIVERY_UNCERTAIN":
-                        previous_retry_is_ready = manual_recovery_confirmed(lock, last_event)
-                    previous_attempt_count = sum(
-                        1 for item in attempts if item["target_date"] == last_target
-                    )
-                    if previous_retry_is_ready and previous_attempt_count >= MAX_ATTEMPTS_PER_TARGET:
-                        blocking_status = "PREVIOUS_TARGET_RETRY_LIMIT_REACHED"
-                    else:
-                        blocking_status = (
-                            "PREVIOUS_TARGET_RETRY_REQUIRED"
-                            if previous_retry_is_ready
-                            else "PREVIOUS_TARGET_MANUAL_RECOVERY_REQUIRED"
-                        )
-                    return {
-                        "status": blocking_status,
-                        "eligible": False,
-                        "target_date": target_date,
-                        "pending_target_date": last_target,
-                        **status,
-                    }
+            return {
+                "status": "TARGET_ALREADY_COMPLETED",
+                "eligible": False,
+                "target_date": target_date,
+                "archive_sha256": archive["archive_sha256"],
+                **status,
+            }
 
     try:
         plan = sealed.preflight(archive_path, ledger_path)
@@ -1280,80 +1228,72 @@ def claim_attempt(
         raise AutonomousResearchError("Plan archive hash is invalid.")
     if type(plan.get("archive_record_count")) is not int or plan["archive_record_count"] < 1:
         raise AutonomousResearchError("Plan archive record count is invalid.")
-    attempt_number = 1
-    queue = target_queue.validate_queue(state["target_queue"])
-    if queue["items"]:
-        front = queue["items"][0]
-        if (
-            target_date != front["target_date"]
-            or archive_sha != front["archive_sha256"]
-            or plan["archive_record_count"] != front["archive_record_count"]
+    attempts = state["attempts"]
+    event_by_attempt = {item["attempt_id"]: item for item in state["events"]}
+    completed_by_date = {
+        item["target_date"]: item
+        for item in queue["completed"]
+    }
+    for completed in queue["completed"]:
+        matching_attempts = [
+            item for item in attempts
+            if item["target_date"] == completed["target_date"]
+        ]
+        if matching_attempts and any(
+            item["archive_sha256"] != completed["archive_sha256"]
+            or item["archive_record_count"] != completed["archive_record_count"]
+            for item in matching_attempts
         ):
-            raise AutonomousResearchError("Attempt does not match the immutable FIFO head.")
-    if state["attempts"]:
-        last_attempt = state["attempts"][-1]
-        last_target = last_attempt["target_date"]
-        if target_date < last_target:
-            raise AutonomousResearchError("Target date is older than the current active target.")
-        last_event = next(
-            (event for event in reversed(state["events"]) if event["attempt_id"] == last_attempt["attempt_id"]),
-            None,
-        )
-        if target_date == last_target:
-            previous_count = sum(1 for item in state["attempts"] if item["target_date"] == target_date)
-            if (
-                last_event is None
-                or last_event["outcome"] != "FAILED"
-                or last_event["reason_code"] not in RETRYABLE_FAILURE_REASON_CODES
-            ):
-                raise AutonomousResearchError(
-                    "A target retry requires a recorded retryable failure."
-                )
-            if (
-                last_event["reason_code"] == "PROVIDER_DELIVERY_UNCERTAIN"
-                and plan.get("manual_recovery_confirmed") is not True
-            ):
-                raise AutonomousResearchError(
-                    "Uncertain provider delivery requires a manual unlock after the failed attempt."
-                )
-            retry_limit = MAX_ATTEMPTS_PER_TARGET
-            if cycle57_fifth_retry_available(state, target_date):
-                retry_limit = MAX_ATTEMPTS_PER_TARGET + 2
-            if previous_count >= retry_limit:
-                raise AutonomousResearchError("The target retry limit is exhausted; no further exception is available.")
-            attempt_number = previous_count + 1
-        else:
-            completed_previous_target = next(
-                (
-                    item
-                    for item in queue["completed"]
-                    if item["target_date"] == last_target
-                ),
-                None,
+            raise AutonomousResearchError(
+                "Completed previous FIFO target does not match its archived attempt identity."
             )
-            if completed_previous_target is not None:
-                if (
-                    completed_previous_target["archive_sha256"] != last_attempt["archive_sha256"]
-                    or completed_previous_target["archive_record_count"] != last_attempt["archive_record_count"]
-                ):
-                    raise AutonomousResearchError(
-                        "Completed previous FIFO target does not match its archived attempt identity."
-                    )
-                # A validated terminal FIFO record closes this exact prior target.
-                # Historical FAILED attempts for it must not block the next FIFO head.
-            else:
-                if last_event is None:
-                    raise AutonomousResearchError("The previous target is incomplete; new target activation is blocked.")
-                if last_event["outcome"] == "FAILED":
-                    raise AutonomousResearchError("The previous target must be resolved before a new target is activated.")
-    if github_run_id is not None and (not github_run_id.isdigit() or len(github_run_id) > 32):
-        raise AutonomousResearchError("GitHub run identifier is invalid.")
 
-    attempt_id = hashlib.sha256(
-        ("GENERAL-AUTO-RESEARCH-V2|" + target_date + "|" + archive_sha + "|" + str(attempt_number)).encode("utf-8")
-    ).hexdigest()
-    if any(item["attempt_id"] == attempt_id for item in state["attempts"]):
-        raise AutonomousResearchError("This autonomous attempt was already claimed.")
+    if any(
+        item["target_date"] < target_date
+        and item["target_date"] not in completed_by_date
+        for item in attempts
+    ):
+        raise AutonomousResearchError(
+            "The previous target must be resolved before a new target is activated."
+        )
+    if any(
+        item["target_date"] != target_date
+        and item["attempt_id"] not in event_by_attempt
+        for item in attempts
+    ):
+        raise AutonomousResearchError(
+            "Another FIFO target attempt is incomplete; new target activation is blocked."
+        )
+
+    target_attempts = [
+        item for item in attempts
+        if item["target_date"] == target_date
+    ]
+    attempt_number = len(target_attempts) + 1
+    if target_attempts:
+        last_event = event_by_attempt.get(target_attempts[-1]["attempt_id"])
+        retryable_no_candidate = (
+            last_event is not None
+            and last_event["outcome"] == "NO_ELIGIBLE_CANDIDATE"
+            and last_event["reason_code"] == "NO_FROZEN_DIRECTIONAL_CANDIDATE"
+        )
+        retryable_failure = (
+            last_event is not None
+            and last_event["outcome"] == "FAILED"
+            and last_event["reason_code"] in RETRYABLE_FAILURE_REASON_CODES
+        )
+        if not (retryable_no_candidate or retryable_failure):
+            raise AutonomousResearchError(
+                "A target retry requires a recorded retryable failure or no-candidate outcome."
+            )
+        if (
+            last_event["reason_code"] == "PROVIDER_DELIVERY_UNCERTAIN"
+            and plan.get("manual_recovery_confirmed") is not True
+        ):
+            raise AutonomousResearchError(
+                "Uncertain provider delivery requires a manual unlock after the failed attempt."
+            )
+
     attempt = {
         "attempt_id": attempt_id,
         "target_date": target_date,
@@ -1363,8 +1303,36 @@ def claim_attempt(
         "github_run_id": github_run_id,
     }
     state["attempts"].append(attempt)
+    state["attempts"].sort(key=lambda item: item["target_date"])
     validate_state(state)
     return attempt
+
+
+def _require_evaluated_target(
+    ledger_path: str | Path,
+    *,
+    target_date: str,
+    archive_sha256: str,
+    archive_record_count: int,
+) -> None:
+    """Require an exact persisted EVALUATED claim before a FIFO target can be consumed."""
+    try:
+        ledger = sealed.load_ledger(ledger_path)
+    except sealed.SealedEvaluationError as exc:
+        raise AutonomousResearchError(
+            "Evaluation ledger could not prove target consumption: " + str(exc)
+        ) from None
+    matches = [
+        entry for entry in ledger["entries"]
+        if entry.get("target_date") == target_date
+        and entry.get("archive_sha256") == archive_sha256
+        and entry.get("archive_record_count") == archive_record_count
+    ]
+    evaluated = [entry for entry in matches if entry.get("state") == "EVALUATED"]
+    if len(evaluated) != 1:
+        raise AutonomousResearchError(
+            "A target can leave the FIFO only after exactly one matching sealed claim is persisted as EVALUATED."
+        )
 
 
 def record_outcome(
@@ -1373,37 +1341,59 @@ def record_outcome(
     *,
     outcome: str,
     reason_code: str,
+    evaluation_ledger_path: str | Path | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     validate_state(state)
     if outcome not in ALLOWED_OUTCOMES or reason_code not in ALLOWED_REASON_CODES:
         raise AutonomousResearchError("Attempt outcome or reason code is not allowed.")
-    if not any(item["attempt_id"] == attempt_id for item in state["attempts"]):
+    attempt = next(
+        (item for item in state["attempts"] if item["attempt_id"] == attempt_id),
+        None,
+    )
+    if attempt is None:
         raise AutonomousResearchError("Cannot record an outcome for an unknown attempt.")
     if any(item["attempt_id"] == attempt_id for item in state["events"]):
         raise AutonomousResearchError("Attempt already has a terminal outcome.")
+
+    if outcome == "SUCCEEDED":
+        if reason_code != "EVALUATION_COMPLETED" or evaluation_ledger_path is None:
+            raise AutonomousResearchError(
+                "Successful completion requires an exact persisted EVALUATED sealed-ledger entry."
+            )
+        _require_evaluated_target(
+            evaluation_ledger_path,
+            target_date=attempt["target_date"],
+            archive_sha256=attempt["archive_sha256"],
+            archive_record_count=attempt["archive_record_count"],
+        )
+    elif outcome == "NO_ELIGIBLE_CANDIDATE" and reason_code != "NO_FROZEN_DIRECTIONAL_CANDIDATE":
+        raise AutonomousResearchError(
+            "A no-candidate outcome must use NO_FROZEN_DIRECTIONAL_CANDIDATE."
+        )
+
     state["events"].append({
         "attempt_id": attempt_id,
         "outcome": outcome,
         "recorded_at_utc": _now_utc(now).isoformat(),
         "reason_code": reason_code,
     })
-    if outcome in {"SUCCEEDED", "NO_ELIGIBLE_CANDIDATE"} and state["target_queue"]["items"]:
-        attempt = next(item for item in state["attempts"] if item["attempt_id"] == attempt_id)
+    if outcome == "SUCCEEDED" and state["target_queue"]["items"]:
         try:
             state["target_queue"] = target_queue.complete_front(
                 state["target_queue"],
                 target_date=attempt["target_date"],
                 archive_sha256=attempt["archive_sha256"],
                 archive_record_count=attempt["archive_record_count"],
-                outcome=outcome,
+                outcome="EVALUATED",
                 now=now,
             )
         except target_queue.TargetQueueError as exc:
             raise AutonomousResearchError(
-                "Terminal outcome cannot release the FIFO head: " + str(exc)
+                "EVALUATED target cannot release the FIFO head: " + str(exc)
             ) from None
     return validate_state(state)
+
 
 
 def retire_exhausted_target(
@@ -1418,101 +1408,10 @@ def retire_exhausted_target(
     expected_next_archive_record_count: int,
     now: datetime | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Close one FIFO head only when its exact retry budget is fully failed."""
-    updated = copy.deepcopy(state)
-    validate_state(updated)
-
-    target = _canonical_date(target_date, "exhausted_target.target_date")
-    next_target = _canonical_date(
-        expected_next_target_date, "exhausted_target.expected_next_target_date"
+    """Reject legacy retry-budget retirement; only EVALUATED can consume a target."""
+    raise AutonomousResearchError(
+        "Retry-budget retirement is permanently disabled; the FIFO target must reach EVALUATED."
     )
-    if not _is_sha256(archive_sha256) or not _is_sha256(expected_next_archive_sha256):
-        raise AutonomousResearchError("Exhausted-target archive identity is invalid.")
-    if type(archive_record_count) is not int or archive_record_count < 1:
-        raise AutonomousResearchError("Exhausted-target archive record count is invalid.")
-    if (
-        type(expected_next_archive_record_count) is not int
-        or expected_next_archive_record_count < 1
-    ):
-        raise AutonomousResearchError("Next FIFO archive record count is invalid.")
-    if (
-        type(expected_attempt_count) is not int
-        or not MAX_ATTEMPTS_PER_TARGET <= expected_attempt_count <= MAX_ATTEMPTS_PER_TARGET + 2
-    ):
-        raise AutonomousResearchError("Expected attempt count is outside the existing bounded retry policy.")
-
-    target_attempts = [
-        item for item in updated["attempts"] if item["target_date"] == target
-    ]
-    if len(target_attempts) != expected_attempt_count:
-        raise AutonomousResearchError("Target attempt count does not match the approved exhaustion evidence.")
-    if any(
-        item["archive_sha256"] != archive_sha256
-        or item["archive_record_count"] != archive_record_count
-        for item in target_attempts
-    ):
-        raise AutonomousResearchError("Target attempts do not share the approved immutable archive identity.")
-
-    events_by_attempt = {
-        event["attempt_id"]: event for event in updated["events"]
-    }
-    if any(
-        events_by_attempt.get(item["attempt_id"]) is None
-        or events_by_attempt[item["attempt_id"]]["outcome"] != "FAILED"
-        for item in target_attempts
-    ):
-        raise AutonomousResearchError("Every target attempt must have a terminal FAILED event before exhaustion.")
-
-    pending = updated["target_queue"]["items"]
-    if len(pending) < 2:
-        raise AutonomousResearchError("The exhausted target and its expected successor must both be in the FIFO.")
-    front = pending[0]
-    successor = pending[1]
-    if (
-        front["target_date"] != target
-        or front["archive_sha256"] != archive_sha256
-        or front["archive_record_count"] != archive_record_count
-    ):
-        raise AutonomousResearchError("Exhausted target does not match the immutable FIFO head.")
-    if (
-        successor["target_date"] != next_target
-        or successor["archive_sha256"] != expected_next_archive_sha256
-        or successor["archive_record_count"] != expected_next_archive_record_count
-    ):
-        raise AutonomousResearchError("Next FIFO target does not match the explicitly approved successor.")
-    if any(item["target_date"] == next_target for item in updated["attempts"]):
-        raise AutonomousResearchError("The successor target already has an attempt and cannot be promoted as untouched.")
-
-    try:
-        updated["target_queue"] = target_queue.retire_exhausted_front(
-            updated["target_queue"],
-            target_date=target,
-            archive_sha256=archive_sha256,
-            archive_record_count=archive_record_count,
-            attempt_count=len(target_attempts),
-            failed_event_count=sum(
-                1 for item in target_attempts
-                if events_by_attempt[item["attempt_id"]]["outcome"] == "FAILED"
-            ),
-            now=now,
-        )
-    except target_queue.TargetQueueError as exc:
-        raise AutonomousResearchError(
-            "Exhausted target could not be closed in the FIFO: " + str(exc)
-        ) from None
-
-    validate_state(updated)
-    report = {
-        "status": "EXHAUSTED_TARGET_RETIRED",
-        "target_date": target,
-        "outcome": "EXHAUSTED_RETRY_BUDGET",
-        "attempts_preserved_count": len(target_attempts),
-        "next_target_date": updated["target_queue"]["items"][0]["target_date"],
-        "completed_target_count": len(updated["target_queue"]["completed"]),
-        "pending_target_count": len(updated["target_queue"]["items"]),
-        "target_values_rendered": False,
-    }
-    return updated, report
 
 
 def _write_github_output(path: str | None, values: dict[str, Any]) -> None:
@@ -1572,6 +1471,7 @@ def main(argv: list[str] | None = None) -> int:
     finish.add_argument("--attempt-id", required=True)
     finish.add_argument("--outcome", choices=sorted(ALLOWED_OUTCOMES), required=True)
     finish.add_argument("--reason-code", choices=sorted(ALLOWED_REASON_CODES), required=True)
+    finish.add_argument("--ledger", type=Path, default=Path("general_evaluation_ledger.json"))
 
     queue_capture = sub.add_parser("queue-capture")
     queue_capture.add_argument("--state", type=Path, default=Path("general_autonomous_research_state.json"))
@@ -1581,16 +1481,6 @@ def main(argv: list[str] | None = None) -> int:
     queue_materialize = sub.add_parser("queue-materialize")
     queue_materialize.add_argument("--state", type=Path, default=Path("general_autonomous_research_state.json"))
     queue_materialize.add_argument("--output", type=Path, default=Path("super_loto_archive.json"))
-
-    retire_exhausted = sub.add_parser("retire-exhausted-target")
-    retire_exhausted.add_argument("--state", type=Path, default=Path("general_autonomous_research_state.json"))
-    retire_exhausted.add_argument("--target-date", required=True)
-    retire_exhausted.add_argument("--archive-sha256", required=True)
-    retire_exhausted.add_argument("--archive-record-count", type=int, required=True)
-    retire_exhausted.add_argument("--expected-attempt-count", type=int, required=True)
-    retire_exhausted.add_argument("--expected-next-target-date", required=True)
-    retire_exhausted.add_argument("--expected-next-archive-sha256", required=True)
-    retire_exhausted.add_argument("--expected-next-archive-record-count", type=int, required=True)
 
     args = parser.parse_args(argv)
     try:
@@ -1644,18 +1534,6 @@ def main(argv: list[str] | None = None) -> int:
             result = target_queue.materialize_front(
                 state["target_queue"], args.output
             )
-        elif args.command == "retire-exhausted-target":
-            state, result = retire_exhausted_target(
-                state,
-                target_date=args.target_date,
-                archive_sha256=args.archive_sha256,
-                archive_record_count=args.archive_record_count,
-                expected_attempt_count=args.expected_attempt_count,
-                expected_next_target_date=args.expected_next_target_date,
-                expected_next_archive_sha256=args.expected_next_archive_sha256,
-                expected_next_archive_record_count=args.expected_next_archive_record_count,
-            )
-            write_state(args.state, state)
         elif args.command == "prepare":
             result = prepare_cycle(
                 state,
@@ -1698,6 +1576,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.attempt_id,
                 outcome=args.outcome,
                 reason_code=args.reason_code,
+                evaluation_ledger_path=args.ledger,
             )
             write_state(args.state, state)
             result = {"status": "ATTEMPT_OUTCOME_RECORDED", "attempt_id": args.attempt_id, "outcome": args.outcome}
