@@ -57,9 +57,8 @@ scheduler does not expose target values to discovery.
 - A known HTTP 5xx response does not, by itself, activate the global uncertainty
   lock. If the single retry also returns an explicit 5xx, the target is recorded
   as PROVIDER_HTTP_5XX_RETRYABLE and may be retried by a later scheduled cycle,
-  subject to the normal three-attempt target budget and the two exact, pinned
-  2026-11-10 exceptions. These are provider-error retries, not permission to
-  unlock or bypass a lock.
+  subject to the normal ten-attempt target budget. These are provider-error
+  retries, not permission to unlock or bypass a lock.
 - A failed target remains at the FIFO head. NO_PROVIDER_REQUEST_SENT and
   PROVIDER_HTTP_5XX_RETRYABLE permit same-target retries within that existing
   budget. A valid directional hypothesis set that is still missing its matching
@@ -244,11 +243,9 @@ command independently verifies that ledger evidence before releasing the FIFO
 head. NO_ELIGIBLE_CANDIDATE is not target completion: it remains in the FIFO
 and may be researched again on a later scheduled cycle.
 
-The normal retry budget is three attempts per target. The only exceptions
-are the previously approved, provenance-pinned fourth and fifth attempts for
-the 2026-11-10 target. A TARGET_RETRY_LIMIT_REACHED response only means that no
-additional automatic attempt is eligible. It does not retire or consume the
-target.
+The normal retry budget is ten attempts per target. A TARGET_RETRY_LIMIT_REACHED
+response only means that no additional automatic attempt is eligible. It does
+not retire or consume the target.
 
 An exhausted target may leave the FIFO only through an explicit
 EXHAUSTED_RETRY_BUDGET record created by the separate manually dispatched
@@ -328,53 +325,24 @@ or a Telegram request is attempted. Other report kinds and non-success
 notifications therefore retain their fail-closed delivery behavior.
 
 
-## Scheduler state schema v4 and Cycle #55 recovery
+## Scheduler state schema v4 and historical recovery provenance
 
 Scheduler state schema v3 introduced the bounded, append-only `recovery_history`
-journal. Schema v4 adds a separate, bounded `manual_retry_history` journal for
-one narrowly scoped exception approved on 2026-11-13. Legacy v1, v2, and v3
-documents are upgraded in memory; the existing generation-guarded state writer
-remains the only way to publish state. Both journals store metadata and
-cryptographic digests only, never draw rows, target numbers, per-draw hits, or
-rankings.
+journal. Schema v4 retains the bounded `manual_retry_history` journal so
+previously recorded Cycle #55 events remain verifiable. These fields are
+historical provenance only. They do not authorize additional attempts or create
+a current dispatch route. The active policy is a uniform ten-attempt budget per
+target; the old one-time dispatch path is retired.
+
+Legacy v1, v2, and v3 documents are upgraded in memory; the generation-guarded
+state writer remains the only way to publish state. Both historical journals
+store metadata and cryptographic digests only, never draw rows, target numbers,
+per-draw hits, or rankings.
 
 Cycle #55 exposed a finalization-order defect: a false
 `NO_ELIGIBLE_CANDIDATE` event was staged without FIFO completion before the
-research-memory append had succeeded. The Cycle #55 recovery utility therefore
-requires both the pinned generation-52 state and the pinned generation-51
-source state. It verifies the exact attempt, event, completed entry, FIFO
-cursor, unchanged pending tail, and original compressed snapshot before
-constructing the v4 preview. The restored attempt remains
-`FAILED / WORKFLOW_FAILED`.
-
-### One-time Cycle #55 exception to PR #103
-
-PR #103's retired attempt cap and non-retryable `WORKFLOW_FAILED` rule remain
-unchanged for every other target. A separate explicit approval authorizes only
-one additional attempt for the exact 2026-11-10 FIFO snapshot:
-- Target date: `2026-11-10`
-- Archive SHA-256: `ae7b79e4922d4178a86c7d7880af3e4758d1a5e7f78d6cc3d2595fbb4fd66596`
-- Archive records: `983`
-- Existing attempts: exactly the three pinned Cycle #55 attempts.
-- Prior terminal failure: `WORKFLOW_FAILED` at `2026-11-12T19:29:11.330937+00:00`.
-
-The manual path is available only through the existing autonomous workflow's
-`workflow_dispatch` action `cycle55-manual-retry`. It requires the fixed
-one-time confirmation phrase, a first-attempt dispatch on `main`, the pinned
-workflow identity and authorized repository actor. Before reserving the fourth
-attempt it revalidates the current free-only authorization and clear global
-NVIDIA lock, exact FIFO snapshot, target isolation, minimum discovery history,
-and fresh disjoint forward/reverse sealed windows. Previously consumed
-holdouts cannot be reused. The exception is consumed atomically with the
-fourth-attempt reservation in the state store and cannot be replayed.
-
-No other target, the authorization period, or the global NVIDIA lock is changed.
-If any identity, state, archive, lock, or sealed-preflight check fails, the
-manual action stops before a provider request. A terminal result for the
-journaled fourth attempt may release only the exact 2026-11-10 FIFO item; the
-next queued target remains in chronological order.
-
-The manual workflow still uses the existing provider limiter, research,
-validation, evaluation, memory, and Telegram paths. The exception itself does
-not unlock or make an NVIDIA request. The one-time retry is not a waiver of
-target isolation or a guarantee that an eligible candidate will exist.
+research-memory append had succeeded. The recovery utility retains the exact
+historical generation, source snapshot, attempt, event, completed entry, FIFO
+cursor, and compressed-snapshot provenance. The restored attempt remains
+`FAILED / WORKFLOW_FAILED`. The old incident and its recorded retry history are
+preserved for audit; they are not a live retry exception.
