@@ -21,7 +21,7 @@ import general_sealed_evaluation as sealed
 from general_hypothesis_proposals import (
     END_MARKER,
     MODEL_PROPOSAL_KEYS,
-    SCHEMA_VERSION as PROPOSAL_SCHEMA_VERSION,
+    LEGACY_SCHEMA_VERSION as PROPOSAL_SCHEMA_VERSION,
     START_MARKER,
     execution_spec_matches_proposal,
     parse_hypothesis_proposals,

@@ -19,51 +19,15 @@ from general_live_consent import (
 )
 
 
-def make_directional_report(direction, *, alter_spec=False):
-    spec = {
-        "schema_version": 1,
-        "score_expression": {
-            "op": "aggregate_history_numbers",
-            "aggregate": "count",
-            "expression": {
-                "op": "eq",
-                "left": {"op": "var", "name": "value"},
-                "right": {"op": "var", "name": "candidate"},
-            },
-        },
-    }
-    proposal_formal_spec = json.loads(json.dumps(spec))
-    if alter_spec:
-        spec["score_expression"]["expression"]["right"]["name"] = "draw_age"
-    proposal = {
-        "hypothesis_id": "HYP-001",
-        "discovery_direction": direction,
-        "proposed_family": "generic count baseline",
-        "research_rationale": "Historical counts may be a useful baseline to challenge against a null model.",
-        "known_risks": ["multiple testing risk"],
-        "formal_execution_spec": proposal_formal_spec,
-    }
-    proposals = {"schema_version": 3, "proposals": [proposal]}
-    specs = {"schema_version": 1, "specifications": [{"hypothesis_id": "HYP-001", "execution_spec": spec}]}
-    return (
-        "<HYPOTHESIS_PROPOSALS_JSON>\n"
-        + json.dumps(proposals)
-        + "\n</HYPOTHESIS_PROPOSALS_JSON>\n"
-        + "<HYPOTHESIS_EXECUTION_SPECS_JSON>\n"
-        + json.dumps(specs)
-        + "\n</HYPOTHESIS_EXECUTION_SPECS_JSON>\n"
-        + research.LESSONS_START
-        + json.dumps({
-            "schema_version": 1,
-            "observations": ["The fixed definition is reproducible."],
-            "failed_approaches": ["A moving threshold was not stable."],
-            "next_tests": ["Compare against a uniform random baseline."],
-        })
-        + research.LESSONS_END
-    )
-
-def make_directional_v2_report(direction):
+def make_directional_report(
+    direction,
+    *,
+    alter_spec=False,
+    formal_spec_missing=False,
+):
     slot = "A" if direction == "forward" else "C"
+    if alter_spec:
+        slot = "C" if direction == "forward" else "A"
     spec = {
         "schema_version": 2,
         "direction": direction,
@@ -81,18 +45,25 @@ def make_directional_v2_report(direction):
         "proposed_family": "direction-sealed state membership",
         "research_rationale": "A direction-isolated state relation can be evaluated without exposing the target.",
         "known_risks": ["Multiple testing and regime drift."],
-        "formal_execution_spec": spec,
+        "formal_execution_spec": None if formal_spec_missing else spec,
     }
     return (
         "<HYPOTHESIS_PROPOSALS_JSON>\n"
-        + json.dumps({"schema_version": 3, "proposals": [proposal]})
+        + json.dumps({"schema_version": 4, "proposal": proposal})
         + "\n</HYPOTHESIS_PROPOSALS_JSON>\n"
-        + "<HYPOTHESIS_EXECUTION_SPECS_JSON>\n"
-        + json.dumps({"schema_version": 1, "specifications": [
-            {"hypothesis_id": "HYP-001", "execution_spec": spec}
-        ]})
-        + "\n</HYPOTHESIS_EXECUTION_SPECS_JSON>"
+        + research.LESSONS_START
+        + json.dumps({
+            "schema_version": 1,
+            "observations": ["The fixed definition is reproducible."],
+            "failed_approaches": ["A moving threshold was not stable."],
+            "next_tests": ["Compare against a uniform random baseline."],
+        })
+        + research.LESSONS_END
     )
+
+
+def make_directional_v2_report(direction):
+    return make_directional_report(direction)
 
 
 def make_fake_connection(response=None):
@@ -265,20 +236,24 @@ class OpenResearchIsolationTests(unittest.TestCase):
         lowered = system.lower()
         self.assertIn("<HYPOTHESIS_PROPOSALS_JSON>", system)
         self.assertIn("</HYPOTHESIS_PROPOSALS_JSON>", system)
-        self.assertIn('"schema_version":3', system)
+        self.assertIn('"schema_version":4', system)
+        self.assertIn('"proposal":{', system)
+        self.assertNotIn('"proposals":[', system)
         self.assertIn('"formal_execution_spec":null', system)
         self.assertIn("coordinator assigns the four mandatory evaluation protocols", system.lower())
         self.assertIn("all mathematical explanation fields", system.lower())
         self.assertIn('"research_rationale"', system)
         self.assertNotIn('"evaluation_protocols"', system)
         self.assertNotIn('"exact_definition"', system)
-        self.assertIn("zero or one proposal only", system.lower())
+        self.assertIn("one proposal object or null", system.lower())
+        self.assertIn("sole authoritative mathematical definition", system.lower())
+        self.assertIn("do not emit <hypothesis_execution_specs_json>", system.lower())
         self.assertIn("whole-block fail-closed contract", system.lower())
         self.assertIn("schema_version 1", lowered)
         self.assertIn("falsification criterion", system.lower())
         self.assertNotIn('"forward_walk_forward"', system)
         self.assertIn("four mandatory evaluation protocols", system.lower())
-        self.assertIn("or return an empty list", system)
+        self.assertIn("return one proposal object or null", system.lower())
         self.assertIn("one isolated forward discovery pass", lowered)
         self.assertIn('"discovery_direction":"forward"', system)
         self.assertNotIn('"discovery_direction":"forward|reverse|both"', system)
@@ -293,10 +268,14 @@ class OpenResearchIsolationTests(unittest.TestCase):
         forward = research.build_messages("2026-10-22", self.rows[:2], direction="forward")[0]["content"].lower()
         reverse = research.build_messages("2026-10-22", self.rows[:2], direction="reverse")[0]["content"].lower()
         for system in (forward, reverse):
-            self.assertIn("<hypothesis_execution_specs_json>", system)
-            self.assertIn("</hypothesis_execution_specs_json>", system)
-            self.assertIn("execution_spec must use schema_version 2", system)
-            self.assertIn("direction must equal this isolated request", system)
+            self.assertIn("<hypothesis_proposals_json>", system)
+            self.assertIn("</hypothesis_proposals_json>", system)
+            self.assertIn('"schema_version":4', system)
+            self.assertIn('"proposal":{', system)
+            self.assertIn("formal_execution_spec field inside the proposal is the sole authoritative", system)
+            self.assertIn("do not emit <hypothesis_execution_specs_json>", system)
+            self.assertIn("nested execution_spec inside formal_execution_spec must use schema_version 2", system)
+            self.assertIn("its direction must equal this isolated request", system)
             self.assertIn("state_ref", system)
             self.assertIn("set_union", system)
             self.assertIn("set_intersection", system)
@@ -307,8 +286,8 @@ class OpenResearchIsolationTests(unittest.TestCase):
             self.assertIn("64 nodes and depth 12", system)
             self.assertIn("t is not a dsl operator", system)
             self.assertIn("if an exact hypothesis cannot be represented faithfully", system)
-            self.assertIn("zero or one item only", system)
-            self.assertIn("complete claim requires one valid spec from each independent direction", system)
+            self.assertIn("one proposal object or null", system)
+            self.assertIn("one independently validated specification from each direction", system)
             self.assertIn("not approved or canonical", system)
             self.assertIn("fixed synthetic 6-of-60 active-scope fixtures", system)
             self.assertIn("do not claim it was real-archive backtested", system)
@@ -393,24 +372,75 @@ class OpenResearchIsolationTests(unittest.TestCase):
         self.assertFalse(specs["execution_ready"])
         self.assertFalse(specs["method_registry_modified"])
 
-    def test_directional_execution_spec_must_match_authoritative_formal_definition(self):
-        result = research.parse_directional_result(
-            make_directional_report("forward", alter_spec=True), "forward"
+    def test_null_formal_definition_cannot_be_overridden_by_legacy_dsl_block(self):
+        report = make_directional_report("forward")
+        proposal = json.loads(
+            report.split("<HYPOTHESIS_PROPOSALS_JSON>")[1]
+            .split("</HYPOTHESIS_PROPOSALS_JSON>")[0]
+        )["proposal"]
+        conflicting_legacy_spec = {
+            "schema_version": 2,
+            "direction": "forward",
+            "score_expression": {
+                "op": "bool_to_number",
+                "arg": {
+                    "op": "contains_candidate",
+                    "state": {"op": "state_ref", "slot": "A"},
+                },
+            },
+        }
+        report += (
+            "<HYPOTHESIS_EXECUTION_SPECS_JSON>"
+            + json.dumps({
+                "schema_version": 1,
+                "specifications": [{
+                    "hypothesis_id": "HYP-001",
+                    "execution_spec": conflicting_legacy_spec,
+                }],
+            })
+            + "</HYPOTHESIS_EXECUTION_SPECS_JSON>"
         )
+        result = research.parse_directional_result(report, "forward")
         self.assertEqual(result["proposal_document"]["status"], "VALID_PROPOSALS")
-        self.assertEqual(result["execution_spec_document"]["status"], "REJECTED")
+        self.assertEqual(result["execution_spec_document"]["status"], "VALIDATED_SPECS")
+        self.assertEqual(
+            result["execution_spec_document"]["specifications"][0]["execution_spec"],
+            proposal["formal_execution_spec"],
+        )
+        self.assertNotEqual(
+            result["execution_spec_document"]["specifications"][0]["execution_spec"],
+            conflicting_legacy_spec,
+        )
+
+    def test_null_formal_definition_cannot_be_overridden_by_legacy_dsl_block(self):
+        report = make_directional_report("reverse", formal_spec_missing=True)
+        legacy_spec = {
+            "schema_version": 2,
+            "direction": "reverse",
+            "score_expression": {
+                "op": "cardinality",
+                "state": {
+                    "op": "set_intersection",
+                    "left": {"op": "state_ref", "slot": "B"},
+                    "right": {"op": "state_ref", "slot": "C"},
+                },
+            },
+        }
+        report += (
+            "<HYPOTHESIS_EXECUTION_SPECS_JSON>"
+            + json.dumps({
+                "schema_version": 1,
+                "specifications": [{
+                    "hypothesis_id": "HYP-001",
+                    "execution_spec": legacy_spec,
+                }],
+            })
+            + "</HYPOTHESIS_EXECUTION_SPECS_JSON>"
+        )
+        result = research.parse_directional_result(report, "reverse")
+        self.assertEqual(result["proposal_document"]["status"], "VALID_PROPOSALS")
+        self.assertEqual(result["execution_spec_document"]["status"], "MISSING_FORMAL_SPEC")
         self.assertEqual(result["execution_spec_document"]["specifications"], [])
-        self.assertIn(
-            "exactly match the proposal's formal mathematical definition",
-            result["execution_spec_document"]["rejection_reasons"][0],
-        )
-        proposals, specs = research.combine_directional_results(
-            result,
-            research.parse_directional_result(make_directional_report("reverse"), "reverse"),
-        )
-        self.assertEqual(proposals["status"], "VALID_PROPOSALS")
-        self.assertEqual(specs["status"], "INCOMPLETE_DIRECTIONAL_SPECS")
-        self.assertFalse(specs["dsl_validated"])
 
     def test_direction_mismatch_is_rejected_fail_closed(self):
         result = research.parse_directional_result(make_directional_report("reverse"), "forward")

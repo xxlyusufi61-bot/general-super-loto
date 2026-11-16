@@ -25,12 +25,16 @@ from general_live_consent import (
     has_explicit_live_consent,
     has_explicit_single_request_consent,
 )
+from general_execution_spec_dispatch import (
+    execution_spec_version,
+    run_synthetic_contract_tests,
+    validate_execution_spec,
+)
 from general_hypothesis_proposals import (
     MODEL_PROPOSAL_KEYS,
     execution_spec_matches_proposal,
     parse_hypothesis_proposals,
 )
-from general_execution_spec_parser import parse_execution_spec_block
 import general_sealed_evaluation as sealed
 import general_research_memory as research_memory
 
@@ -337,40 +341,44 @@ def build_messages(
         "</RULE_CHANGE_REQUEST_JSON>\n"
         "If no rule change is needed, omit the entire rule-change block. Rule-change requests are submitted "
         "separately for user approval; malformed or incomplete blocks are rejected.\n"
-        "Also include exactly one machine-readable hypothesis proposal block. It is a research queue only, "
-        "not an approved or executable formula. Return zero or one proposal only: choose the single most "
-        "defensible testable hypothesis using discovery data only, or return an empty list. Do not emit "
-        "a list of alternatives. This keeps the whole-block fail-closed contract atomic instead of allowing "
-        "a mixed list of valid and invalid proposals to interfere with each other.\n"
+        "Include exactly one structured hypothesis-proposal block. It is a research queue only, "
+        "not an approved or executable formula, and it follows a whole-block fail-closed contract: "
+        "malformed or contradictory proposal data rejects the entire candidate. Return one proposal object "
+        "or null; never return an array "
+        "or a list of alternatives. The singular object keeps the JSON shape shallow and avoids an outer "
+        "proposal-array delimiter.\n"
         "<HYPOTHESIS_PROPOSALS_JSON>\n"
-        "{\"schema_version\":3,\"proposals\":[{"
+        "{\"schema_version\":4,\"proposal\":{"
         "\"hypothesis_id\":\"HYP-001\","
         f"\"discovery_direction\":\"{direction}\","
         "\"proposed_family\":\"free descriptive label; not a registry status\","
         "\"research_rationale\":\"discovery-only rationale; not a formula definition or execution instruction\","
         "\"known_risks\":[\"overfitting risk\"],"
-        "\"formal_execution_spec\":null}]}\n"
+        "\"formal_execution_spec\":null}}\n"
         "</HYPOTHESIS_PROPOSALS_JSON>\n"
-        "Use exactly the schema keys shown; do not add prediction numbers, source code, weights chosen from hidden "
-        "targets, model-authored formula prose, model-selected evaluation protocol fields, or any claim of validation. "
-        "The coordinator assigns the four mandatory evaluation protocols and all mathematical explanation fields "
-        "locally after validating the formal DSL object. Proposed family names are descriptive only and never change "
-        "the method registry. The research_rationale field is commentary only and cannot override the formal definition.\n"
-        "The formal_execution_spec field is the sole authoritative mathematical definition. It must be either null "
-        "(if the hypothesis cannot be represented faithfully) or a complete nested schema_version 2 execution_spec "
-        "object whose direction matches this isolated call. The coordinator derives hypothesis, exact_definition, "
-        "inputs, output_rule, parameter policy, selection policy, and falsification criterion from the validated AST.\n"
-        "Do not use sealed validation rows, validation outcomes, or post-target records to define or order the proposal.\n"
-        "Also include exactly one HYPOTHESIS_EXECUTION_SPECS_JSON block for this direction only. "
-        "Provide zero or one matching execution specification for the first proposal in this isolated pass, "
-        "when it can be represented faithfully by this DSL. Never provide a spec for another direction. "
-        "Do not provide alternatives for later proposals and do not use validation outcomes to choose. "
-        "The coordinator combines separately parsed directional outputs; a complete claim requires one "
-        "valid spec from each independent direction.\n"
-        "The outer execution-specification block keeps schema_version 1 and contains specifications. "
-        "Each item has exactly hypothesis_id and execution_spec. execution_spec MUST use schema_version 2, "
-        "direction must equal this isolated request's direction (" + direction + ") and include score_expression. "
-        "This is a typed expression tree, not source code.\n"
+        "Use exactly the schema keys shown: schema_version and proposal. The proposal value must be one "
+        "object or null. Do not include a proposals array, a second hypothesis, a separate execution-spec "
+        "JSON block, prediction numbers, source code, tuned weights, model-authored formula prose, "
+        "model-selected evaluation protocols, or claims of validation.\n"
+        "The formal_execution_spec field inside the proposal is the sole authoritative mathematical definition. "
+        "It must be either null (meaning this hypothesis is non-executable) or one complete nested "
+        "schema_version 2 execution_spec object whose direction matches this isolated call. The coordinator "
+        "validates and synthetic-tests this exact AST, then derives the execution-spec artifact locally from "
+        "the same object. Never rewrite or duplicate the AST in another block.\n"
+        "The coordinator assigns the four mandatory evaluation protocols and derives all mathematical "
+        "explanation fields (hypothesis, exact_definition, inputs, output_rule, parameter policy, selection "
+        "policy, and falsification criterion) locally after validating the formal AST. Proposed family "
+        "names are descriptive only and never change the method registry. The research_rationale field is "
+        "commentary only and cannot override the formal definition.\n"
+        "If no faithful safe-DSL definition exists, set formal_execution_spec to null. Do not output a "
+        "different execution specification elsewhere to compensate. A null formal definition is retained "
+        "as a non-executable hypothesis and cannot enter sealed evaluation.\n"
+        "Do not use sealed validation rows, validation outcomes, or post-target records to define or order "
+        "the proposal.\n"
+        "The nested execution_spec inside formal_execution_spec must use schema_version 2 and include score_expression; "
+        "its direction must equal this isolated request ("
+        + direction
+        + "). It is a typed expression tree, not source code.\n"
         "The direction-sealed slot contract is mandatory: forward may reference A and B only; C is the "
         "hidden current target. Reverse may reference B and C only; A is the hidden historical target, "
         "and reverse output is retrospective stress testing only, never predictive evidence.\n"
@@ -396,11 +404,12 @@ def build_messages(
         "A DSL-valid specification is not approved or canonical. It is run only against fixed synthetic "
         "6-of-60 active-scope fixtures before any separate sealed evaluation; do not claim it was real-archive "
         "backtested, promoted, or written to the method registry.\n"
-        "Place one raw JSON object between <HYPOTHESIS_EXECUTION_SPECS_JSON> and "
-        "</HYPOTHESIS_EXECUTION_SPECS_JSON>. Its top-level keys are schema_version and "
-        "specifications. Provide zero or one item only. The item has exactly hypothesis_id and "
-        "execution_spec and must match the first proposal in this isolated direction. Do not copy a template "
-        "with placeholders; use a fully valid AST or leave the list empty."
+        "Return only one <HYPOTHESIS_PROPOSALS_JSON> block for structured candidate data. "
+        "Do not emit <HYPOTHESIS_EXECUTION_SPECS_JSON> or any other duplicate machine-readable "
+        "definition block. A complete claim still requires one independently validated specification "
+        "from each direction, but those specifications are derived by the coordinator from each "
+        "direction's one authoritative proposal AST. If an exact hypothesis cannot be represented "
+        "faithfully, use formal_execution_spec=null rather than approximating it.\n"
     )
     if prior_memory is None:
         prior_memory = []
@@ -890,10 +899,11 @@ def parse_directional_result(
     report: str,
     direction: str,
 ) -> dict[str, Any]:
-    """Validate one direction's model output and namespace its IDs before merging."""
+    """Validate one isolated proposal and derive its DSL artifact from its sole AST."""
     if direction not in {"forward", "reverse"}:
         raise ValueError("Directional output must be forward or reverse.")
-    proposals = parse_hypothesis_proposals(report)
+
+    proposals = parse_hypothesis_proposals(report, required_schema_version=4)
     if proposals["status"] in {"VALID_PROPOSALS", "VALID_EMPTY"}:
         wrong_direction = [
             item.get("hypothesis_id")
@@ -903,8 +913,8 @@ def parse_directional_result(
         if wrong_direction:
             proposals["status"] = "REJECTED_DIRECTION_MISMATCH"
             proposals["rejection_reasons"] = [
-                "Every proposal in this isolated " + direction +
-                " call must use the same discovery_direction; mismatched IDs: "
+                "Every proposal in this isolated " + direction
+                + " call must use the same discovery_direction; mismatched IDs: "
                 + ", ".join(str(item) for item in wrong_direction)
             ]
             proposals["proposals"] = []
@@ -925,58 +935,65 @@ def parse_directional_result(
     proposals["direction"] = direction
     proposals["source_hypothesis_ids"] = original_ids
 
-    execution = parse_execution_spec_block(
-        report,
-        allowed_hypothesis_ids=set(original_ids),
-    )
-    if execution["specifications"]:
-        proposals_by_source_id = {
-            item.get("source_hypothesis_id"): item for item in proposals["proposals"]
-        }
-        if any(
-            not execution_spec_matches_proposal(
-                proposals_by_source_id.get(item["hypothesis_id"], {}),
-                item["execution_spec"],
-            )
-            for item in execution["specifications"]
-        ):
-            execution["status"] = "REJECTED"
-            execution["dsl_validated"] = False
-            execution["synthetic_tests_passed"] = False
-            execution["execution_ready"] = False
+    execution: dict[str, Any] = {
+        "schema_version": 1,
+        "status": "VALID_EMPTY" if proposals["status"] == "VALID_EMPTY" else "REJECTED",
+        "dsl_validated": False,
+        "synthetic_tests_passed": False,
+        "execution_ready": False,
+        "method_registry_modified": False,
+        "specifications": [],
+        "rejection_reasons": [],
+        "direction": direction,
+        "source_hypothesis_ids": original_ids,
+    }
+
+    if proposals["status"] not in {"VALID_PROPOSALS", "VALID_EMPTY"}:
+        execution["rejection_reasons"] = list(proposals.get("rejection_reasons", []))
+    elif proposals["proposals"]:
+        source_proposal = proposals["proposals"][0]
+        source_id = source_proposal["source_hypothesis_id"]
+        formal_spec = source_proposal.get("formal_execution_spec")
+        if formal_spec is None:
+            execution["status"] = "MISSING_FORMAL_SPEC"
             execution["rejection_reasons"] = [
-                "Execution specification does not exactly match the proposal's formal mathematical definition."
+                "The proposal has no formal_execution_spec; it remains a non-executable hypothesis."
             ]
-            execution["specifications"] = []
-    if len(execution["specifications"]) > 1:
-        execution["status"] = "REJECTED_DIRECTIONAL_SPEC_COUNT"
-        execution["dsl_validated"] = False
-        execution["synthetic_tests_passed"] = False
-        execution["execution_ready"] = False
-        execution["rejection_reasons"] = [
-            "An isolated directional response may provide at most one execution specification."
-        ]
-        execution["specifications"] = []
-    mapped_specs = []
-    for item in execution["specifications"]:
-        mapped = dict(item)
-        source_id = item["hypothesis_id"]
-        if source_id not in remap:
-            execution["status"] = "REJECTED_DIRECTIONAL_SPEC_ID"
-            execution["dsl_validated"] = False
-            execution["synthetic_tests_passed"] = False
-            execution["execution_ready"] = False
-            execution["rejection_reasons"] = [
-                "Execution specification is not attached to a validated proposal from this direction."
-            ]
-            mapped_specs = []
-            break
-        mapped["source_hypothesis_id"] = source_id
-        mapped["hypothesis_id"] = remap[source_id]
-        mapped_specs.append(mapped)
-    execution["specifications"] = mapped_specs
-    execution["direction"] = direction
-    execution["source_hypothesis_ids"] = original_ids
+        else:
+            try:
+                spec_version = execution_spec_version(formal_spec)
+                resumed_from_memory = report.lstrip().startswith(
+                    "This is a previously captured GENERAL candidate resumed from append-only research memory."
+                )
+                if spec_version == 1 and not resumed_from_memory:
+                    raise ValueError(
+                        "Fresh isolated research requires direction-sealed DSL v2; DSL v1 is accepted only for an exact pending-memory resume."
+                    )
+                checked_spec = validate_execution_spec(formal_spec)
+                if spec_version == 2 and checked_spec.get("direction") != direction:
+                    raise ValueError("Formal execution-spec direction does not match the isolated request.")
+                synthetic = run_synthetic_contract_tests(checked_spec)
+                if synthetic.get("status") != "PASS":
+                    raise ValueError("Formal execution-spec synthetic contract tests did not pass.")
+            except (TypeError, ValueError) as exc:
+                execution["status"] = "REJECTED"
+                execution["rejection_reasons"] = [str(exc)]
+            else:
+                execution["status"] = "VALIDATED_SPECS"
+                execution["dsl_validated"] = True
+                execution["synthetic_tests_passed"] = True
+                execution["specifications"] = [{
+                    "hypothesis_id": remap[source_id],
+                    "source_hypothesis_id": source_id,
+                    "execution_spec": checked_spec,
+                    "dsl_version": 2,
+                    "dsl_validated": True,
+                    "synthetic_tests_passed": True,
+                    "synthetic_test_summary": synthetic,
+                    "execution_ready": False,
+                    "registry_write_allowed": False,
+                }]
+
     return {
         "direction": direction,
         "proposal_document": proposals,
@@ -1857,14 +1874,7 @@ def render_pending_candidate_report(candidate: dict[str, Any], direction: str) -
     # parser accepts only the model-controlled input schema; strip all derived
     # fields and let the parser regenerate them canonically.
     model_proposal = {key: proposal[key] for key in MODEL_PROPOSAL_KEYS}
-    proposal_block = {"schema_version": 3, "proposals": [model_proposal]}
-    execution_block = {
-        "schema_version": 1,
-        "specifications": [{
-            "hypothesis_id": proposal["hypothesis_id"],
-            "execution_spec": specification,
-        }],
-    }
+    proposal_block = {"schema_version": 4, "proposal": model_proposal}
     lessons = candidate.get("learning_notes")
     if not isinstance(lessons, dict) or set(lessons) != research_memory.LESSON_KEYS:
         lessons = {"observations": [], "failed_approaches": [], "next_tests": []}
@@ -1875,9 +1885,6 @@ def render_pending_candidate_report(candidate: dict[str, Any], direction: str) -
         + "<HYPOTHESIS_PROPOSALS_JSON>\n"
         + json.dumps(proposal_block, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
         + "\n</HYPOTHESIS_PROPOSALS_JSON>\n"
-        + "<HYPOTHESIS_EXECUTION_SPECS_JSON>\n"
-        + json.dumps(execution_block, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
-        + "\n</HYPOTHESIS_EXECUTION_SPECS_JSON>\n"
         + LESSONS_START
         + json.dumps(learning_block, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
         + LESSONS_END

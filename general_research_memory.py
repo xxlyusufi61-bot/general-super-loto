@@ -23,8 +23,8 @@ from general_hypothesis_proposals import (
     execution_spec_matches_proposal,
     parse_hypothesis_proposals,
 )
-from general_execution_spec_parser import parse_execution_spec_block
 from general_execution_spec_dispatch import (
+    execution_spec_version,
     run_synthetic_contract_tests,
     validate_execution_spec,
 )
@@ -634,7 +634,7 @@ def _validate_entry(entry: Any, expected_id: int) -> dict[str, Any]:
         if {key: checked_proposal[key] for key in PROPOSAL_KEYS} != proposal:
             raise ResearchMemoryError("Stored proposal is not in canonical validated form.")
     if entry["execution_spec_status"] not in {
-        "VALIDATED_SPECS", "VALID_EMPTY", "MISSING_BLOCK", "REJECTED", "NOT_RUN",
+        "VALIDATED_SPECS", "VALID_EMPTY", "MISSING_BLOCK", "MISSING_FORMAL_SPEC", "REJECTED", "NOT_RUN",
     }:
         raise ResearchMemoryError("Execution-spec status is invalid.")
     if entry["execution_spec"] is not None and not isinstance(entry["execution_spec"], dict):
@@ -1107,47 +1107,79 @@ def _direction_artifacts(
         report = path.read_text(encoding="utf-8")
     except (OSError, UnicodeError):
         raise ResearchMemoryError("Directional model report could not be read.") from None
-    proposals = parse_hypothesis_proposals(report)
+
+    proposals = parse_hypothesis_proposals(report, required_schema_version=4)
     if proposals["status"] in {"VALID_PROPOSALS", "VALID_EMPTY"} and any(
         item.get("discovery_direction") != direction for item in proposals["proposals"]
     ):
         proposals["status"] = "REJECTED_DIRECTION_MISMATCH"
         proposals["proposals"] = []
-        proposals["rejection_reasons"] = ["Proposal direction did not match the isolated request."]
-    allowed_ids = {item["hypothesis_id"] for item in proposals["proposals"]}
-    specs = parse_execution_spec_block(report, allowed_hypothesis_ids=allowed_ids)
-    if len(specs["specifications"]) > 1:
-        specs["status"] = "REJECTED"
-        specs["specifications"] = []
-        specs["rejection_reasons"] = ["Only one specification is permitted per directional request."]
-    if any(item.get("hypothesis_id") not in allowed_ids for item in specs["specifications"]):
-        specs["status"] = "REJECTED"
-        specs["specifications"] = []
-        specs["rejection_reasons"] = ["Execution specification is not attached to this direction's proposal."]
-    if specs["specifications"]:
-        proposals_by_id = {
-            item["hypothesis_id"]: item for item in proposals["proposals"]
-        }
-        if any(
-            not execution_spec_matches_proposal(
-                proposals_by_id.get(item["hypothesis_id"], {}),
-                item["execution_spec"],
-            )
-            for item in specs["specifications"]
-        ):
-            specs["status"] = "REJECTED"
-            specs["specifications"] = []
+        proposals["rejection_reasons"] = [
+            "Proposal direction did not match the isolated request."
+        ]
+
+    specs: dict[str, Any] = {
+        "schema_version": 1,
+        "status": "VALID_EMPTY" if proposals["status"] == "VALID_EMPTY" else "REJECTED",
+        "dsl_validated": False,
+        "synthetic_tests_passed": False,
+        "execution_ready": False,
+        "method_registry_modified": False,
+        "specifications": [],
+        "rejection_reasons": [],
+    }
+    if proposals["status"] not in {"VALID_PROPOSALS", "VALID_EMPTY"}:
+        specs["rejection_reasons"] = list(proposals.get("rejection_reasons", []))
+    elif proposals["proposals"]:
+        proposal = proposals["proposals"][0]
+        formal_spec = proposal.get("formal_execution_spec")
+        if formal_spec is None:
+            specs["status"] = "MISSING_FORMAL_SPEC"
             specs["rejection_reasons"] = [
-                "Execution specification does not exactly match the proposal's formal mathematical definition."
+                "The proposal has no formal_execution_spec; it remains a non-executable hypothesis."
             ]
-    if specs["status"] == "VALIDATED_SPECS" and (
-        not proposals["proposals"]
-        or len(specs["specifications"]) != 1
-        or specs["specifications"][0].get("hypothesis_id") != proposals["proposals"][0]["hypothesis_id"]
-    ):
-        specs["status"] = "REJECTED"
-        specs["specifications"] = []
-        specs["rejection_reasons"] = ["Only a specification for this direction's first proposal can be retained."]
+        else:
+            is_pending_memory_resume = report.lstrip().startswith(
+                "This is a previously captured GENERAL candidate resumed from append-only research memory."
+            )
+            try:
+                spec_version = execution_spec_version(formal_spec)
+                if spec_version == 1 and not is_pending_memory_resume:
+                    raise ValueError(
+                        "DSL v1 is accepted only for an exact pending-memory resume."
+                    )
+                checked_spec = validate_execution_spec(formal_spec)
+                if spec_version == 2 and checked_spec.get("direction") != direction:
+                    raise ValueError(
+                        "Formal execution-spec direction does not match the isolated request."
+                    )
+                if not execution_spec_matches_proposal(proposal, checked_spec):
+                    raise ValueError(
+                        "Formal execution specification differs from the authoritative proposal AST."
+                    )
+                synthetic = run_synthetic_contract_tests(checked_spec)
+                if synthetic.get("status") != "PASS":
+                    raise ValueError(
+                        "Formal execution-spec synthetic contract tests did not pass."
+                    )
+            except (TypeError, ValueError) as exc:
+                specs["status"] = "REJECTED"
+                specs["rejection_reasons"] = [str(exc)]
+            else:
+                specs["status"] = "VALIDATED_SPECS"
+                specs["dsl_validated"] = True
+                specs["synthetic_tests_passed"] = True
+                specs["specifications"] = [{
+                    "hypothesis_id": proposal["hypothesis_id"],
+                    "execution_spec": checked_spec,
+                    "dsl_version": spec_version,
+                    "dsl_validated": True,
+                    "synthetic_tests_passed": True,
+                    "synthetic_test_summary": synthetic,
+                    "execution_ready": False,
+                    "registry_write_allowed": False,
+                }]
+
     notes = _parse_learning_notes(report)
     # Learning notes may describe the active research boundary, which can also
     # be a real reserved reverse-holdout date. Remove only exact forbidden date
