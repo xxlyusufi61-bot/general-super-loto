@@ -1,11 +1,12 @@
 # Cycle #55 state-store recovery
 
-> Historical record: the retry-cap and EXHAUSTED_RETRY_BUDGET retirement
-> described here are superseded by the evaluation-only FIFO policy. New
-> scheduler code does not retire targets for exhausted retries. A target may
-> leave the FIFO only after a matching sealed-evaluation ledger entry is
-> persisted as EVALUATED. This document remains as immutable provenance for
-> the earlier Cycle #55 repair and is not an authorization to repeat it.
+> Historical record: this document preserves the exact Cycle #55 false-terminal
+> recovery and the one-time 2026-11-10 retry history. The general retry policy
+> remains three attempts per target, with the exact pinned fourth/fifth-attempt
+> exceptions already recorded for this target. EXHAUSTED_RETRY_BUDGET retirement
+> remains an explicit, validated FIFO outcome; the current scheduler uses a
+> separate manually dispatched workflow for new retirements. This historical
+> document is provenance, not an authorization to repeat the Cycle #55 action.
 
 ## Scope
 
