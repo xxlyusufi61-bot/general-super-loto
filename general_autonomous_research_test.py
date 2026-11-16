@@ -323,6 +323,25 @@ class AutonomousResearchStateTests(unittest.TestCase):
             self.assertFalse(blocked["eligible"])
             self.assertEqual(blocked["status"], "TARGET_RETRY_LIMIT_REACHED")
 
+            last = state["attempts"][-1]
+            eleventh_at = NOW + timedelta(minutes=auto.MAX_ATTEMPTS_PER_TARGET + 1)
+            state["attempts"].append({
+                "attempt_id": "f" * 64,
+                "target_date": last["target_date"],
+                "archive_sha256": last["archive_sha256"],
+                "archive_record_count": last["archive_record_count"],
+                "claimed_at_utc": eleventh_at.isoformat(),
+                "github_run_id": "420000011",
+            })
+            state["events"].append({
+                "attempt_id": "f" * 64,
+                "outcome": "FAILED",
+                "recorded_at_utc": (eleventh_at + timedelta(seconds=1)).isoformat(),
+                "reason_code": "NO_PROVIDER_REQUEST_SENT",
+            })
+            with self.assertRaisesRegex(auto.AutonomousResearchError, "ten-attempt limit"):
+                auto.validate_state(state)
+
     def test_successful_target_cannot_be_recorded_without_exact_evaluated_ledger(self):
         state = active_state()
         attempt_id = "e" * 64
