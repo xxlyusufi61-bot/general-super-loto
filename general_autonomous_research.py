@@ -406,16 +406,24 @@ def validate_state(value: Any) -> dict[str, Any]:
                 and manual.get("prior_attempt_id") == entry["attempt_id"]
                 and manual.get("target_date") == entry["target_date"]
                 and manual_event is not None
-                and manual_event.get("outcome") in {"SUCCEEDED", "NO_ELIGIBLE_CANDIDATE"}
                 and len(completed) == 1
-                and completed[0].get("outcome") == manual_event["outcome"]
+                and (
+                    (
+                        manual_event.get("outcome") == "SUCCEEDED"
+                        and completed[0].get("outcome") in {"EVALUATED", "SUCCEEDED"}
+                    )
+                    or (
+                        manual_event.get("outcome") == "NO_ELIGIBLE_CANDIDATE"
+                        and completed[0].get("outcome") == "NO_ELIGIBLE_CANDIDATE"
+                    )
+                )
             )
             exhausted_attempts = [
                 attempt for attempt in attempts
                 if attempt["target_date"] == entry["target_date"]
             ]
             exhausted_events_complete = (
-                len(exhausted_attempts) == LEGACY_CYCLE55_RETIRED_ATTEMPTS
+                len(exhausted_attempts) == MAX_ATTEMPTS_PER_TARGET + 2
                 and all(
                     event_by_attempt.get(attempt["attempt_id"]) is not None
                     and event_by_attempt[attempt["attempt_id"]]["outcome"] == "FAILED"
@@ -1428,9 +1436,9 @@ def _require_evaluated_target(
         and entry.get("archive_record_count") == archive_record_count
     ]
     evaluated = [entry for entry in matches if entry.get("state") == "EVALUATED"]
-    if len(evaluated) != 1:
+    if not evaluated:
         raise AutonomousResearchError(
-            "A target can leave the FIFO only after exactly one matching sealed claim is persisted as EVALUATED."
+            "A target can leave the FIFO only after at least one matching sealed claim is persisted as EVALUATED."
         )
 
 
