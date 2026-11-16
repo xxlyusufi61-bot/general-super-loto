@@ -17,6 +17,10 @@ class SingleRequestDiagnosticTests(unittest.TestCase):
     def setUp(self):
         research._NVIDIA_REQUESTS_ATTEMPTED = 0
         research._NVIDIA_REQUEST_LABELS_ATTEMPTED.clear()
+        research._NVIDIA_REQUEST_LABELS_SUCCEEDED.clear()
+        research._NVIDIA_DIRECTIONAL_COMPLETED.clear()
+        research._NVIDIA_REQUEST_ATTEMPT_COUNTS.clear()
+        research._RETRY_AUDIT_EVENTS.clear()
         self.temp_dir = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp_dir.cleanup)
         self.root = Path(self.temp_dir.name)
