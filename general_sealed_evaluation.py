@@ -475,8 +475,169 @@ def _used_validation_dates(ledger: dict[str, Any]) -> set[str]:
 
 
 def get_used_validation_dates(ledger: dict[str, Any]) -> set[str]:
-    """Return all dates permanently consumed by either directional holdout."""
+    """Return all dates reserved or permanently consumed by directional holdouts."""
     return set(_used_validation_dates(ledger))
+
+
+def _pending_claim_with_split(
+    archive: dict[str, Any],
+    ledger: dict[str, Any],
+    *,
+    offline_memory_path: str | Path = "general_research_memory.json",
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    """Return the exact active claim and its original partition for safe resumption."""
+    matches = [
+        (index, entry)
+        for index, entry in enumerate(ledger["entries"])
+        if entry.get("state") == "CLAIMED"
+        and entry.get("target_date") == archive.get("last_date")
+        and entry.get("archive_sha256") == archive.get("archive_sha256")
+    ]
+    if not matches:
+        return None
+    if len(matches) != 1:
+        raise SealedEvaluationError("More than one pending sealed claim matches the active archive.")
+    entry_index, entry = matches[0]
+    if entry_index != len(ledger["entries"]) - 1:
+        raise SealedEvaluationError("A pending sealed claim is not the final evaluation-ledger entry.")
+
+    expected_prior_dates = sorted({
+        day
+        for prior in ledger["entries"][:entry_index]
+        for day in prior["validation_dates"] + prior.get("reverse_validation_dates", [])
+    })
+    if entry.get("previously_consumed_validation_dates") != expected_prior_dates:
+        raise SealedEvaluationError("Pending claim prior-consumption snapshot does not match the append-only ledger.")
+    if (
+        not isinstance(entry.get("claim_id"), str)
+        or len(entry["claim_id"]) != 64
+        or any(ch not in "0123456789abcdef" for ch in entry["claim_id"])
+        or not isinstance(entry.get("archive_snapshot_path"), str)
+        or not entry["archive_snapshot_path"]
+        or entry.get("archive_record_count") != archive.get("record_count")
+    ):
+        raise SealedEvaluationError("Pending sealed claim identity or archive binding is invalid.")
+
+    snapshot = load_archive(Path(entry["archive_snapshot_path"]))
+    if (
+        snapshot["archive_sha256"] != archive["archive_sha256"]
+        or snapshot["last_date"] != archive["last_date"]
+        or snapshot["record_count"] != archive["record_count"]
+        or snapshot["rows"] != archive["rows"]
+    ):
+        raise SealedEvaluationError("Pending claim immutable snapshot does not match the active FIFO archive.")
+
+    split = split_archive(
+        archive["rows"],
+        archive_sha256=archive["archive_sha256"],
+        used_validation_dates=set(expected_prior_dates),
+        offline_memory_path=offline_memory_path,
+    )
+    if split["target_date"] != entry.get("target_date"):
+        raise SealedEvaluationError("Pending claim target does not match its original chronological partition.")
+    r60 = split["regimes"]["R60"]
+    forward_dates = [row["date"] for row in r60["validation_rows"]]
+    reverse_dates = [row["date"] for row in r60["reverse_validation_rows"]]
+    if (
+        forward_dates != entry.get("validation_dates")
+        or reverse_dates != entry.get("reverse_validation_dates")
+        or len(forward_dates) != entry.get("validation_count")
+        or len(reverse_dates) != entry.get("reverse_validation_count")
+        or (forward_dates and forward_dates[0] != entry.get("validation_start_date"))
+        or (forward_dates and forward_dates[-1] != entry.get("validation_end_date"))
+        or (reverse_dates and reverse_dates[0] != entry.get("reverse_validation_start_date"))
+        or (reverse_dates and reverse_dates[-1] != entry.get("reverse_validation_end_date"))
+        or r60["discovery_count"] != entry.get("r60_discovery_count")
+    ):
+        raise SealedEvaluationError("Pending claim holdout or discovery partition changed; resumption is forbidden.")
+
+    if (
+        "offline_development_memory_sha256" not in entry
+        or "previously_consumed_offline_development_draw_count" not in entry
+    ):
+        empty_digest = _sha256_bytes(_canonical_json([]))
+        if (
+            split["previously_consumed_offline_development_draw_count"] != 0
+            or split["offline_development_memory_sha256"] != empty_digest
+        ):
+            raise SealedEvaluationError("Legacy pending claim has no matching offline-consumption snapshot.")
+    elif (
+        entry["offline_development_memory_sha256"] != split["offline_development_memory_sha256"]
+        or entry["previously_consumed_offline_development_draw_count"]
+        != split["previously_consumed_offline_development_draw_count"]
+    ):
+        raise SealedEvaluationError("Offline development memory changed after the pending sealed claim.")
+
+    for field in ("hypothesis_id", "spec_sha256", "reverse_hypothesis_id", "reverse_spec_sha256"):
+        value = entry.get(field)
+        if not isinstance(value, str) or not value:
+            raise SealedEvaluationError("Pending claim frozen candidate identity is invalid.")
+        if field.endswith("sha256") and (
+            len(value) != 64 or any(ch not in "0123456789abcdef" for ch in value)
+        ):
+            raise SealedEvaluationError("Pending claim frozen specification hash is invalid.")
+    return entry, split
+
+
+def pending_claim_for_archive(
+    archive_path: str | Path,
+    ledger_path: str | Path,
+    *,
+    offline_memory_path: str | Path = "general_research_memory.json",
+) -> dict[str, Any] | None:
+    """Return a validated pending claim for the exact active archive."""
+    archive = load_archive(archive_path)
+    ledger = load_ledger(ledger_path)
+    pending = _pending_claim_with_split(
+        archive, ledger, offline_memory_path=offline_memory_path
+    )
+    return None if pending is None else dict(pending[0])
+
+
+def split_for_research(
+    archive_path: str | Path,
+    ledger_path: str | Path,
+    *,
+    offline_memory_path: str | Path = "general_research_memory.json",
+) -> dict[str, Any]:
+    """Use fresh dates normally, or the original split for an exact pending claim."""
+    archive = load_archive(archive_path)
+    ledger = load_ledger(ledger_path)
+    pending = _pending_claim_with_split(
+        archive, ledger, offline_memory_path=offline_memory_path
+    )
+    if pending is not None:
+        return pending[1]
+    return split_archive(
+        archive["rows"],
+        archive_sha256=archive["archive_sha256"],
+        used_validation_dates=_used_validation_dates(ledger),
+        offline_memory_path=offline_memory_path,
+    )
+
+
+def pending_claim_matches_candidates(
+    entry: dict[str, Any],
+    forward_candidate: dict[str, Any] | None,
+    reverse_candidate: dict[str, Any] | None,
+) -> bool:
+    """Require the exact two directional definitions frozen by a pending claim."""
+    if not isinstance(entry, dict) or not isinstance(forward_candidate, dict) or not isinstance(reverse_candidate, dict):
+        return False
+    forward_proposal = forward_candidate.get("proposal")
+    reverse_proposal = reverse_candidate.get("proposal")
+    forward_spec = forward_candidate.get("execution_spec")
+    reverse_spec = reverse_candidate.get("execution_spec")
+    if not all(isinstance(item, dict) for item in (
+        forward_proposal, reverse_proposal, forward_spec, reverse_spec
+    )):
+        return False
+    return (
+        forward_proposal.get("hypothesis_id") == entry.get("hypothesis_id")
+        and reverse_proposal.get("hypothesis_id") == entry.get("reverse_hypothesis_id")
+        and _sha256_bytes(_canonical_json(forward_spec)) == entry.get("spec_sha256")
+        and _sha256_bytes(_canonical_json(reverse_spec)) == entry.get("reverse_spec_sha256")
+    )
 
 
 def preflight(
@@ -488,13 +649,21 @@ def preflight(
     """Fail before any hosted-model request if no fresh validation interval exists."""
     archive = load_archive(archive_path)
     ledger = load_ledger(ledger_path)
-    used_dates = _used_validation_dates(ledger)
-    split = split_archive(
-        archive["rows"],
-        archive_sha256=archive["archive_sha256"],
-        used_validation_dates=used_dates,
-        offline_memory_path=offline_memory_path,
+    pending = _pending_claim_with_split(
+        archive, ledger, offline_memory_path=offline_memory_path
     )
+    if pending is not None:
+        pending_entry, split = pending
+        used_dates = set(pending_entry["previously_consumed_validation_dates"])
+    else:
+        pending_entry = None
+        used_dates = _used_validation_dates(ledger)
+        split = split_archive(
+            archive["rows"],
+            archive_sha256=archive["archive_sha256"],
+            used_validation_dates=used_dates,
+            offline_memory_path=offline_memory_path,
+        )
     r60 = split["regimes"]["R60"]
     validation_dates = [row["date"] for row in r60["validation_rows"]]
     reverse_validation_dates = [row["date"] for row in r60["reverse_validation_rows"]]
@@ -530,6 +699,8 @@ def preflight(
         "reverse_validation_dates": reverse_validation_dates,
         "hosted_model_request_performed": False,
         "real_archive_evaluation_performed": False,
+        "pending_claim_resume_available": pending_entry is not None,
+        "pending_claim_id": pending_entry["claim_id"] if pending_entry is not None else None,
     })
     return result
 
@@ -649,18 +820,72 @@ def create_claim(
     *,
     snapshot_directory: str | Path = SNAPSHOT_DIRECTORY,
     offline_memory_path: str | Path = "general_research_memory.json",
+    sealed_plan_path: str | Path | None = None,
 ) -> dict[str, Any]:
-    """Claim one fresh interval; call this before running a real-archive score."""
+    """Claim a fresh interval or resume the exact existing claim for this frozen candidate."""
     candidate = _select_one_frozen_candidate(proposals_path, specs_path)
+    archive = load_archive(archive_path)
+    ledger = load_ledger(ledger_path)
+    pending = _pending_claim_with_split(
+        archive, ledger, offline_memory_path=offline_memory_path
+    )
+    if pending is not None:
+        entry, split = pending
+        if candidate is None:
+            raise SealedEvaluationError("A pending sealed claim exists but its frozen candidate pair is unavailable.")
+        if (
+            candidate["hypothesis_id"] != entry["hypothesis_id"]
+            or candidate["spec_sha256"] != entry["spec_sha256"]
+            or candidate["reverse_hypothesis_id"] != entry["reverse_hypothesis_id"]
+            or candidate["reverse_spec_sha256"] != entry["reverse_spec_sha256"]
+        ):
+            raise SealedEvaluationError("A pending sealed claim can only resume with its exact original directional candidates.")
+        if sealed_plan_path is not None:
+            _write_json_atomic(Path(sealed_plan_path), public_plan(split))
+        return {
+            "status": "RESUMED_CLAIM",
+            "claim_created": True,
+            "claim_resumed": True,
+            "claim_id": entry["claim_id"],
+            "target_date": entry["target_date"],
+            "archive_sha256": entry["archive_sha256"],
+            "hypothesis_id": entry["hypothesis_id"],
+            "spec_sha256": entry["spec_sha256"],
+            "reverse_hypothesis_id": entry["reverse_hypothesis_id"],
+            "reverse_spec_sha256": entry["reverse_spec_sha256"],
+            "validation_start_date": entry["validation_start_date"],
+            "validation_end_date": entry["validation_end_date"],
+            "validation_draw_count": entry["validation_count"],
+            "reverse_validation_start_date": entry["reverse_validation_start_date"],
+            "reverse_validation_end_date": entry["reverse_validation_end_date"],
+            "reverse_validation_draw_count": entry["reverse_validation_count"],
+            "archive_snapshot_path": entry["archive_snapshot_path"],
+            "ledger_entry_must_be_persisted_before_evaluation": True,
+            "current_target_included": False,
+            "current_target_numbers_exposed": False,
+        }
     if candidate is None:
         return {
             "status": "SKIPPED_NO_SINGLE_FROZEN_CANDIDATE",
             "claim_created": False,
+            "claim_resumed": False,
             "real_archive_evaluation_performed": False,
             "reason": "Need one DSL-valid specification for the first eligible proposal in each direction, with no alternatives.",
         }
-    archive = load_archive(archive_path)
-    ledger = load_ledger(ledger_path)
+    completed_match = next((
+        item for item in ledger["entries"]
+        if item.get("state") == "EVALUATED"
+        and item.get("target_date") == archive["last_date"]
+        and item.get("archive_sha256") == archive["archive_sha256"]
+        and item.get("hypothesis_id") == candidate["hypothesis_id"]
+        and item.get("spec_sha256") == candidate["spec_sha256"]
+        and item.get("reverse_hypothesis_id") == candidate["reverse_hypothesis_id"]
+        and item.get("reverse_spec_sha256") == candidate["reverse_spec_sha256"]
+    ), None)
+    if completed_match is not None:
+        raise SealedEvaluationError(
+            "This exact directional candidate pair already completed its sealed evaluation; duplicate scoring is forbidden."
+        )
     used_dates = _used_validation_dates(ledger)
     split = split_archive(
         archive["rows"],
@@ -766,6 +991,7 @@ def create_claim(
     return {
         "status": "CLAIMED",
         "claim_created": True,
+        "claim_resumed": False,
         "claim_id": claim_id,
         "target_date": split["target_date"],
         "archive_sha256": archive["archive_sha256"],
@@ -1672,6 +1898,7 @@ def _write_github_output(path: str | None, result: dict[str, Any]) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     with target.open("a", encoding="utf-8") as stream:
         stream.write("claim_created=" + ("true" if result.get("claim_created") is True else "false") + "\n")
+        stream.write("claim_resumed=" + ("true" if result.get("claim_resumed") is True else "false") + "\n")
         if isinstance(result.get("claim_id"), str):
             stream.write("claim_id=" + result["claim_id"] + "\n")
 
@@ -1689,7 +1916,12 @@ def main(argv: list[str] | None = None) -> int:
     claim.add_argument("--specs", type=Path, required=True)
     claim.add_argument("--output", type=Path, default=Path("open_research_evaluation_claim.json"))
     claim.add_argument("--snapshot-directory", type=Path, default=Path(SNAPSHOT_DIRECTORY))
+    claim.add_argument("--sealed-plan", type=Path, default=None)
     claim.add_argument("--github-output", type=str, default=None)
+    pending = sub.add_parser("pending-claim", help="Check whether the exact active archive has a resumable sealed claim.")
+    pending.add_argument("--archive", type=Path, required=True)
+    pending.add_argument("--ledger", type=Path, default=Path("general_evaluation_ledger.json"))
+    pending.add_argument("--github-output", type=str, default=None)
     run = sub.add_parser("evaluate", help="Run only a previously persisted one-shot claim.")
     run.add_argument("--claim-id", required=True)
     run.add_argument("--ledger", type=Path, default=Path("general_evaluation_ledger.json"))
@@ -1701,10 +1933,25 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "preflight":
             result = preflight(args.archive, args.ledger)
+        elif args.command == "pending-claim":
+            pending_entry = pending_claim_for_archive(args.archive, args.ledger)
+            result = {
+                "status": "PENDING_CLAIM" if pending_entry is not None else "NO_PENDING_CLAIM",
+                "pending_claim": pending_entry is not None,
+                "claim_id": pending_entry["claim_id"] if pending_entry is not None else None,
+                "target_date": pending_entry["target_date"] if pending_entry is not None else None,
+                "numbers_stored": False,
+            }
+            if args.github_output:
+                with Path(args.github_output).open("a", encoding="utf-8") as stream:
+                    stream.write("pending_claim=" + ("true" if pending_entry is not None else "false") + "\n")
+                    if pending_entry is not None:
+                        stream.write("pending_claim_id=" + pending_entry["claim_id"] + "\n")
         elif args.command == "claim":
             result = create_claim(
                 args.archive, args.ledger, args.proposals, args.specs,
                 snapshot_directory=args.snapshot_directory,
+                sealed_plan_path=args.sealed_plan,
             )
             _write_json_atomic(args.output, result)
             _write_github_output(args.github_output, result)

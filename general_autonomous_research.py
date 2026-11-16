@@ -48,6 +48,9 @@ CYCLE57_RETRY_ATTEMPT_ID = "50c89cdfbb465f47491c6bfd67f709387fb1caf00ed9157651e9
 RETRYABLE_FAILURE_REASON_CODES = {
     "NO_PROVIDER_REQUEST_SENT",
     "PROVIDER_DELIVERY_UNCERTAIN",
+    "PROVIDER_HTTP_5XX_RETRYABLE",
+    "DIRECTIONAL_CANDIDATE_SET_INCOMPLETE",
+    "SEALED_EVALUATION_INCOMPLETE",
 }
 CYCLE55_RECOVERY_TARGET_DATE = "2026-11-10"
 CYCLE55_RECOVERY_ARCHIVE_SHA256 = "ae7b79e4922d4178a86c7d7880af3e4758d1a5e7f78d6cc3d2595fbb4fd66596"
@@ -64,6 +67,9 @@ ALLOWED_REASON_CODES = {
     "NO_PROVIDER_REQUEST_SENT",
     "PROVIDER_DELIVERY_UNCERTAIN",
     "PROVIDER_HTTP_REJECTION_NO_RETRY",
+    "PROVIDER_HTTP_5XX_RETRYABLE",
+    "DIRECTIONAL_CANDIDATE_SET_INCOMPLETE",
+    "SEALED_EVALUATION_INCOMPLETE",
 }
 
 
@@ -1250,6 +1256,8 @@ def prepare_cycle(
         "retryable": retryable,
         "retry_number": retry_number,
         "manual_recovery_confirmed": recovered_after_uncertain_delivery,
+        "pending_claim_resume_available": plan.get("pending_claim_resume_available") is True,
+        "pending_claim_id": plan.get("pending_claim_id"),
     }
 
 

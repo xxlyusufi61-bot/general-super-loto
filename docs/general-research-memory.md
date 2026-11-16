@@ -44,6 +44,70 @@ Each direction may retain:
 
 The record may include target-date metadata, the archive hash, and the discovery-window date range/count. It does not copy archive rows, draw-number sets, prediction values, individual holdout dates, per-draw hit records, API credentials, or raw structured rule-change requests. The exact sealed validation windows are used transiently for redaction; their dates are not written into memory. Before any directional memory write, the writer verifies that the plan's target date, archive SHA-256, and archive record count match the loaded archive, then reconstructs the chronological partition using the claim's immutable prior-consumption snapshot (or the current ledger when no claim exists). Any mismatch or altered window metadata fails closed.
 
+## Pending candidate resumption
+
+A research report is not a completed evaluation. A captured directional proposal
+and its exact execution-specification AST remain in the append-only memory even
+when the other direction fails, the provider returns an HTTP 5xx, or the
+workflow terminates before a sealed claim/evaluation. Such a candidate is not
+marked as consumed by a failed workflow.
+
+Before a later attempt makes a new directional discovery request, the runner
+checks for the oldest pending candidate matching all of:
+- The same isolated direction.
+- The exact FIFO target date.
+- The exact canonical archive SHA-256.
+- One canonically validated proposal and its matching execution specification.
+- A fresh pass of the DSL synthetic contract tests.
+- No completed sealed-evaluation feedback for that stored specification.
+
+The lookup is read-only. It does not mutate memory, claim a holdout, or write a
+consumption marker. When a match exists, the runner reconstructs the structured
+directional report from the stored proposal, definition, and safe learning
+notes, and uses that exact frozen definition for the normal sealed-evaluation
+path. It does not ask the model to rediscover or silently modify the candidate.
+A new provider request is made only for a direction that has no resumable
+candidate. Forward and reverse candidate records remain isolated.
+
+A candidate becomes evaluated only when the existing append-only evaluation
+ledger confirms that its matching sealed claim reached EVALUATED and the
+memory writer validates matching feedback. Only then is it excluded from the
+pending-candidate lookup. If one valid directional candidate exists but the
+other direction still has no executable candidate, the target is recorded as
+DIRECTIONAL_CANDIDATE_SET_INCOMPLETE, not as a terminal no-candidate result.
+The FIFO head stays active so the next permitted attempt can resume the stored
+candidate while investigating the missing direction.
+
+If a sealed claim was durably persisted but evaluation failed before its ledger
+entry reached EVALUATED, its dates remain reserved exclusively for that exact
+claim. The next permitted attempt must resume the same claim ID, archive
+snapshot SHA-256, forward/reverse candidate IDs, specification hashes, and
+original directional holdout dates. It reconstructs the original
+discovery/holdout partition from the claim's immutable prior-consumption
+snapshot. It may not create a replacement claim, select a different candidate,
+or send new discovery requests for either direction. The scheduled workflow
+skips offline development in this state so the pinned offline-memory digest
+cannot drift between claim and evaluation.
+
+A CLAIMED interval is reserved, not discarded or available to another
+candidate. It becomes permanently consumed only when the append-only ledger
+moves that exact claim to EVALUATED. Other candidates and later claims continue
+to exclude those reserved dates throughout recovery.
+
+Candidates without an execution specification, with a rejected definition, or
+whose synthetic DSL tests no longer pass are not eligible for real-archive
+execution. Their original proposal records remain in memory; the resume lookup
+does not rewrite them or pretend they are test-ready. No pending hypothesis is
+promoted to the method registry by this mechanism.
+
+The request-level retry audit stores only allowlisted status, direction,
+attempt count, delivery classification, decision, and budget category. It
+never stores prompt text, provider response bodies, raw archive rows, target
+values, or predicted numbers. An explicit HTTP 500-599 response may be retried
+at most once after a separately committed retry-reserve slot. Ambiguous
+transport/delivery outcomes, HTTP 402/429, incomplete SSE, and response
+validation failures are not automatically retried.
+
 ## Consumed validation feedback
 
 PR #63 remains unchanged:
@@ -54,7 +118,7 @@ PR #63 remains unchanged:
 - Such feedback is development history only. It is never a fresh independent validation result and must not be used to select the first frozen candidate for the current one-shot claim.
 - Reverse metrics are always marked `retrospective_only: true`; they are not predictive evidence.
 
-The memory writer checks that evaluation feedback matches the candidate/specification frozen for that direction and that the evaluation report is backed by an `EVALUATED` ledger entry for the current archive and target. If an evaluation report exists locally but the ledger is still only `CLAIMED`, its scores are discarded from memory. The claim remains consumed under the existing ledger rules.
+The memory writer checks that evaluation feedback matches the candidate/specification frozen for that direction and that the evaluation report is backed by an `EVALUATED` ledger entry for the current archive and target. If an evaluation report exists locally but the ledger is still only `CLAIMED`, its scores are discarded from memory. The claim remains reserved for its exact frozen candidate pair and can resume with the same immutable holdout; it is not treated as a completed evaluation until the ledger reaches `EVALUATED`.
 
 ## Persistence and immutability
 

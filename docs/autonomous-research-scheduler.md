@@ -38,25 +38,53 @@ scheduler does not expose target values to discovery.
   entitlement. The provider's account quota is not queried by this controller.
   Free-use and no-billing verification remains an explicit operator attestation.
 - A provider request is reserved before network access. Failed and uncertain
-  submissions consume the reservation. SDK automatic retries remain disabled.
+  submissions consume the reservation. SDK-managed automatic retries remain
+  disabled; any GENERAL retry is explicit, separately reserved, and audited.
 - The NVIDIA-compatible Chat Completions call uses the official OpenAI SDK's
   managed SSE streaming mode. GENERAL accumulates only `delta.content`, ignores
   reasoning-only fields, and accepts a response only after the stream terminates
   with `finish_reason=stop`. An interrupted stream or a stream without that
   terminal marker is incomplete and cannot be used as a research report.
-  Streaming does not authorize another request: uncertain delivery remains
-  subject to the same global lock and manual-recovery rules.
-- A failed target remains at the FIFO head. Only NO_PROVIDER_REQUEST_SENT
-  (proof that no provider request started) permits an automatic same-target
-  retry, within the existing limit of three total attempts per target. Each
-  retry is recorded and uses the controlled retry reserve.
+  Incomplete streams, response-validation failures, and ambiguous transport
+  outcomes are never retried automatically.
+- An explicit HTTP 500-599 response is distinguishable from an unknown delivery
+  outcome. For each ordinary directional request, GENERAL may make at most one
+  additional attempt after an explicit provider HTTP 5xx response was received.
+  The retry has to reserve a slot from the dedicated 20-per-day retry reserve
+  before network access. The second 5xx ends that request; no third call is made.
+  The retry is not used in one-request diagnostic or token-test modes. If the
+  retry reservation cannot be committed, no retry request is sent.
+- A known HTTP 5xx response does not, by itself, activate the global uncertainty
+  lock. If the single retry also returns an explicit 5xx, the target is recorded
+  as PROVIDER_HTTP_5XX_RETRYABLE and may be retried by a later scheduled cycle,
+  subject to the existing three-total-attempt target limit and FIFO rules.
+  These are provider-error retries, not permission to unlock or bypass a lock.
+- A failed target remains at the FIFO head. NO_PROVIDER_REQUEST_SENT and
+  PROVIDER_HTTP_5XX_RETRYABLE permit a same-target retry within the existing
+  three-total-attempt limit. A valid directional hypothesis set that is still
+  missing its matching second-direction candidate/specification is recorded as
+  DIRECTIONAL_CANDIDATE_SET_INCOMPLETE and also retains the same FIFO target.
+  Each later cycle first checks the persisted candidate memory before asking
+  the provider for a direction again.
+- SEALED_EVALUATION_INCOMPLETE is retryable only after the original claim was
+  persisted and its directional candidates were safely appended to GENERAL
+  memory. Recovery reuses the same claim ID, frozen candidate IDs/spec hashes,
+  immutable archive snapshot, original discovery partition, and exact forward
+  and reverse holdout dates. It does not open a new holdout or issue discovery
+  requests. While a claim is pending, the scheduled workflow skips offline
+  development so its pinned offline-memory digest remains unchanged.
+- A CLAIMED holdout remains reserved to that exact claim; other candidates may
+  never reuse it. It becomes permanently consumed only after the claim reaches
+  EVALUATED. A failed or incomplete evaluation must be resumed, not discarded.
 - WORKFLOW_FAILED means a provider request was sent and returned, but a later
-  workflow stage failed; it is not automatically retried.
+  workflow stage failed outside the explicit incomplete-evaluation case; it is
+  not automatically retried.
 - PROVIDER_DELIVERY_UNCERTAIN remains blocked until a manual unlock is recorded
   strictly after that failure. Only a later scheduled cycle may then retry the
   same target. The workflow never unlocks itself.
-- HTTP 402/429 responses are recorded as PROVIDER_HTTP_REJECTION_NO_RETRY.
-  Manual unlock does not override this non-retryable classification.
+- HTTP 402/429 responses are recorded as PROVIDER_HTTP_REJECTION_NO_RETRY
+  and retain the existing global safety-pause behavior. Manual unlock does not
+  override this non-retryable classification and cannot authorize a replay.
 - No automatic unlocking, paid conversion, card-required service, or billing
   transition is permitted.
 
@@ -131,15 +159,30 @@ fetch or push failure blocks the corresponding NVIDIA request.
   consumed dates in its existing append-only ledger. The scheduler never changes
   those dates or silently reduces minimum history requirements.
 - A target date is reserved in the scheduler's append-only attempt list before
-  the first hosted request. Only a NO_PROVIDER_REQUEST_SENT outcome allows an
-  automatic retry. WORKFLOW_FAILED is not automatically replayed after a
-  provider request has been sent. A PROVIDER_DELIVERY_UNCERTAIN failure allows
-  retry only after a later manual unlock is recorded; no automatic unlock or
-  same-run retry is performed.
-- A previously claimed target may be researched again after a retryable failure
-  when fresh sealed windows remain available. The sealed evaluator excludes all
-  previously consumed dates and must create new, disjoint holdouts; it never
-  reuses an earlier claim's validation dates.
+  the first hosted request. NO_PROVIDER_REQUEST_SENT, an explicitly received
+  HTTP 5xx after its one bounded request-level retry, and
+  DIRECTIONAL_CANDIDATE_SET_INCOMPLETE are retryable target outcomes.
+  WORKFLOW_FAILED is not automatically replayed after a provider request has
+  been sent. A PROVIDER_DELIVERY_UNCERTAIN failure allows retry only after a
+  later manual unlock is recorded; no automatic unlock or same-run retry occurs.
+- A previously claimed target with an incomplete persisted evaluation is
+  resumed only through its exact pending claim. That recovery reuses the original
+  claim ID, archive snapshot, frozen forward/reverse definitions, and unchanged
+  directional holdout dates. Those dates stay reserved from every other
+  candidate. A new claim and new disjoint holdouts are allowed only after the
+  prior claim is completed or the FIFO target is otherwise formally resolved.
+- A directional proposal/specification captured in the append-only GENERAL
+  research memory is not consumed merely because its workflow ended in failure.
+  The next attempt may reuse it only when direction, target date, and exact
+  archive SHA-256 all match, the stored proposal and DSL definition validate
+  again, and the DSL synthetic contract tests pass. A candidate with completed
+  sealed-evaluation feedback is not reused as pending work.
+- If one direction has a valid executable candidate but the other direction is
+  empty or failed, the pair remains incomplete rather than becoming a terminal
+  no-candidate scientific outcome. The scheduler retains the FIFO head and
+  the next attempt reuses the saved candidate while investigating only the
+  missing direction. Reuse makes no new NVIDIA request and does not expose
+  target values or holdout rows.
 
 ## Reporting and limits
 

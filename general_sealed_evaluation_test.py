@@ -164,8 +164,104 @@ class SealedEvaluationTests(unittest.TestCase):
         )
         self.assertEqual(ledger["entries"][0]["reverse_hypothesis_id"], "HYP-002")
         assert_no_draw_number_sets(self, ledger)
-        with self.assertRaises(sealed.SealedEvaluationError):
-            sealed.preflight(self.archive_path, self.ledger_path)
+        pending = sealed.preflight(self.archive_path, self.ledger_path)
+        self.assertEqual(pending["status"], "READY")
+        self.assertTrue(pending["pending_claim_resume_available"])
+        self.assertEqual(pending["forward_validation_dates"], ledger["entries"][0]["validation_dates"])
+        self.assertEqual(pending["reverse_validation_dates"], ledger["entries"][0]["reverse_validation_dates"])
+
+    def test_incomplete_claim_resumes_same_candidate_archive_and_holdout_without_new_claim(self):
+        proposals, specs = write_candidate_documents(self.root)
+        first = sealed.create_claim(
+            self.archive_path,
+            self.ledger_path,
+            proposals,
+            specs,
+            snapshot_directory=self.snapshot_directory,
+        )
+        self.assertTrue(first["claim_created"])
+        self.assertFalse(first["claim_resumed"])
+        original_ledger = sealed.load_ledger(self.ledger_path)
+        original_entry = original_ledger["entries"][0]
+        original_forward = list(original_entry["validation_dates"])
+        original_reverse = list(original_entry["reverse_validation_dates"])
+        original_prior_dates = list(original_entry["previously_consumed_validation_dates"])
+
+        # Simulate a workflow crash after the CLAIMED ledger commit but before
+        # the evaluation can change the ledger state to EVALUATED.
+        resumed_preflight = sealed.preflight(self.archive_path, self.ledger_path)
+        self.assertTrue(resumed_preflight["pending_claim_resume_available"])
+        self.assertEqual(resumed_preflight["pending_claim_id"], first["claim_id"])
+        self.assertEqual(resumed_preflight["forward_validation_dates"], original_forward)
+        self.assertEqual(resumed_preflight["reverse_validation_dates"], original_reverse)
+
+        sealed_plan_path = self.root / "resumed-sealed-plan.json"
+        resumed = sealed.create_claim(
+            self.archive_path,
+            self.ledger_path,
+            proposals,
+            specs,
+            snapshot_directory=self.snapshot_directory,
+            sealed_plan_path=sealed_plan_path,
+        )
+        self.assertTrue(resumed["claim_created"])
+        self.assertTrue(resumed["claim_resumed"])
+        self.assertEqual(resumed["claim_id"], first["claim_id"])
+        self.assertEqual(resumed["validation_draw_count"], len(original_forward))
+        self.assertEqual(resumed["reverse_validation_draw_count"], len(original_reverse))
+        self.assertEqual(
+            json.loads(sealed_plan_path.read_text(encoding="utf-8")),
+            sealed.public_plan(sealed.split_archive(
+                self.rows,
+                archive_sha256=sealed.load_archive(self.archive_path)["archive_sha256"],
+                used_validation_dates=set(original_prior_dates),
+            )),
+        )
+        after_resume = sealed.load_ledger(self.ledger_path)
+        self.assertEqual(len(after_resume["entries"]), 1)
+        self.assertEqual(after_resume["entries"][0]["state"], "CLAIMED")
+        self.assertEqual(after_resume["entries"][0]["validation_dates"], original_forward)
+        self.assertEqual(after_resume["entries"][0]["reverse_validation_dates"], original_reverse)
+
+        evaluated = sealed.evaluate_claim(
+            resumed["claim_id"],
+            self.ledger_path,
+            proposals,
+            specs,
+            output_path=self.root / "resumed-evaluation.json",
+        )
+        self.assertEqual(evaluated["status"], "EVALUATED_EXPLORATORY_FIXED_SPEC")
+        self.assertIsNone(sealed.pending_claim_for_archive(self.archive_path, self.ledger_path))
+        with self.assertRaisesRegex(sealed.SealedEvaluationError, "already completed"):
+            sealed.create_claim(
+                self.archive_path,
+                self.ledger_path,
+                proposals,
+                specs,
+                snapshot_directory=self.snapshot_directory,
+            )
+
+    def test_pending_claim_rejects_a_changed_directional_specification(self):
+        proposals, specs = write_candidate_documents(self.root)
+        sealed.create_claim(
+            self.archive_path,
+            self.ledger_path,
+            proposals,
+            specs,
+            snapshot_directory=self.snapshot_directory,
+        )
+        changed = json.loads(specs.read_text(encoding="utf-8"))
+        changed["specifications"][0]["execution_spec"]["score_expression"]["expression"]["right"]["name"] = "value"
+        specs.write_text(json.dumps(changed), encoding="utf-8")
+        with self.assertRaisesRegex(sealed.SealedEvaluationError, "exact original directional candidates"):
+            sealed.create_claim(
+                self.archive_path,
+                self.ledger_path,
+                proposals,
+                specs,
+                snapshot_directory=self.snapshot_directory,
+            )
+        self.assertEqual(len(sealed.load_ledger(self.ledger_path)["entries"]), 1)
 
     def test_more_than_two_or_unmatched_directional_specs_cannot_claim(self):
         proposals, specs = write_candidate_documents(self.root, specification_count=3)

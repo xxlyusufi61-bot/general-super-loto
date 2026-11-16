@@ -187,9 +187,15 @@ jobs:
         run: |
           python3 general_autonomous_research.py queue-materialize \
             --output super_loto_archive.json
+      - name: Detect pending sealed claim before offline discovery
+        id: pending_claim_check
+        if: ${{ github.event_name == 'schedule' && steps.queue_capture.outputs.has_pending == 'true' }}
+        run: |
+          python3 general_sealed_evaluation.py pending-claim --archive super_loto_archive.json --ledger general_evaluation_ledger.json --github-output "$GITHUB_OUTPUT"
+          cat "$GITHUB_OUTPUT"
       - name: Run bounded offline hypothesis discovery and evaluation
         id: offline_discovery
-        if: ${{ github.event_name == 'schedule' && steps.queue_capture.outputs.has_pending == 'true' }}
+        if: ${{ github.event_name == 'schedule' && steps.queue_capture.outputs.has_pending == 'true' && steps.pending_claim_check.outcome == 'success' && steps.pending_claim_check.outputs.pending_claim != 'true' }}
         continue-on-error: true
         run: |
           python3 general_offline_hypothesis_discovery.py run \
@@ -353,16 +359,16 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          incomplete_request=false
+          uncertain_request=false
           for request_label in forward reverse forward_critique between_draws unlabelled; do
-            if [ -f "/tmp/general_nvidia_api_attempted_${request_label}" ] && [ ! -f "/tmp/general_nvidia_api_succeeded_${request_label}" ]; then
-              incomplete_request=true
+            if [ -f "/tmp/general_nvidia_api_attempted_${request_label}" ] && [ ! -f "/tmp/general_nvidia_api_succeeded_${request_label}" ] && [ ! -f "/tmp/general_nvidia_api_known_http_5xx_${request_label}" ]; then
+              uncertain_request=true
             fi
           done
-          if [ "$incomplete_request" = "true" ]; then
+          if [ "$uncertain_request" = "true" ]; then
             python3 general_nvidia_guard.py lock --reason "Autonomous NVIDIA request delivery or response validation is uncertain; global safety pause is required. No automatic retry is allowed."
           else
-            echo "No uncertain provider delivery detected; global lock unchanged."
+            echo "Only completed, explicit HTTP rejection, or known HTTP 5xx outcomes were observed; global lock unchanged."
           fi
       - name: Create the frozen sealed evaluation claim
         id: sealed_claim
@@ -374,6 +380,7 @@ jobs:
             --proposals open_research_proposals.json \
             --specs open_research_execution_specs.json \
             --output open_research_evaluation_claim.json \
+            --sealed-plan open_research_sealed_plan.json \
             --github-output "$GITHUB_OUTPUT"
           cat "$GITHUB_OUTPUT"
       - name: Persist immutable sealed archive snapshot on main
@@ -473,25 +480,39 @@ jobs:
         if: ${{ always() && steps.attempt_reservation.outputs.attempt_id != '' && (steps.persist_attempt.outcome == 'failure' || steps.persist_claim_snapshot.outcome == 'failure' || steps.research.outcome == 'failure' || steps.sealed_claim.outcome == 'failure' || steps.persist_claim.outcome == 'failure' || steps.evaluation.outcome == 'failure' || steps.persist_eval.outcome == 'failure' || steps.research_memory.outcome == 'failure') }}
         env:
           ATTEMPT_ID: ${{ steps.attempt_reservation.outputs.attempt_id }}
+          CLAIM_CREATED: ${{ steps.sealed_claim.outputs.claim_created }}
+          CLAIM_PERSIST_OUTCOME: ${{ steps.persist_claim.outcome }}
+          EVALUATION_OUTCOME: ${{ steps.evaluation.outcome }}
+          RESEARCH_MEMORY_OUTCOME: ${{ steps.research_memory.outcome }}
         run: |
           incomplete_request=false
           any_request=false
           http_rejection_no_retry=false
+          known_http_5xx=false
           for request_label in forward reverse forward_critique between_draws unlabelled; do
             if [ -f "/tmp/general_nvidia_api_attempted_${request_label}" ]; then
               any_request=true
               if [ ! -f "/tmp/general_nvidia_api_succeeded_${request_label}" ]; then
-                incomplete_request=true
+                if [ -f "/tmp/general_nvidia_api_no_retry_${request_label}" ]; then
+                  http_rejection_no_retry=true
+                elif [ -f "/tmp/general_nvidia_api_known_http_5xx_${request_label}" ]; then
+                  known_http_5xx=true
+                else
+                  incomplete_request=true
+                fi
               fi
             fi
-            if [ -f "/tmp/general_nvidia_api_no_retry_${request_label}" ]; then
-              http_rejection_no_retry=true
-            fi
           done
-          if [ "$http_rejection_no_retry" = "true" ]; then
+          if [ "$CLAIM_CREATED" = "true" ] && [ "$CLAIM_PERSIST_OUTCOME" = "success" ] && [ "$EVALUATION_OUTCOME" = "failure" ] && [ "$RESEARCH_MEMORY_OUTCOME" = "success" ]; then
+            reason_code="SEALED_EVALUATION_INCOMPLETE"
+          elif [ -f "/tmp/general_directional_candidates_incomplete" ]; then
+            reason_code="DIRECTIONAL_CANDIDATE_SET_INCOMPLETE"
+          elif [ "$http_rejection_no_retry" = "true" ]; then
             reason_code="PROVIDER_HTTP_REJECTION_NO_RETRY"
           elif [ "$incomplete_request" = "true" ]; then
             reason_code="PROVIDER_DELIVERY_UNCERTAIN"
+          elif [ "$known_http_5xx" = "true" ]; then
+            reason_code="PROVIDER_HTTP_5XX_RETRYABLE"
           elif [ "$any_request" = "true" ]; then
             reason_code="WORKFLOW_FAILED"
           else
@@ -564,5 +585,6 @@ jobs:
             open_research_evaluation_claim.json
             open_research_evaluation_report.json
             open_research_run_status.json
+            open_research_retry_audit.json
           if-no-files-found: ignore
           retention-days: 14

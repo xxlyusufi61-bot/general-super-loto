@@ -213,6 +213,7 @@ jobs:
             --proposals open_research_proposals.json \
             --specs open_research_execution_specs.json \
             --output open_research_evaluation_claim.json \
+            --sealed-plan open_research_sealed_plan.json \
             --github-output "$GITHUB_OUTPUT"
       - name: Persist immutable sealed archive snapshot on main
         id: persist-sealed-snapshot
@@ -262,16 +263,16 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          incomplete_request=false
+          uncertain_request=false
           for request_label in forward reverse forward_critique between_draws unlabelled; do
-            if [ -f "/tmp/general_nvidia_api_attempted_${request_label}" ] && [ ! -f "/tmp/general_nvidia_api_succeeded_${request_label}" ]; then
-              incomplete_request=true
+            if [ -f "/tmp/general_nvidia_api_attempted_${request_label}" ] && [ ! -f "/tmp/general_nvidia_api_succeeded_${request_label}" ] && [ ! -f "/tmp/general_nvidia_api_known_http_5xx_${request_label}" ]; then
+              uncertain_request=true
             fi
           done
-          if [ "$incomplete_request" = "true" ]; then
+          if [ "$uncertain_request" = "true" ]; then
             python3 general_nvidia_guard.py lock --reason "GENERAL blank-slate NVIDIA request delivery or validation is uncertain; global safety pause is required. No automatic retry is permitted."
           else
-            echo "No incomplete provider request detected; global lock unchanged."
+            echo "Only completed, explicit HTTP rejection, or known HTTP 5xx outcomes were observed; global lock unchanged."
           fi
       - name: Submit a structured rule-change request for Telegram approval if proposed
         if: ${{ success() }}
@@ -340,6 +341,7 @@ jobs:
             open_research_evaluation_claim.json
             open_research_evaluation_report.json
             open_research_run_status.json
+            open_research_retry_audit.json
             general_evaluation_ledger.json
           if-no-files-found: ignore
           retention-days: 14

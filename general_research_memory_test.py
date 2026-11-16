@@ -521,6 +521,111 @@ class ResearchMemoryValidationTests(unittest.TestCase):
                 memory.load_memory(path)
 
 
+class PendingCandidateResumeTests(unittest.TestCase):
+    @staticmethod
+    def _validated_entry(root, direction="forward", target="2026-11-04", archive_sha="a" * 64):
+        report_path = root / (direction + ".md")
+        report_path.write_text(directional_report(direction), encoding="utf-8")
+        return memory._build_entry(
+            entry_id=1,
+            run_id="900001",
+            run_attempt="1",
+            target_date=target,
+            archive_sha256=archive_sha,
+            direction=direction,
+            report_path=report_path,
+            discovery_window={
+                "start_date": "2026-08-01",
+                "end_date": "2026-10-01",
+                "draw_count": 30,
+                "holdout_dates_copied": False,
+                "archive_rows_copied": False,
+            },
+            outcome="RESEARCH_COMPLETE_UNEVALUATED",
+            failed_direction=None,
+            failed_stage=None,
+            error_type=None,
+            shared_failure=False,
+            evaluation=None,
+        )
+
+    def test_pending_candidate_requires_exact_target_archive_and_passing_spec(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            entry = self._validated_entry(root)
+            self.assertEqual(entry["proposal_status"], "VALID_PROPOSALS")
+            self.assertEqual(entry["execution_spec_status"], "VALIDATED_SPECS")
+            self.assertIsNone(entry["evaluation_feedback"])
+            self.assertEqual(
+                memory.run_synthetic_contract_tests(entry["execution_spec"])["status"],
+                "PASS",
+            )
+            canonical_proposal = memory._validate_proposal(
+                entry["proposals"][0], canonical=True
+            )
+            self.assertEqual(
+                {key: canonical_proposal[key] for key in memory.PROPOSAL_KEYS},
+                entry["proposals"][0],
+            )
+            self.assertTrue(
+                memory.execution_spec_matches_proposal(
+                    entry["proposals"][0], entry["execution_spec"]
+                )
+            )
+            path = root / "memory.json"
+            value = memory.empty_memory()
+            value["entries"] = [entry]
+            write_json(path, value)
+            original_memory_bytes = path.read_bytes()
+
+            pending = memory.find_pending_candidate(
+                "forward", "2026-11-04", "a" * 64, memory_path=path
+            )
+            self.assertIsNotNone(pending)
+            self.assertEqual(pending["proposal"]["hypothesis_id"], "HYP-001")
+            self.assertEqual(pending["direction"], "forward")
+            self.assertEqual(pending["source_status"], "HYPOTHESES_CAPTURED")
+            self.assertIsNone(memory.find_pending_candidate(
+                "forward", "2026-11-05", "a" * 64, memory_path=path
+            ))
+            self.assertIsNone(memory.find_pending_candidate(
+                "forward", "2026-11-04", "b" * 64, memory_path=path
+            ))
+            self.assertIsNone(memory.find_pending_candidate(
+                "reverse", "2026-11-04", "a" * 64, memory_path=path
+            ))
+            self.assertEqual(path.read_bytes(), original_memory_bytes)
+
+    def test_evaluated_candidate_is_not_resumed_again(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            entry = self._validated_entry(root)
+            entry["status"] = "EVALUATED"
+            entry["evaluation_feedback"] = {
+                "status": "EVALUATED_EXPLORATORY_FIXED_SPEC",
+                "claim_id": "c" * 64,
+                "candidate_id": entry["proposals"][0]["hypothesis_id"],
+                "spec_sha256": entry["execution_spec_sha256"],
+                "holdout": {},
+                "cross_validation": {},
+                "holdout_consumed": True,
+                "retrospective_only": False,
+                "raw_holdout_dates_stored": False,
+                "per_draw_results_stored": False,
+                "draw_number_values_stored": False,
+                "interpretation": "The fixed candidate completed its sealed evaluation.",
+            }
+            entry["content_sha256"] = _hash_entry(entry)
+            path = root / "memory.json"
+            value = memory.empty_memory()
+            value["entries"] = [entry]
+            write_json(path, value)
+
+            self.assertIsNone(memory.find_pending_candidate(
+                "forward", "2026-11-04", "a" * 64, memory_path=path
+            ))
+
+
 class DirectionalMemoryContextTests(unittest.TestCase):
     def test_context_uses_only_same_direction_and_older_target_entries(self):
         value = memory.empty_memory()

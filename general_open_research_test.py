@@ -166,7 +166,15 @@ class OpenResearchIsolationTests(unittest.TestCase):
         rows.append({"date": "2021-01-10", "numbers": target_numbers})
         rows.sort(key=lambda row: row["date"])
 
-        target, discovery, plan = research.isolate_discovery_only(rows)
+        original_archive = research.ARCHIVE
+        with tempfile.TemporaryDirectory() as temp_dir:
+            archive_path = Path(temp_dir) / "archive.json"
+            archive_path.write_text(json.dumps({"draws": rows}), encoding="utf-8")
+            research.ARCHIVE = archive_path
+            try:
+                target, discovery, plan = research.isolate_discovery_only(rows)
+            finally:
+                research.ARCHIVE = original_archive
         forward_messages = research.build_messages(target, discovery, direction="forward")
         reverse_messages = research.build_messages(target, discovery, direction="reverse")
         forward_payload = json.loads(forward_messages[1]["content"])
@@ -225,11 +233,18 @@ class OpenResearchIsolationTests(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as temp_dir:
             ledger_path = Path(temp_dir) / "ledger.json"
+            archive_path = Path(temp_dir) / "archive.json"
             ledger_path.write_text(json.dumps(ledger), encoding="utf-8")
-            target, discovery, plan = research.isolate_discovery_only(
-                rows,
-                ledger_path=ledger_path,
-            )
+            archive_path.write_text(json.dumps({"draws": rows}), encoding="utf-8")
+            original_archive = research.ARCHIVE
+            research.ARCHIVE = archive_path
+            try:
+                target, discovery, plan = research.isolate_discovery_only(
+                    rows,
+                    ledger_path=ledger_path,
+                )
+            finally:
+                research.ARCHIVE = original_archive
 
         r60_discovery_dates = {
             row["date"] for row in discovery
@@ -589,8 +604,14 @@ class NvidiaUsageObservationTests(unittest.TestCase):
         research._NVIDIA_REQUESTS_ATTEMPTED = 0
         research._NVIDIA_REQUEST_LABELS_ATTEMPTED.clear()
         research._NVIDIA_REQUEST_LABELS_SUCCEEDED.clear()
+        research._NVIDIA_DIRECTIONAL_COMPLETED.clear()
+        research._NVIDIA_REQUEST_ATTEMPT_COUNTS.clear()
+        research._RETRY_AUDIT_EVENTS.clear()
+        research.RETRY_AUDIT.unlink(missing_ok=True)
+        research.RETRY_AUDIT.with_name(research.RETRY_AUDIT.name + ".tmp").unlink(missing_ok=True)
         for label in ("forward", "reverse", "forward_critique", "between_draws", "unlabelled"):
             Path("/tmp/general_nvidia_api_no_retry_" + label).unlink(missing_ok=True)
+            Path("/tmp/general_nvidia_api_known_http_5xx_" + label).unlink(missing_ok=True)
 
     @staticmethod
     def sdk_response(
@@ -669,8 +690,13 @@ class NvidiaUsageObservationTests(unittest.TestCase):
     def tearDown(self):
         Path("/tmp/general_nvidia_api_attempted").unlink(missing_ok=True)
         Path("/tmp/general_nvidia_api_succeeded").unlink(missing_ok=True)
+        research.RETRY_AUDIT.unlink(missing_ok=True)
+        research.RETRY_AUDIT.with_name(research.RETRY_AUDIT.name + ".tmp").unlink(missing_ok=True)
         for label in ("forward", "reverse", "forward_critique", "between_draws", "unlabelled"):
             Path("/tmp/general_nvidia_api_no_retry_" + label).unlink(missing_ok=True)
+            Path("/tmp/general_nvidia_api_known_http_5xx_" + label).unlink(missing_ok=True)
+            Path("/tmp/general_nvidia_api_attempted_" + label).unlink(missing_ok=True)
+            Path("/tmp/general_nvidia_api_succeeded_" + label).unlink(missing_ok=True)
 
     def test_openai_sdk_client_uses_nvidia_base_url_timeout_and_zero_retries(self):
         fake_client = MagicMock()
@@ -1037,7 +1063,7 @@ class NvidiaUsageObservationTests(unittest.TestCase):
         self.assertEqual(saved[0]["sdk_max_retries"], 0)
         self.assertEqual(research._NVIDIA_REQUESTS_ATTEMPTED, 1)
 
-    def test_http_504_is_recorded_as_uncertain_and_never_marked_retryable(self):
+    def test_http_504_is_retried_once_after_explicit_response_and_then_validated(self):
         class SyntheticGatewayTimeout(Exception):
             status_code = 504
             response = SimpleNamespace(headers={
@@ -1045,24 +1071,26 @@ class NvidiaUsageObservationTests(unittest.TestCase):
                 "Authorization": "never-log-this",
             })
 
-        client = self.client_with_response()
-        client.chat.completions.create.side_effect = SyntheticGatewayTimeout("gateway timed out")
+        first = self.client_with_response()
+        first.chat.completions.create.side_effect = SyntheticGatewayTimeout("gateway timed out")
+        second = self.client_with_response(self.sdk_response("recovered after one 5xx"))
+        clients = [first, second]
         saved = []
         with patch.dict(os.environ, self.live_env(), clear=True), patch.object(
             research, "reserve_nvidia_request"
-        ), patch.object(
+        ) as reserve, patch.object(
             research, "save_usage_observation",
             side_effect=lambda observation, **kwargs: saved.append(observation),
         ), patch(
-            "general_open_research._create_nvidia_client", return_value=client
+            "general_open_research._create_nvidia_client", side_effect=clients
         ):
-            with self.assertRaisesRegex(RuntimeError, "SyntheticGatewayTimeout"):
-                research.call_model(
-                    [{"role": "user", "content": "gateway timeout test"}],
-                    request_label="forward",
-                )
+            answer = research.call_model(
+                [{"role": "user", "content": "gateway retry test"}],
+                request_label="forward",
+            )
 
-        self.assertEqual(len(saved), 1)
+        self.assertEqual(answer, "recovered after one 5xx")
+        self.assertEqual(len(saved), 2)
         self.assertEqual(saved[0]["http_status"], 504)
         self.assertEqual(saved[0]["failure_stage"], "provider_http_error")
         self.assertEqual(saved[0]["request_delivery_state"], "response_received")
@@ -1070,11 +1098,63 @@ class NvidiaUsageObservationTests(unittest.TestCase):
         self.assertFalse(saved[0]["model_stream_events_received"])
         self.assertFalse(saved[0]["model_response_validated"])
         self.assertEqual(saved[0]["provider_error_category"], "HTTP_5XX_SERVER_ERROR")
+        self.assertTrue(saved[1]["model_response_validated"])
+        self.assertFalse(Path("/tmp/general_nvidia_api_known_http_5xx_forward").exists())
         self.assertFalse(Path("/tmp/general_nvidia_api_no_retry_forward").exists())
-        self.assertEqual(research._NVIDIA_REQUESTS_ATTEMPTED, 1)
-        client.close.assert_called_once()
+        self.assertEqual(research._NVIDIA_REQUESTS_ATTEMPTED, 2)
+        self.assertEqual(research._NVIDIA_REQUEST_ATTEMPT_COUNTS["forward"], 2)
+        self.assertEqual(reserve.call_count, 2)
+        self.assertEqual(reserve.call_args_list[1].kwargs.get("budget_category"), "retry_reserve")
+        first.close.assert_called_once()
+        second.close.assert_called_once()
+        audit = json.loads(research.RETRY_AUDIT.read_text(encoding="utf-8"))
+        self.assertEqual(audit["automatic_retries_reserved"], 1)
+        self.assertFalse(audit["provider_response_bodies_stored"])
 
-    def test_forward_success_then_reverse_504_records_phases_without_retry(self):
+    def test_retry_budget_failure_preserves_known_5xx_classification_without_second_send(self):
+        class SyntheticGatewayTimeout(Exception):
+            status_code = 504
+            response = SimpleNamespace(headers={"x-request-id": "reserve-failure-504"})
+
+        first = self.client_with_response()
+        first.chat.completions.create.side_effect = SyntheticGatewayTimeout(
+            "synthetic first HTTP 504"
+        )
+        second = self.client_with_response()
+        clients = [first, second]
+        saved = []
+
+        def client_factory(_api_key, _timeout):
+            return clients.pop(0)
+
+        with patch.dict(os.environ, self.live_env(), clear=True), patch.object(
+            research, "reserve_nvidia_request",
+            side_effect=[None, RuntimeError("synthetic retry reserve exhausted")],
+        ) as reserve, patch.object(
+            research, "save_usage_observation",
+            side_effect=lambda observation, **kwargs: saved.append(observation),
+        ), patch(
+            "general_open_research._create_nvidia_client", side_effect=client_factory
+        ):
+            with self.assertRaisesRegex(RuntimeError, "retry reserve exhausted"):
+                research.call_model(
+                    [{"role": "user", "content": "synthetic reserve failure"}],
+                    request_label="forward",
+                )
+
+        self.assertEqual(len(saved), 1)
+        self.assertEqual(saved[0]["http_status"], 504)
+        self.assertEqual(research._NVIDIA_REQUESTS_ATTEMPTED, 1)
+        self.assertEqual(reserve.call_count, 2)
+        first.chat.completions.create.assert_called_once()
+        second.chat.completions.create.assert_not_called()
+        first.close.assert_called_once()
+        second.close.assert_called_once()
+        self.assertTrue(Path("/tmp/general_nvidia_api_attempted_forward").exists())
+        self.assertTrue(Path("/tmp/general_nvidia_api_known_http_5xx_forward").exists())
+        self.assertFalse(Path("/tmp/general_nvidia_api_no_retry_forward").exists())
+
+    def test_forward_success_then_reverse_504_retries_once_then_stops(self):
         class SyntheticGatewayTimeout(Exception):
             status_code = 504
             response = SimpleNamespace(headers={"x-request-id": "reverse-gateway-504"})
@@ -1082,9 +1162,13 @@ class NvidiaUsageObservationTests(unittest.TestCase):
         clients = [
             self.client_with_response(self.sdk_response("forward completed")),
             self.client_with_response(),
+            self.client_with_response(),
         ]
         clients[1].chat.completions.create.side_effect = SyntheticGatewayTimeout(
             "synthetic reverse gateway timeout"
+        )
+        clients[2].chat.completions.create.side_effect = SyntheticGatewayTimeout(
+            "synthetic reverse retry also failed"
         )
         saved = []
 
@@ -1107,7 +1191,7 @@ class NvidiaUsageObservationTests(unittest.TestCase):
 
         with patch.dict(os.environ, self.live_env(), clear=True), patch.object(
             research, "reserve_nvidia_request"
-        ), patch.object(
+        ) as reserve, patch.object(
             research, "save_usage_observation",
             side_effect=lambda observation, **kwargs: saved.append(
                 (observation, kwargs["request_label"])
@@ -1125,7 +1209,7 @@ class NvidiaUsageObservationTests(unittest.TestCase):
                 ),
                 "forward completed",
             )
-            with self.assertRaisesRegex(RuntimeError, "SyntheticGatewayTimeout"):
+            with self.assertRaisesRegex(RuntimeError, "explicit HTTP 504"):
                 research.call_model(
                     [
                         {"role": "system", "content": "synthetic system prompt"},
@@ -1139,33 +1223,31 @@ class NvidiaUsageObservationTests(unittest.TestCase):
                     request_label="reverse",
                 )
 
-        self.assertEqual(len(saved), 2)
+        self.assertEqual(len(saved), 3)
         forward_observation, forward_label = saved[0]
         reverse_observation, reverse_label = saved[1]
-        self.assertEqual((forward_label, reverse_label), ("forward", "reverse"))
+        retry_observation, retry_label = saved[2]
+        self.assertEqual((forward_label, reverse_label, retry_label), ("forward", "reverse", "reverse"))
         self.assertTrue(forward_observation["model_response_validated"])
         self.assertIsNotNone(forward_observation["first_sse_event_seconds"])
         self.assertEqual(forward_observation["http_status"], 200)
-        self.assertEqual(reverse_observation["http_status"], 504)
-        self.assertEqual(reverse_observation["failure_stage"], "provider_http_error")
-        self.assertEqual(reverse_observation["provider_error_category"], "HTTP_5XX_SERVER_ERROR")
-        self.assertEqual(reverse_observation["stream_event_count"], 0)
-        self.assertIsNone(reverse_observation["first_sse_event_seconds"])
-        self.assertFalse(reverse_observation["model_stream_events_received"])
-        self.assertFalse(reverse_observation["model_response_validated"])
-        self.assertEqual(reverse_observation["automatic_retries"], 0)
-        self.assertEqual(reverse_observation["sdk_max_retries"], 0)
-        self.assertGreater(reverse_observation["request_body_bytes"], 0)
-        self.assertGreater(reverse_observation["system_prompt_bytes"], 0)
-        self.assertGreater(reverse_observation["user_prompt_bytes"], 0)
-        for metric in (
-            "tcp_tls_establishment_seconds", "request_send_seconds",
-            "response_header_wait_seconds", "transport_open_seconds",
-        ):
-            self.assertIsNotNone(reverse_observation[metric])
-        self.assertEqual(research._NVIDIA_REQUESTS_ATTEMPTED, 2)
+        for failed in (reverse_observation, retry_observation):
+            self.assertEqual(failed["http_status"], 504)
+            self.assertEqual(failed["failure_stage"], "provider_http_error")
+            self.assertEqual(failed["provider_error_category"], "HTTP_5XX_SERVER_ERROR")
+            self.assertEqual(failed["stream_event_count"], 0)
+            self.assertFalse(failed["model_stream_events_received"])
+            self.assertFalse(failed["model_response_validated"])
+        self.assertEqual(research._NVIDIA_REQUESTS_ATTEMPTED, 3)
+        self.assertEqual(research._NVIDIA_REQUEST_ATTEMPT_COUNTS, {"forward": 1, "reverse": 2})
         self.assertEqual(research._NVIDIA_REQUEST_LABELS_SUCCEEDED, {"forward"})
+        self.assertTrue(Path("/tmp/general_nvidia_api_known_http_5xx_reverse").exists())
+        self.assertFalse(Path("/tmp/general_nvidia_api_no_retry_reverse").exists())
+        self.assertEqual(reserve.call_count, 3)
+        self.assertEqual(reserve.call_args_list[2].kwargs.get("budget_category"), "retry_reserve")
         self.assertEqual(clients, [])
+        audit = json.loads(research.RETRY_AUDIT.read_text(encoding="utf-8"))
+        self.assertEqual(audit["automatic_retries_reserved"], 1)
 
     def test_http_404_records_allowlisted_error_identifiers_without_body_or_retry_changes(self):
         class SyntheticNotFoundError(Exception):
@@ -1503,6 +1585,7 @@ class NvidiaUsageObservationTests(unittest.TestCase):
                 {"usage": {"prompt_tokens": 110, "completion_tokens": 35, "total_tokens": 145}},
             )
             with patch.object(research, "USAGE_REPORT", usage_path):
+                research._NVIDIA_REQUEST_ATTEMPT_COUNTS.update({"forward": 1, "reverse": 1})
                 research.save_usage_observation(forward_observation, request_label="forward")
                 research.save_usage_observation(reverse_observation, request_label="reverse")
                 summary = research.write_combined_usage_summary()
@@ -1522,7 +1605,7 @@ class NvidiaUsageObservationTests(unittest.TestCase):
 
 
 class OpenResearchOrchestrationFailureTests(unittest.TestCase):
-    def test_reverse_504_after_forward_success_stops_before_parse_or_promotion(self):
+    def test_reverse_provider_failure_after_forward_success_stops_before_parse_or_promotion(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             target = "2026-11-12"
@@ -1543,6 +1626,7 @@ class OpenResearchOrchestrationFailureTests(unittest.TestCase):
                 "EXECUTION_SPECS": root / "open_research_execution_specs.json",
                 "USAGE_REPORT": root / "open_research_usage.json",
                 "RUN_STATUS": root / "open_research_run_status.json",
+                "RETRY_AUDIT": root / "open_research_retry_audit.json",
             }
             with (
                 patch.multiple(research, **paths),
@@ -1550,7 +1634,7 @@ class OpenResearchOrchestrationFailureTests(unittest.TestCase):
                 patch.object(research, "parse_archive", return_value=rows),
                 patch.object(research, "isolate_discovery_only", return_value=(target, train, {})),
                 patch.object(research.sealed, "load_archive", return_value=archive_proof),
-                patch.object(research.sealed, "load_ledger", return_value={}),
+                patch.object(research.sealed, "load_ledger", return_value={"entries": []}),
                 patch.object(research.sealed, "get_used_validation_dates", return_value=set()),
                 patch.object(research.sealed, "split_archive", return_value=partition),
                 patch.object(research.sealed, "public_plan", return_value={"target_date": target}),
@@ -1586,6 +1670,182 @@ class OpenResearchOrchestrationFailureTests(unittest.TestCase):
 
 
 
+class PendingCandidateResumeOrchestrationTests(unittest.TestCase):
+    @staticmethod
+    def _main_paths(root):
+        return {
+            "BASE": root,
+            "ARCHIVE": root / "super_loto_archive.json",
+            "REPORT": root / "open_research_report.md",
+            "FORWARD_REPORT": root / "open_research_forward_report.md",
+            "REVERSE_REPORT": root / "open_research_reverse_report.md",
+            "PROPOSALS": root / "open_research_proposals.json",
+            "EXECUTION_SPECS": root / "open_research_execution_specs.json",
+            "USAGE_REPORT": root / "open_research_usage.json",
+            "RUN_STATUS": root / "open_research_run_status.json",
+            "RETRY_AUDIT": root / "open_research_retry_audit.json",
+        }
+
+    @staticmethod
+    def _candidate(direction, archive_sha):
+        parsed = research.parse_directional_result(make_directional_report(direction), direction)
+        proposal = parsed["proposal_document"]["proposals"][0]
+        proposal = {
+            key: value for key, value in proposal.items()
+            if key in research.research_memory.PROPOSAL_KEYS
+        }
+        specification = parsed["execution_spec_document"]["specifications"][0]["execution_spec"]
+        return {
+            "direction": direction,
+            "target_date": "2026-11-12",
+            "archive_sha256": archive_sha,
+            "proposal": proposal,
+            "execution_spec": specification,
+            "learning_notes": {
+                "observations": ["The fixed definition is reproducible."],
+                "failed_approaches": ["A moving threshold was not stable."],
+                "next_tests": ["Compare against a uniform random baseline."],
+            },
+        }
+
+    @staticmethod
+    def _patch_preflight(rows, root, paths):
+        target = rows[-1]["date"]
+        train = rows[:-1]
+        partition = {"target_date": target, "discovery_rows": train}
+        archive_proof = {"archive_sha256": "a" * 64, "rows": rows}
+        sealed_plan = {
+            "target_date": target,
+            "regimes": {
+                "R60": {
+                    "validation_start_date": "2026-11-01",
+                    "validation_end_date": "2026-11-02",
+                    "validation_count": 2,
+                    "reverse_validation_start_date": "2026-10-30",
+                    "reverse_validation_end_date": "2026-10-31",
+                    "reverse_validation_count": 2,
+                },
+            },
+        }
+        return target, train, partition, archive_proof, sealed_plan
+
+    def test_main_reuses_exact_target_pending_candidates_without_provider_calls(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            target = "2026-11-12"
+            rows = [
+                {"date": "2026-11-10", "numbers": [1, 2, 3, 4, 5, 6]},
+                {"date": target, "numbers": [7, 8, 9, 10, 11, 12]},
+            ]
+            paths = self._main_paths(root)
+            target, train, partition, archive_proof, sealed_plan = self._patch_preflight(rows, root, paths)
+            candidates = [
+                self._candidate("forward", archive_proof["archive_sha256"]),
+                self._candidate("reverse", archive_proof["archive_sha256"]),
+            ]
+            with (
+                patch.multiple(research, **paths),
+                patch.object(research.sealed, "preflight"),
+                patch.object(research, "parse_archive", return_value=rows),
+                patch.object(research, "isolate_discovery_only", return_value=(target, train, {})),
+                patch.object(research.sealed, "load_archive", return_value=archive_proof),
+                patch.object(research.sealed, "load_ledger", return_value={"entries": []}),
+                patch.object(research.sealed, "get_used_validation_dates", return_value=set()),
+                patch.object(research.sealed, "split_archive", return_value=partition),
+                patch.object(research.sealed, "public_plan", return_value=sealed_plan),
+                patch.object(research.research_memory, "direction_context", return_value=[]),
+                patch.object(
+                    research.research_memory, "find_pending_candidate",
+                    side_effect=candidates,
+                ) as find_pending,
+                patch.object(research, "build_messages", side_effect=AssertionError("reused candidates must not prompt discovery")),
+                patch.object(research, "call_model") as call_model,
+                patch.object(
+                    research, "write_combined_usage_summary",
+                    return_value={"inference_requests_made_by_this_run": 0, "automatic_retries": 0},
+                ),
+                patch.object(research, "write_run_status") as write_status,
+            ):
+                result = research.main()
+
+            self.assertEqual(result, 0)
+            call_model.assert_not_called()
+            self.assertEqual(find_pending.call_count, 2)
+            self.assertTrue(paths["FORWARD_REPORT"].is_file())
+            self.assertTrue(paths["REVERSE_REPORT"].is_file())
+            proposals = json.loads(paths["PROPOSALS"].read_text(encoding="utf-8"))
+            specifications = json.loads(paths["EXECUTION_SPECS"].read_text(encoding="utf-8"))
+            self.assertEqual(len(proposals["proposals"]), 2)
+            self.assertEqual(specifications["status"], "VALIDATED_SPECS")
+            self.assertFalse(specifications["execution_ready"])
+            self.assertTrue(specifications["synthetic_tests_passed"])
+            self.assertEqual(research._NVIDIA_REQUESTS_ATTEMPTED, 0)
+            self.assertEqual(research._NVIDIA_REQUEST_ATTEMPT_COUNTS, {})
+            self.assertEqual(research._NVIDIA_DIRECTIONAL_COMPLETED, {"forward", "reverse"})
+            self.assertEqual(write_status.call_args.args[:2], ("RESEARCH_COMPLETE", "research_complete"))
+
+    def test_valid_candidate_is_not_terminally_discarded_when_other_direction_is_empty(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            target = "2026-11-12"
+            rows = [
+                {"date": "2026-11-10", "numbers": [1, 2, 3, 4, 5, 6]},
+                {"date": target, "numbers": [7, 8, 9, 10, 11, 12]},
+            ]
+            paths = self._main_paths(root)
+            target, train, partition, archive_proof, sealed_plan = self._patch_preflight(rows, root, paths)
+            empty_reverse = (
+                "<HYPOTHESIS_PROPOSALS_JSON>\n"
+                + json.dumps({"schema_version": 3, "proposals": []})
+                + "\n</HYPOTHESIS_PROPOSALS_JSON>\n"
+                + "<HYPOTHESIS_EXECUTION_SPECS_JSON>\n"
+                + json.dumps({"schema_version": 1, "specifications": []})
+                + "\n</HYPOTHESIS_EXECUTION_SPECS_JSON>\n"
+            )
+            marker = Path("/tmp/general_directional_candidates_incomplete")
+            marker.unlink(missing_ok=True)
+            with (
+                patch.multiple(research, **paths),
+                patch.object(research.sealed, "preflight"),
+                patch.object(research, "parse_archive", return_value=rows),
+                patch.object(research, "isolate_discovery_only", return_value=(target, train, {})),
+                patch.object(research.sealed, "load_archive", return_value=archive_proof),
+                patch.object(research.sealed, "load_ledger", return_value={"entries": []}),
+                patch.object(research.sealed, "get_used_validation_dates", return_value=set()),
+                patch.object(research.sealed, "split_archive", return_value=partition),
+                patch.object(research.sealed, "public_plan", return_value=sealed_plan),
+                patch.object(research.research_memory, "direction_context", return_value=[]),
+                patch.object(research.research_memory, "find_pending_candidate", return_value=None),
+                patch.object(
+                    research, "build_messages",
+                    return_value=[{"role": "user", "content": "synthetic isolated request"}],
+                ),
+                patch.object(
+                    research, "call_model",
+                    side_effect=[make_directional_report("forward"), empty_reverse],
+                ) as call_model,
+                patch.object(
+                    research, "write_combined_usage_summary",
+                    return_value={"inference_requests_made_by_this_run": 2, "automatic_retries": 0},
+                ),
+                patch.object(research, "write_run_status") as write_status,
+            ):
+                result = research.main()
+
+            self.assertEqual(result, 2)
+            self.assertEqual(call_model.call_count, 2)
+            self.assertTrue(marker.is_file())
+            proposals = json.loads(paths["PROPOSALS"].read_text(encoding="utf-8"))
+            specifications = json.loads(paths["EXECUTION_SPECS"].read_text(encoding="utf-8"))
+            self.assertEqual(len(proposals["proposals"]), 1)
+            self.assertFalse(specifications["execution_ready"])
+            self.assertEqual(
+                write_status.call_args.args[:2],
+                ("FAILED", "directional_candidate_pairing"),
+            )
+            marker.unlink(missing_ok=True)
+
+
 class OpenResearchWorkflowRegressionTests(unittest.TestCase):
     @staticmethod
     def _workflow_step(path, name):
@@ -1604,7 +1864,7 @@ class OpenResearchWorkflowRegressionTests(unittest.TestCase):
         )
         return "\n".join(lines[start:end])
 
-    def test_reverse_504_path_activates_lock_and_never_retries_or_claims_holdout(self):
+    def test_known_http_5xx_is_excluded_from_uncertainty_lock_and_claim_gate_stays_fail_closed(self):
         workflow = "open-research.yml"
         lock_step = self._workflow_step(
             workflow, "Activate global lock after an incomplete NVIDIA research request"
@@ -1615,6 +1875,11 @@ class OpenResearchWorkflowRegressionTests(unittest.TestCase):
         )
         self.assertIn('/tmp/general_nvidia_api_attempted_${request_label}', lock_step)
         self.assertIn('/tmp/general_nvidia_api_succeeded_${request_label}', lock_step)
+        self.assertNotIn(
+            '&& [ ! -f "/tmp/general_nvidia_api_no_retry_${request_label}" ]',
+            lock_step,
+        )
+        self.assertIn('/tmp/general_nvidia_api_known_http_5xx_${request_label}', lock_step)
         self.assertIn("python3 general_nvidia_guard.py lock --reason", lock_step)
         self.assertNotIn("rerun", lock_step.lower())
         self.assertNotIn("--retry", lock_step.lower())
@@ -1627,6 +1892,38 @@ class OpenResearchWorkflowRegressionTests(unittest.TestCase):
             workflow, "Run one-shot chronological evaluation"
         )
         self.assertIn("steps.sealed-claim.outputs.claim_created == 'true'", evaluation_step)
+
+    def test_autonomous_scheduler_preserves_known_5xx_and_incomplete_candidate_targets(self):
+        workflow = "general-autonomous-research.yml"
+        lock_step = self._workflow_step(
+            workflow, "Activate global lock after an incomplete provider request"
+        )
+        self.assertNotIn(
+            '&& [ ! -f "/tmp/general_nvidia_api_no_retry_${request_label}" ]',
+            lock_step,
+        )
+        self.assertIn('/tmp/general_nvidia_api_known_http_5xx_${request_label}', lock_step)
+        self.assertIn("uncertain_request=true", lock_step)
+
+        pending_check = self._workflow_step(workflow, "Detect pending sealed claim before offline discovery")
+        self.assertIn("general_sealed_evaluation.py pending-claim", pending_check)
+        offline_step = self._workflow_step(workflow, "Run bounded offline hypothesis discovery and evaluation")
+        self.assertIn("steps.pending_claim_check.outputs.pending_claim != 'true'", offline_step)
+        claim_step = self._workflow_step(workflow, "Create the frozen sealed evaluation claim")
+        self.assertIn("--sealed-plan open_research_sealed_plan.json", claim_step)
+
+        finish_step = self._workflow_step(workflow, "Record failed claimed cycle")
+        self.assertIn("SEALED_EVALUATION_INCOMPLETE", finish_step)
+        self.assertIn('RESEARCH_MEMORY_OUTCOME" = "success"', finish_step)
+        self.assertIn('/tmp/general_directional_candidates_incomplete', finish_step)
+        self.assertIn('reason_code="DIRECTIONAL_CANDIDATE_SET_INCOMPLETE"', finish_step)
+        self.assertIn('reason_code="PROVIDER_HTTP_5XX_RETRYABLE"', finish_step)
+        self.assertIn('reason_code="PROVIDER_DELIVERY_UNCERTAIN"', finish_step)
+        self.assertIn('reason_code="PROVIDER_HTTP_REJECTION_NO_RETRY"', finish_step)
+
+        upload_step = self._workflow_step(workflow, "Upload number-safe autonomous cycle artifacts")
+        self.assertIn("open_research_retry_audit.json", upload_step)
+
 
     def test_failed_research_memory_record_is_not_a_formula_promotion(self):
         memory_step = self._workflow_step(
