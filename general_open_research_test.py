@@ -1817,7 +1817,10 @@ class OpenResearchWorkflowRegressionTests(unittest.TestCase):
         )
         self.assertIn('/tmp/general_nvidia_api_attempted_${request_label}', lock_step)
         self.assertIn('/tmp/general_nvidia_api_succeeded_${request_label}', lock_step)
-        self.assertIn('/tmp/general_nvidia_api_no_retry_${request_label}', lock_step)
+        self.assertNotIn(
+            '&& [ ! -f "/tmp/general_nvidia_api_no_retry_${request_label}" ]',
+            lock_step,
+        )
         self.assertIn('/tmp/general_nvidia_api_known_http_5xx_${request_label}', lock_step)
         self.assertIn("python3 general_nvidia_guard.py lock --reason", lock_step)
         self.assertNotIn("rerun", lock_step.lower())
@@ -1837,7 +1840,10 @@ class OpenResearchWorkflowRegressionTests(unittest.TestCase):
         lock_step = self._workflow_step(
             workflow, "Activate global lock after an incomplete provider request"
         )
-        self.assertIn('/tmp/general_nvidia_api_no_retry_${request_label}', lock_step)
+        self.assertNotIn(
+            '&& [ ! -f "/tmp/general_nvidia_api_no_retry_${request_label}" ]',
+            lock_step,
+        )
         self.assertIn('/tmp/general_nvidia_api_known_http_5xx_${request_label}', lock_step)
         self.assertIn("uncertain_request=true", lock_step)
 
