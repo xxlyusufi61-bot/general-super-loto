@@ -464,7 +464,8 @@ jobs:
           python3 general_autonomous_research.py finish \
             --attempt-id "$ATTEMPT_ID" \
             --outcome SUCCEEDED \
-            --reason-code EVALUATION_COMPLETED
+            --reason-code EVALUATION_COMPLETED \
+            --ledger general_evaluation_ledger.json
       - name: Record no-candidate outcome without scoring the archive
         id: finish_no_candidate
         if: ${{ always() && steps.attempt_reservation.outputs.attempt_id != '' && steps.research.outcome == 'success' && steps.sealed_claim.outcome == 'success' && steps.sealed_claim.outputs.claim_created != 'true' && steps.research_memory.outcome == 'success' }}
