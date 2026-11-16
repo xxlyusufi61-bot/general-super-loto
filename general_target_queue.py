@@ -24,7 +24,10 @@ MAX_PENDING_TARGETS = 128
 MAX_COMPLETED_TARGETS = 10_000
 MAX_SNAPSHOT_BYTES = 1_500_000
 MAX_COMPRESSED_QUEUE_BYTES = 5_000_000
+# Legacy outcomes remain readable for state-history compatibility. New target
+# consumption records are written only as EVALUATED.
 TERMINAL_TARGET_OUTCOMES = {
+    "EVALUATED",
     "SUCCEEDED",
     "NO_ELIGIBLE_CANDIDATE",
     "EXHAUSTED_RETRY_BUDGET",
@@ -429,9 +432,9 @@ def complete_front(
     outcome: str,
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    """Remove the FIFO head only after a valid terminal scientific outcome."""
-    if outcome not in {"SUCCEEDED", "NO_ELIGIBLE_CANDIDATE"}:
-        raise TargetQueueError("Only terminal successful outcomes may release a FIFO target.")
+    """Remove the FIFO head only after a persisted EVALUATED outcome."""
+    if outcome != "EVALUATED":
+        raise TargetQueueError("Only an EVALUATED sealed claim may release a FIFO target.")
     return _record_terminal_front(
         queue_value,
         target_date=target_date,
@@ -452,21 +455,9 @@ def retire_exhausted_front(
     failed_event_count: int,
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    """Close a FIFO head as exhausted only when every expected attempt failed."""
-    if (
-        type(attempt_count) is not int
-        or attempt_count < 3
-        or type(failed_event_count) is not int
-        or failed_event_count != attempt_count
-    ):
-        raise TargetQueueError("Retry-budget exhaustion requires at least three fully failed attempts.")
-    return _record_terminal_front(
-        queue_value,
-        target_date=target_date,
-        archive_sha256=archive_sha256,
-        archive_record_count=archive_record_count,
-        outcome="EXHAUSTED_RETRY_BUDGET",
-        now=now,
+    """Reject retry-budget retirement; a target remains FIFO until EVALUATED."""
+    raise TargetQueueError(
+        "Retry-budget retirement is disabled; only EVALUATED may consume a FIFO target."
     )
 
 
