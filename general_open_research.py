@@ -1390,9 +1390,17 @@ def call_model(
     if type(_retry_attempt) is not int or _retry_attempt not in {0, 1}:
         raise RuntimeError("Only one bounded internal retry is supported.")
     if _retry_attempt == 1 and (
-        diagnostic_mode or single_request_mode or request_key not in _NVIDIA_REQUEST_LABELS_ATTEMPTED
+        diagnostic_mode
+        or single_request_mode
+        or request_key not in _NVIDIA_REQUEST_LABELS_ATTEMPTED
+        or not Path(
+            "/tmp/general_nvidia_api_known_http_5xx_" + request_key
+        ).is_file()
     ):
-        raise RuntimeError("The bounded retry is unavailable in this request mode or without an original attempt.")
+        raise RuntimeError(
+            "The bounded retry requires a prior, explicitly received HTTP 5xx response "
+            "in ordinary multi-request mode."
+        )
     if request_key in _NVIDIA_REQUEST_LABELS_ATTEMPTED and _retry_attempt == 0:
         raise RuntimeError(
             "This directional NVIDIA request was already attempted; no duplicate request was sent."
