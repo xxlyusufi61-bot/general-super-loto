@@ -455,9 +455,21 @@ def retire_exhausted_front(
     failed_event_count: int,
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    """Reject retry-budget retirement; a target remains FIFO until EVALUATED."""
-    raise TargetQueueError(
-        "Retry-budget retirement is disabled; only EVALUATED may consume a FIFO target."
+    """Close a FIFO head as exhausted only when every expected attempt failed."""
+    if (
+        type(attempt_count) is not int
+        or attempt_count < 3
+        or type(failed_event_count) is not int
+        or failed_event_count != attempt_count
+    ):
+        raise TargetQueueError("Retry-budget exhaustion requires at least three fully failed attempts.")
+    return _record_terminal_front(
+        queue_value,
+        target_date=target_date,
+        archive_sha256=archive_sha256,
+        archive_record_count=archive_record_count,
+        outcome="EXHAUSTED_RETRY_BUDGET",
+        now=now,
     )
 
 
