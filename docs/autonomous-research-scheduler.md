@@ -66,8 +66,19 @@ scheduler does not expose target values to discovery.
   DIRECTIONAL_CANDIDATE_SET_INCOMPLETE and also retains the same FIFO target.
   Each later cycle first checks the persisted candidate memory before asking
   the provider for a direction again.
+- SEALED_EVALUATION_INCOMPLETE is retryable only after the original claim was
+  persisted and its directional candidates were safely appended to GENERAL
+  memory. Recovery reuses the same claim ID, frozen candidate IDs/spec hashes,
+  immutable archive snapshot, original discovery partition, and exact forward
+  and reverse holdout dates. It does not open a new holdout or issue discovery
+  requests. While a claim is pending, the scheduled workflow skips offline
+  development so its pinned offline-memory digest remains unchanged.
+- A CLAIMED holdout remains reserved to that exact claim; other candidates may
+  never reuse it. It becomes permanently consumed only after the claim reaches
+  EVALUATED. A failed or incomplete evaluation must be resumed, not discarded.
 - WORKFLOW_FAILED means a provider request was sent and returned, but a later
-  workflow stage failed; it is not automatically retried.
+  workflow stage failed outside the explicit incomplete-evaluation case; it is
+  not automatically retried.
 - PROVIDER_DELIVERY_UNCERTAIN remains blocked until a manual unlock is recorded
   strictly after that failure. Only a later scheduled cycle may then retry the
   same target. The workflow never unlocks itself.
