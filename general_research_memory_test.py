@@ -556,6 +556,19 @@ class PendingCandidateResumeTests(unittest.TestCase):
             self.assertEqual(entry["proposal_status"], "VALID_PROPOSALS")
             self.assertEqual(entry["execution_spec_status"], "VALIDATED_SPECS")
             self.assertIsNone(entry["evaluation_feedback"])
+            self.assertEqual(
+                memory.run_synthetic_contract_tests(entry["execution_spec"])["status"],
+                "PASS",
+            )
+            self.assertEqual(
+                memory._validate_proposal(entry["proposals"][0], canonical=True),
+                entry["proposals"][0],
+            )
+            self.assertTrue(
+                memory.execution_spec_matches_proposal(
+                    entry["proposals"][0], entry["execution_spec"]
+                )
+            )
             path = root / "memory.json"
             value = memory.empty_memory()
             value["entries"] = [entry]
