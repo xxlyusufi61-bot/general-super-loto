@@ -166,7 +166,15 @@ class OpenResearchIsolationTests(unittest.TestCase):
         rows.append({"date": "2021-01-10", "numbers": target_numbers})
         rows.sort(key=lambda row: row["date"])
 
-        target, discovery, plan = research.isolate_discovery_only(rows)
+        original_archive = research.ARCHIVE
+        with tempfile.TemporaryDirectory() as temp_dir:
+            archive_path = Path(temp_dir) / "archive.json"
+            archive_path.write_text(json.dumps({"draws": rows}), encoding="utf-8")
+            research.ARCHIVE = archive_path
+            try:
+                target, discovery, plan = research.isolate_discovery_only(rows)
+            finally:
+                research.ARCHIVE = original_archive
         forward_messages = research.build_messages(target, discovery, direction="forward")
         reverse_messages = research.build_messages(target, discovery, direction="reverse")
         forward_payload = json.loads(forward_messages[1]["content"])
@@ -225,11 +233,18 @@ class OpenResearchIsolationTests(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as temp_dir:
             ledger_path = Path(temp_dir) / "ledger.json"
+            archive_path = Path(temp_dir) / "archive.json"
             ledger_path.write_text(json.dumps(ledger), encoding="utf-8")
-            target, discovery, plan = research.isolate_discovery_only(
-                rows,
-                ledger_path=ledger_path,
-            )
+            archive_path.write_text(json.dumps({"draws": rows}), encoding="utf-8")
+            original_archive = research.ARCHIVE
+            research.ARCHIVE = archive_path
+            try:
+                target, discovery, plan = research.isolate_discovery_only(
+                    rows,
+                    ledger_path=ledger_path,
+                )
+            finally:
+                research.ARCHIVE = original_archive
 
         r60_discovery_dates = {
             row["date"] for row in discovery
