@@ -2127,7 +2127,12 @@ def main() -> int:
         print("Execution-spec status:", execution_spec_document["status"])
         print("DSL-validated directional specifications:", len(execution_spec_document["specifications"]))
         print("Both directional synthetic tests passed:", execution_spec_document["synthetic_tests_passed"])
-        if proposal_document["proposals"] and not execution_spec_document["execution_ready"]:
+        directional_pair_is_incomplete = (
+            execution_spec_document.get("status") != "VALIDATED_SPECS"
+            or execution_spec_document.get("synthetic_tests_passed") is not True
+            or len(execution_spec_document.get("specifications", [])) != 2
+        )
+        if proposal_document["proposals"] and directional_pair_is_incomplete:
             Path("/tmp/general_directional_candidates_incomplete").write_text(
                 datetime.now(timezone.utc).isoformat(), encoding="utf-8"
             )
