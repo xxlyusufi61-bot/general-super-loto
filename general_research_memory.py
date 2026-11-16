@@ -1451,6 +1451,87 @@ def record_cycle(
     }
 
 
+def find_pending_candidate(
+    direction: str,
+    target_date: str,
+    archive_sha256: str,
+    *,
+    memory_path: str | Path = MEMORY_PATH,
+) -> dict[str, Any] | None:
+    """Return the oldest exact-target candidate with a validated DSL spec and no completed evaluation.
+
+    This is a read-only resume lookup. A candidate is never marked consumed here;
+    only an append-only evaluation-feedback record can establish that its frozen
+    specification has completed the sealed evaluation.
+    """
+    if direction not in {"forward", "reverse"}:
+        raise ResearchMemoryError("Pending-candidate direction must be forward or reverse.")
+    try:
+        parsed_target = date.fromisoformat(target_date)
+    except (TypeError, ValueError):
+        raise ResearchMemoryError("Pending-candidate target date is invalid.") from None
+    if parsed_target.isoformat() != target_date or parsed_target < RESEARCH_SCOPE_START:
+        raise ResearchMemoryError("Pending-candidate target date is outside the active research scope.")
+    if not isinstance(archive_sha256, str) or not HEX64.fullmatch(archive_sha256):
+        raise ResearchMemoryError("Pending-candidate archive hash is invalid.")
+
+    memory = load_memory(memory_path)
+    matching = [
+        entry for entry in memory["entries"]
+        if entry["direction"] == direction
+        and entry["target_date"] == target_date
+        and entry["archive_sha256"] == archive_sha256
+    ]
+    evaluated_spec_hashes = {
+        entry["execution_spec_sha256"]
+        for entry in matching
+        if entry["evaluation_feedback"] is not None
+        and entry["execution_spec_sha256"] is not None
+    }
+
+    # FIFO preserves discovery order: a later candidate cannot silently replace
+    # an earlier valid candidate that still has not received a sealed evaluation.
+    for entry in matching:
+        if (
+            entry["evaluation_feedback"] is not None
+            or entry["proposal_status"] != "VALID_PROPOSALS"
+            or len(entry["proposals"]) != 1
+            or entry["execution_spec_status"] != "VALIDATED_SPECS"
+            or not isinstance(entry["execution_spec"], dict)
+            or not isinstance(entry["execution_spec_sha256"], str)
+            or entry["execution_spec_sha256"] in evaluated_spec_hashes
+        ):
+            continue
+        proposal = entry["proposals"][0]
+        specification = entry["execution_spec"]
+        try:
+            checked_spec = validate_execution_spec(specification)
+            checked_proposal = _validate_proposal(proposal, canonical=True)
+        except (TypeError, ValueError):
+            continue
+        if (
+            checked_spec != specification
+            or checked_proposal != proposal
+            or not execution_spec_matches_proposal(proposal, specification)
+            or entry["execution_spec_sha256"] != _sha(_canonical(specification))
+        ):
+            continue
+        return {
+            "source": SOURCE,
+            "direction": direction,
+            "target_date": target_date,
+            "archive_sha256": archive_sha256,
+            "source_entry_id": entry["entry_id"],
+            "source_cycle_id": entry["cycle_id"],
+            "source_status": entry["status"],
+            "proposal": proposal,
+            "execution_spec": specification,
+            "execution_spec_sha256": entry["execution_spec_sha256"],
+            "learning_notes": entry["learning_notes"],
+        }
+    return None
+
+
 def _write_memory(memory: dict[str, Any], path: str | Path) -> None:
     target = Path(path)
     checked = load_memory(target)
