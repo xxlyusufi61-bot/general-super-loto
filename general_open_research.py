@@ -1397,7 +1397,12 @@ def call_model(
         raise RuntimeError(
             "This directional NVIDIA request was already attempted; no duplicate request was sent."
         )
-    if request_label in {"forward", "reverse"} and _retry_attempt == 0:
+    if (
+        request_label in {"forward", "reverse"}
+        and _retry_attempt == 0
+        and not diagnostic_mode
+        and not single_request_mode
+    ):
         directional_completed = [
             label for label in ("forward", "reverse")
             if label in _NVIDIA_DIRECTIONAL_COMPLETED
