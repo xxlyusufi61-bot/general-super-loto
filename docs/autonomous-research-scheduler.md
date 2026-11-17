@@ -162,9 +162,11 @@ fetch or push failure blocks the corresponding NVIDIA request.
   the first hosted request. NO_PROVIDER_REQUEST_SENT, an explicitly received
   HTTP 5xx after its one bounded request-level retry, and
   DIRECTIONAL_CANDIDATE_SET_INCOMPLETE are retryable target outcomes.
-  WORKFLOW_FAILED is not automatically replayed after a provider request has
-  been sent. A PROVIDER_DELIVERY_UNCERTAIN failure allows retry only after a
-  later manual unlock is recorded; no automatic unlock or same-run retry occurs.
+  WORKFLOW_FAILED and PROVIDER_DELIVERY_UNCERTAIN are retryable only after a
+  manual global NVIDIA unlock is recorded strictly after the failed event. The
+  next scheduled cycle may retry the same FIFO target with its remaining budget;
+  no automatic unlock or same-run replay occurs. Without that fresh unlock both
+  failure classes remain blocked.
 - A previously claimed target with an incomplete persisted evaluation is
   resumed only through its exact pending claim. That recovery reuses the original
   claim ID, archive snapshot, frozen forward/reverse definitions, and unchanged
@@ -259,11 +261,14 @@ NO_ELIGIBLE_CANDIDATE is not target completion: it remains in the FIFO and
 may be retried within the established budget. If a direction is missing, the
 target is not marked EVALUATED. A SUCCEEDED attempt is accepted only after
 exactly one matching sealed-evaluation ledger entry is persisted as EVALUATED.
-WORKFLOW_FAILED after provider delivery is not automatically retried.
-PROVIDER_DELIVERY_UNCERTAIN remains blocked until the global lock is manually
-unlocked after the failure timestamp. HTTP 402/429 remain non-retryable, and
-existing bounded HTTP 5xx retry semantics are unchanged. A target already
-being processed is never replaced by the latest archive head.
+WORKFLOW_FAILED after provider delivery remains blocked until a manual global
+NVIDIA unlock is recorded strictly after its failure timestamp. The same
+post-failure unlock gate applies to PROVIDER_DELIVERY_UNCERTAIN. Once the gate is
+satisfied, the next scheduled cycle may retry the same FIFO target within its
+remaining ten-attempt budget. There is no automatic unlock or same-run replay.
+HTTP 402/429 remain non-retryable, and existing bounded HTTP 5xx retry
+semantics are unchanged. A target already being processed is never replaced by
+the latest archive head.
 
 When the queue is first introduced to a scheduler state with no prior attempts,
 the bootstrap cursor starts immediately before the latest canonical draw, so
@@ -314,10 +319,15 @@ when both records are accepted by the authoritative state store.
 
 If research-memory validation fails after a provider request was sent and
 returned, the claimed attempt is recorded as FAILED with WORKFLOW_FAILED. The
-FIFO head remains pending and is not automatically retried, preserving PR #103.
-A failed or ambiguous final state-store publication leaves the authoritative
-attempt in progress, which also blocks the FIFO; it is not treated as a
-successful completion and is never retried automatically. Telegram success
+FIFO head remains pending. It becomes eligible for a later scheduled retry only
+after a manual global NVIDIA unlock is recorded strictly after the failure
+timestamp; this never triggers a same-run retry. That retry is bound to an
+append-only workflow_retry_history record linking the original failure,
+post-failure unlock timestamp, and immediate retry attempt. A failed or
+ambiguous final state-store publication leaves the authoritative attempt in
+progress, which also blocks the FIFO; it is not treated as a successful
+completion and is never retried automatically.
+ Telegram success
 messages are sent only after the final state-store publication succeeds.
 Failure notifications cover memory-append, terminal-outcome, and final
 state-store publication errors.
@@ -337,28 +347,25 @@ or a Telegram request is attempted. Other report kinds and non-success
 notifications therefore retain their fail-closed delivery behavior.
 
 
-## Scheduler state schema v5 and scoped recovery provenance
+## Scheduler state schema v5 and retry recovery provenance
 
 Scheduler state schema v3 introduced the bounded, append-only `recovery_history`
-journal. Schema v4 retains the bounded `manual_retry_history` journal so
-previously recorded Cycle #55 events remain verifiable. Schema v5 adds a
-separate, single-entry `scoped_recovery_history` journal for the explicitly
-approved 2026-11-12 failed-workflow recovery. It is cryptographically
-self-consistent and pinned to the exact FIFO target, archive snapshot, prior
-attempt, failure event, authorized actor, workflow ref, sixth attempt, and
-adjacency-aware preflight summary.
+journal. Schema v4 retains the bounded `manual_retry_history` journal for
+historical Cycle #55 provenance. Schema v5 adds `workflow_retry_history`, an
+append-only record binding a post-provider `WORKFLOW_FAILED` retry to its exact
+prior attempt, later manual global unlock timestamp, matching FIFO/archive
+identity, and immediately following retry attempt. The journal is validated
+against the attempt/event ledgers and a canonical metadata digest; it cannot
+authorize a different target or be replayed.
 
-The Cycle #55 journals remain historical provenance only and do not authorize
-the 2026-11-12 recovery. The new scoped journal does not make any other
-`WORKFLOW_FAILED` target retryable and does not change normal retry behavior.
-The active policy remains a uniform ten-attempt budget per target; the special
-manual dispatch is a separate, one-use route bound only to the pinned incident.
-A new workflow failure remains blocked under the ordinary policy.
-
-Legacy v1 through v4 documents are upgraded in memory; the generation-guarded
-state writer remains the only way to publish state. All recovery journals store
-metadata and cryptographic digests only, never draw rows, target numbers,
-per-draw hits, or rankings.
+The uniform ten-attempt budget remains. `WORKFLOW_FAILED` remains blocked until
+the global NVIDIA lock has been manually unlocked after the failure timestamp.
+There is no automatic lock change or same-run replay. HTTP 402/429 and security,
+archive, chronology, target-isolation, or sealed-partition integrity failures
+remain fail-closed. Legacy v1 through v4 state documents are upgraded in memory;
+the generation-guarded state writer remains the only way to publish state.
+All journals store metadata and cryptographic digests only, never draw rows,
+target numbers, per-draw hits, or rankings.
 
 Cycle #55 exposed a finalization-order defect: a false
 `NO_ELIGIBLE_CANDIDATE` event was staged without FIFO completion before the
@@ -366,4 +373,4 @@ research-memory append had succeeded. The recovery utility retains the exact
 historical generation, source snapshot, attempt, event, completed entry, FIFO
 cursor, and compressed-snapshot provenance. The restored attempt remains
 `FAILED / WORKFLOW_FAILED`. The old incident and its recorded retry history are
-preserved for audit; they are not reused by the new scoped recovery.
+preserved for audit; they are not a live retry exception.
