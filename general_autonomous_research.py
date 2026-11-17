@@ -606,8 +606,11 @@ def validate_state(value: Any) -> dict[str, Any]:
             item = scoped_recovery[field]
             if not isinstance(item, str) or not item.isdigit() or len(item) > 32:
                 raise AutonomousResearchError("Scoped recovery GitHub run identifier is invalid.")
-        if not isinstance(scoped_recovery["partition_version"], str) or not scoped_recovery["partition_version"]:
-            raise AutonomousResearchError("Scoped recovery partition version is invalid.")
+        if (
+            type(scoped_recovery["partition_version"]) is not int
+            or scoped_recovery["partition_version"] != sealed.PARTITION_VERSION
+        ):
+            raise AutonomousResearchError("Scoped recovery must use the current adjacency-aware partition version.")
         _timestamp(scoped_recovery["authorized_at_utc"], "scoped_recovery.authorized_at_utc")
         claimed_at = _timestamp(scoped_recovery["claimed_at_utc"], "scoped_recovery.claimed_at_utc")
         if claimed_at < _timestamp(scoped_recovery["authorized_at_utc"], "scoped_recovery.authorized_at_utc"):
@@ -1243,7 +1246,7 @@ def _prepare_scoped_failed_workflow_recovery(
         "retry_number": 6,
         "scoped_recovery": True,
         "preflight_sha256": plan_digest,
-        "partition_version": plan.get("partition_version") or "v2",
+        "partition_version": plan.get("partition_version") or sealed.PARTITION_VERSION,
         "forward_validation_count": len(forward_dates),
         "reverse_validation_count": len(reverse_dates),
         "discovery_count": discovery_count,
