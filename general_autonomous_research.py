@@ -1699,6 +1699,24 @@ def main(argv: list[str] | None = None) -> int:
     claim.add_argument("--run-id", default="")
     claim.add_argument("--github-output")
 
+
+    scoped_prepare = sub.add_parser("prepare-scoped-recovery")
+    scoped_claim = sub.add_parser("claim-scoped-recovery")
+    for command_parser in (scoped_prepare, scoped_claim):
+        command_parser.add_argument("--state", type=Path, default=Path("general_autonomous_research_state.json"))
+        command_parser.add_argument("--archive", type=Path, default=Path("super_loto_archive.json"))
+        command_parser.add_argument("--ledger", type=Path, default=Path("general_evaluation_ledger.json"))
+        command_parser.add_argument("--global-lock", type=Path, default=Path("general_nvidia_lock.json"))
+        command_parser.add_argument("--confirmation", required=True)
+        command_parser.add_argument("--github-actor", required=True)
+        command_parser.add_argument("--github-actor-id", type=int, required=True)
+        command_parser.add_argument("--github-event-name", required=True)
+        command_parser.add_argument("--github-ref", required=True)
+        command_parser.add_argument("--github-workflow-ref", required=True)
+        command_parser.add_argument("--github-output")
+    scoped_claim.add_argument("--run-id", required=True)
+
+
     finish = sub.add_parser("finish")
     finish.add_argument("--state", type=Path, default=Path("general_autonomous_research_state.json"))
     finish.add_argument("--attempt-id", required=True)
@@ -1825,6 +1843,47 @@ def main(argv: list[str] | None = None) -> int:
             write_state(args.state, state)
             result = {"status": "ATTEMPT_CLAIMED_BEFORE_PROVIDER_CALL", **attempt}
             _write_github_output(args.github_output, {"attempt_id": attempt["attempt_id"]})
+
+        elif args.command == "prepare-scoped-recovery":
+            result = prepare_scoped_failed_workflow_recovery(
+                state,
+                archive_path=args.archive,
+                ledger_path=args.ledger,
+                global_lock_path=args.global_lock,
+                confirmation=args.confirmation,
+                github_actor=args.github_actor,
+                github_actor_id=args.github_actor_id,
+                github_event_name=args.github_event_name,
+                github_ref=args.github_ref,
+                github_workflow_ref=args.github_workflow_ref,
+            )
+            _write_github_output(args.github_output, {
+                "eligible": result.get("eligible") is True,
+                "status": result.get("status"),
+                "target_date": result.get("target_date"),
+                "retryable": result.get("retryable") is True,
+                "retry_number": result.get("retry_number"),
+                "forward_validation_count": result.get("forward_validation_count"),
+                "reverse_validation_count": result.get("reverse_validation_count"),
+                "discovery_count": result.get("discovery_count"),
+            })
+        elif args.command == "claim-scoped-recovery":
+            result = claim_scoped_failed_workflow_recovery(
+                state,
+                archive_path=args.archive,
+                ledger_path=args.ledger,
+                global_lock_path=args.global_lock,
+                confirmation=args.confirmation,
+                github_actor=args.github_actor,
+                github_actor_id=args.github_actor_id,
+                github_event_name=args.github_event_name,
+                github_ref=args.github_ref,
+                github_workflow_ref=args.github_workflow_ref,
+                github_run_id=args.run_id,
+            )
+            write_state(args.state, state)
+            _write_github_output(args.github_output, {"attempt_id": result["attempt_id"]})
+
         else:
             state = record_outcome(
                 state,
