@@ -93,6 +93,7 @@ class Cycle55RecoveryTests(unittest.TestCase):
         state = autonomous.initial_state()
         state.pop("recovery_history")
         state.pop("manual_retry_history")
+        state.pop("workflow_retry_history")
         state["schema_version"] = 2
         state["authorization"] = {
             "enabled": True,
@@ -179,7 +180,7 @@ class Cycle55RecoveryTests(unittest.TestCase):
 
     def test_recovery_archives_false_terminal_records_and_restores_exact_fifo_snapshot(self):
         recovered = self.recover()
-        self.assertEqual(recovered["schema_version"], 4)
+        self.assertEqual(recovered["schema_version"], 5)
         self.assertEqual(recovered["events"][-1]["outcome"], "FAILED")
         self.assertEqual(recovered["events"][-1]["reason_code"], "WORKFLOW_FAILED")
         self.assertEqual(
@@ -250,7 +251,7 @@ class Cycle55RecoveryTests(unittest.TestCase):
                 now=datetime.fromisoformat("2026-11-13T12:05:00+00:00"),
             )
         self.assertFalse(result["eligible"])
-        self.assertEqual(result["status"], "WORKFLOW_FAILED_NO_AUTOMATIC_RETRY")
+        self.assertEqual(result["status"], "WORKFLOW_FAILED_MANUAL_RECOVERY_REQUIRED")
 
     def test_newer_target_cannot_bypass_restored_fifo_head(self):
         recovered = self.recover()
@@ -382,7 +383,7 @@ class Cycle55RecoveryTests(unittest.TestCase):
                 )
                 self.assertTrue(output_path.exists())
                 self.assertEqual(result["status"], "LOCAL_RECOVERY_PREVIEW_CREATED")
-                self.assertEqual(result["schema_version"], 4)
+                self.assertEqual(result["schema_version"], 5)
                 self.assertFalse(result["production_state_written"])
                 self.assertEqual(current_path.read_bytes(), current_raw)
                 self.assertEqual(source_path.read_bytes(), source_raw)

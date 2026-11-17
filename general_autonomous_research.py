@@ -52,6 +52,11 @@ RETRYABLE_FAILURE_REASON_CODES = {
     "PROVIDER_HTTP_5XX_RETRYABLE",
     "DIRECTIONAL_CANDIDATE_SET_INCOMPLETE",
     "SEALED_EVALUATION_INCOMPLETE",
+    "WORKFLOW_FAILED",
+}
+MANUAL_UNLOCK_REQUIRED_FAILURE_REASON_CODES = {
+    "PROVIDER_DELIVERY_UNCERTAIN",
+    "WORKFLOW_FAILED",
 }
 CYCLE55_RECOVERY_TARGET_DATE = "2026-11-10"
 CYCLE55_RECOVERY_ARCHIVE_SHA256 = "ae7b79e4922d4178a86c7d7880af3e4758d1a5e7f78d6cc3d2595fbb4fd66596"
@@ -119,7 +124,7 @@ def _is_sha256(value: Any) -> bool:
 
 def initial_state() -> dict[str, Any]:
     return {
-        "schema_version": 4,
+        "schema_version": 5,
         "project": PROJECT,
         "authorization": {
             "enabled": False,
@@ -135,6 +140,7 @@ def initial_state() -> dict[str, Any]:
         "target_queue": target_queue.initial_queue(),
         "recovery_history": [],
         "manual_retry_history": [],
+        "workflow_retry_history": [],
     }
 
 
@@ -142,26 +148,32 @@ def validate_state(value: Any) -> dict[str, Any]:
     legacy_v1_keys = {"schema_version", "project", "authorization", "attempts", "events"}
     legacy_v2_keys = legacy_v1_keys | {"target_queue"}
     legacy_v3_keys = legacy_v2_keys | {"recovery_history"}
+    legacy_v4_keys = legacy_v3_keys | {"manual_retry_history"}
     if isinstance(value, dict) and set(value) == legacy_v1_keys and value.get("schema_version") == 1:
-        value["schema_version"] = 4
+        value["schema_version"] = 5
         value["target_queue"] = target_queue.initial_queue()
         value["recovery_history"] = []
         value["manual_retry_history"] = []
+        value["workflow_retry_history"] = []
     elif isinstance(value, dict) and set(value) == legacy_v2_keys and value.get("schema_version") == 2:
-        value["schema_version"] = 4
+        value["schema_version"] = 5
         value["recovery_history"] = []
         value["manual_retry_history"] = []
+        value["workflow_retry_history"] = []
     elif isinstance(value, dict) and set(value) == legacy_v3_keys and value.get("schema_version") == 3:
-        # Schema v4 adds an append-only journal for one narrowly scoped,
-        # explicitly approved Cycle #55 retry exception.
-        value["schema_version"] = 4
+        value["schema_version"] = 5
         value["manual_retry_history"] = []
+        value["workflow_retry_history"] = []
+    elif isinstance(value, dict) and set(value) == legacy_v4_keys and value.get("schema_version") == 4:
+        value["schema_version"] = 5
+        value["workflow_retry_history"] = []
     if not isinstance(value, dict) or set(value) != {
         "schema_version", "project", "authorization", "attempts", "events",
-        "target_queue", "recovery_history", "manual_retry_history"
+        "target_queue", "recovery_history", "manual_retry_history",
+        "workflow_retry_history"
     }:
         raise AutonomousResearchError("Autonomous scheduler state has an invalid schema.")
-    if type(value.get("schema_version")) is not int or value["schema_version"] != 4:
+    if type(value.get("schema_version")) is not int or value["schema_version"] != 5:
         raise AutonomousResearchError("Unsupported autonomous scheduler state schema version.")
     try:
         target_queue.validate_queue(value["target_queue"])
@@ -540,6 +552,81 @@ def validate_state(value: Any) -> dict[str, Any]:
         if manual_retry["authorization_id"] != expected_id:
             raise AutonomousResearchError("Cycle #55 manual retry authorization digest does not match its immutable metadata.")
 
+    workflow_retry_history = value.get("workflow_retry_history")
+    if not isinstance(workflow_retry_history, list) or len(workflow_retry_history) > 10000:
+        raise AutonomousResearchError("Workflow retry journal is not a valid bounded list.")
+    attempt_by_id = {item["attempt_id"]: item for item in attempts}
+    attempt_position = {item["attempt_id"]: index for index, item in enumerate(attempts)}
+    workflow_retry_by_prior_attempt: dict[str, dict[str, Any]] = {}
+    workflow_retry_ids: set[str] = set()
+    workflow_retry_attempt_ids: set[str] = set()
+    required_workflow_retry = {
+        "schema_version", "retry_id", "target_date", "archive_sha256",
+        "archive_record_count", "prior_attempt_id", "prior_failure_reason_code",
+        "prior_failure_at_utc", "manual_unlocked_at_utc", "retry_attempt_id",
+        "retry_github_run_id", "claimed_at_utc", "consumed",
+    }
+    for entry in workflow_retry_history:
+        if not isinstance(entry, dict) or set(entry) != required_workflow_retry:
+            raise AutonomousResearchError("Workflow retry journal entry has an invalid schema.")
+        if type(entry["schema_version"]) is not int or entry["schema_version"] != 1:
+            raise AutonomousResearchError("Unsupported workflow retry journal version.")
+        retry_id = entry["retry_id"]
+        prior_id = entry["prior_attempt_id"]
+        retry_attempt_id = entry["retry_attempt_id"]
+        if not _is_sha256(retry_id) or retry_id in workflow_retry_ids:
+            raise AutonomousResearchError("Workflow retry journal identifier is invalid or duplicated.")
+        if (
+            not isinstance(prior_id, str) or prior_id not in attempt_by_id
+            or not isinstance(retry_attempt_id, str) or retry_attempt_id not in attempt_by_id
+            or prior_id in workflow_retry_by_prior_attempt
+            or retry_attempt_id in workflow_retry_attempt_ids
+        ):
+            raise AutonomousResearchError("Workflow retry journal references an unknown or reused attempt.")
+        if entry["consumed"] is not True or entry["prior_failure_reason_code"] != "WORKFLOW_FAILED":
+            raise AutonomousResearchError("Workflow retry journal is not a consumed WORKFLOW_FAILED authorization.")
+        target = _canonical_date(entry["target_date"], "workflow_retry.target_date")
+        if not _is_sha256(entry["archive_sha256"]):
+            raise AutonomousResearchError("Workflow retry archive hash is invalid.")
+        if type(entry["archive_record_count"]) is not int or entry["archive_record_count"] < 1:
+            raise AutonomousResearchError("Workflow retry archive record count is invalid.")
+        failure_at = _timestamp(entry["prior_failure_at_utc"], "workflow_retry.prior_failure_at_utc")
+        unlocked_at = _timestamp(entry["manual_unlocked_at_utc"], "workflow_retry.manual_unlocked_at_utc")
+        claimed_at = _timestamp(entry["claimed_at_utc"], "workflow_retry.claimed_at_utc")
+        if not failure_at < unlocked_at <= claimed_at:
+            raise AutonomousResearchError("Manual unlock must postdate the failure and predate the retry claim.")
+        run_id = entry["retry_github_run_id"]
+        if not isinstance(run_id, str) or not run_id.isdigit() or len(run_id) > 32:
+            raise AutonomousResearchError("Workflow retry GitHub run identifier is invalid.")
+        prior_attempt = attempt_by_id[prior_id]
+        retry_attempt = attempt_by_id[retry_attempt_id]
+        prior_event = event_by_attempt.get(prior_id)
+        if (
+            attempt_position[retry_attempt_id] != attempt_position[prior_id] + 1
+            or prior_event is None
+            or prior_event["outcome"] != "FAILED"
+            or prior_event["reason_code"] != "WORKFLOW_FAILED"
+            or prior_event["recorded_at_utc"] != entry["prior_failure_at_utc"]
+            or prior_attempt["target_date"] != target
+            or retry_attempt["target_date"] != target
+            or prior_attempt["archive_sha256"] != entry["archive_sha256"]
+            or retry_attempt["archive_sha256"] != entry["archive_sha256"]
+            or prior_attempt["archive_record_count"] != entry["archive_record_count"]
+            or retry_attempt["archive_record_count"] != entry["archive_record_count"]
+            or retry_attempt["github_run_id"] != run_id
+            or retry_attempt["claimed_at_utc"] != entry["claimed_at_utc"]
+        ):
+            raise AutonomousResearchError("Workflow retry journal does not match the exact failed FIFO attempt and its immediate retry.")
+        payload = {key: item for key, item in entry.items() if key != "retry_id"}
+        expected_retry_id = hashlib.sha256(
+            json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+        ).hexdigest()
+        if retry_id != expected_retry_id:
+            raise AutonomousResearchError("Workflow retry journal digest does not match its metadata.")
+        workflow_retry_ids.add(retry_id)
+        workflow_retry_attempt_ids.add(retry_attempt_id)
+        workflow_retry_by_prior_attempt[prior_id] = entry
+
     target_counts: dict[str, int] = {}
     for target in attempt_dates:
         target_counts[target] = target_counts.get(target, 0) + 1
@@ -567,6 +654,13 @@ def validate_state(value: Any) -> dict[str, Any]:
                         )
                     )
                 )
+                if prior_event is not None and prior_event["reason_code"] == "WORKFLOW_FAILED":
+                    authorization = workflow_retry_by_prior_attempt.get(prior_attempt["attempt_id"])
+                    next_attempt_id = target_attempts[index + 1]["attempt_id"]
+                    normal_retry = (
+                        authorization is not None
+                        and authorization["retry_attempt_id"] == next_attempt_id
+                    )
                 approved_cycle55_exception = (
                     target == CYCLE55_MANUAL_RETRY_TARGET_DATE
                     and len(target_attempts) in (4, 5)
@@ -619,20 +713,28 @@ def read_global_lock(path: str | Path) -> dict[str, Any]:
         raise AutonomousResearchError("Global NVIDIA lock failed validation; automation is blocked.") from None
 
 
-def manual_recovery_confirmed(lock_state: dict[str, Any], failed_event: dict[str, Any]) -> bool:
-    """Require a recorded manual unlock strictly after an uncertain provider failure."""
-    if failed_event.get("reason_code") != "PROVIDER_DELIVERY_UNCERTAIN":
-        return False
+def manual_recovery_unlock_timestamp(
+    lock_state: dict[str, Any], failed_event: dict[str, Any]
+) -> str | None:
+    """Return only a manual unlock recorded strictly after a gated failure."""
+    if failed_event.get("reason_code") not in MANUAL_UNLOCK_REQUIRED_FAILURE_REASON_CODES:
+        return None
     unlocked_at = lock_state.get("last_unlocked_at")
     if not isinstance(unlocked_at, str):
-        return False
+        return None
     try:
-        return _timestamp(unlocked_at, "global_lock.last_unlocked_at") > _timestamp(
+        if _timestamp(unlocked_at, "global_lock.last_unlocked_at") > _timestamp(
             failed_event.get("recorded_at_utc"),
             "failed_event.recorded_at_utc",
-        )
+        ):
+            return unlocked_at
     except AutonomousResearchError:
-        return False
+        return None
+    return None
+
+
+def manual_recovery_confirmed(lock_state: dict[str, Any], failed_event: dict[str, Any]) -> bool:
+    return manual_recovery_unlock_timestamp(lock_state, failed_event) is not None
 
 
 
@@ -763,7 +865,8 @@ def prepare_cycle(
     attempts = state["attempts"]
     retryable = False
     retry_number = 1
-    recovered_after_uncertain_delivery = False
+    manual_recovery_confirmed_for_failure = False
+    manual_recovery_unlock_at_utc: str | None = None
     if attempts:
         last_attempt = attempts[-1]
         last_target = last_attempt["target_date"]
@@ -785,11 +888,15 @@ def prepare_cycle(
                 }
             if last_event["outcome"] == "FAILED":
                 reason_code = last_event["reason_code"]
-                if reason_code == "PROVIDER_DELIVERY_UNCERTAIN":
-                    recovered_after_uncertain_delivery = manual_recovery_confirmed(lock, last_event)
+                if reason_code in MANUAL_UNLOCK_REQUIRED_FAILURE_REASON_CODES:
+                    manual_recovery_unlock_at_utc = manual_recovery_unlock_timestamp(lock, last_event)
+                    manual_recovery_confirmed_for_failure = manual_recovery_unlock_at_utc is not None
                 if (
                     reason_code in RETRYABLE_FAILURE_REASON_CODES
-                    and (reason_code != "PROVIDER_DELIVERY_UNCERTAIN" or recovered_after_uncertain_delivery)
+                    and (
+                        reason_code not in MANUAL_UNLOCK_REQUIRED_FAILURE_REASON_CODES
+                        or manual_recovery_confirmed_for_failure
+                    )
                 ):
                     retry_limit = MAX_ATTEMPTS_PER_TARGET
                     if same_target_attempts >= retry_limit:
@@ -806,7 +913,7 @@ def prepare_cycle(
                     if reason_code == "PROVIDER_HTTP_REJECTION_NO_RETRY":
                         blocked_status = "PROVIDER_HTTP_REJECTION_NO_RETRY"
                     elif reason_code == "WORKFLOW_FAILED":
-                        blocked_status = "WORKFLOW_FAILED_NO_AUTOMATIC_RETRY"
+                        blocked_status = "WORKFLOW_FAILED_MANUAL_RECOVERY_REQUIRED"
                     else:
                         blocked_status = "PROVIDER_DELIVERY_UNCERTAIN_MANUAL_RECOVERY_REQUIRED"
                     return {
@@ -869,34 +976,35 @@ def prepare_cycle(
                     }
                 if last_event["outcome"] == "FAILED":
                     previous_retry_is_ready = (
-                        last_event["reason_code"] == "NO_PROVIDER_REQUEST_SENT"
+                        last_event["reason_code"] in RETRYABLE_FAILURE_REASON_CODES
                     )
-                    if last_event["reason_code"] == "PROVIDER_DELIVERY_UNCERTAIN":
+                    if last_event["reason_code"] in MANUAL_UNLOCK_REQUIRED_FAILURE_REASON_CODES:
                         previous_retry_is_ready = manual_recovery_confirmed(lock, last_event)
-                    if (
-                        last_event["outcome"] == "NO_ELIGIBLE_CANDIDATE"
-                        and last_event["reason_code"] == "NO_FROZEN_DIRECTIONAL_CANDIDATE"
-                    ):
-                        previous_retry_is_ready = True
-                    previous_attempt_count = sum(
-                        1 for item in attempts if item["target_date"] == last_target
+                elif (
+                    last_event["outcome"] == "NO_ELIGIBLE_CANDIDATE"
+                    and last_event["reason_code"] == "NO_FROZEN_DIRECTIONAL_CANDIDATE"
+                ):
+                    previous_retry_is_ready = True
+
+                previous_attempt_count = sum(
+                    1 for item in attempts if item["target_date"] == last_target
+                )
+                previous_retry_limit = MAX_ATTEMPTS_PER_TARGET
+                if previous_retry_is_ready and previous_attempt_count >= previous_retry_limit:
+                    blocking_status = "PREVIOUS_TARGET_RETRY_LIMIT_REACHED"
+                else:
+                    blocking_status = (
+                        "PREVIOUS_TARGET_RETRY_REQUIRED"
+                        if previous_retry_is_ready
+                        else "PREVIOUS_TARGET_MANUAL_RECOVERY_REQUIRED"
                     )
-                    previous_retry_limit = MAX_ATTEMPTS_PER_TARGET
-                    if previous_retry_is_ready and previous_attempt_count >= previous_retry_limit:
-                        blocking_status = "PREVIOUS_TARGET_RETRY_LIMIT_REACHED"
-                    else:
-                        blocking_status = (
-                            "PREVIOUS_TARGET_RETRY_REQUIRED"
-                            if previous_retry_is_ready
-                            else "PREVIOUS_TARGET_MANUAL_RECOVERY_REQUIRED"
-                        )
-                    return {
-                        "status": blocking_status,
-                        "eligible": False,
-                        "target_date": target_date,
-                        "pending_target_date": last_target,
-                        **status,
-                    }
+                return {
+                    "status": blocking_status,
+                    "eligible": False,
+                    "target_date": target_date,
+                    "pending_target_date": last_target,
+                    **status,
+                }
 
     try:
         plan = sealed.preflight(archive_path, ledger_path)
@@ -959,7 +1067,8 @@ def prepare_cycle(
         "previously_consumed_holdout_dates_reused": False,
         "retryable": retryable,
         "retry_number": retry_number,
-        "manual_recovery_confirmed": recovered_after_uncertain_delivery,
+        "manual_recovery_confirmed": manual_recovery_confirmed_for_failure,
+        "manual_recovery_unlock_at_utc": manual_recovery_unlock_at_utc,
         "pending_claim_resume_available": plan.get("pending_claim_resume_available") is True,
         "pending_claim_id": plan.get("pending_claim_id"),
     }
@@ -985,6 +1094,7 @@ def claim_attempt(
     if type(plan.get("archive_record_count")) is not int or plan["archive_record_count"] < 1:
         raise AutonomousResearchError("Plan archive record count is invalid.")
     attempt_number = 1
+    workflow_failure_to_recover: tuple[dict[str, Any], dict[str, Any]] | None = None
     queue = target_queue.validate_queue(state["target_queue"])
     if queue["items"]:
         front = queue["items"][0]
@@ -1019,13 +1129,20 @@ def claim_attempt(
                 raise AutonomousResearchError(
                     "A target retry requires a retryable failure or a recorded no-candidate outcome."
                 )
-            if (
-                last_event["reason_code"] == "PROVIDER_DELIVERY_UNCERTAIN"
-                and plan.get("manual_recovery_confirmed") is not True
-            ):
-                raise AutonomousResearchError(
-                    "Uncertain provider delivery requires a manual unlock after the failed attempt."
-                )
+            if last_event["reason_code"] in MANUAL_UNLOCK_REQUIRED_FAILURE_REASON_CODES:
+                if plan.get("manual_recovery_confirmed") is not True:
+                    raise AutonomousResearchError(
+                        "Post-provider workflow failure or uncertain delivery requires a manual unlock after the failed attempt."
+                    )
+                if last_event["reason_code"] == "WORKFLOW_FAILED":
+                    unlock_at = plan.get("manual_recovery_unlock_at_utc")
+                    if not isinstance(unlock_at, str):
+                        raise AutonomousResearchError("A WORKFLOW_FAILED retry is missing its manual unlock provenance.")
+                    if _timestamp(unlock_at, "plan.manual_recovery_unlock_at_utc") <= _timestamp(
+                        last_event["recorded_at_utc"], "failed_event.recorded_at_utc"
+                    ):
+                        raise AutonomousResearchError("The manual unlock predates the WORKFLOW_FAILED event.")
+                    workflow_failure_to_recover = (last_attempt, last_event)
             retry_limit = MAX_ATTEMPTS_PER_TARGET
             if previous_count >= retry_limit:
                 raise AutonomousResearchError("The ten-attempt target retry limit is exhausted.")
@@ -1062,15 +1179,45 @@ def claim_attempt(
     ).hexdigest()
     if any(item["attempt_id"] == attempt_id for item in state["attempts"]):
         raise AutonomousResearchError("This autonomous attempt was already claimed.")
+    claimed_at = _now_utc(now).isoformat()
+    if workflow_failure_to_recover is not None:
+        if github_run_id is None:
+            raise AutonomousResearchError("A workflow-failure retry requires a GitHub run identifier.")
+        unlock_at = _timestamp(
+            plan["manual_recovery_unlock_at_utc"],
+            "plan.manual_recovery_unlock_at_utc",
+        )
+        if unlock_at > _timestamp(claimed_at, "attempt.claimed_at_utc"):
+            raise AutonomousResearchError("Manual unlock provenance postdates the retry claim.")
     attempt = {
         "attempt_id": attempt_id,
         "target_date": target_date,
         "archive_sha256": archive_sha,
         "archive_record_count": plan["archive_record_count"],
-        "claimed_at_utc": _now_utc(now).isoformat(),
+        "claimed_at_utc": claimed_at,
         "github_run_id": github_run_id,
     }
     state["attempts"].append(attempt)
+    if workflow_failure_to_recover is not None:
+        prior_attempt, prior_event = workflow_failure_to_recover
+        retry_entry = {
+            "schema_version": 1,
+            "target_date": target_date,
+            "archive_sha256": archive_sha,
+            "archive_record_count": plan["archive_record_count"],
+            "prior_attempt_id": prior_attempt["attempt_id"],
+            "prior_failure_reason_code": "WORKFLOW_FAILED",
+            "prior_failure_at_utc": prior_event["recorded_at_utc"],
+            "manual_unlocked_at_utc": plan["manual_recovery_unlock_at_utc"],
+            "retry_attempt_id": attempt_id,
+            "retry_github_run_id": github_run_id,
+            "claimed_at_utc": claimed_at,
+            "consumed": True,
+        }
+        retry_entry["retry_id"] = hashlib.sha256(
+            json.dumps(retry_entry, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+        ).hexdigest()
+        state["workflow_retry_history"].append(retry_entry)
     validate_state(state)
     return attempt
 

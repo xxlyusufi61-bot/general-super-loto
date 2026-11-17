@@ -404,7 +404,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
         self.assertEqual(state, before)
 
 
-    def test_workflow_failed_after_provider_delivery_is_not_automatically_retried(self):
+    def test_workflow_failed_retries_only_after_a_later_manual_unlock(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             archive = root / "archive.json"
@@ -421,25 +421,67 @@ class AutonomousResearchStateTests(unittest.TestCase):
                 state, archive_path=archive, ledger_path=ledger,
                 global_lock_path=lock, now=NOW,
             )
-            attempt = auto.claim_attempt(
+            first_attempt = auto.claim_attempt(
                 state, plan, github_run_id="420000012", now=NOW,
             )
             auto.record_outcome(
-                state, attempt["attempt_id"], outcome="FAILED",
+                state, first_attempt["attempt_id"], outcome="FAILED",
                 reason_code="WORKFLOW_FAILED", now=NOW,
             )
 
-            later_unlock = NOW + timedelta(minutes=1)
+            blocked = auto.prepare_cycle(
+                state, archive_path=archive, ledger_path=ledger,
+                global_lock_path=lock, now=NOW + timedelta(minutes=1),
+            )
+            self.assertFalse(blocked["eligible"])
+            self.assertEqual(blocked["status"], "WORKFLOW_FAILED_MANUAL_RECOVERY_REQUIRED")
+
+            stale_unlock = NOW - timedelta(minutes=1)
+            lock.write_text(
+                json.dumps(make_unlocked_state(initial_lock_state(), stamp=stale_unlock.isoformat())),
+                encoding="utf-8",
+            )
+            stale_blocked = auto.prepare_cycle(
+                state, archive_path=archive, ledger_path=ledger,
+                global_lock_path=lock, now=NOW + timedelta(minutes=2),
+            )
+            self.assertFalse(stale_blocked["eligible"])
+            self.assertEqual(stale_blocked["status"], "WORKFLOW_FAILED_MANUAL_RECOVERY_REQUIRED")
+
+            later_unlock = NOW + timedelta(minutes=3)
             lock.write_text(
                 json.dumps(make_unlocked_state(initial_lock_state(), stamp=later_unlock.isoformat())),
                 encoding="utf-8",
             )
-            blocked = auto.prepare_cycle(
+            retry_plan = auto.prepare_cycle(
                 state, archive_path=archive, ledger_path=ledger,
-                global_lock_path=lock, now=NOW + timedelta(minutes=2),
+                global_lock_path=lock, now=NOW + timedelta(minutes=4),
             )
-            self.assertFalse(blocked["eligible"])
-            self.assertEqual(blocked["status"], "WORKFLOW_FAILED_NO_AUTOMATIC_RETRY")
+            self.assertTrue(retry_plan["eligible"])
+            self.assertTrue(retry_plan["retryable"])
+            self.assertTrue(retry_plan["manual_recovery_confirmed"])
+            self.assertEqual(retry_plan["retry_number"], 2)
+            self.assertEqual(retry_plan["manual_recovery_unlock_at_utc"], later_unlock.isoformat())
+
+            retry_attempt = auto.claim_attempt(
+                state, retry_plan, github_run_id="420000013",
+                now=NOW + timedelta(minutes=4),
+            )
+            self.assertEqual(retry_attempt["target_date"], first_attempt["target_date"])
+            self.assertNotEqual(retry_attempt["attempt_id"], first_attempt["attempt_id"])
+            self.assertEqual(len(state["workflow_retry_history"]), 1)
+            auto.validate_state(state)
+
+            invalid = json.loads(json.dumps(state))
+            invalid["workflow_retry_history"][0]["manual_unlocked_at_utc"] = NOW.isoformat()
+            with self.assertRaisesRegex(auto.AutonomousResearchError, "Manual unlock must postdate"):
+                auto.validate_state(invalid)
+
+            missing_journal = json.loads(json.dumps(state))
+            missing_journal["workflow_retry_history"] = []
+            with self.assertRaisesRegex(auto.AutonomousResearchError, "Repeated target attempts"):
+                auto.validate_state(missing_journal)
+
 
     def test_failed_target_with_pending_sealed_claim_retries_same_formula_and_holdouts(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -753,6 +795,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
         state.pop("target_queue")
         state.pop("recovery_history")
         state.pop("manual_retry_history")
+        state.pop("workflow_retry_history")
         state["schema_version"] = 1
         state["attempts"].append({
             "attempt_id": "e" * 64,
@@ -763,7 +806,8 @@ class AutonomousResearchStateTests(unittest.TestCase):
             "github_run_id": "98765",
         })
         upgraded = auto.validate_state(state)
-        self.assertEqual(upgraded["schema_version"], 4)
+        self.assertEqual(upgraded["schema_version"], 5)
+        self.assertEqual(upgraded["workflow_retry_history"], [])
         self.assertEqual(upgraded["target_queue"], auto.target_queue.initial_queue())
         self.assertEqual(upgraded["recovery_history"], [])
         self.assertEqual(upgraded["attempts"][0]["attempt_id"], "e" * 64)

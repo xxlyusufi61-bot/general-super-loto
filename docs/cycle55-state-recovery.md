@@ -3,7 +3,7 @@
 > Historical record only: this document preserves the Cycle #55 false-terminal
 > recovery and attempts recorded under the policy in force at that time. Those
 > old exception records remain solely for audit and grant no active retry path.
-> The current scheduler uses a uniform ten-attempt budget per target. Explicit
+> The current scheduler uses a uniform ten-attempt budget per target. A post-provider WORKFLOW_FAILED retry is permitted only after a fresh manual global NVIDIA unlock and is recorded in the schema-v5 workflow_retry_history journal. Explicit
 > EXHAUSTED_RETRY_BUDGET retirement remains separately confirmed and validated.
 > This document is not an authorization to repeat the Cycle #55 action.
 
