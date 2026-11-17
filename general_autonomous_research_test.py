@@ -449,7 +449,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
             "pending_claim_resume_available": False,
             "partition_version": "adjacency-aware-v2",
             "forward_validation_dates": [f"2026-10-{day:02d}" for day in range(1, 31)],
-            "reverse_validation_dates": [f"2026-09-{day:02d}" for day in range(1, 31)],
+            "reverse_validation_dates": [f"2026-12-{day:02d}" for day in range(1, 31)],
             "regimes": {"R60": {"status": "READY", "discovery_count": 900}},
         }
 
@@ -473,13 +473,15 @@ class AutonomousResearchStateTests(unittest.TestCase):
                 "github_workflow_ref": auto.SCOPED_RECOVERY_WORKFLOW_REF,
                 "now": recovery_now,
             }
-            with patch.object(auto.target_queue, "validate_queue", side_effect=lambda value: value), \\
-                 patch.object(auto.sealed, "load_archive", return_value={
-                     "last_date": target, "archive_sha256": archive_sha,
-                     "record_count": auto.SCOPED_RECOVERY_ARCHIVE_RECORD_COUNT,
-                 }), \\
-                 patch.object(auto.sealed, "load_ledger", return_value={"entries": []}), \\
-                 patch.object(auto.sealed, "preflight", return_value=plan):
+            with (
+                patch.object(auto.target_queue, "validate_queue", side_effect=lambda value: value),
+                patch.object(auto.sealed, "load_archive", return_value={
+                    "last_date": target, "archive_sha256": archive_sha,
+                    "record_count": auto.SCOPED_RECOVERY_ARCHIVE_RECORD_COUNT,
+                }),
+                patch.object(auto.sealed, "load_ledger", return_value={"entries": []}),
+                patch.object(auto.sealed, "preflight", return_value=plan),
+            ):
                 before = json.loads(json.dumps(state))
                 with self.assertRaisesRegex(auto.AutonomousResearchError, "Exact one-time"):
                     auto.prepare_scoped_failed_workflow_recovery(
