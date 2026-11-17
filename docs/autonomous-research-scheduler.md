@@ -360,6 +360,9 @@ authorize a different target or be replayed.
 
 The uniform ten-attempt budget remains. `WORKFLOW_FAILED` remains blocked until
 the global NVIDIA lock has been manually unlocked after the failure timestamp.
+The existing unlock command is a no-op when the lock is already clear, so merely
+invoking it does not create fresh confirmation. The recorded unlock timestamp
+must come from a real manual locked-to-clear transition after the failure.
 There is no automatic lock change or same-run replay. HTTP 402/429 and security,
 archive, chronology, target-isolation, or sealed-partition integrity failures
 remain fail-closed. Legacy v1 through v4 state documents are upgraded in memory;
