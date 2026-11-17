@@ -1193,8 +1193,18 @@ def _direction_artifacts(
     _reject_consumed_validation_dates(
         proposals["proposals"], forbidden_validation_dates, "Directional proposals"
     )
+    # The specifications envelope mixes the model-authored AST with
+    # coordinator-generated validation metadata. In particular,
+    # synthetic_test_summary includes the fixed research-scope boundary date.
+    # Check only the extracted AST here; the complete model-authored proposal,
+    # including formal_execution_spec and all proposal text, was checked above.
+    model_authored_specs = [
+        item["execution_spec"]
+        for item in specs["specifications"]
+        if isinstance(item, dict) and isinstance(item.get("execution_spec"), dict)
+    ]
     _reject_consumed_validation_dates(
-        specs["specifications"], forbidden_validation_dates, "Directional specifications"
+        model_authored_specs, forbidden_validation_dates, "Directional specifications"
     )
     _reject_consumed_validation_dates(
         notes, forbidden_validation_dates, "Directional learning notes"
