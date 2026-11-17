@@ -174,6 +174,12 @@
       "outcome": "FAILED",
       "recorded_at_utc": "2026-11-16T15:37:05.530450+00:00",
       "reason_code": "DIRECTIONAL_CANDIDATE_SET_INCOMPLETE"
+    },
+    {
+      "attempt_id": "f0cee0ae5e524979abc1166ebac6a42129b1c9267070408426b9b004dafbbef1",
+      "outcome": "FAILED",
+      "recorded_at_utc": "2026-11-17T01:42:37.047943+00:00",
+      "reason_code": "DIRECTIONAL_CANDIDATE_SET_INCOMPLETE"
     }
   ],
   "target_queue": {
