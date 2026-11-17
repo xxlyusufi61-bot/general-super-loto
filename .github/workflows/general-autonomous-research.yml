@@ -279,7 +279,7 @@ jobs:
           python3 general_autonomous_research.py queue-materialize \
             --output super_loto_archive.json
 
-      - name: Prepare the scheduled cycle or pinned one-time recovery
+      - name: Prepare one cycle for the oldest queued target and fresh sealed windows
         id: prepare
         if: ${{ steps.status.outputs.authorized == 'true' && steps.status.outputs.lock_clear == 'true' && ((github.event_name == 'schedule' && steps.queue_capture.outputs.has_pending == 'true') || (github.event_name == 'workflow_dispatch' && inputs.action == 'recover-failed-workflow-2026-11-12')) }}
         env:
