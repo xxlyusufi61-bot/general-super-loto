@@ -187,6 +187,40 @@ class ResearchMemoryValidationTests(unittest.TestCase):
             )
 
 
+    def test_coordinator_synthetic_scope_date_does_not_block_model_spec_capture(self):
+        forbidden = {"2020-08-02"}
+        with tempfile.TemporaryDirectory() as directory:
+            for direction in ("forward", "reverse"):
+                report_path = Path(directory) / (direction + ".md")
+                report_path.write_text(directional_report(direction), encoding="utf-8")
+                _, _, _, proposals, specs, _ = memory._direction_artifacts(
+                    direction,
+                    report_path,
+                    forbidden_validation_dates=forbidden,
+                )
+                self.assertEqual(proposals["status"], "VALID_PROPOSALS")
+                self.assertEqual(specs["status"], "VALIDATED_SPECS")
+                self.assertEqual(len(specs["specifications"]), 1)
+                synthetic = specs["specifications"][0]["synthetic_test_summary"]
+                self.assertEqual(synthetic["research_scope_start_date"], "2020-08-02")
+
+            # The same boundary date remains forbidden when it appears in
+            # model-authored proposal text, rather than coordinator metadata.
+            unsafe_path = Path(directory) / "unsafe-reverse.md"
+            unsafe_report = directional_report("reverse").replace(
+                "A simple count baseline is being tested against a chronological null.",
+                "The 2020-08-02 scope boundary is part of this hypothesis.",
+            )
+            unsafe_path.write_text(unsafe_report, encoding="utf-8")
+            with self.assertRaisesRegex(
+                memory.ResearchMemoryError, "consumed validation date"
+            ):
+                memory._direction_artifacts(
+                    "reverse",
+                    unsafe_path,
+                    forbidden_validation_dates=forbidden,
+                )
+
     def test_written_month_dates_are_rejected_when_they_match_reserved_holdouts(self):
         for report in (
             "The sealed date is October 21, 2026.",
