@@ -77,6 +77,15 @@ next. The manual exception is not itself a provider request; normal shared
 NVIDIA rate limits, lock checks, evaluation, memory, and Telegram reporting
 remain in force.
 
+## Separate 2026-11-12 recovery
+
+The later pinned `2026-11-12` `WORKFLOW_FAILED` incident has its own
+independent, one-use recovery journal and dispatch guard. It does not reuse the
+Cycle #55 `manual_retry_history`, the Cycle #55 workflow, or any prior
+authorization. Its exact evidence and preflight requirements are documented in
+`docs/scoped-2026-11-12-failed-workflow-recovery.md`. This section does not
+authorize or trigger that separate action.
+
 ## Scheduled-work pause and controlled migration workflow
 
 The dedicated .github/workflows/general-cycle55-migration.yml workflow is
