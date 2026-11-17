@@ -3,7 +3,7 @@
 > Historical record only: this document preserves the Cycle #55 false-terminal
 > recovery and attempts recorded under the policy in force at that time. Those
 > old exception records remain solely for audit and grant no active retry path.
-> The current scheduler uses a uniform ten-attempt budget per target. Explicit
+> The current scheduler uses a uniform ten-attempt budget per target. A post-provider WORKFLOW_FAILED retry is permitted only after a fresh manual global NVIDIA unlock and is recorded in the schema-v5 workflow_retry_history journal. Explicit
 > EXHAUSTED_RETRY_BUDGET retirement remains separately confirmed and validated.
 > This document is not an authorization to repeat the Cycle #55 action.
 
@@ -76,15 +76,6 @@ finalization gates succeed. The subsequent 2026-11-12 FIFO target remains
 next. The manual exception is not itself a provider request; normal shared
 NVIDIA rate limits, lock checks, evaluation, memory, and Telegram reporting
 remain in force.
-
-## Separate 2026-11-12 recovery
-
-The later pinned `2026-11-12` `WORKFLOW_FAILED` incident has its own
-independent, one-use recovery journal and dispatch guard. It does not reuse the
-Cycle #55 `manual_retry_history`, the Cycle #55 workflow, or any prior
-authorization. Its exact evidence and preflight requirements are documented in
-`docs/scoped-2026-11-12-failed-workflow-recovery.md`. This section does not
-authorize or trigger that separate action.
 
 ## Scheduled-work pause and controlled migration workflow
 
