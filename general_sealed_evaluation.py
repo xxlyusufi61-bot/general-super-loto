@@ -39,7 +39,9 @@ from general_hypothesis_execution import (
     validate_execution_spec,
 )
 
-VERSION = "0.4.0"
+VERSION = "0.5.0"
+PARTITION_VERSION = 2
+LEGACY_PARTITION_VERSION = 1
 RESEARCH_SCOPE_START = date(2020, 8, 2)
 DEFAULT_MIN_TRAIN_DRAWS = 40
 DEFAULT_MAX_VALIDATION_DRAWS = 30
@@ -137,7 +139,7 @@ def _offline_development_consumption(
     return dates, digest
 
 
-def split_archive(
+def _split_archive_legacy(
     rows: list[dict[str, Any]],
     *,
     archive_sha256: str = "",
@@ -309,6 +311,147 @@ def split_archive(
     }
 
 
+def split_archive(
+    rows: list[dict[str, Any]],
+    *,
+    archive_sha256: str = "",
+    used_validation_dates: set[str] | None = None,
+    offline_memory_path: str | Path = "general_research_memory.json",
+    partition_version: int = PARTITION_VERSION,
+) -> dict[str, Any]:
+    """Build a fresh adjacency-safe split or replay an immutable historical split."""
+    if type(partition_version) is not int or partition_version not in {
+        LEGACY_PARTITION_VERSION, PARTITION_VERSION
+    }:
+        raise SealedEvaluationError("Unsupported sealed partition version.")
+
+    base = _split_archive_legacy(
+        rows,
+        archive_sha256=archive_sha256,
+        used_validation_dates=used_validation_dates,
+        offline_memory_path=offline_memory_path,
+    )
+    if partition_version == LEGACY_PARTITION_VERSION:
+        base["partition_version"] = LEGACY_PARTITION_VERSION
+        return base
+
+    offline_used_list, offline_digest = _offline_development_consumption(
+        offline_memory_path
+    )
+    if offline_digest != base["offline_development_memory_sha256"]:
+        raise SealedEvaluationError(
+            "Offline development memory changed while constructing the sealed partition."
+        )
+    used_dates = set(used_validation_dates or ()) | set(offline_used_list)
+    target_date = base["target_date"]
+    history = [row for row in rows if row["date"] < target_date]
+    available = [_copy_row(row) for row in history if row["date"] not in used_dates]
+
+    # Consumed rows split the canonical chronology into contiguous eligible blocks.
+    # Never compact rows across a consumed date to manufacture a false neighbour.
+    first_available = next(
+        (index for index, row in enumerate(history) if row["date"] not in used_dates),
+        None,
+    )
+    reverse_block = []
+    if first_available is not None:
+        for row in history[first_available:]:
+            if row["date"] in used_dates:
+                break
+            reverse_block.append(_copy_row(row))
+
+    last_available = next(
+        (index for index in range(len(history) - 1, -1, -1)
+         if history[index]["date"] not in used_dates),
+        None,
+    )
+    forward_block = []
+    if last_available is not None:
+        for row in reversed(history[:last_available + 1]):
+            if row["date"] in used_dates:
+                break
+            forward_block.append(_copy_row(row))
+        forward_block.reverse()
+
+    # Keep two exact canonical context rows outside each holdout. When both
+    # directions share one contiguous block, the balanced budget prevents overlap.
+    validation_budget = max(0, len(available) - DEFAULT_MIN_TRAIN_DRAWS)
+    balanced_limit = min(DEFAULT_MAX_VALIDATION_DRAWS, validation_budget // 2)
+    reverse_count = min(balanced_limit, max(0, len(reverse_block) - 2))
+    forward_count = min(balanced_limit, max(0, len(forward_block) - 2))
+    reverse_validation = reverse_block[:reverse_count]
+    validation = forward_block[-forward_count:] if forward_count else []
+    reverse_dates = {row["date"] for row in reverse_validation}
+    forward_dates = {row["date"] for row in validation}
+    if reverse_dates.intersection(forward_dates):
+        raise SealedEvaluationError("Adjacency-safe directional validation windows overlap.")
+
+    discovery = sorted(
+        (row for row in available
+         if row["date"] not in reverse_dates and row["date"] not in forward_dates),
+        key=lambda row: row["date"],
+    )
+    ready = (
+        len(reverse_validation) >= MIN_VALIDATION_DRAWS
+        and len(validation) >= MIN_VALIDATION_DRAWS
+        and len(discovery) >= DEFAULT_MIN_TRAIN_DRAWS
+    )
+    reason = None if ready else (
+        "No adjacency-safe bidirectional partition can preserve 40 discovery rows, "
+        "two independent validation targets per direction, and both exact canonical "
+        "neighbours without reusing consumed dates."
+    )
+    all_roles = discovery + validation + reverse_validation
+    role_dates = [row["date"] for row in all_roles]
+    if len(role_dates) != len(set(role_dates)):
+        raise SealedEvaluationError("Adjacency-safe partition assigned a canonical row more than once.")
+    if any(row["date"] in used_dates for row in all_roles):
+        raise SealedEvaluationError("Adjacency-safe partition reused a consumed date.")
+    if any(row["date"] >= target_date for row in all_roles):
+        raise SealedEvaluationError("Adjacency-safe partition includes the isolated target or a later date.")
+    if reverse_validation and discovery and reverse_validation[-1]["date"] >= discovery[0]["date"]:
+        raise SealedEvaluationError("Reverse validation and discovery chronology overlap.")
+    if discovery and validation and discovery[-1]["date"] >= validation[0]["date"]:
+        raise SealedEvaluationError("Discovery and forward validation chronology overlap.")
+
+    regime = {
+        "regime": "R60",
+        "number_pool_size": 60,
+        "status": "READY" if ready else "NOT_EVALUABLE_INSUFFICIENT_HISTORY",
+        "reason": reason,
+        "pre_target_draw_count": len(history),
+        "available_pre_target_draw_count": len(available),
+        "previously_consumed_draw_count": len(used_dates),
+        "discovery_rows": discovery,
+        "validation_rows": validation,
+        "reverse_validation_rows": reverse_validation,
+        "discovery_count": len(discovery),
+        "validation_count": len(validation),
+        "reverse_validation_count": len(reverse_validation),
+        "discovery_start_date": discovery[0]["date"] if discovery else None,
+        "discovery_end_date": discovery[-1]["date"] if discovery else None,
+        "validation_start_date": validation[0]["date"] if validation else None,
+        "validation_end_date": validation[-1]["date"] if validation else None,
+        "reverse_validation_start_date": reverse_validation[0]["date"] if reverse_validation else None,
+        "reverse_validation_end_date": reverse_validation[-1]["date"] if reverse_validation else None,
+    }
+    base.update({
+        "partition_version": PARTITION_VERSION,
+        "orchestrator_version": VERSION,
+        "pre_target_draw_count": len(history),
+        "previously_consumed_validation_draw_count": len(used_dates),
+        "target_numbers_exposed": False,
+        "target_in_discovery": False,
+        "target_in_validation": False,
+        "target_in_reverse_validation": False,
+        "directional_validation_windows_disjoint": True,
+        "discovery_rows": discovery,
+        "discovery_count": len(discovery),
+        "regimes": {"R60": regime},
+    })
+    return base
+
+
 def _validate_dsl_v2_directional_context(
     candidate: dict[str, Any],
     split: dict[str, Any],
@@ -398,6 +541,11 @@ def load_ledger(path: str | Path) -> dict[str, Any]:
             or state not in ALLOWED_CLAIM_STATES
         ):
             raise SealedEvaluationError("Evaluation ledger entry is malformed; failing closed.")
+        partition_version = entry.get("partition_version", LEGACY_PARTITION_VERSION)
+        if type(partition_version) is not int or partition_version not in {
+            LEGACY_PARTITION_VERSION, PARTITION_VERSION
+        }:
+            raise SealedEvaluationError("Evaluation ledger partition version is invalid.")
         reverse_dates = entry.get("reverse_validation_dates", [])
         if not isinstance(reverse_dates, list):
             raise SealedEvaluationError("Evaluation ledger reverse validation dates are malformed.")
@@ -455,7 +603,7 @@ def public_plan(split: dict[str, Any]) -> dict[str, Any]:
     return {
         key: split[key]
         for key in (
-            "schema_version", "orchestrator_version", "engine_version",
+            "schema_version", "partition_version", "orchestrator_version", "engine_version",
             "target_date", "archive_sha256", "archive_record_count",
             "pre_target_draw_count", "previously_consumed_validation_draw_count",
             "previously_consumed_offline_development_draw_count",
@@ -532,6 +680,7 @@ def _pending_claim_with_split(
         archive_sha256=archive["archive_sha256"],
         used_validation_dates=set(expected_prior_dates),
         offline_memory_path=offline_memory_path,
+        partition_version=entry.get("partition_version", LEGACY_PARTITION_VERSION),
     )
     if split["target_date"] != entry.get("target_date"):
         raise SealedEvaluationError("Pending claim target does not match its original chronological partition.")
@@ -664,6 +813,19 @@ def preflight(
             used_validation_dates=used_dates,
             offline_memory_path=offline_memory_path,
         )
+    if split.get("partition_version") == PARTITION_VERSION:
+        offline_dates, offline_digest = _offline_development_consumption(offline_memory_path)
+        if offline_digest != split["offline_development_memory_sha256"]:
+            raise SealedEvaluationError("Offline development memory changed during sealed preflight.")
+        canonical_pre_target = [
+            row for row in archive["rows"] if row["date"] < split["target_date"]
+        ]
+        _validate_dsl_v2_directional_context(
+            {"execution_spec_dsl_version": 2, "reverse_execution_spec_dsl_version": 2},
+            split,
+            canonical_pre_target,
+            set(used_dates) | set(offline_dates),
+        )
     r60 = split["regimes"]["R60"]
     validation_dates = [row["date"] for row in r60["validation_rows"]]
     reverse_validation_dates = [row["date"] for row in r60["reverse_validation_rows"]]
@@ -689,6 +851,7 @@ def preflight(
     result = public_plan(split)
     result.update({
         "status": "READY",
+        "partition_version": split.get("partition_version", LEGACY_PARTITION_VERSION),
         "ledger_entry_count": len(ledger["entries"]),
         "validation_dates_previously_consumed": False,
         "previously_consumed_sealed_validation_draw_count": len(used_dates),
@@ -896,7 +1059,12 @@ def create_claim(
     canonical_pre_target_rows = [
         row for row in archive["rows"] if row["date"] < split["target_date"]
     ]
-    _validate_dsl_v2_directional_context(candidate, split, canonical_pre_target_rows, used_dates)
+    offline_dates, offline_digest = _offline_development_consumption(offline_memory_path)
+    if offline_digest != split["offline_development_memory_sha256"]:
+        raise SealedEvaluationError("Offline development memory changed during claim creation.")
+    _validate_dsl_v2_directional_context(
+        candidate, split, canonical_pre_target_rows, used_dates | set(offline_dates)
+    )
     r60 = split["regimes"]["R60"]
     validation = r60["validation_rows"]
     reverse_validation = r60["reverse_validation_rows"]
@@ -921,6 +1089,7 @@ def create_claim(
     claim_material = {
         "archive_sha256": archive["archive_sha256"],
         "target_date": split["target_date"],
+        "partition_version": split["partition_version"],
         "research_scope_start_date": RESEARCH_SCOPE_START.isoformat(),
         "validation_dates": validation_dates,
         "reverse_validation_dates": reverse_validation_dates,
@@ -950,6 +1119,7 @@ def create_claim(
 
     entry = {
         "claim_id": claim_id,
+        "partition_version": split["partition_version"],
         "state": "CLAIMED",
         "claimed_at_utc": datetime.now(timezone.utc).isoformat(),
         "orchestrator_version": VERSION,
@@ -1606,6 +1776,7 @@ def evaluate_claim(
         archive_sha256=archive["archive_sha256"],
         used_validation_dates=set(recorded_prior_dates),
         offline_memory_path=offline_memory_path,
+        partition_version=entry.get("partition_version", LEGACY_PARTITION_VERSION),
     )
     if (
         "offline_development_memory_sha256" not in entry
@@ -1630,8 +1801,12 @@ def evaluate_claim(
     replay_canonical_pre_target = [
         row for row in archive["rows"] if row["date"] < split["target_date"]
     ]
+    current_offline_dates, current_offline_digest = _offline_development_consumption(offline_memory_path)
+    if current_offline_digest != split["offline_development_memory_sha256"]:
+        raise SealedEvaluationError("Offline development memory changed during evaluation replay.")
     _validate_dsl_v2_directional_context(
-        candidate, split, replay_canonical_pre_target, set(recorded_prior_dates)
+        candidate, split, replay_canonical_pre_target,
+        set(recorded_prior_dates) | set(current_offline_dates),
     )
     if split["target_date"] != entry["target_date"]:
         raise SealedEvaluationError("Snapshot target cutoff does not match the ledger.")

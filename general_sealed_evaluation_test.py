@@ -137,6 +137,7 @@ class SealedEvaluationTests(unittest.TestCase):
     def test_preflight_is_offline_and_ready_before_model_request(self):
         result = sealed.preflight(self.archive_path, self.ledger_path)
         self.assertEqual(result["status"], "READY")
+        self.assertEqual(result["partition_version"], 2)
         self.assertFalse(result["hosted_model_request_performed"])
         self.assertFalse(result["real_archive_evaluation_performed"])
 

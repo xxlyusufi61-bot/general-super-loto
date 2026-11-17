@@ -212,6 +212,38 @@ class AutonomousResearchStateTests(unittest.TestCase):
                     self.assertFalse(result["eligible"])
                     self.assertEqual(result["status"], "WAITING_FOR_FRESH_SEALED_WINDOWS")
 
+    def test_adjacency_preflight_failure_does_not_reserve_a_target_attempt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root / "archive.json"
+            ledger = root / "ledger.json"
+            lock = root / "lock.json"
+            archive.write_text(json.dumps({"draws": synthetic_rows(90)}), encoding="utf-8")
+            ledger.write_text(json.dumps({
+                "schema_version": 1, "purpose": "test append-only ledger", "entries": []
+            }), encoding="utf-8")
+            lock.write_text(json.dumps(initial_lock_state()), encoding="utf-8")
+            state = active_state()
+            attempts_before = json.loads(json.dumps(state["attempts"]))
+            failure = auto.sealed.SealedEvaluationError(
+                "No adjacency-safe bidirectional partition can preserve 40 discovery rows, "
+                "two independent validation targets per direction, and both exact canonical "
+                "neighbours without reusing consumed dates."
+            )
+            with patch.object(auto.sealed, "preflight", side_effect=failure):
+                plan = auto.prepare_cycle(
+                    state, archive_path=archive, ledger_path=ledger,
+                    global_lock_path=lock, now=NOW,
+                )
+            self.assertFalse(plan["eligible"])
+            self.assertEqual(plan["status"], "WAITING_FOR_FRESH_SEALED_WINDOWS")
+            self.assertEqual(state["attempts"], attempts_before)
+            with self.assertRaisesRegex(
+                auto.AutonomousResearchError, "Only a ready sealed cycle can be claimed"
+            ):
+                auto.claim_attempt(state, plan, github_run_id="445583", now=NOW)
+            self.assertEqual(state["attempts"], attempts_before)
+
     def test_active_global_lock_blocks_prepare_before_archive_analysis(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

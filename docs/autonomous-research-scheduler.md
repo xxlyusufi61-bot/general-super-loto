@@ -278,12 +278,24 @@ canonical digest. If the original source archive cannot be proven byte-for-byte,
 the scheduler stops for manual recovery rather than guessing at an old snapshot.
 
 FIFO retention does not relax the existing research contract. Every target still
-requires its own leakage-free pre-target partition, canonical adjacency, fresh
-disjoint sealed holdouts, unchanged minimum training history, and time-ordered
-evaluation. Consumed sealed holdout dates and offline development dates remain unavailable to later discovery and validation windows. Offline consumption is read from the validated research-memory namespace; each sealed claim pins its digest and count so a memory change after claim creation fails closed. A queued
-target may therefore remain pending when its own frozen snapshot cannot satisfy
-fresh sealed-window requirements; the scheduler must wait or require recovery,
-not use later draws, lower minimums, reuse consumed dates, or skip ahead.
+requires its own leakage-free pre-target partition, canonical adjacency,
+fresh disjoint sealed holdouts, unchanged minimum training history, and
+time-ordered evaluation. The adjacency-aware sealed preflight runs inside
+prepare_cycle before the scheduler reserves a target attempt; the standalone
+research workflow also runs it before hosted inference. If either directional
+boundary cannot retain its exact two canonical neighbours while preserving the
+40-row discovery minimum and two validation targets per direction, the cycle
+returns to a waiting state without a provider request, attempt reservation, or
+FIFO completion. Consumed sealed holdout dates and offline development dates
+remain unavailable to later discovery and validation windows. Offline
+consumption is read from the validated research-memory namespace; each new
+sealed claim pins its digest and count so a memory change after claim creation
+fails closed. New claims record partition version 2. Historical claims without
+that field are replayed using the original version 1 partition algorithm, so
+their frozen validation dates are not silently re-split. A queued target may
+therefore remain pending when its own frozen snapshot cannot satisfy fresh
+sealed-window requirements; the scheduler must wait or require recovery, not
+use later draws, lower minimums, reuse consumed dates, or skip ahead.
 
 The implemented target lifecycle remains: RESERVED, directional discovery,
 proposal/DSL validation, applicable frozen evaluation, Telegram/reporting, and

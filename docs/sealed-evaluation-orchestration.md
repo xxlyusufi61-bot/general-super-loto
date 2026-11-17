@@ -1,4 +1,4 @@
-# GENERAL bidirectional sealed evaluation orchestration v0.4
+# GENERAL bidirectional sealed evaluation orchestration v0.5
 
 ## Purpose and boundaries
 
@@ -14,12 +14,12 @@ The labels A→B→C, A→T and MOD5→T remain open method families unless thei
 
 The only active scope is the 6-of-60 draw history dated 2020-08-02 onward. Records before that date are not part of the canonical archive, must be rejected, and are never supplied to GENERAL or any agent.
 
-For R60, each run partitions the still-unconsumed pre-target rows into three chronological, non-overlapping pieces:
-- Reverse holdout: up to 30 oldest eligible rows not previously consumed by either direction.
-- Discovery: only the middle unconsumed rows after the reverse holdout and before the forward holdout.
-- Forward holdout: up to 30 newest eligible rows not previously consumed by either direction.
+For R60, each new partition uses three chronological, non-overlapping roles without compacting rows across a consumed date:
+- Reverse holdout: up to 30 earliest still-unconsumed rows from the oldest contiguous eligible block. The two immediately following canonical rows remain available as later-state context.
+- Discovery: every other unconsumed row between the directional holdouts, including the exact context rows reserved at each boundary.
+- Forward holdout: up to 30 latest still-unconsumed rows from the newest contiguous eligible block. The two immediately preceding canonical rows remain available as training context.
 
-A date consumed by either directional holdout is excluded from every later discovery and fresh holdout partition. It remains in the immutable source archive and append-only ledger, but is not silently recycled as training/discovery evidence or a new validation target. Dates consumed by GENERAL's offline symbolic development windows are excluded in the same way by the sealed split: the offline consumption ledger is strictly validated, its date-set digest is pinned into each new sealed claim, and evaluation stops if that memory changes after claim creation. Offline exploratory dates do not become sealed holdouts, but they are never reused as fresh evidence. New windows advance through the remaining unused chronology: the reverse window takes the oldest unused rows, and the forward window takes the newest unused rows. A minimum of 40 unconsumed middle discovery rows plus at least two rows for each fresh holdout is required; the minimum is never silently reduced. If new rows do not yet satisfy all three minimums, preflight stops before either hosted request. With 80 initially unused pre-target R60 rows, for example, the first split is 20 reverse / 40 discovery / 20 forward. Subsequent splits use only dates not consumed by earlier claims. Dates/counts may be shown in the public plan; draw-number sets may not.
+A consumed date is excluded from every later discovery/validation role. Its canonical neighbours do not become adjacent merely because the consumed row is omitted. The offline development ledger and append-only sealed ledger are both validated and their consumed date sets are combined; the offline-memory digest is pinned into every new claim. New windows advance from the oldest and newest still-unconsumed contiguous blocks. Every reverse target must retain its exact two immediately following canonical states in the available roles; every forward target must retain its exact two immediately preceding canonical states in discovery or earlier forward validation. The same geometry is preflighted for both directions before hosted inference, irrespective of whether the eventual model proposal uses DSL v2. A minimum of 40 unconsumed discovery rows and at least two independent validation targets per direction is mandatory; the minimum is never silently reduced. If either contiguous boundary cannot supply the exact neighbours, preflight stops before any provider request. With 80 initially unused pre-target R60 rows, the first split remains 20 reverse / 40 discovery / 20 forward. Dates/counts may be shown in the public plan; draw-number sets may not.
 
 No pre-scope discovery, evaluation, diagnostic, or baseline path exists.
 
