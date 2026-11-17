@@ -93,6 +93,7 @@ class Cycle55RecoveryTests(unittest.TestCase):
         state = autonomous.initial_state()
         state.pop("recovery_history")
         state.pop("manual_retry_history")
+        state.pop("scoped_recovery_history")
         state["schema_version"] = 2
         state["authorization"] = {
             "enabled": True,
@@ -179,7 +180,7 @@ class Cycle55RecoveryTests(unittest.TestCase):
 
     def test_recovery_archives_false_terminal_records_and_restores_exact_fifo_snapshot(self):
         recovered = self.recover()
-        self.assertEqual(recovered["schema_version"], 4)
+        self.assertEqual(recovered["schema_version"], 5)
         self.assertEqual(recovered["events"][-1]["outcome"], "FAILED")
         self.assertEqual(recovered["events"][-1]["reason_code"], "WORKFLOW_FAILED")
         self.assertEqual(
