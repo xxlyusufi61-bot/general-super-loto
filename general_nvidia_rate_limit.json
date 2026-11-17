@@ -15,8 +15,8 @@
   "package_max_requests": 4,
   "requests": [
     {
-      "reserved_at_utc": "2026-11-17T19:25:13.169860+00:00",
-      "source": "open-research-forward"
+      "reserved_at_utc": "2026-11-17T19:31:05.302563+00:00",
+      "source": "open-research-reverse"
     }
   ],
   "daily_requests": [
@@ -54,6 +54,13 @@
       "category": "retry_reserve",
       "package_id": "44158108709:1",
       "reservation_id": "7ed39efb708647adbe8a916406921227"
+    },
+    {
+      "reserved_at_utc": "2026-11-17T19:31:05.302563+00:00",
+      "source": "open-research-reverse",
+      "category": "retry_reserve",
+      "package_id": "44158108709:1",
+      "reservation_id": "760b2042156648ad939423a42eb04232"
     }
   ],
   "diagnostic_run_ids": [
@@ -65,5 +72,5 @@
     "43537220871",
     "43771155471"
   ],
-  "updated_at_utc": "2026-11-17T19:24:43.169860+00:00"
+  "updated_at_utc": "2026-11-17T19:30:35.302563+00:00"
 }
