@@ -404,6 +404,111 @@ class AutonomousResearchStateTests(unittest.TestCase):
         self.assertEqual(state, before)
 
 
+
+    def test_scoped_failed_workflow_recovery_is_pinned_single_use_and_preflighted(self):
+        recovery_now = datetime(2026, 11, 17, 8, 0, tzinfo=timezone.utc)
+        archive_sha = auto.SCOPED_RECOVERY_ARCHIVE_SHA256
+        target = auto.SCOPED_RECOVERY_TARGET_DATE
+        state = active_state(days=30)
+        state["target_queue"] = {
+            "schema_version": 1,
+            "observed_through_date": target,
+            "items": [{
+                "target_date": target,
+                "archive_sha256": archive_sha,
+                "archive_record_count": auto.SCOPED_RECOVERY_ARCHIVE_RECORD_COUNT,
+            }],
+            "completed": [],
+        }
+        prior_ids = ["a" * 64, "b" * 64, "c" * 64, "d" * 64, auto.SCOPED_RECOVERY_PRIOR_ATTEMPT_ID]
+        for index, attempt_id in enumerate(prior_ids):
+            state["attempts"].append({
+                "attempt_id": attempt_id,
+                "target_date": target,
+                "archive_sha256": archive_sha,
+                "archive_record_count": auto.SCOPED_RECOVERY_ARCHIVE_RECORD_COUNT,
+                "claimed_at_utc": NOW.isoformat(),
+                "github_run_id": auto.SCOPED_RECOVERY_PRIOR_RUN_ID if index == 4 else str(44040345000 + index),
+            })
+            state["events"].append({
+                "attempt_id": attempt_id,
+                "outcome": "FAILED",
+                "recorded_at_utc": (
+                    auto.SCOPED_RECOVERY_PRIOR_FAILURE_AT_UTC if index == 4
+                    else f"2026-11-17T07:{index:02d}:00+00:00"
+                ),
+                "reason_code": "WORKFLOW_FAILED" if index == 4 else "PROVIDER_HTTP_5XX_RETRYABLE",
+            })
+
+        plan = {
+            "target_date": target,
+            "archive_sha256": archive_sha,
+            "target_numbers_exposed": False,
+            "target_in_discovery": False,
+            "target_in_validation": False,
+            "pending_claim_resume_available": False,
+            "partition_version": "adjacency-aware-v2",
+            "forward_validation_dates": [f"2026-10-{day:02d}" for day in range(1, 31)],
+            "reverse_validation_dates": [f"2026-09-{day:02d}" for day in range(1, 31)],
+            "regimes": {"R60": {"status": "READY", "discovery_count": 900}},
+        }
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive_path = root / "archive.json"
+            ledger_path = root / "ledger.json"
+            lock_path = root / "lock.json"
+            archive_path.write_text("{}", encoding="utf-8")
+            ledger_path.write_text("{}", encoding="utf-8")
+            lock_path.write_text(json.dumps(initial_lock_state()), encoding="utf-8")
+
+            common = {
+                "archive_path": archive_path,
+                "ledger_path": ledger_path,
+                "global_lock_path": lock_path,
+                "github_actor": auto.SCOPED_RECOVERY_ACTOR_LOGIN,
+                "github_actor_id": auto.SCOPED_RECOVERY_ACTOR_ID,
+                "github_event_name": "workflow_dispatch",
+                "github_ref": "refs/heads/main",
+                "github_workflow_ref": auto.SCOPED_RECOVERY_WORKFLOW_REF,
+                "now": recovery_now,
+            }
+            with patch.object(auto.target_queue, "validate_queue", side_effect=lambda value: value), \\
+                 patch.object(auto.sealed, "load_archive", return_value={
+                     "last_date": target, "archive_sha256": archive_sha,
+                     "record_count": auto.SCOPED_RECOVERY_ARCHIVE_RECORD_COUNT,
+                 }), \\
+                 patch.object(auto.sealed, "load_ledger", return_value={"entries": []}), \\
+                 patch.object(auto.sealed, "preflight", return_value=plan):
+                before = json.loads(json.dumps(state))
+                with self.assertRaisesRegex(auto.AutonomousResearchError, "Exact one-time"):
+                    auto.prepare_scoped_failed_workflow_recovery(
+                        state, confirmation="NO", **common
+                    )
+                self.assertEqual(state, before)
+
+                prepared = auto.prepare_scoped_failed_workflow_recovery(
+                    state, confirmation=auto.SCOPED_RECOVERY_CONFIRMATION, **common
+                )
+                self.assertTrue(prepared["eligible"])
+                self.assertEqual(prepared["retry_number"], 6)
+
+                claimed = auto.claim_scoped_failed_workflow_recovery(
+                    state,
+                    confirmation=auto.SCOPED_RECOVERY_CONFIRMATION,
+                    github_run_id="45000000001",
+                    **common,
+                )
+
+                self.assertEqual(claimed["status"], "SCOPED_RECOVERY_ATTEMPT_CLAIMED")
+                self.assertEqual(len(state["attempts"]), 6)
+                self.assertEqual(len(state["scoped_recovery_history"]), 1)
+                self.assertEqual(state["events"][-1]["attempt_id"], auto.SCOPED_RECOVERY_PRIOR_ATTEMPT_ID)
+                self.assertEqual(state["events"][-1]["reason_code"], "WORKFLOW_FAILED")
+                self.assertEqual(state["target_queue"]["items"][0]["target_date"], target)
+                self.assertEqual(state["scoped_recovery_history"][0]["recovery_github_run_id"], "45000000001")
+
+
     def test_workflow_failed_after_provider_delivery_is_not_automatically_retried(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -763,7 +868,8 @@ class AutonomousResearchStateTests(unittest.TestCase):
             "github_run_id": "98765",
         })
         upgraded = auto.validate_state(state)
-        self.assertEqual(upgraded["schema_version"], 4)
+        self.assertEqual(upgraded["schema_version"], 5)
+        self.assertEqual(upgraded["scoped_recovery_history"], [])
         self.assertEqual(upgraded["target_queue"], auto.target_queue.initial_queue())
         self.assertEqual(upgraded["recovery_history"], [])
         self.assertEqual(upgraded["attempts"][0]["attempt_id"], "e" * 64)
