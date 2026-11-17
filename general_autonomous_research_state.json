@@ -114,6 +114,14 @@
       "archive_record_count": 984,
       "claimed_at_utc": "2026-11-17T07:39:58.932764+00:00",
       "github_run_id": "44040345546"
+    },
+    {
+      "attempt_id": "e537ff70303c75348c4b78065b9fb0c26aa7558bbda167a522dd61d4fcc59804",
+      "target_date": "2026-11-12",
+      "archive_sha256": "e85b8b5de47355b83f2c070f9ffbfe8dc97541ec52b93a849c3e285f776d781e",
+      "archive_record_count": 984,
+      "claimed_at_utc": "2026-11-17T19:24:37.110673+00:00",
+      "github_run_id": "44158108709"
     }
   ],
   "events": [
@@ -306,5 +314,21 @@
       "authorization_id": "54178121ac875c7c33f1a7ccbde18d17ff89acd94c17dca36d25ecc56e1c6e44"
     }
   ],
-  "workflow_retry_history": []
+  "workflow_retry_history": [
+    {
+      "schema_version": 1,
+      "target_date": "2026-11-12",
+      "archive_sha256": "e85b8b5de47355b83f2c070f9ffbfe8dc97541ec52b93a849c3e285f776d781e",
+      "archive_record_count": 984,
+      "prior_attempt_id": "503c5ea28d5ce30d1dd20a0f35b1d0f754e9bd09d9559bd06941d0497998b57d",
+      "prior_failure_reason_code": "WORKFLOW_FAILED",
+      "prior_failure_at_utc": "2026-11-17T07:50:58.480457+00:00",
+      "manual_unlocked_at_utc": "2026-11-17T14:39:26.908120+00:00",
+      "retry_attempt_id": "e537ff70303c75348c4b78065b9fb0c26aa7558bbda167a522dd61d4fcc59804",
+      "retry_github_run_id": "44158108709",
+      "claimed_at_utc": "2026-11-17T19:24:37.110673+00:00",
+      "consumed": true,
+      "retry_id": "dca123480ed1e44cdc21922ccef0986afb58f808086310b27eb76c8c7a80e3c7"
+    }
+  ]
 }
