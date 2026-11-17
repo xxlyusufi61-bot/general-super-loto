@@ -1111,6 +1111,238 @@ def prepare_cycle(
     }
 
 
+
+def _prepare_scoped_failed_workflow_recovery(
+    state: dict[str, Any],
+    *,
+    archive_path: str | Path,
+    ledger_path: str | Path,
+    global_lock_path: str | Path,
+    confirmation: str,
+    github_actor: str,
+    github_actor_id: int,
+    github_event_name: str,
+    github_ref: str,
+    github_workflow_ref: str,
+    now: datetime | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Preflight one explicitly approved recovery for the pinned 12 November FIFO head."""
+    validate_state(state)
+    if confirmation != SCOPED_RECOVERY_CONFIRMATION:
+        raise AutonomousResearchError("Exact one-time scoped recovery confirmation is required.")
+    if (
+        github_actor != SCOPED_RECOVERY_ACTOR_LOGIN
+        or type(github_actor_id) is not int
+        or github_actor_id != SCOPED_RECOVERY_ACTOR_ID
+        or github_event_name != "workflow_dispatch"
+        or github_ref != "refs/heads/main"
+        or github_workflow_ref != SCOPED_RECOVERY_WORKFLOW_REF
+    ):
+        raise AutonomousResearchError("Scoped recovery dispatch identity is not authorized.")
+    status = authorization_status(state, now=now)
+    if not status["authorized"]:
+        raise AutonomousResearchError("Autonomous free-only authorization expired or is disabled.")
+    lock = read_global_lock(global_lock_path)
+    if lock["locked"]:
+        raise AutonomousResearchError("The global NVIDIA safety lock is active; scoped recovery is blocked.")
+
+    archive = sealed.load_archive(archive_path)
+    if (
+        archive["last_date"] != SCOPED_RECOVERY_TARGET_DATE
+        or archive["archive_sha256"] != SCOPED_RECOVERY_ARCHIVE_SHA256
+        or archive["record_count"] != SCOPED_RECOVERY_ARCHIVE_RECORD_COUNT
+    ):
+        raise AutonomousResearchError("Archive does not match the pinned 12 November FIFO snapshot.")
+    queue = target_queue.validate_queue(state["target_queue"])
+    if not queue["items"]:
+        raise AutonomousResearchError("The pinned recovery target is no longer pending in the FIFO.")
+    head = queue["items"][0]
+    if (
+        head["target_date"] != SCOPED_RECOVERY_TARGET_DATE
+        or head["archive_sha256"] != SCOPED_RECOVERY_ARCHIVE_SHA256
+        or head["archive_record_count"] != SCOPED_RECOVERY_ARCHIVE_RECORD_COUNT
+    ):
+        raise AutonomousResearchError("Scoped recovery target is not the immutable FIFO head.")
+
+    target_attempts = [
+        item for item in state["attempts"] if item["target_date"] == SCOPED_RECOVERY_TARGET_DATE
+    ]
+    if (
+        len(target_attempts) != 5
+        or target_attempts[-1]["attempt_id"] != SCOPED_RECOVERY_PRIOR_ATTEMPT_ID
+        or state["attempts"][-1]["attempt_id"] != SCOPED_RECOVERY_PRIOR_ATTEMPT_ID
+    ):
+        raise AutonomousResearchError("Scoped recovery is allowed only after the exact five-attempt pinned history.")
+    prior = target_attempts[-1]
+    prior_event = next(
+        (event for event in state["events"] if event["attempt_id"] == SCOPED_RECOVERY_PRIOR_ATTEMPT_ID),
+        None,
+    )
+    if (
+        prior["archive_sha256"] != SCOPED_RECOVERY_ARCHIVE_SHA256
+        or prior["archive_record_count"] != SCOPED_RECOVERY_ARCHIVE_RECORD_COUNT
+        or prior["github_run_id"] != SCOPED_RECOVERY_PRIOR_RUN_ID
+        or prior_event is None
+        or prior_event["outcome"] != "FAILED"
+        or prior_event["reason_code"] != "WORKFLOW_FAILED"
+        or prior_event["recorded_at_utc"] != SCOPED_RECOVERY_PRIOR_FAILURE_AT_UTC
+    ):
+        raise AutonomousResearchError("The prior workflow failure does not match the pinned recovery evidence.")
+    if state["scoped_recovery_history"]:
+        raise AutonomousResearchError("The one-time scoped recovery authorization has already been consumed.")
+
+    ledger = sealed.load_ledger(ledger_path)
+    if any(entry.get("target_date") == SCOPED_RECOVERY_TARGET_DATE for entry in ledger["entries"]):
+        raise AutonomousResearchError("A prior sealed claim exists for this target; recovery preflight is blocked.")
+
+    try:
+        plan = sealed.preflight(archive_path, ledger_path)
+    except sealed.SealedEvaluationError as exc:
+        raise AutonomousResearchError("Adjacency-aware sealed preflight rejected recovery: " + str(exc)) from None
+    if (
+        plan.get("target_date") != SCOPED_RECOVERY_TARGET_DATE
+        or plan.get("archive_sha256") != SCOPED_RECOVERY_ARCHIVE_SHA256
+        or plan.get("target_numbers_exposed") is not False
+        or plan.get("target_in_discovery") is not False
+        or plan.get("target_in_validation") is not False
+        or plan.get("pending_claim_resume_available") is True
+    ):
+        raise AutonomousResearchError("Scoped recovery sealed preflight failed target isolation or pending-claim checks.")
+    regime = plan.get("regimes", {}).get("R60", {})
+    forward_dates = plan.get("forward_validation_dates", [])
+    reverse_dates = plan.get("reverse_validation_dates", [])
+    discovery_count = regime.get("discovery_count")
+    if (
+        regime.get("status") != "READY"
+        or not isinstance(discovery_count, int)
+        or discovery_count < sealed.DEFAULT_MIN_TRAIN_DRAWS
+        or len(forward_dates) < sealed.MIN_VALIDATION_DRAWS
+        or len(reverse_dates) < sealed.MIN_VALIDATION_DRAWS
+        or set(forward_dates).intersection(reverse_dates)
+    ):
+        raise AutonomousResearchError("Scoped recovery has no valid disjoint adjacency-safe directional windows.")
+
+    geometry = {
+        "target_date": plan["target_date"],
+        "archive_sha256": plan["archive_sha256"],
+        "partition_version": plan.get("partition_version"),
+        "discovery_count": discovery_count,
+        "forward_validation_dates": forward_dates,
+        "reverse_validation_dates": reverse_dates,
+    }
+    plan_digest = hashlib.sha256(
+        json.dumps(geometry, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+    ).hexdigest()
+    result = {
+        "status": "READY",
+        "eligible": True,
+        "target_date": SCOPED_RECOVERY_TARGET_DATE,
+        "archive_sha256": SCOPED_RECOVERY_ARCHIVE_SHA256,
+        "archive_record_count": SCOPED_RECOVERY_ARCHIVE_RECORD_COUNT,
+        "retryable": True,
+        "retry_number": 6,
+        "scoped_recovery": True,
+        "preflight_sha256": plan_digest,
+        "partition_version": plan.get("partition_version") or "v2",
+        "forward_validation_count": len(forward_dates),
+        "reverse_validation_count": len(reverse_dates),
+        "discovery_count": discovery_count,
+    }
+    return result, status
+
+
+def prepare_scoped_failed_workflow_recovery(
+    state: dict[str, Any],
+    **kwargs: Any,
+) -> dict[str, Any]:
+    plan, status = _prepare_scoped_failed_workflow_recovery(state, **kwargs)
+    return {**plan, **status}
+
+
+def claim_scoped_failed_workflow_recovery(
+    state: dict[str, Any],
+    *,
+    archive_path: str | Path,
+    ledger_path: str | Path,
+    global_lock_path: str | Path,
+    confirmation: str,
+    github_actor: str,
+    github_actor_id: int,
+    github_event_name: str,
+    github_ref: str,
+    github_workflow_ref: str,
+    github_run_id: str,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    plan, _ = _prepare_scoped_failed_workflow_recovery(
+        state,
+        archive_path=archive_path,
+        ledger_path=ledger_path,
+        global_lock_path=global_lock_path,
+        confirmation=confirmation,
+        github_actor=github_actor,
+        github_actor_id=github_actor_id,
+        github_event_name=github_event_name,
+        github_ref=github_ref,
+        github_workflow_ref=github_workflow_ref,
+        now=now,
+    )
+    if not isinstance(github_run_id, str) or not github_run_id.isdigit() or len(github_run_id) > 32:
+        raise AutonomousResearchError("Scoped recovery GitHub run identifier is invalid.")
+    target_attempts = [
+        item for item in state["attempts"] if item["target_date"] == SCOPED_RECOVERY_TARGET_DATE
+    ]
+    if len(target_attempts) >= MAX_ATTEMPTS_PER_TARGET:
+        raise AutonomousResearchError("The ten-attempt target retry limit is exhausted.")
+    attempt_number = len(target_attempts) + 1
+    attempt_id = hashlib.sha256(
+        ("GENERAL-AUTO-RESEARCH-V2|" + SCOPED_RECOVERY_TARGET_DATE + "|" + SCOPED_RECOVERY_ARCHIVE_SHA256 + "|" + str(attempt_number)).encode("utf-8")
+    ).hexdigest()
+    if any(item["attempt_id"] == attempt_id for item in state["attempts"]):
+        raise AutonomousResearchError("The scoped recovery attempt identifier was already claimed.")
+    claimed_at = _now_utc(now).isoformat()
+    attempt = {
+        "attempt_id": attempt_id,
+        "target_date": SCOPED_RECOVERY_TARGET_DATE,
+        "archive_sha256": SCOPED_RECOVERY_ARCHIVE_SHA256,
+        "archive_record_count": SCOPED_RECOVERY_ARCHIVE_RECORD_COUNT,
+        "claimed_at_utc": claimed_at,
+        "github_run_id": github_run_id,
+    }
+    state["attempts"].append(attempt)
+    journal = {
+        "schema_version": 1,
+        "recovery_type": "APPROVED_FAILED_WORKFLOW_RECOVERY",
+        "target_date": SCOPED_RECOVERY_TARGET_DATE,
+        "archive_sha256": SCOPED_RECOVERY_ARCHIVE_SHA256,
+        "archive_record_count": SCOPED_RECOVERY_ARCHIVE_RECORD_COUNT,
+        "prior_attempt_id": SCOPED_RECOVERY_PRIOR_ATTEMPT_ID,
+        "prior_github_run_id": SCOPED_RECOVERY_PRIOR_RUN_ID,
+        "prior_failure_at_utc": SCOPED_RECOVERY_PRIOR_FAILURE_AT_UTC,
+        "prior_failure_reason_code": "WORKFLOW_FAILED",
+        "recovery_attempt_id": attempt_id,
+        "recovery_github_run_id": github_run_id,
+        "github_actor_login": github_actor,
+        "github_actor_id": github_actor_id,
+        "workflow_ref": github_workflow_ref,
+        "authorized_at_utc": claimed_at,
+        "claimed_at_utc": claimed_at,
+        "attempt_count_before": 5,
+        "partition_version": plan["partition_version"],
+        "forward_validation_count": plan["forward_validation_count"],
+        "reverse_validation_count": plan["reverse_validation_count"],
+        "discovery_count": plan["discovery_count"],
+        "preflight_sha256": plan["preflight_sha256"],
+        "consumed": True,
+    }
+    journal["recovery_id"] = hashlib.sha256(
+        json.dumps(journal, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+    ).hexdigest()
+    state["scoped_recovery_history"].append(journal)
+    validate_state(state)
+    return {"status": "SCOPED_RECOVERY_ATTEMPT_CLAIMED", **attempt}
+
+
 def claim_attempt(
     state: dict[str, Any],
     plan: dict[str, Any],
