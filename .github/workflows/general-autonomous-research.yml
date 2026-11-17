@@ -13,6 +13,7 @@ name: GENERAL Autonomous Research Cycle
           - status
           - activate
           - pause
+          - recover-failed-workflow-2026-11-12
         default: status
       authorization_phrase:
         description: "For activation only, enter the exact autonomous free-only authorization phrase."
@@ -33,6 +34,11 @@ name: GENERAL Autonomous Research Cycle
           - "7"
           - "30"
         default: "7"
+      recovery_confirmation:
+        description: "One-time confirmation for the pinned 2026-11-12 failed-workflow recovery only."
+        required: false
+        type: string
+        default: "NO"
 
 permissions:
   contents: write
@@ -129,7 +135,7 @@ jobs:
           message: "Refresh validated Super Loto archive"
 
   scheduled-cycle:
-    if: ${{ github.event_name == 'schedule' && needs.archive-refresh.result == 'success' }}
+    if: ${{ always() && ((github.event_name == 'schedule' && needs.archive-refresh.result == 'success') || (github.event_name == 'workflow_dispatch' && inputs.action == 'recover-failed-workflow-2026-11-12' && github.ref == 'refs/heads/main')) }}
     needs: archive-refresh
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -268,29 +274,66 @@ jobs:
           python3 general_nvidia_guard.py check
           echo "GENERAL_NVIDIA_GUARD_PASSED=1" >> "$GITHUB_ENV"
       - name: Materialize only the oldest queued target snapshot
-        if: ${{ github.event_name == 'schedule' && steps.status.outputs.authorized == 'true' && steps.status.outputs.lock_clear == 'true' && steps.queue_capture.outputs.has_pending == 'true' }}
+        if: ${{ steps.status.outputs.authorized == 'true' && steps.status.outputs.lock_clear == 'true' && ((github.event_name == 'schedule' && steps.queue_capture.outputs.has_pending == 'true') || (github.event_name == 'workflow_dispatch' && inputs.action == 'recover-failed-workflow-2026-11-12')) }}
         run: |
           python3 general_autonomous_research.py queue-materialize \
             --output super_loto_archive.json
 
-      - name: Prepare one cycle for the oldest queued target and fresh sealed windows
+      - name: Prepare the scheduled cycle or pinned one-time recovery
         id: prepare
-        if: ${{ github.event_name == 'schedule' && steps.status.outputs.authorized == 'true' && steps.status.outputs.lock_clear == 'true' && steps.queue_capture.outputs.has_pending == 'true' }}
+        if: ${{ steps.status.outputs.authorized == 'true' && steps.status.outputs.lock_clear == 'true' && ((github.event_name == 'schedule' && steps.queue_capture.outputs.has_pending == 'true') || (github.event_name == 'workflow_dispatch' && inputs.action == 'recover-failed-workflow-2026-11-12')) }}
+        env:
+          RECOVERY_CONFIRMATION: ${{ inputs.recovery_confirmation }}
+          RECOVERY_ACTOR: ${{ github.actor }}
+          RECOVERY_ACTOR_ID: ${{ github.actor_id }}
+          RECOVERY_WORKFLOW_REF: ${{ github.workflow_ref }}
         run: |
-          python3 general_autonomous_research.py prepare \
-            --archive super_loto_archive.json \
-            --ledger general_evaluation_ledger.json \
-            --github-output "$GITHUB_OUTPUT"
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            python3 general_autonomous_research.py prepare-scoped-recovery \
+              --archive super_loto_archive.json \
+              --ledger general_evaluation_ledger.json \
+              --confirmation "$RECOVERY_CONFIRMATION" \
+              --github-actor "$RECOVERY_ACTOR" \
+              --github-actor-id "$RECOVERY_ACTOR_ID" \
+              --github-event-name "$GITHUB_EVENT_NAME" \
+              --github-ref "$GITHUB_REF" \
+              --github-workflow-ref "$RECOVERY_WORKFLOW_REF" \
+              --github-output "$GITHUB_OUTPUT"
+          else
+            python3 general_autonomous_research.py prepare \
+              --archive super_loto_archive.json \
+              --ledger general_evaluation_ledger.json \
+              --github-output "$GITHUB_OUTPUT"
+          fi
           cat "$GITHUB_OUTPUT"
       - name: Claim this target before any provider request
         id: attempt_reservation
         if: ${{ steps.prepare.outputs.eligible == 'true' }}
+        env:
+          RECOVERY_CONFIRMATION: ${{ inputs.recovery_confirmation }}
+          RECOVERY_ACTOR: ${{ github.actor }}
+          RECOVERY_ACTOR_ID: ${{ github.actor_id }}
+          RECOVERY_WORKFLOW_REF: ${{ github.workflow_ref }}
         run: |
-          python3 general_autonomous_research.py claim \
-            --archive super_loto_archive.json \
-            --ledger general_evaluation_ledger.json \
-            --run-id "$GITHUB_RUN_ID" \
-            --github-output "$GITHUB_OUTPUT"
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            python3 general_autonomous_research.py claim-scoped-recovery \
+              --archive super_loto_archive.json \
+              --ledger general_evaluation_ledger.json \
+              --confirmation "$RECOVERY_CONFIRMATION" \
+              --github-actor "$RECOVERY_ACTOR" \
+              --github-actor-id "$RECOVERY_ACTOR_ID" \
+              --github-event-name "$GITHUB_EVENT_NAME" \
+              --github-ref "$GITHUB_REF" \
+              --github-workflow-ref "$RECOVERY_WORKFLOW_REF" \
+              --run-id "$GITHUB_RUN_ID" \
+              --github-output "$GITHUB_OUTPUT"
+          else
+            python3 general_autonomous_research.py claim \
+              --archive super_loto_archive.json \
+              --ledger general_evaluation_ledger.json \
+              --run-id "$GITHUB_RUN_ID" \
+              --github-output "$GITHUB_OUTPUT"
+          fi
           cat "$GITHUB_OUTPUT"
       - name: Persist the target-attempt reservation in the state store
         id: persist_attempt
