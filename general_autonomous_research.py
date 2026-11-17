@@ -985,25 +985,26 @@ def prepare_cycle(
                     and last_event["reason_code"] == "NO_FROZEN_DIRECTIONAL_CANDIDATE"
                 ):
                     previous_retry_is_ready = True
-                    previous_attempt_count = sum(
-                        1 for item in attempts if item["target_date"] == last_target
+
+                previous_attempt_count = sum(
+                    1 for item in attempts if item["target_date"] == last_target
+                )
+                previous_retry_limit = MAX_ATTEMPTS_PER_TARGET
+                if previous_retry_is_ready and previous_attempt_count >= previous_retry_limit:
+                    blocking_status = "PREVIOUS_TARGET_RETRY_LIMIT_REACHED"
+                else:
+                    blocking_status = (
+                        "PREVIOUS_TARGET_RETRY_REQUIRED"
+                        if previous_retry_is_ready
+                        else "PREVIOUS_TARGET_MANUAL_RECOVERY_REQUIRED"
                     )
-                    previous_retry_limit = MAX_ATTEMPTS_PER_TARGET
-                    if previous_retry_is_ready and previous_attempt_count >= previous_retry_limit:
-                        blocking_status = "PREVIOUS_TARGET_RETRY_LIMIT_REACHED"
-                    else:
-                        blocking_status = (
-                            "PREVIOUS_TARGET_RETRY_REQUIRED"
-                            if previous_retry_is_ready
-                            else "PREVIOUS_TARGET_MANUAL_RECOVERY_REQUIRED"
-                        )
-                    return {
-                        "status": blocking_status,
-                        "eligible": False,
-                        "target_date": target_date,
-                        "pending_target_date": last_target,
-                        **status,
-                    }
+                return {
+                    "status": blocking_status,
+                    "eligible": False,
+                    "target_date": target_date,
+                    "pending_target_date": last_target,
+                    **status,
+                }
 
     try:
         plan = sealed.preflight(archive_path, ledger_path)
