@@ -447,7 +447,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
             "target_in_discovery": False,
             "target_in_validation": False,
             "pending_claim_resume_available": False,
-            "partition_version": "adjacency-aware-v2",
+            "partition_version": auto.sealed.PARTITION_VERSION,
             "forward_validation_dates": [f"2026-10-{day:02d}" for day in range(1, 31)],
             "reverse_validation_dates": [f"2026-12-{day:02d}" for day in range(1, 31)],
             "regimes": {"R60": {"status": "READY", "discovery_count": 900}},
@@ -860,6 +860,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
         state.pop("target_queue")
         state.pop("recovery_history")
         state.pop("manual_retry_history")
+        state.pop("scoped_recovery_history")
         state["schema_version"] = 1
         state["attempts"].append({
             "attempt_id": "e" * 64,
