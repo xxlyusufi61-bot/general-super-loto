@@ -46,22 +46,17 @@ CYCLE55_MANUAL_RETRY_PRIOR_FAILURE_AT_UTC = "2026-11-12T19:29:11.330937+00:00"
 CYCLE57_RETRY_PRIOR_ATTEMPT_ID = "25135d06049ee281e793b792b5b1ae6f344418fc1038ea55b1524cfd8c3fdf4f"
 CYCLE57_RETRY_FAILURE_AT_UTC = "2026-11-13T09:47:58.660638+00:00"
 CYCLE57_RETRY_ATTEMPT_ID = "50c89cdfbb465f47491c6bfd67f709387fb1caf00ed9157651e99652cf2f3e6f"
-SCOPED_RECOVERY_TARGET_DATE = "2026-11-12"
-SCOPED_RECOVERY_ARCHIVE_SHA256 = "e85b8b5de47355b83f2c070f9ffbfe8dc97541ec52b93a849c3e285f776d781e"
-SCOPED_RECOVERY_ARCHIVE_RECORD_COUNT = 984
-SCOPED_RECOVERY_PRIOR_ATTEMPT_ID = "503c5ea28d5ce30d1dd20a0f35b1d0f754e9bd09d9559bd06941d0497998b57d"
-SCOPED_RECOVERY_PRIOR_RUN_ID = "44040345546"
-SCOPED_RECOVERY_PRIOR_FAILURE_AT_UTC = "2026-11-17T07:50:58.480457+00:00"
-SCOPED_RECOVERY_ACTOR_LOGIN = "xxlyusufi61-bot"
-SCOPED_RECOVERY_ACTOR_ID = 345811504
-SCOPED_RECOVERY_WORKFLOW_REF = "xxlyusufi61-bot/general-super-loto/.github/workflows/general-autonomous-research.yml@refs/heads/main"
-SCOPED_RECOVERY_CONFIRMATION = "GENERAL_RECOVER_2026_11_12_WORKFLOW_44040345546_ONCE"
 RETRYABLE_FAILURE_REASON_CODES = {
     "NO_PROVIDER_REQUEST_SENT",
     "PROVIDER_DELIVERY_UNCERTAIN",
     "PROVIDER_HTTP_5XX_RETRYABLE",
     "DIRECTIONAL_CANDIDATE_SET_INCOMPLETE",
     "SEALED_EVALUATION_INCOMPLETE",
+    "WORKFLOW_FAILED",
+}
+MANUAL_UNLOCK_REQUIRED_FAILURE_REASON_CODES = {
+    "PROVIDER_DELIVERY_UNCERTAIN",
+    "WORKFLOW_FAILED",
 }
 CYCLE55_RECOVERY_TARGET_DATE = "2026-11-10"
 CYCLE55_RECOVERY_ARCHIVE_SHA256 = "ae7b79e4922d4178a86c7d7880af3e4758d1a5e7f78d6cc3d2595fbb4fd66596"
@@ -145,7 +140,7 @@ def initial_state() -> dict[str, Any]:
         "target_queue": target_queue.initial_queue(),
         "recovery_history": [],
         "manual_retry_history": [],
-        "scoped_recovery_history": [],
+        "workflow_retry_history": [],
     }
 
 
@@ -159,25 +154,23 @@ def validate_state(value: Any) -> dict[str, Any]:
         value["target_queue"] = target_queue.initial_queue()
         value["recovery_history"] = []
         value["manual_retry_history"] = []
-        value["scoped_recovery_history"] = []
+        value["workflow_retry_history"] = []
     elif isinstance(value, dict) and set(value) == legacy_v2_keys and value.get("schema_version") == 2:
         value["schema_version"] = 5
         value["recovery_history"] = []
         value["manual_retry_history"] = []
-        value["scoped_recovery_history"] = []
+        value["workflow_retry_history"] = []
     elif isinstance(value, dict) and set(value) == legacy_v3_keys and value.get("schema_version") == 3:
-        # Schema v4 added the historical Cycle #55 journal.
         value["schema_version"] = 5
         value["manual_retry_history"] = []
-        value["scoped_recovery_history"] = []
+        value["workflow_retry_history"] = []
     elif isinstance(value, dict) and set(value) == legacy_v4_keys and value.get("schema_version") == 4:
-        # Schema v5 adds a separate journal for the pinned 12 November recovery.
         value["schema_version"] = 5
-        value["scoped_recovery_history"] = []
+        value["workflow_retry_history"] = []
     if not isinstance(value, dict) or set(value) != {
         "schema_version", "project", "authorization", "attempts", "events",
         "target_queue", "recovery_history", "manual_retry_history",
-        "scoped_recovery_history"
+        "workflow_retry_history"
     }:
         raise AutonomousResearchError("Autonomous scheduler state has an invalid schema.")
     if type(value.get("schema_version")) is not int or value["schema_version"] != 5:
@@ -559,126 +552,80 @@ def validate_state(value: Any) -> dict[str, Any]:
         if manual_retry["authorization_id"] != expected_id:
             raise AutonomousResearchError("Cycle #55 manual retry authorization digest does not match its immutable metadata.")
 
-
-    scoped_history = value.get("scoped_recovery_history")
-    if not isinstance(scoped_history, list) or len(scoped_history) > 1:
-        raise AutonomousResearchError("Scoped failed-workflow recovery journal is not a valid single-use list.")
-    scoped_recovery = scoped_history[0] if scoped_history else None
-    if scoped_recovery is not None:
-        required_scoped = {
-            "schema_version", "recovery_id", "recovery_type", "target_date",
-            "archive_sha256", "archive_record_count", "prior_attempt_id",
-            "prior_github_run_id", "prior_failure_at_utc", "prior_failure_reason_code",
-            "recovery_attempt_id", "recovery_github_run_id", "github_actor_login",
-            "github_actor_id", "workflow_ref", "authorized_at_utc", "claimed_at_utc",
-            "attempt_count_before", "partition_version", "forward_validation_count",
-            "reverse_validation_count", "discovery_count", "preflight_sha256", "consumed",
-        }
-        if not isinstance(scoped_recovery, dict) or set(scoped_recovery) != required_scoped:
-            raise AutonomousResearchError("Scoped failed-workflow recovery entry has an invalid schema.")
-        if type(scoped_recovery["schema_version"]) is not int or scoped_recovery["schema_version"] != 1:
-            raise AutonomousResearchError("Unsupported scoped recovery journal version.")
+    workflow_retry_history = value.get("workflow_retry_history")
+    if not isinstance(workflow_retry_history, list) or len(workflow_retry_history) > 10000:
+        raise AutonomousResearchError("Workflow retry journal is not a valid bounded list.")
+    attempt_by_id = {item["attempt_id"]: item for item in attempts}
+    attempt_position = {item["attempt_id"]: index for index, item in enumerate(attempts)}
+    workflow_retry_by_prior_attempt: dict[str, dict[str, Any]] = {}
+    workflow_retry_ids: set[str] = set()
+    workflow_retry_attempt_ids: set[str] = set()
+    required_workflow_retry = {
+        "schema_version", "retry_id", "target_date", "archive_sha256",
+        "archive_record_count", "prior_attempt_id", "prior_failure_reason_code",
+        "prior_failure_at_utc", "manual_unlocked_at_utc", "retry_attempt_id",
+        "retry_github_run_id", "claimed_at_utc", "consumed",
+    }
+    for entry in workflow_retry_history:
+        if not isinstance(entry, dict) or set(entry) != required_workflow_retry:
+            raise AutonomousResearchError("Workflow retry journal entry has an invalid schema.")
+        if type(entry["schema_version"]) is not int or entry["schema_version"] != 1:
+            raise AutonomousResearchError("Unsupported workflow retry journal version.")
+        retry_id = entry["retry_id"]
+        prior_id = entry["prior_attempt_id"]
+        retry_attempt_id = entry["retry_attempt_id"]
+        if not _is_sha256(retry_id) or retry_id in workflow_retry_ids:
+            raise AutonomousResearchError("Workflow retry journal identifier is invalid or duplicated.")
         if (
-            scoped_recovery["recovery_type"] != "APPROVED_FAILED_WORKFLOW_RECOVERY"
-            or scoped_recovery["target_date"] != SCOPED_RECOVERY_TARGET_DATE
-            or scoped_recovery["archive_sha256"] != SCOPED_RECOVERY_ARCHIVE_SHA256
-            or scoped_recovery["archive_record_count"] != SCOPED_RECOVERY_ARCHIVE_RECORD_COUNT
-            or scoped_recovery["prior_attempt_id"] != SCOPED_RECOVERY_PRIOR_ATTEMPT_ID
-            or scoped_recovery["prior_github_run_id"] != SCOPED_RECOVERY_PRIOR_RUN_ID
-            or scoped_recovery["prior_failure_at_utc"] != SCOPED_RECOVERY_PRIOR_FAILURE_AT_UTC
-            or scoped_recovery["prior_failure_reason_code"] != "WORKFLOW_FAILED"
-            or scoped_recovery["github_actor_login"] != SCOPED_RECOVERY_ACTOR_LOGIN
-            or scoped_recovery["github_actor_id"] != SCOPED_RECOVERY_ACTOR_ID
-            or scoped_recovery["workflow_ref"] != SCOPED_RECOVERY_WORKFLOW_REF
-            or scoped_recovery["attempt_count_before"] != 5
-            or scoped_recovery["consumed"] is not True
+            not isinstance(prior_id, str) or prior_id not in attempt_by_id
+            or not isinstance(retry_attempt_id, str) or retry_attempt_id not in attempt_by_id
+            or prior_id in workflow_retry_by_prior_attempt
+            or retry_attempt_id in workflow_retry_attempt_ids
         ):
-            raise AutonomousResearchError("Scoped recovery journal exceeds or mismatches the one-target authorization.")
+            raise AutonomousResearchError("Workflow retry journal references an unknown or reused attempt.")
+        if entry["consumed"] is not True or entry["prior_failure_reason_code"] != "WORKFLOW_FAILED":
+            raise AutonomousResearchError("Workflow retry journal is not a consumed WORKFLOW_FAILED authorization.")
+        target = _canonical_date(entry["target_date"], "workflow_retry.target_date")
+        if not _is_sha256(entry["archive_sha256"]):
+            raise AutonomousResearchError("Workflow retry archive hash is invalid.")
+        if type(entry["archive_record_count"]) is not int or entry["archive_record_count"] < 1:
+            raise AutonomousResearchError("Workflow retry archive record count is invalid.")
+        failure_at = _timestamp(entry["prior_failure_at_utc"], "workflow_retry.prior_failure_at_utc")
+        unlocked_at = _timestamp(entry["manual_unlocked_at_utc"], "workflow_retry.manual_unlocked_at_utc")
+        claimed_at = _timestamp(entry["claimed_at_utc"], "workflow_retry.claimed_at_utc")
+        if not failure_at < unlocked_at <= claimed_at:
+            raise AutonomousResearchError("Manual unlock must postdate the failure and predate the retry claim.")
+        run_id = entry["retry_github_run_id"]
+        if not isinstance(run_id, str) or not run_id.isdigit() or len(run_id) > 32:
+            raise AutonomousResearchError("Workflow retry GitHub run identifier is invalid.")
+        prior_attempt = attempt_by_id[prior_id]
+        retry_attempt = attempt_by_id[retry_attempt_id]
+        prior_event = event_by_attempt.get(prior_id)
         if (
-            not _is_sha256(scoped_recovery["recovery_id"])
-            or not _is_sha256(scoped_recovery["preflight_sha256"])
-            or type(scoped_recovery["archive_record_count"]) is not int
-            or type(scoped_recovery["github_actor_id"]) is not int
-            or type(scoped_recovery["attempt_count_before"]) is not int
-        ):
-            raise AutonomousResearchError("Scoped recovery journal digest or numeric metadata is invalid.")
-        for field in ("prior_github_run_id", "recovery_github_run_id"):
-            item = scoped_recovery[field]
-            if not isinstance(item, str) or not item.isdigit() or len(item) > 32:
-                raise AutonomousResearchError("Scoped recovery GitHub run identifier is invalid.")
-        if (
-            type(scoped_recovery["partition_version"]) is not int
-            or scoped_recovery["partition_version"] != sealed.PARTITION_VERSION
-        ):
-            raise AutonomousResearchError("Scoped recovery must use the current adjacency-aware partition version.")
-        _timestamp(scoped_recovery["authorized_at_utc"], "scoped_recovery.authorized_at_utc")
-        claimed_at = _timestamp(scoped_recovery["claimed_at_utc"], "scoped_recovery.claimed_at_utc")
-        if claimed_at < _timestamp(scoped_recovery["authorized_at_utc"], "scoped_recovery.authorized_at_utc"):
-            raise AutonomousResearchError("Scoped recovery claim predates dispatch authorization.")
-        for field, minimum in (
-            ("forward_validation_count", sealed.MIN_VALIDATION_DRAWS),
-            ("reverse_validation_count", sealed.MIN_VALIDATION_DRAWS),
-            ("discovery_count", sealed.DEFAULT_MIN_TRAIN_DRAWS),
-        ):
-            count = scoped_recovery[field]
-            if type(count) is not int or count < minimum:
-                raise AutonomousResearchError("Scoped recovery does not prove fresh adjacency-safe directional windows.")
-        prior_attempt = next(
-            (item for item in attempts if item["attempt_id"] == SCOPED_RECOVERY_PRIOR_ATTEMPT_ID),
-            None,
-        )
-        recovery_attempt = next(
-            (item for item in attempts if item["attempt_id"] == scoped_recovery["recovery_attempt_id"]),
-            None,
-        )
-        prior_event = event_by_attempt.get(SCOPED_RECOVERY_PRIOR_ATTEMPT_ID)
-        if (
-            prior_attempt is None
-            or prior_attempt["target_date"] != SCOPED_RECOVERY_TARGET_DATE
-            or prior_attempt["archive_sha256"] != SCOPED_RECOVERY_ARCHIVE_SHA256
-            or prior_attempt["archive_record_count"] != SCOPED_RECOVERY_ARCHIVE_RECORD_COUNT
-            or prior_attempt["github_run_id"] != SCOPED_RECOVERY_PRIOR_RUN_ID
+            attempt_position[retry_attempt_id] != attempt_position[prior_id] + 1
             or prior_event is None
             or prior_event["outcome"] != "FAILED"
             or prior_event["reason_code"] != "WORKFLOW_FAILED"
-            or prior_event["recorded_at_utc"] != SCOPED_RECOVERY_PRIOR_FAILURE_AT_UTC
+            or prior_event["recorded_at_utc"] != entry["prior_failure_at_utc"]
+            or prior_attempt["target_date"] != target
+            or retry_attempt["target_date"] != target
+            or prior_attempt["archive_sha256"] != entry["archive_sha256"]
+            or retry_attempt["archive_sha256"] != entry["archive_sha256"]
+            or prior_attempt["archive_record_count"] != entry["archive_record_count"]
+            or retry_attempt["archive_record_count"] != entry["archive_record_count"]
+            or retry_attempt["github_run_id"] != run_id
+            or retry_attempt["claimed_at_utc"] != entry["claimed_at_utc"]
         ):
-            raise AutonomousResearchError("Scoped recovery does not match the immutable prior WORKFLOW_FAILED attempt.")
-        target_attempts = [
-            item for item in attempts if item["target_date"] == SCOPED_RECOVERY_TARGET_DATE
-        ]
-        if (
-            len(target_attempts) < 6
-            or target_attempts[4]["attempt_id"] != SCOPED_RECOVERY_PRIOR_ATTEMPT_ID
-            or target_attempts[5] is not recovery_attempt
-            or recovery_attempt is None
-            or recovery_attempt["archive_sha256"] != SCOPED_RECOVERY_ARCHIVE_SHA256
-            or recovery_attempt["archive_record_count"] != SCOPED_RECOVERY_ARCHIVE_RECORD_COUNT
-            or recovery_attempt["github_run_id"] != scoped_recovery["recovery_github_run_id"]
-            or recovery_attempt["claimed_at_utc"] != scoped_recovery["claimed_at_utc"]
-        ):
-            raise AutonomousResearchError("Scoped recovery attempt is not the exact sixth attempt after the pinned failure.")
-        active_head = value["target_queue"]["items"]
-        completed_match = [
-            item for item in value["target_queue"]["completed"]
-            if item.get("target_date") == SCOPED_RECOVERY_TARGET_DATE
-            and item.get("archive_sha256") == SCOPED_RECOVERY_ARCHIVE_SHA256
-            and item.get("archive_record_count") == SCOPED_RECOVERY_ARCHIVE_RECORD_COUNT
-        ]
-        if not (
-            (active_head and active_head[0]["target_date"] == SCOPED_RECOVERY_TARGET_DATE
-             and active_head[0]["archive_sha256"] == SCOPED_RECOVERY_ARCHIVE_SHA256
-             and active_head[0]["archive_record_count"] == SCOPED_RECOVERY_ARCHIVE_RECORD_COUNT)
-            or len(completed_match) == 1
-        ):
-            raise AutonomousResearchError("Scoped recovery target is neither the FIFO head nor its exact completed record.")
-        payload = {key: item for key, item in scoped_recovery.items() if key != "recovery_id"}
-        expected_id = hashlib.sha256(
+            raise AutonomousResearchError("Workflow retry journal does not match the exact failed FIFO attempt and its immediate retry.")
+        payload = {key: item for key, item in entry.items() if key != "retry_id"}
+        expected_retry_id = hashlib.sha256(
             json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
         ).hexdigest()
-        if scoped_recovery["recovery_id"] != expected_id:
-            raise AutonomousResearchError("Scoped recovery authorization digest does not match its immutable metadata.")
-
+        if retry_id != expected_retry_id:
+            raise AutonomousResearchError("Workflow retry journal digest does not match its metadata.")
+        workflow_retry_ids.add(retry_id)
+        workflow_retry_attempt_ids.add(retry_attempt_id)
+        workflow_retry_by_prior_attempt[prior_id] = entry
 
     target_counts: dict[str, int] = {}
     for target in attempt_dates:
@@ -707,6 +654,13 @@ def validate_state(value: Any) -> dict[str, Any]:
                         )
                     )
                 )
+                if prior_event is not None and prior_event["reason_code"] == "WORKFLOW_FAILED":
+                    authorization = workflow_retry_by_prior_attempt.get(prior_attempt["attempt_id"])
+                    next_attempt_id = target_attempts[index + 1]["attempt_id"]
+                    normal_retry = (
+                        authorization is not None
+                        and authorization["retry_attempt_id"] == next_attempt_id
+                    )
                 approved_cycle55_exception = (
                     target == CYCLE55_MANUAL_RETRY_TARGET_DATE
                     and len(target_attempts) in (4, 5)
@@ -717,16 +671,7 @@ def validate_state(value: Any) -> dict[str, Any]:
                     and prior_event["outcome"] == "FAILED"
                     and prior_event["reason_code"] == "WORKFLOW_FAILED"
                 )
-                approved_scoped_recovery = (
-                    target == SCOPED_RECOVERY_TARGET_DATE
-                    and scoped_recovery is not None
-                    and index == 4
-                    and prior_attempt["attempt_id"] == scoped_recovery["prior_attempt_id"]
-                    and prior_event is not None
-                    and prior_event["outcome"] == "FAILED"
-                    and prior_event["reason_code"] == "WORKFLOW_FAILED"
-                )
-                if not (normal_retry or approved_cycle55_exception or approved_scoped_recovery):
+                if not (normal_retry or approved_cycle55_exception):
                     raise AutonomousResearchError(
                         "Repeated target attempts require a retryable failure or a recorded no-candidate outcome; only the consumed Cycle #55 authorization permits its exact fourth attempt."
                     )
@@ -768,20 +713,28 @@ def read_global_lock(path: str | Path) -> dict[str, Any]:
         raise AutonomousResearchError("Global NVIDIA lock failed validation; automation is blocked.") from None
 
 
-def manual_recovery_confirmed(lock_state: dict[str, Any], failed_event: dict[str, Any]) -> bool:
-    """Require a recorded manual unlock strictly after an uncertain provider failure."""
-    if failed_event.get("reason_code") != "PROVIDER_DELIVERY_UNCERTAIN":
-        return False
+def manual_recovery_unlock_timestamp(
+    lock_state: dict[str, Any], failed_event: dict[str, Any]
+) -> str | None:
+    """Return only a manual unlock recorded strictly after a gated failure."""
+    if failed_event.get("reason_code") not in MANUAL_UNLOCK_REQUIRED_FAILURE_REASON_CODES:
+        return None
     unlocked_at = lock_state.get("last_unlocked_at")
     if not isinstance(unlocked_at, str):
-        return False
+        return None
     try:
-        return _timestamp(unlocked_at, "global_lock.last_unlocked_at") > _timestamp(
+        if _timestamp(unlocked_at, "global_lock.last_unlocked_at") > _timestamp(
             failed_event.get("recorded_at_utc"),
             "failed_event.recorded_at_utc",
-        )
+        ):
+            return unlocked_at
     except AutonomousResearchError:
-        return False
+        return None
+    return None
+
+
+def manual_recovery_confirmed(lock_state: dict[str, Any], failed_event: dict[str, Any]) -> bool:
+    return manual_recovery_unlock_timestamp(lock_state, failed_event) is not None
 
 
 
@@ -912,7 +865,8 @@ def prepare_cycle(
     attempts = state["attempts"]
     retryable = False
     retry_number = 1
-    recovered_after_uncertain_delivery = False
+    manual_recovery_confirmed_for_failure = False
+    manual_recovery_unlock_at_utc: str | None = None
     if attempts:
         last_attempt = attempts[-1]
         last_target = last_attempt["target_date"]
@@ -934,11 +888,15 @@ def prepare_cycle(
                 }
             if last_event["outcome"] == "FAILED":
                 reason_code = last_event["reason_code"]
-                if reason_code == "PROVIDER_DELIVERY_UNCERTAIN":
-                    recovered_after_uncertain_delivery = manual_recovery_confirmed(lock, last_event)
+                if reason_code in MANUAL_UNLOCK_REQUIRED_FAILURE_REASON_CODES:
+                    manual_recovery_unlock_at_utc = manual_recovery_unlock_timestamp(lock, last_event)
+                    manual_recovery_confirmed_for_failure = manual_recovery_unlock_at_utc is not None
                 if (
                     reason_code in RETRYABLE_FAILURE_REASON_CODES
-                    and (reason_code != "PROVIDER_DELIVERY_UNCERTAIN" or recovered_after_uncertain_delivery)
+                    and (
+                        reason_code not in MANUAL_UNLOCK_REQUIRED_FAILURE_REASON_CODES
+                        or manual_recovery_confirmed_for_failure
+                    )
                 ):
                     retry_limit = MAX_ATTEMPTS_PER_TARGET
                     if same_target_attempts >= retry_limit:
@@ -955,7 +913,7 @@ def prepare_cycle(
                     if reason_code == "PROVIDER_HTTP_REJECTION_NO_RETRY":
                         blocked_status = "PROVIDER_HTTP_REJECTION_NO_RETRY"
                     elif reason_code == "WORKFLOW_FAILED":
-                        blocked_status = "WORKFLOW_FAILED_NO_AUTOMATIC_RETRY"
+                        blocked_status = "WORKFLOW_FAILED_MANUAL_RECOVERY_REQUIRED"
                     else:
                         blocked_status = "PROVIDER_DELIVERY_UNCERTAIN_MANUAL_RECOVERY_REQUIRED"
                     return {
@@ -1018,15 +976,15 @@ def prepare_cycle(
                     }
                 if last_event["outcome"] == "FAILED":
                     previous_retry_is_ready = (
-                        last_event["reason_code"] == "NO_PROVIDER_REQUEST_SENT"
+                        last_event["reason_code"] in RETRYABLE_FAILURE_REASON_CODES
                     )
-                    if last_event["reason_code"] == "PROVIDER_DELIVERY_UNCERTAIN":
+                    if last_event["reason_code"] in MANUAL_UNLOCK_REQUIRED_FAILURE_REASON_CODES:
                         previous_retry_is_ready = manual_recovery_confirmed(lock, last_event)
-                    if (
-                        last_event["outcome"] == "NO_ELIGIBLE_CANDIDATE"
-                        and last_event["reason_code"] == "NO_FROZEN_DIRECTIONAL_CANDIDATE"
-                    ):
-                        previous_retry_is_ready = True
+                elif (
+                    last_event["outcome"] == "NO_ELIGIBLE_CANDIDATE"
+                    and last_event["reason_code"] == "NO_FROZEN_DIRECTIONAL_CANDIDATE"
+                ):
+                    previous_retry_is_ready = True
                     previous_attempt_count = sum(
                         1 for item in attempts if item["target_date"] == last_target
                     )
@@ -1108,242 +1066,11 @@ def prepare_cycle(
         "previously_consumed_holdout_dates_reused": False,
         "retryable": retryable,
         "retry_number": retry_number,
-        "manual_recovery_confirmed": recovered_after_uncertain_delivery,
+        "manual_recovery_confirmed": manual_recovery_confirmed_for_failure,
+        "manual_recovery_unlock_at_utc": manual_recovery_unlock_at_utc,
         "pending_claim_resume_available": plan.get("pending_claim_resume_available") is True,
         "pending_claim_id": plan.get("pending_claim_id"),
     }
-
-
-
-def _prepare_scoped_failed_workflow_recovery(
-    state: dict[str, Any],
-    *,
-    archive_path: str | Path,
-    ledger_path: str | Path,
-    global_lock_path: str | Path,
-    confirmation: str,
-    github_actor: str,
-    github_actor_id: int,
-    github_event_name: str,
-    github_ref: str,
-    github_workflow_ref: str,
-    now: datetime | None = None,
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Preflight one explicitly approved recovery for the pinned 12 November FIFO head."""
-    validate_state(state)
-    if confirmation != SCOPED_RECOVERY_CONFIRMATION:
-        raise AutonomousResearchError("Exact one-time scoped recovery confirmation is required.")
-    if (
-        github_actor != SCOPED_RECOVERY_ACTOR_LOGIN
-        or type(github_actor_id) is not int
-        or github_actor_id != SCOPED_RECOVERY_ACTOR_ID
-        or github_event_name != "workflow_dispatch"
-        or github_ref != "refs/heads/main"
-        or github_workflow_ref != SCOPED_RECOVERY_WORKFLOW_REF
-    ):
-        raise AutonomousResearchError("Scoped recovery dispatch identity is not authorized.")
-    status = authorization_status(state, now=now)
-    if not status["authorized"]:
-        raise AutonomousResearchError("Autonomous free-only authorization expired or is disabled.")
-    lock = read_global_lock(global_lock_path)
-    if lock["locked"]:
-        raise AutonomousResearchError("The global NVIDIA safety lock is active; scoped recovery is blocked.")
-
-    archive = sealed.load_archive(archive_path)
-    if (
-        archive["last_date"] != SCOPED_RECOVERY_TARGET_DATE
-        or archive["archive_sha256"] != SCOPED_RECOVERY_ARCHIVE_SHA256
-        or archive["record_count"] != SCOPED_RECOVERY_ARCHIVE_RECORD_COUNT
-    ):
-        raise AutonomousResearchError("Archive does not match the pinned 12 November FIFO snapshot.")
-    queue = target_queue.validate_queue(state["target_queue"])
-    if not queue["items"]:
-        raise AutonomousResearchError("The pinned recovery target is no longer pending in the FIFO.")
-    head = queue["items"][0]
-    if (
-        head["target_date"] != SCOPED_RECOVERY_TARGET_DATE
-        or head["archive_sha256"] != SCOPED_RECOVERY_ARCHIVE_SHA256
-        or head["archive_record_count"] != SCOPED_RECOVERY_ARCHIVE_RECORD_COUNT
-    ):
-        raise AutonomousResearchError("Scoped recovery target is not the immutable FIFO head.")
-
-    target_attempts = [
-        item for item in state["attempts"] if item["target_date"] == SCOPED_RECOVERY_TARGET_DATE
-    ]
-    if (
-        len(target_attempts) != 5
-        or target_attempts[-1]["attempt_id"] != SCOPED_RECOVERY_PRIOR_ATTEMPT_ID
-        or state["attempts"][-1]["attempt_id"] != SCOPED_RECOVERY_PRIOR_ATTEMPT_ID
-    ):
-        raise AutonomousResearchError("Scoped recovery is allowed only after the exact five-attempt pinned history.")
-    prior = target_attempts[-1]
-    prior_event = next(
-        (event for event in state["events"] if event["attempt_id"] == SCOPED_RECOVERY_PRIOR_ATTEMPT_ID),
-        None,
-    )
-    if (
-        prior["archive_sha256"] != SCOPED_RECOVERY_ARCHIVE_SHA256
-        or prior["archive_record_count"] != SCOPED_RECOVERY_ARCHIVE_RECORD_COUNT
-        or prior["github_run_id"] != SCOPED_RECOVERY_PRIOR_RUN_ID
-        or prior_event is None
-        or prior_event["outcome"] != "FAILED"
-        or prior_event["reason_code"] != "WORKFLOW_FAILED"
-        or prior_event["recorded_at_utc"] != SCOPED_RECOVERY_PRIOR_FAILURE_AT_UTC
-    ):
-        raise AutonomousResearchError("The prior workflow failure does not match the pinned recovery evidence.")
-    if state["scoped_recovery_history"]:
-        raise AutonomousResearchError("The one-time scoped recovery authorization has already been consumed.")
-
-    ledger = sealed.load_ledger(ledger_path)
-    if any(entry.get("target_date") == SCOPED_RECOVERY_TARGET_DATE for entry in ledger["entries"]):
-        raise AutonomousResearchError("A prior sealed claim exists for this target; recovery preflight is blocked.")
-
-    try:
-        plan = sealed.preflight(archive_path, ledger_path)
-    except sealed.SealedEvaluationError as exc:
-        raise AutonomousResearchError("Adjacency-aware sealed preflight rejected recovery: " + str(exc)) from None
-    if (
-        plan.get("target_date") != SCOPED_RECOVERY_TARGET_DATE
-        or plan.get("archive_sha256") != SCOPED_RECOVERY_ARCHIVE_SHA256
-        or plan.get("target_numbers_exposed") is not False
-        or plan.get("target_in_discovery") is not False
-        or plan.get("target_in_validation") is not False
-        or plan.get("pending_claim_resume_available") is True
-    ):
-        raise AutonomousResearchError("Scoped recovery sealed preflight failed target isolation or pending-claim checks.")
-    regime = plan.get("regimes", {}).get("R60", {})
-    forward_dates = plan.get("forward_validation_dates", [])
-    reverse_dates = plan.get("reverse_validation_dates", [])
-    discovery_count = regime.get("discovery_count")
-    if (
-        regime.get("status") != "READY"
-        or not isinstance(discovery_count, int)
-        or discovery_count < sealed.DEFAULT_MIN_TRAIN_DRAWS
-        or len(forward_dates) < sealed.MIN_VALIDATION_DRAWS
-        or len(reverse_dates) < sealed.MIN_VALIDATION_DRAWS
-        or set(forward_dates).intersection(reverse_dates)
-    ):
-        raise AutonomousResearchError("Scoped recovery has no valid disjoint adjacency-safe directional windows.")
-
-    geometry = {
-        "target_date": plan["target_date"],
-        "archive_sha256": plan["archive_sha256"],
-        "partition_version": plan.get("partition_version"),
-        "discovery_count": discovery_count,
-        "forward_validation_dates": forward_dates,
-        "reverse_validation_dates": reverse_dates,
-    }
-    plan_digest = hashlib.sha256(
-        json.dumps(geometry, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
-    ).hexdigest()
-    result = {
-        "status": "READY",
-        "eligible": True,
-        "target_date": SCOPED_RECOVERY_TARGET_DATE,
-        "archive_sha256": SCOPED_RECOVERY_ARCHIVE_SHA256,
-        "archive_record_count": SCOPED_RECOVERY_ARCHIVE_RECORD_COUNT,
-        "retryable": True,
-        "retry_number": 6,
-        "scoped_recovery": True,
-        "preflight_sha256": plan_digest,
-        "partition_version": plan.get("partition_version") or sealed.PARTITION_VERSION,
-        "forward_validation_count": len(forward_dates),
-        "reverse_validation_count": len(reverse_dates),
-        "discovery_count": discovery_count,
-    }
-    return result, status
-
-
-def prepare_scoped_failed_workflow_recovery(
-    state: dict[str, Any],
-    **kwargs: Any,
-) -> dict[str, Any]:
-    plan, status = _prepare_scoped_failed_workflow_recovery(state, **kwargs)
-    return {**plan, **status}
-
-
-def claim_scoped_failed_workflow_recovery(
-    state: dict[str, Any],
-    *,
-    archive_path: str | Path,
-    ledger_path: str | Path,
-    global_lock_path: str | Path,
-    confirmation: str,
-    github_actor: str,
-    github_actor_id: int,
-    github_event_name: str,
-    github_ref: str,
-    github_workflow_ref: str,
-    github_run_id: str,
-    now: datetime | None = None,
-) -> dict[str, Any]:
-    plan, _ = _prepare_scoped_failed_workflow_recovery(
-        state,
-        archive_path=archive_path,
-        ledger_path=ledger_path,
-        global_lock_path=global_lock_path,
-        confirmation=confirmation,
-        github_actor=github_actor,
-        github_actor_id=github_actor_id,
-        github_event_name=github_event_name,
-        github_ref=github_ref,
-        github_workflow_ref=github_workflow_ref,
-        now=now,
-    )
-    if not isinstance(github_run_id, str) or not github_run_id.isdigit() or len(github_run_id) > 32:
-        raise AutonomousResearchError("Scoped recovery GitHub run identifier is invalid.")
-    target_attempts = [
-        item for item in state["attempts"] if item["target_date"] == SCOPED_RECOVERY_TARGET_DATE
-    ]
-    if len(target_attempts) >= MAX_ATTEMPTS_PER_TARGET:
-        raise AutonomousResearchError("The ten-attempt target retry limit is exhausted.")
-    attempt_number = len(target_attempts) + 1
-    attempt_id = hashlib.sha256(
-        ("GENERAL-AUTO-RESEARCH-V2|" + SCOPED_RECOVERY_TARGET_DATE + "|" + SCOPED_RECOVERY_ARCHIVE_SHA256 + "|" + str(attempt_number)).encode("utf-8")
-    ).hexdigest()
-    if any(item["attempt_id"] == attempt_id for item in state["attempts"]):
-        raise AutonomousResearchError("The scoped recovery attempt identifier was already claimed.")
-    claimed_at = _now_utc(now).isoformat()
-    attempt = {
-        "attempt_id": attempt_id,
-        "target_date": SCOPED_RECOVERY_TARGET_DATE,
-        "archive_sha256": SCOPED_RECOVERY_ARCHIVE_SHA256,
-        "archive_record_count": SCOPED_RECOVERY_ARCHIVE_RECORD_COUNT,
-        "claimed_at_utc": claimed_at,
-        "github_run_id": github_run_id,
-    }
-    state["attempts"].append(attempt)
-    journal = {
-        "schema_version": 1,
-        "recovery_type": "APPROVED_FAILED_WORKFLOW_RECOVERY",
-        "target_date": SCOPED_RECOVERY_TARGET_DATE,
-        "archive_sha256": SCOPED_RECOVERY_ARCHIVE_SHA256,
-        "archive_record_count": SCOPED_RECOVERY_ARCHIVE_RECORD_COUNT,
-        "prior_attempt_id": SCOPED_RECOVERY_PRIOR_ATTEMPT_ID,
-        "prior_github_run_id": SCOPED_RECOVERY_PRIOR_RUN_ID,
-        "prior_failure_at_utc": SCOPED_RECOVERY_PRIOR_FAILURE_AT_UTC,
-        "prior_failure_reason_code": "WORKFLOW_FAILED",
-        "recovery_attempt_id": attempt_id,
-        "recovery_github_run_id": github_run_id,
-        "github_actor_login": github_actor,
-        "github_actor_id": github_actor_id,
-        "workflow_ref": github_workflow_ref,
-        "authorized_at_utc": claimed_at,
-        "claimed_at_utc": claimed_at,
-        "attempt_count_before": 5,
-        "partition_version": plan["partition_version"],
-        "forward_validation_count": plan["forward_validation_count"],
-        "reverse_validation_count": plan["reverse_validation_count"],
-        "discovery_count": plan["discovery_count"],
-        "preflight_sha256": plan["preflight_sha256"],
-        "consumed": True,
-    }
-    journal["recovery_id"] = hashlib.sha256(
-        json.dumps(journal, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
-    ).hexdigest()
-    state["scoped_recovery_history"].append(journal)
-    validate_state(state)
-    return {"status": "SCOPED_RECOVERY_ATTEMPT_CLAIMED", **attempt}
 
 
 def claim_attempt(
@@ -1366,6 +1093,7 @@ def claim_attempt(
     if type(plan.get("archive_record_count")) is not int or plan["archive_record_count"] < 1:
         raise AutonomousResearchError("Plan archive record count is invalid.")
     attempt_number = 1
+    workflow_failure_to_recover: tuple[dict[str, Any], dict[str, Any]] | None = None
     queue = target_queue.validate_queue(state["target_queue"])
     if queue["items"]:
         front = queue["items"][0]
@@ -1400,13 +1128,20 @@ def claim_attempt(
                 raise AutonomousResearchError(
                     "A target retry requires a retryable failure or a recorded no-candidate outcome."
                 )
-            if (
-                last_event["reason_code"] == "PROVIDER_DELIVERY_UNCERTAIN"
-                and plan.get("manual_recovery_confirmed") is not True
-            ):
-                raise AutonomousResearchError(
-                    "Uncertain provider delivery requires a manual unlock after the failed attempt."
-                )
+            if last_event["reason_code"] in MANUAL_UNLOCK_REQUIRED_FAILURE_REASON_CODES:
+                if plan.get("manual_recovery_confirmed") is not True:
+                    raise AutonomousResearchError(
+                        "Post-provider workflow failure or uncertain delivery requires a manual unlock after the failed attempt."
+                    )
+                if last_event["reason_code"] == "WORKFLOW_FAILED":
+                    unlock_at = plan.get("manual_recovery_unlock_at_utc")
+                    if not isinstance(unlock_at, str):
+                        raise AutonomousResearchError("A WORKFLOW_FAILED retry is missing its manual unlock provenance.")
+                    if _timestamp(unlock_at, "plan.manual_recovery_unlock_at_utc") <= _timestamp(
+                        last_event["recorded_at_utc"], "failed_event.recorded_at_utc"
+                    ):
+                        raise AutonomousResearchError("The manual unlock predates the WORKFLOW_FAILED event.")
+                    workflow_failure_to_recover = (last_attempt, last_event)
             retry_limit = MAX_ATTEMPTS_PER_TARGET
             if previous_count >= retry_limit:
                 raise AutonomousResearchError("The ten-attempt target retry limit is exhausted.")
@@ -1443,15 +1178,45 @@ def claim_attempt(
     ).hexdigest()
     if any(item["attempt_id"] == attempt_id for item in state["attempts"]):
         raise AutonomousResearchError("This autonomous attempt was already claimed.")
+    claimed_at = _now_utc(now).isoformat()
+    if workflow_failure_to_recover is not None:
+        if github_run_id is None:
+            raise AutonomousResearchError("A workflow-failure retry requires a GitHub run identifier.")
+        unlock_at = _timestamp(
+            plan["manual_recovery_unlock_at_utc"],
+            "plan.manual_recovery_unlock_at_utc",
+        )
+        if unlock_at > _timestamp(claimed_at, "attempt.claimed_at_utc"):
+            raise AutonomousResearchError("Manual unlock provenance postdates the retry claim.")
     attempt = {
         "attempt_id": attempt_id,
         "target_date": target_date,
         "archive_sha256": archive_sha,
         "archive_record_count": plan["archive_record_count"],
-        "claimed_at_utc": _now_utc(now).isoformat(),
+        "claimed_at_utc": claimed_at,
         "github_run_id": github_run_id,
     }
     state["attempts"].append(attempt)
+    if workflow_failure_to_recover is not None:
+        prior_attempt, prior_event = workflow_failure_to_recover
+        retry_entry = {
+            "schema_version": 1,
+            "target_date": target_date,
+            "archive_sha256": archive_sha,
+            "archive_record_count": plan["archive_record_count"],
+            "prior_attempt_id": prior_attempt["attempt_id"],
+            "prior_failure_reason_code": "WORKFLOW_FAILED",
+            "prior_failure_at_utc": prior_event["recorded_at_utc"],
+            "manual_unlocked_at_utc": plan["manual_recovery_unlock_at_utc"],
+            "retry_attempt_id": attempt_id,
+            "retry_github_run_id": github_run_id,
+            "claimed_at_utc": claimed_at,
+            "consumed": True,
+        }
+        retry_entry["retry_id"] = hashlib.sha256(
+            json.dumps(retry_entry, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+        ).hexdigest()
+        state["workflow_retry_history"].append(retry_entry)
     validate_state(state)
     return attempt
 
@@ -1702,24 +1467,6 @@ def main(argv: list[str] | None = None) -> int:
     claim.add_argument("--run-id", default="")
     claim.add_argument("--github-output")
 
-
-    scoped_prepare = sub.add_parser("prepare-scoped-recovery")
-    scoped_claim = sub.add_parser("claim-scoped-recovery")
-    for command_parser in (scoped_prepare, scoped_claim):
-        command_parser.add_argument("--state", type=Path, default=Path("general_autonomous_research_state.json"))
-        command_parser.add_argument("--archive", type=Path, default=Path("super_loto_archive.json"))
-        command_parser.add_argument("--ledger", type=Path, default=Path("general_evaluation_ledger.json"))
-        command_parser.add_argument("--global-lock", type=Path, default=Path("general_nvidia_lock.json"))
-        command_parser.add_argument("--confirmation", required=True)
-        command_parser.add_argument("--github-actor", required=True)
-        command_parser.add_argument("--github-actor-id", type=int, required=True)
-        command_parser.add_argument("--github-event-name", required=True)
-        command_parser.add_argument("--github-ref", required=True)
-        command_parser.add_argument("--github-workflow-ref", required=True)
-        command_parser.add_argument("--github-output")
-    scoped_claim.add_argument("--run-id", required=True)
-
-
     finish = sub.add_parser("finish")
     finish.add_argument("--state", type=Path, default=Path("general_autonomous_research_state.json"))
     finish.add_argument("--attempt-id", required=True)
@@ -1846,47 +1593,6 @@ def main(argv: list[str] | None = None) -> int:
             write_state(args.state, state)
             result = {"status": "ATTEMPT_CLAIMED_BEFORE_PROVIDER_CALL", **attempt}
             _write_github_output(args.github_output, {"attempt_id": attempt["attempt_id"]})
-
-        elif args.command == "prepare-scoped-recovery":
-            result = prepare_scoped_failed_workflow_recovery(
-                state,
-                archive_path=args.archive,
-                ledger_path=args.ledger,
-                global_lock_path=args.global_lock,
-                confirmation=args.confirmation,
-                github_actor=args.github_actor,
-                github_actor_id=args.github_actor_id,
-                github_event_name=args.github_event_name,
-                github_ref=args.github_ref,
-                github_workflow_ref=args.github_workflow_ref,
-            )
-            _write_github_output(args.github_output, {
-                "eligible": result.get("eligible") is True,
-                "status": result.get("status"),
-                "target_date": result.get("target_date"),
-                "retryable": result.get("retryable") is True,
-                "retry_number": result.get("retry_number"),
-                "forward_validation_count": result.get("forward_validation_count"),
-                "reverse_validation_count": result.get("reverse_validation_count"),
-                "discovery_count": result.get("discovery_count"),
-            })
-        elif args.command == "claim-scoped-recovery":
-            result = claim_scoped_failed_workflow_recovery(
-                state,
-                archive_path=args.archive,
-                ledger_path=args.ledger,
-                global_lock_path=args.global_lock,
-                confirmation=args.confirmation,
-                github_actor=args.github_actor,
-                github_actor_id=args.github_actor_id,
-                github_event_name=args.github_event_name,
-                github_ref=args.github_ref,
-                github_workflow_ref=args.github_workflow_ref,
-                github_run_id=args.run_id,
-            )
-            write_state(args.state, state)
-            _write_github_output(args.github_output, {"attempt_id": result["attempt_id"]})
-
         else:
             state = record_outcome(
                 state,
