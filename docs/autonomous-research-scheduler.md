@@ -327,7 +327,7 @@ post-failure unlock timestamp, and immediate retry attempt. A failed or
 ambiguous final state-store publication leaves the authoritative attempt in
 progress, which also blocks the FIFO; it is not treated as a successful
 completion and is never retried automatically.
- Telegram success
+Telegram success
 messages are sent only after the final state-store publication succeeds.
 Failure notifications cover memory-append, terminal-outcome, and final
 state-store publication errors.
