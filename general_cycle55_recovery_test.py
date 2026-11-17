@@ -251,7 +251,7 @@ class Cycle55RecoveryTests(unittest.TestCase):
                 now=datetime.fromisoformat("2026-11-13T12:05:00+00:00"),
             )
         self.assertFalse(result["eligible"])
-        self.assertEqual(result["status"], "WORKFLOW_FAILED_NO_AUTOMATIC_RETRY")
+        self.assertEqual(result["status"], "WORKFLOW_FAILED_MANUAL_RECOVERY_REQUIRED")
 
     def test_newer_target_cannot_bypass_restored_fifo_head(self):
         recovered = self.recover()
