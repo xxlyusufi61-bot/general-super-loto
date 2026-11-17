@@ -717,6 +717,25 @@ def _pending_claim_with_split(
     ):
         raise SealedEvaluationError("Offline development memory changed after the pending sealed claim.")
 
+    forward_dsl_version = entry.get("execution_spec_dsl_version", 1)
+    reverse_dsl_version = entry.get("reverse_execution_spec_dsl_version", 1)
+    if forward_dsl_version == 2 or reverse_dsl_version == 2:
+        offline_dates, offline_digest = _offline_development_consumption(offline_memory_path)
+        if offline_digest != split["offline_development_memory_sha256"]:
+            raise SealedEvaluationError("Offline development memory changed during pending-claim replay.")
+        canonical_pre_target = [
+            row for row in archive["rows"] if row["date"] < split["target_date"]
+        ]
+        _validate_dsl_v2_directional_context(
+            {
+                "execution_spec_dsl_version": forward_dsl_version,
+                "reverse_execution_spec_dsl_version": reverse_dsl_version,
+            },
+            split,
+            canonical_pre_target,
+            set(expected_prior_dates) | set(offline_dates),
+        )
+
     for field in ("hypothesis_id", "spec_sha256", "reverse_hypothesis_id", "reverse_spec_sha256"):
         value = entry.get(field)
         if not isinstance(value, str) or not value:
