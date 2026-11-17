@@ -137,6 +137,7 @@ class SealedEvaluationTests(unittest.TestCase):
     def test_preflight_is_offline_and_ready_before_model_request(self):
         result = sealed.preflight(self.archive_path, self.ledger_path)
         self.assertEqual(result["status"], "READY")
+        self.assertEqual(result["partition_version"], 2)
         self.assertFalse(result["hosted_model_request_performed"])
         self.assertFalse(result["real_archive_evaluation_performed"])
 
@@ -240,6 +241,27 @@ class SealedEvaluationTests(unittest.TestCase):
                 specs,
                 snapshot_directory=self.snapshot_directory,
             )
+
+    def test_legacy_pending_claim_replays_partition_v1_and_rechecks_v2_adjacency(self):
+        proposals, specs = write_candidate_documents(self.root)
+        first = sealed.create_claim(
+            self.archive_path,
+            self.ledger_path,
+            proposals,
+            specs,
+            snapshot_directory=self.snapshot_directory,
+        )
+        self.assertTrue(first["claim_created"])
+        ledger = json.loads(self.ledger_path.read_text(encoding="utf-8"))
+        del ledger["entries"][0]["partition_version"]
+        self.ledger_path.write_text(json.dumps(ledger), encoding="utf-8")
+
+        plan = sealed.preflight(self.archive_path, self.ledger_path)
+        self.assertEqual(plan["partition_version"], 1)
+        self.assertTrue(plan["pending_claim_resume_available"])
+        self.assertEqual(plan["pending_claim_id"], first["claim_id"])
+        self.assertEqual(plan["forward_validation_dates"], ledger["entries"][0]["validation_dates"])
+        self.assertEqual(plan["reverse_validation_dates"], ledger["entries"][0]["reverse_validation_dates"])
 
     def test_pending_claim_rejects_a_changed_directional_specification(self):
         proposals, specs = write_candidate_documents(self.root)

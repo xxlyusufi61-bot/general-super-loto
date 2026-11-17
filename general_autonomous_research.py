@@ -908,6 +908,7 @@ def prepare_cycle(
             or "fresh reverse sealed validation interval" in lower
             or "no sufficiently sized forward r60 validation interval" in lower
             or "no sufficiently sized reverse r60 validation interval" in lower
+            or "adjacency-safe bidirectional partition" in lower
             or "r60 discovery history is shorter than the default minimum training window" in lower
             or "discovery history is shorter than the default minimum" in lower
         ):
@@ -952,6 +953,7 @@ def prepare_cycle(
         "discovery_count": discovery_count,
         "forward_validation_count": forward_count,
         "reverse_validation_count": reverse_count,
+        "partition_version": plan.get("partition_version"),
         "target_numbers_exposed": False,
         "forward_reverse_holdouts_disjoint": True,
         "previously_consumed_holdout_dates_reused": False,

@@ -9,6 +9,7 @@ from general_sealed_evaluation import (
     _evaluate_full_reverse_history,
     _evaluate_forward_validation_with_details,
     _validate_dsl_v2_directional_context,
+    split_archive,
 )
 
 
@@ -142,6 +143,105 @@ class SealedEvaluationDSLv2Tests(unittest.TestCase):
                 reverse_split,
                 canonical,
                 {canonical[1]["date"]},
+            )
+
+    def test_adjacency_aware_partition_handles_consumed_blocks_at_all_archive_positions(self):
+        from datetime import date, timedelta
+        start = date(2020, 8, 2)
+        canonical = []
+        for index in range(120):
+            day = (start + timedelta(days=2 * index)).isoformat()
+            base = (index * 7) % 60 + 1
+            numbers = sorted({
+                ((base + offset * 11 - 1) % 60) + 1
+                for offset in range(6)
+            })
+            canonical.append({"date": day, "numbers": numbers})
+        target = {
+            "date": (start + timedelta(days=242)).isoformat(),
+            "numbers": [1, 2, 3, 4, 5, 6],
+        }
+        rows = canonical + [target]
+        consumed_blocks = [
+            list(range(0, 5)) + list(range(60, 65)),
+            list(range(25, 31)) + list(range(70, 77)),
+            list(range(30, 40)) + list(range(115, 120)),
+            list(range(0, 5)) + list(range(25, 31)) + list(range(70, 77)) + list(range(115, 120)),
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            memory_path = Path(directory) / "offline-memory.json"
+            for block_indexes in consumed_blocks:
+                with self.subTest(consumed=block_indexes):
+                    consumed = {canonical[index]["date"] for index in block_indexes}
+                    split = split_archive(
+                        rows,
+                        used_validation_dates=consumed,
+                        offline_memory_path=memory_path,
+                    )
+                    r60 = split["regimes"]["R60"]
+                    self.assertEqual(split["partition_version"], 2)
+                    self.assertEqual(r60["status"], "READY")
+                    self.assertGreaterEqual(r60["discovery_count"], 40)
+                    self.assertGreaterEqual(r60["validation_count"], 2)
+                    self.assertGreaterEqual(r60["reverse_validation_count"], 2)
+
+                    discovery = r60["discovery_rows"]
+                    forward = r60["validation_rows"]
+                    reverse = r60["reverse_validation_rows"]
+                    roles = [row["date"] for row in discovery + forward + reverse]
+                    self.assertEqual(len(roles), len(set(roles)))
+                    self.assertFalse(consumed.intersection(roles))
+                    self.assertNotIn(target["date"], roles)
+                    self.assertLess(max(row["date"] for row in reverse), min(row["date"] for row in discovery))
+                    self.assertLess(max(row["date"] for row in discovery), min(row["date"] for row in forward))
+
+                    role_map = {row["date"]: row for row in discovery + forward + reverse}
+                    _validate_dsl_v2_directional_context(
+                        {"execution_spec_dsl_version": 2, "reverse_execution_spec_dsl_version": 1},
+                        split, canonical, consumed,
+                    )
+                    _validate_dsl_v2_directional_context(
+                        {"execution_spec_dsl_version": 1, "reverse_execution_spec_dsl_version": 2},
+                        split, canonical, consumed,
+                    )
+                    for target_row in reverse:
+                        later = [row for row in canonical if row["date"] > target_row["date"]][:2]
+                        self.assertEqual(len(later), 2)
+                        self.assertTrue(all(role_map.get(row["date"]) == row for row in later))
+                    for index, target_row in enumerate(forward):
+                        earlier = [row for row in canonical if row["date"] < target_row["date"]][-2:]
+                        training = discovery + forward[:index]
+                        training_map = {row["date"]: row for row in training}
+                        self.assertEqual(len(earlier), 2)
+                        self.assertTrue(all(training_map.get(row["date"]) == row for row in earlier))
+
+    def test_partition_v1_preserves_legacy_window_selection(self):
+        from datetime import date, timedelta
+        start = date(2020, 8, 2)
+        canonical = []
+        for index in range(80):
+            day = (start + timedelta(days=2 * index)).isoformat()
+            base = (index * 7) % 60 + 1
+            numbers = sorted({
+                ((base + offset * 11 - 1) % 60) + 1
+                for offset in range(6)
+            })
+            canonical.append({"date": day, "numbers": numbers})
+        target = {
+            "date": (start + timedelta(days=162)).isoformat(),
+            "numbers": [1, 2, 3, 4, 5, 6],
+        }
+        rows = canonical + [target]
+        with tempfile.TemporaryDirectory() as directory:
+            memory_path = Path(directory) / "offline-memory.json"
+            legacy = split_archive(rows, partition_version=1, offline_memory_path=memory_path)
+            current = split_archive(rows, offline_memory_path=memory_path)
+        self.assertEqual(legacy["partition_version"], 1)
+        self.assertEqual(current["partition_version"], 2)
+        for field in ("discovery_rows", "validation_rows", "reverse_validation_rows"):
+            self.assertEqual(
+                [row["date"] for row in legacy["regimes"]["R60"][field]],
+                [row["date"] for row in current["regimes"]["R60"][field]],
             )
 
     def test_full_reverse_diagnostic_skips_consumed_neighbours_instead_of_bridging(self):
