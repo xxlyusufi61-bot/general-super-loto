@@ -337,18 +337,27 @@ or a Telegram request is attempted. Other report kinds and non-success
 notifications therefore retain their fail-closed delivery behavior.
 
 
-## Scheduler state schema v4 and historical recovery provenance
+## Scheduler state schema v5 and scoped recovery provenance
 
 Scheduler state schema v3 introduced the bounded, append-only `recovery_history`
 journal. Schema v4 retains the bounded `manual_retry_history` journal so
-previously recorded Cycle #55 events remain verifiable. These fields are
-historical provenance only. They do not authorize additional attempts or create
-a current dispatch route. The active policy is a uniform ten-attempt budget per
-target; the old one-time dispatch path is retired.
+previously recorded Cycle #55 events remain verifiable. Schema v5 adds a
+separate, single-entry `scoped_recovery_history` journal for the explicitly
+approved 2026-11-12 failed-workflow recovery. It is cryptographically
+self-consistent and pinned to the exact FIFO target, archive snapshot, prior
+attempt, failure event, authorized actor, workflow ref, sixth attempt, and
+adjacency-aware preflight summary.
 
-Legacy v1, v2, and v3 documents are upgraded in memory; the generation-guarded
-state writer remains the only way to publish state. Both historical journals
-store metadata and cryptographic digests only, never draw rows, target numbers,
+The Cycle #55 journals remain historical provenance only and do not authorize
+the 2026-11-12 recovery. The new scoped journal does not make any other
+`WORKFLOW_FAILED` target retryable and does not change normal retry behavior.
+The active policy remains a uniform ten-attempt budget per target; the special
+manual dispatch is a separate, one-use route bound only to the pinned incident.
+A new workflow failure remains blocked under the ordinary policy.
+
+Legacy v1 through v4 documents are upgraded in memory; the generation-guarded
+state writer remains the only way to publish state. All recovery journals store
+metadata and cryptographic digests only, never draw rows, target numbers,
 per-draw hits, or rankings.
 
 Cycle #55 exposed a finalization-order defect: a false
@@ -357,4 +366,4 @@ research-memory append had succeeded. The recovery utility retains the exact
 historical generation, source snapshot, attempt, event, completed entry, FIFO
 cursor, and compressed-snapshot provenance. The restored attempt remains
 `FAILED / WORKFLOW_FAILED`. The old incident and its recorded retry history are
-preserved for audit; they are not a live retry exception.
+preserved for audit; they are not reused by the new scoped recovery.
