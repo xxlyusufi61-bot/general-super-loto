@@ -46,6 +46,16 @@ CYCLE55_MANUAL_RETRY_PRIOR_FAILURE_AT_UTC = "2026-11-12T19:29:11.330937+00:00"
 CYCLE57_RETRY_PRIOR_ATTEMPT_ID = "25135d06049ee281e793b792b5b1ae6f344418fc1038ea55b1524cfd8c3fdf4f"
 CYCLE57_RETRY_FAILURE_AT_UTC = "2026-11-13T09:47:58.660638+00:00"
 CYCLE57_RETRY_ATTEMPT_ID = "50c89cdfbb465f47491c6bfd67f709387fb1caf00ed9157651e99652cf2f3e6f"
+SCOPED_RECOVERY_TARGET_DATE = "2026-11-12"
+SCOPED_RECOVERY_ARCHIVE_SHA256 = "e85b8b5de47355b83f2c070f9ffbfe8dc97541ec52b93a849c3e285f776d781e"
+SCOPED_RECOVERY_ARCHIVE_RECORD_COUNT = 984
+SCOPED_RECOVERY_PRIOR_ATTEMPT_ID = "503c5ea28d5ce30d1dd20a0f35b1d0f754e9bd09d9559bd06941d0497998b57d"
+SCOPED_RECOVERY_PRIOR_RUN_ID = "44040345546"
+SCOPED_RECOVERY_PRIOR_FAILURE_AT_UTC = "2026-11-17T07:50:58.480457+00:00"
+SCOPED_RECOVERY_ACTOR_LOGIN = "xxlyusufi61-bot"
+SCOPED_RECOVERY_ACTOR_ID = 345811504
+SCOPED_RECOVERY_WORKFLOW_REF = "xxlyusufi61-bot/general-super-loto/.github/workflows/general-autonomous-research.yml@refs/heads/main"
+SCOPED_RECOVERY_CONFIRMATION = "GENERAL_RECOVER_2026_11_12_WORKFLOW_44040345546_ONCE"
 RETRYABLE_FAILURE_REASON_CODES = {
     "NO_PROVIDER_REQUEST_SENT",
     "PROVIDER_DELIVERY_UNCERTAIN",
@@ -119,7 +129,7 @@ def _is_sha256(value: Any) -> bool:
 
 def initial_state() -> dict[str, Any]:
     return {
-        "schema_version": 4,
+        "schema_version": 5,
         "project": PROJECT,
         "authorization": {
             "enabled": False,
@@ -135,6 +145,7 @@ def initial_state() -> dict[str, Any]:
         "target_queue": target_queue.initial_queue(),
         "recovery_history": [],
         "manual_retry_history": [],
+        "scoped_recovery_history": [],
     }
 
 
@@ -142,26 +153,34 @@ def validate_state(value: Any) -> dict[str, Any]:
     legacy_v1_keys = {"schema_version", "project", "authorization", "attempts", "events"}
     legacy_v2_keys = legacy_v1_keys | {"target_queue"}
     legacy_v3_keys = legacy_v2_keys | {"recovery_history"}
+    legacy_v4_keys = legacy_v3_keys | {"manual_retry_history"}
     if isinstance(value, dict) and set(value) == legacy_v1_keys and value.get("schema_version") == 1:
-        value["schema_version"] = 4
+        value["schema_version"] = 5
         value["target_queue"] = target_queue.initial_queue()
         value["recovery_history"] = []
         value["manual_retry_history"] = []
+        value["scoped_recovery_history"] = []
     elif isinstance(value, dict) and set(value) == legacy_v2_keys and value.get("schema_version") == 2:
-        value["schema_version"] = 4
+        value["schema_version"] = 5
         value["recovery_history"] = []
         value["manual_retry_history"] = []
+        value["scoped_recovery_history"] = []
     elif isinstance(value, dict) and set(value) == legacy_v3_keys and value.get("schema_version") == 3:
-        # Schema v4 adds an append-only journal for one narrowly scoped,
-        # explicitly approved Cycle #55 retry exception.
-        value["schema_version"] = 4
+        # Schema v4 added the historical Cycle #55 journal.
+        value["schema_version"] = 5
         value["manual_retry_history"] = []
+        value["scoped_recovery_history"] = []
+    elif isinstance(value, dict) and set(value) == legacy_v4_keys and value.get("schema_version") == 4:
+        # Schema v5 adds a separate journal for the pinned 12 November recovery.
+        value["schema_version"] = 5
+        value["scoped_recovery_history"] = []
     if not isinstance(value, dict) or set(value) != {
         "schema_version", "project", "authorization", "attempts", "events",
-        "target_queue", "recovery_history", "manual_retry_history"
+        "target_queue", "recovery_history", "manual_retry_history",
+        "scoped_recovery_history"
     }:
         raise AutonomousResearchError("Autonomous scheduler state has an invalid schema.")
-    if type(value.get("schema_version")) is not int or value["schema_version"] != 4:
+    if type(value.get("schema_version")) is not int or value["schema_version"] != 5:
         raise AutonomousResearchError("Unsupported autonomous scheduler state schema version.")
     try:
         target_queue.validate_queue(value["target_queue"])
