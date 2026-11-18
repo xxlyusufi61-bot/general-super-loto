@@ -38,7 +38,7 @@ def append_draws(rows, count):
 
 
 class SingleActiveTargetQueueTests(unittest.TestCase):
-    def test_bootstrap_and_archive_growth_keep_only_latest_target(self):
+    def test_bootstrap_pins_unattempted_active_target_while_new_draws_stage_as_latest(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             archive = root / "archive.json"
@@ -53,19 +53,36 @@ class SingleActiveTargetQueueTests(unittest.TestCase):
             self.assertEqual(summary["pending_target_count"], 1)
             self.assertEqual(initial["active"]["target_date"], rows[-1]["date"])
             self.assertEqual(initial["latest_snapshot"]["target_date"], rows[-1]["date"])
+            active_hash = initial["active"]["archive_sha256"]
+            self.assertEqual(initial["active"]["archive_record_count"], len(rows))
             self.assertEqual(initial["completed"], [])
 
+            # A newer canonical archive can arrive after the active snapshot
+            # was captured but before its first attempt is reserved. The active
+            # target and its work must remain pinned to the original prefix.
             grown = append_draws(rows, 2)
             write_archive(archive, grown)
             updated, summary = queue.capture_new_targets(
                 initial, archive_path=archive, attempts=[], events=[],
                 now=NOW + timedelta(hours=1),
             )
-            self.assertEqual(updated["active"]["target_date"], grown[-1]["date"])
+            self.assertEqual(updated["active"]["target_date"], rows[-1]["date"])
+            self.assertEqual(updated["active"]["archive_sha256"], active_hash)
+            self.assertEqual(updated["active"]["archive_record_count"], len(rows))
             self.assertEqual(updated["latest_snapshot"]["target_date"], grown[-1]["date"])
+            self.assertEqual(updated["latest_snapshot"]["archive_record_count"], len(grown))
             self.assertEqual(summary["pending_target_count"], 1)
+            self.assertEqual(summary["active_target_date"], rows[-1]["date"])
+            self.assertEqual(summary["latest_observed_date"], grown[-1]["date"])
             self.assertEqual(summary["intermediate_draws_promoted_as_targets"], False)
             self.assertEqual(updated["completed"], [])
+
+            active_archive = root / "active-archive.json"
+            materialized = queue.materialize_front(updated, active_archive)
+            loaded = queue.sealed.load_archive(active_archive)
+            self.assertEqual(materialized["target_date"], rows[-1]["date"])
+            self.assertEqual(loaded["last_date"], rows[-1]["date"])
+            self.assertEqual(loaded["record_count"], len(rows))
 
             unchanged, summary = queue.capture_new_targets(
                 updated, archive_path=archive, attempts=[], events=[],

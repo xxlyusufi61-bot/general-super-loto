@@ -157,7 +157,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: python3 general_automation_state_integrity_audit.py
-      - name: Capture every unseen canonical draw in the durable FIFO
+      - name: Observe the latest canonical archive and preserve one active target
         id: queue_capture
         if: ${{ github.event_name == 'schedule' }}
         run: |
@@ -165,7 +165,7 @@ jobs:
             --archive super_loto_archive.json \
             --github-output "$GITHUB_OUTPUT"
           cat "$GITHUB_OUTPUT"
-      - name: Persist FIFO snapshots without changing protected archive or ledger objects
+      - name: Persist the active snapshot and latest archive cursor without changing protected objects
         id: persist_queue
         if: ${{ github.event_name == 'schedule' && steps.queue_capture.outputs.changed == 'true' }}
         uses: ./.github/actions/publish-automation-state
@@ -173,9 +173,9 @@ jobs:
           token: ${{ github.token }}
           expected_generation: ${{ steps.state_bootstrap.outputs.generation }}
           objects: autonomous_research_state
-          message: "Append newly observed draw snapshots to autonomous FIFO"
+          message: "Persist active-target snapshot and latest archive cursor"
 
-      - name: Materialize oldest FIFO snapshot for offline mathematical research
+      - name: Materialize the pinned active-target snapshot for offline mathematical research
         id: offline_materialize
         if: ${{ github.event_name == 'schedule' && steps.queue_capture.outputs.has_pending == 'true' }}
         run: |
@@ -267,13 +267,13 @@ jobs:
         run: |
           python3 general_nvidia_guard.py check
           echo "GENERAL_NVIDIA_GUARD_PASSED=1" >> "$GITHUB_ENV"
-      - name: Materialize only the oldest queued target snapshot
+      - name: Materialize only the pinned active-target snapshot
         if: ${{ github.event_name == 'schedule' && steps.status.outputs.authorized == 'true' && steps.status.outputs.lock_clear == 'true' && steps.queue_capture.outputs.has_pending == 'true' }}
         run: |
           python3 general_autonomous_research.py queue-materialize \
             --output super_loto_archive.json
 
-      - name: Prepare one cycle for the oldest queued target and fresh sealed windows
+      - name: Prepare one research pass for the active target and fresh sealed windows
         id: prepare
         if: ${{ github.event_name == 'schedule' && steps.status.outputs.authorized == 'true' && steps.status.outputs.lock_clear == 'true' && steps.queue_capture.outputs.has_pending == 'true' }}
         run: |

@@ -505,10 +505,11 @@ def capture_new_targets(
                 if not any(done["target_date"] == active["target_date"] for done in completed):
                     completed.append(_completed_record(active, outcome, event["recorded_at_utc"]))
                 active = None
-            elif state == "UNATTEMPTED" and latest_date > active["target_date"]:
-                active = None
-            # An in-progress or failed package stays pinned to its exact snapshot.
-            # A successful/no-candidate pass stays active while no newer draw exists.
+            # Keep an active snapshot pinned even before the first attempt is
+            # reserved. Offline discovery and its checkpoints may already exist;
+            # a newer archive cursor must never discard that unfinished work.
+            # In-progress/failed attempts are also pinned. A completed package
+            # is released only when a newer canonical draw is observed.
 
     completed.sort(key=lambda item: item["target_date"])
     if len({item["target_date"] for item in completed}) != len(completed):

@@ -8,11 +8,12 @@ The active target is bound to an immutable content-addressed archive prefix. The
 
 ## Continuation and recovery
 
+- An active target remains pinned even before its first attempt is reserved. Offline discovery or checkpoints may already exist, so a newer archive cannot replace an unattempted active snapshot.
 - A claimed attempt without a terminal event remains in progress and blocks a new attempt.
 - A failed attempt remains attached to the same active target and exact archive snapshot. Retry eligibility continues to follow the existing provider-delivery and manual-unlock safety rules.
 - A successful sealed evaluation completes one frozen formula test, not the target's whole research lifetime. The same current target may therefore receive a later independent discovery package.
 - A valid no-candidate outcome also completes a package without consuming the failed-attempt budget.
-- Once a later canonical draw is observed, a completed active target is recorded in history and only the newest archive snapshot is promoted. An in-progress or failed target is not silently skipped.
+- Once a later canonical draw is observed, a terminal active package is recorded in history and only the newest archive snapshot is promoted. An unattempted, in-progress or failed target is not silently skipped; its exact snapshot remains pinned while the latest archive cursor is staged separately.
 - Target retirement after exhaustion remains a separate explicit manual action.
 
 ## Failed-attempt budget

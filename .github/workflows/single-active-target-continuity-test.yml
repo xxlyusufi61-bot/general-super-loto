@@ -1,0 +1,97 @@
+name: Single Active Target Continuity CI
+
+'on':
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "general_autonomous_research.py"
+      - "general_autonomous_research_test.py"
+      - "general_target_queue.py"
+      - "general_target_queue_test.py"
+      - "general_target_evaluator.py"
+      - "general_target_evaluator_test.py"
+      - "general_target_evaluation_ledger.py"
+      - "general_target_evaluation_ledger_test.py"
+      - "general_sealed_evaluation.py"
+      - "general_sealed_evaluation_test.py"
+      - "general_sealed_evaluation_v2_test.py"
+      - "general_execution_spec_dispatch.py"
+      - "general_execution_spec_dispatch_test.py"
+      - "general_execution_spec_parser.py"
+      - "general_execution_spec_parser_test.py"
+      - "general_hypothesis_execution.py"
+      - "general_hypothesis_execution_test.py"
+      - "general_hypothesis_execution_v2.py"
+      - "general_hypothesis_execution_v2_test.py"
+      - "general_hypothesis_proposals.py"
+      - "general_hypothesis_proposals_test.py"
+      - "general_research_memory.py"
+      - "general_research_memory_test.py"
+      - "general_offline_hypothesis_discovery.py"
+      - "general_offline_hypothesis_discovery_test.py"
+      - "general_method_registry_test.py"
+      - ".github/workflows/general-autonomous-research.yml"
+      - ".github/workflows/single-active-target-continuity-test.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  offline-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install pinned test dependencies
+        run: python3 -m pip install --disable-pip-version-check --no-input -r requirements.txt
+      - name: Compile continuity and sealed-evaluation modules
+        run: |
+          python3 -m py_compile \
+            general_autonomous_research.py \
+            general_autonomous_research_test.py \
+            general_target_queue.py \
+            general_target_queue_test.py \
+            general_target_evaluator.py \
+            general_target_evaluator_test.py \
+            general_target_evaluation_ledger.py \
+            general_target_evaluation_ledger_test.py \
+            general_sealed_evaluation.py \
+            general_sealed_evaluation_test.py \
+            general_sealed_evaluation_v2_test.py \
+            general_execution_spec_dispatch.py \
+            general_execution_spec_dispatch_test.py \
+            general_execution_spec_parser.py \
+            general_execution_spec_parser_test.py \
+            general_hypothesis_execution.py \
+            general_hypothesis_execution_test.py \
+            general_hypothesis_execution_v2.py \
+            general_hypothesis_execution_v2_test.py \
+            general_hypothesis_proposals.py \
+            general_hypothesis_proposals_test.py \
+            general_research_memory.py \
+            general_research_memory_test.py \
+            general_offline_hypothesis_discovery.py \
+            general_offline_hypothesis_discovery_test.py
+      - name: Run offline regression suites only
+        run: |
+          python3 -m unittest -v \
+            general_target_queue_test \
+            general_autonomous_research_test \
+            general_target_evaluator_test \
+            general_target_evaluation_ledger_test \
+            general_sealed_evaluation_test \
+            general_sealed_evaluation_v2_test \
+            general_execution_spec_dispatch_test \
+            general_execution_spec_parser_test \
+            general_hypothesis_execution_test \
+            general_hypothesis_execution_v2_test \
+            general_hypothesis_proposals_test \
+            general_research_memory_test \
+            general_offline_hypothesis_discovery_test \
+            general_method_registry_test
