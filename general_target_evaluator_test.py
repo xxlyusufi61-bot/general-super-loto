@@ -164,17 +164,23 @@ class LocalTargetEvaluationTests(unittest.TestCase):
                 snapshot_directory=self.snapshot_directory,
             )
 
-    def test_current_target_conditioning_pair_rejects_previously_consumed_holdouts(self):
+    def test_target_scoring_uses_observed_prior_draws_only_as_frozen_conditioning_context(self):
         docs = json.loads(self.ledger_path.read_text(encoding="utf-8"))
         rows = sealed.load_archive(self.archive_path)["rows"]
-        docs["entries"][0]["previously_consumed_validation_dates"] = [rows[-2]["date"]]
+        docs["entries"][0]["previously_consumed_validation_dates"] = [
+            rows[-2]["date"], rows[-3]["date"]
+        ]
         self.ledger_path.write_text(json.dumps(docs), encoding="utf-8")
-        with self.assertRaisesRegex(ValueError, "previously consumed holdout row"):
-            evaluate_frozen_target(
-                self.claim["claim_id"], self.attempt_id, self.ledger_path,
-                self.proposals, self.specs, scheduler_state_path=self.state_path,
-                snapshot_directory=self.snapshot_directory,
-            )
+        report = evaluate_frozen_target(
+            self.claim["claim_id"], self.attempt_id, self.ledger_path,
+            self.proposals, self.specs, scheduler_state_path=self.state_path,
+            snapshot_directory=self.snapshot_directory,
+        )
+        self.assertEqual(report["status"], "LOCAL_TARGET_EVALUATION_COMPLETED")
+        self.assertTrue(report["prior_draws_used_only_as_conditioning_context"])
+        self.assertFalse(report["prior_holdouts_reused_as_evaluation_targets"])
+        self.assertFalse(report["prior_draws_reused_for_discovery_or_tuning"])
+        self.assertFalse(report["target_score_sent_to_model"])
 
     def test_snapshot_path_cannot_escape_approved_directory(self):
         doc = json.loads(self.ledger_path.read_text(encoding="utf-8"))

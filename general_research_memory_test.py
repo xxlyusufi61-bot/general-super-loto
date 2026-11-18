@@ -1309,15 +1309,6 @@ class ResearchMemoryPersistenceTests(unittest.TestCase):
 
             # A reused EVALUATED claim must not be mislabeled as no-candidate
             # or append a second copy of its existing formula feedback.
-            from general_sealed_evaluation import get_used_validation_dates, public_plan, split_archive
-            reused_partition = split_archive(
-                archive["rows"],
-                archive_sha256=archive_hash,
-                used_validation_dates=get_used_validation_dates(
-                    json.loads(ledger_path.read_text(encoding="utf-8"))
-                ),
-            )
-            write_json(root / "sealed-plan.json", public_plan(reused_partition))
             write_json(root / "claim.json", {
                 "claim_created": False,
                 "claim_reused": True,
@@ -1338,7 +1329,7 @@ class ResearchMemoryPersistenceTests(unittest.TestCase):
                 run_id="123456789",
                 run_attempt="2",
             )
-            self.assertEqual(reused_result["status"], "NO_DIRECTIONAL_RECORDS")
+            self.assertEqual(reused_result["status"], "REUSED_EVALUATED_CLAIM_ALREADY_RECORDED")
             self.assertEqual(reused_result["entries_added"], 0)
             self.assertEqual(len(memory.load_memory(memory_path)["entries"]), 2)
 

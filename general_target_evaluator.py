@@ -93,14 +93,16 @@ def _rank_frozen_forward_candidate(
             raise TargetEvaluationError("Two immediately preceding canonical states are required.")
         # The immediately preceding draws are conditioning context only. They
         # are not rescored as holdout targets, fed into discovery, or used to tune
-        # this frozen specification.
+        # this frozen specification. This is a forward local target score, not
+        # another historical validation pass, so prior validation-date exclusion
+        # applies to holdout selection, not to these observed conditioning states.
         return execution_v2.rank_candidates_for_pair(
             pre_target_rows[-2:],
             target_date=target_date,
             number_pool_size=60,
             execution_spec=spec,
             canonical_history=pre_target_rows,
-            excluded_dates=entry["previously_consumed_validation_dates"],
+            excluded_dates=(),
         )
     history = pre_target_rows[-execution_v1.MAX_HISTORY_DRAWS:]
     if not history:

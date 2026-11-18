@@ -1372,6 +1372,49 @@ def record_cycle(
         or (claim.get("claim_created") is not True and claim.get("claim_reused") is not True)
     ):
         raise ResearchMemoryError("An evaluation report without its successful current-cycle claim cannot enter memory.")
+    if isinstance(claim, dict) and claim.get("claim_reused") is True:
+        claim_id = claim.get("claim_id")
+        if not isinstance(claim_id, str) or not HEX64.fullmatch(claim_id):
+            raise ResearchMemoryError("Reused sealed claim ID is missing or invalid.")
+        matches = [
+            item for item in ledger.get("entries", [])
+            if isinstance(item, dict) and item.get("claim_id") == claim_id
+        ]
+        if len(matches) != 1:
+            raise ResearchMemoryError("Reused sealed claim is not uniquely present in the evaluation ledger.")
+        current_claim = matches[0]
+        if (
+            current_claim.get("state") != "EVALUATED"
+            or current_claim.get("archive_sha256") != archive_hash
+            or current_claim.get("target_date") != target
+        ):
+            raise ResearchMemoryError("Reused sealed claim must be the exact EVALUATED entry for this archive/target.")
+        if evaluation_report is not None and (
+            evaluation_report.get("claim_id") != claim_id
+            or evaluation_report.get("archive_sha256") != archive_hash
+            or evaluation_report.get("target_date") != target
+        ):
+            raise ResearchMemoryError("Reused claim's historical evaluation report has mismatched provenance.")
+        existing_memory = load_memory(memory_path)
+        recorded_directions = {
+            item["direction"]
+            for item in existing_memory["entries"]
+            if isinstance(item.get("evaluation_feedback"), dict)
+            and item["evaluation_feedback"].get("claim_id") == claim_id
+            and item["evaluation_feedback"].get("status") == "EVALUATED_EXPLORATORY_FIXED_SPEC"
+        }
+        if recorded_directions == {"forward", "reverse"}:
+            return {
+                "status": "REUSED_EVALUATED_CLAIM_ALREADY_RECORDED",
+                "entries_added": 0,
+                "claim_id": claim_id,
+                "raw_archive_rows_stored": False,
+                "target_or_predicted_numbers_stored": False,
+                "consumed_holdout_rows_stored": False,
+            }
+        raise ResearchMemoryError(
+            "Reused EVALUATED claim has incomplete directional memory; recover its original saved evaluation artifact instead of repeating consumed holdouts."
+        )
     plan = _load_optional_json(sealed_plan_path) or {}
     has_any_directional_report = (
         Path(forward_report_path).is_file() or Path(reverse_report_path).is_file()
