@@ -1482,21 +1482,12 @@ class AutonomousResearchMemoryIntegrationTests(unittest.TestCase):
         sealed_plan_path = root / "sealed-plan.json"
 
         write_json(archive_path, {"draws": rows})
-        archive = sealed.load_archive(archive_path)
         write_json(ledger_path, {
             "schema_version": 1,
             "purpose": "synthetic autonomous memory integration test",
             "entries": [],
         })
         write_json(lock_path, initial_lock_state())
-
-        partition = sealed.split_archive(
-            archive["rows"],
-            archive_sha256=archive["archive_sha256"],
-            used_validation_dates=set(),
-        )
-        sealed_plan = sealed.public_plan(partition)
-        write_json(sealed_plan_path, sealed_plan)
 
         state = autonomous.activate_state(
             autonomous.initial_state(),
@@ -1506,6 +1497,24 @@ class AutonomousResearchMemoryIntegrationTests(unittest.TestCase):
             global_lock=initial_lock_state(),
             now=self.AUTONOMOUS_NOW,
         )
+        captured_queue, _ = autonomous.target_queue.capture_new_targets(
+            state["target_queue"],
+            archive_path=archive_path,
+            attempts=state["attempts"],
+            events=state["events"],
+            now=self.AUTONOMOUS_NOW,
+        )
+        state["target_queue"] = captured_queue
+        autonomous.target_queue.materialize_front(captured_queue, archive_path)
+        archive = sealed.load_archive(archive_path)
+
+        partition = sealed.split_archive(
+            archive["rows"],
+            archive_sha256=archive["archive_sha256"],
+            used_validation_dates=set(),
+        )
+        sealed_plan = sealed.public_plan(partition)
+        write_json(sealed_plan_path, sealed_plan)
         prepared = autonomous.prepare_cycle(
             state,
             archive_path=archive_path,

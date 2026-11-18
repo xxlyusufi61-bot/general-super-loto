@@ -376,7 +376,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
                 "recorded_at_utc": (eleventh_at + timedelta(seconds=1)).isoformat(),
                 "reason_code": "NO_PROVIDER_REQUEST_SENT",
             })
-            with self.assertRaisesRegex(auto.AutonomousResearchError, "ten-attempt limit"):
+            with self.assertRaisesRegex(auto.AutonomousResearchError, "ten-failed-attempt limit"):
                 auto.validate_state(state)
 
     def _safe_local_target_report(self, attempt):
@@ -943,10 +943,11 @@ class AutonomousResearchStateTests(unittest.TestCase):
                 auto.validate_state(state)
 
 
-    def test_new_target_cannot_skip_a_previous_proven_no_send_target(self):
+    def test_new_draw_is_staged_without_skipping_previous_failed_active_target(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             archive = root / "archive.json"
+            active_archive = root / "active-archive.json"
             ledger = root / "ledger.json"
             lock = root / "lock.json"
             rows = synthetic_rows(90)
@@ -966,17 +967,31 @@ class AutonomousResearchStateTests(unittest.TestCase):
                 state, attempt["attempt_id"], outcome="FAILED",
                 reason_code="NO_PROVIDER_REQUEST_SENT", now=NOW,
             )
+            original_target = attempt["target_date"]
             rows.append({
                 "date": (date.fromisoformat(rows[-1]["date"]) + timedelta(days=2)).isoformat(),
                 "numbers": [1, 2, 3, 4, 5, 6],
             })
             archive.write_text(json.dumps({"draws": rows}), encoding="utf-8")
-            blocked = auto.prepare_cycle(
-                state, archive_path=archive, ledger_path=ledger,
+            updated_queue, capture = auto.target_queue.capture_new_targets(
+                state["target_queue"], archive_path=archive,
+                attempts=state["attempts"], events=state["events"],
+                now=NOW + timedelta(days=1),
+            )
+            state["target_queue"] = updated_queue
+            self.assertEqual(updated_queue["active"]["target_date"], original_target)
+            self.assertEqual(updated_queue["latest_snapshot"]["target_date"], rows[-1]["date"])
+            self.assertEqual(capture["pending_target_count"], 1)
+            self.assertEqual(capture["intermediate_draws_promoted_as_targets"], False)
+
+            auto.target_queue.materialize_front(updated_queue, active_archive)
+            retry = auto.prepare_cycle(
+                state, archive_path=active_archive, ledger_path=ledger,
                 global_lock_path=lock, now=NOW + timedelta(days=1),
             )
-            self.assertFalse(blocked["eligible"])
-            self.assertEqual(blocked["status"], "PREVIOUS_TARGET_RETRY_REQUIRED")
+            self.assertTrue(retry["eligible"])
+            self.assertTrue(retry["retryable"])
+            self.assertEqual(retry["target_date"], original_target)
 
     def test_target_date_regression_fails_closed(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1124,7 +1139,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
             # A later draw is staged independently. Only once the existing
             # package is terminal can the newest draw become the next target.
             later_rows = append_draws(rows, 2)
-            write_archive(archive, later_rows)
+            archive.write_bytes(auto.target_queue._snapshot_bytes(later_rows))
             updated_queue, summary = auto.target_queue.capture_new_targets(
                 state["target_queue"], archive_path=archive,
                 attempts=state["attempts"], events=state["events"],

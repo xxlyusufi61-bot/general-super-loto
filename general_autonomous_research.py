@@ -904,6 +904,10 @@ def prepare_cycle(
             "latest_observed_date": queue.get("observed_through_date"),
             **status,
         }
+    if target_date < active_item["target_date"]:
+        raise AutonomousResearchError(
+            "Archive target moved backwards relative to the immutable active-target snapshot."
+        )
     archive_hash_matches_snapshot = archive["archive_sha256"] == active_item["archive_sha256"]
     archive_hash_matches_source = archive["archive_sha256"] == active_item["source_archive_sha256"]
     if (

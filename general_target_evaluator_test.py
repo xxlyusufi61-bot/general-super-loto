@@ -65,6 +65,19 @@ class LocalTargetEvaluationTests(unittest.TestCase):
         self.ledger_path = self.root / "evaluation-ledger.json"
         self.snapshot_directory = self.root / "general_evaluation_snapshots"
         self.proposals, self.specs = _write_v2_documents(self.root)
+        source_archive = sealed.load_archive(self.archive_path)
+        snapshot_item = target_queue._make_item(
+            self.rows, source_archive_sha256=source_archive["archive_sha256"],
+            enqueued_at_utc="2026-11-18T12:00:00+00:00",
+        )
+        active_queue = {
+            "schema_version": 2,
+            "observed_through_date": self.rows[-1]["date"],
+            "active": snapshot_item,
+            "latest_snapshot": snapshot_item,
+            "completed": [],
+        }
+        target_queue.materialize_front(active_queue, self.archive_path)
         self.claim = sealed.create_claim(
             self.archive_path, self.ledger_path, self.proposals, self.specs,
             snapshot_directory=self.snapshot_directory,
@@ -77,17 +90,7 @@ class LocalTargetEvaluationTests(unittest.TestCase):
 
         self.state_path = self.root / "general_autonomous_research_state.json"
         state = auto.initial_state()
-        snapshot_item = target_queue._make_item(
-            self.rows, source_archive_sha256=self.claim["archive_sha256"],
-            enqueued_at_utc="2026-11-18T12:00:00+00:00",
-        )
-        state["target_queue"] = {
-            "schema_version": 2,
-            "observed_through_date": self.rows[-1]["date"],
-            "active": snapshot_item,
-            "latest_snapshot": snapshot_item,
-            "completed": [],
-        }
+        state["target_queue"] = active_queue
         self.attempt_id = "e" * 64
         state["attempts"].append({
             "attempt_id": self.attempt_id,
