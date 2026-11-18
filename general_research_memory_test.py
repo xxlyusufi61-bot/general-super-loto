@@ -1282,6 +1282,18 @@ class ResearchMemoryPersistenceTests(unittest.TestCase):
             self.assertEqual(saved["entries"][0]["proposals"][0]["hypothesis_id"], "HYP-001")
             self.assertEqual(saved["entries"][1]["proposals"][0]["hypothesis_id"], "HYP-501")
             self.assertTrue(saved["entries"][0]["evaluation_feedback"]["holdout_consumed"])
+            self.assertEqual(
+                {item["evaluation_feedback"]["claim_id"] for item in saved["entries"]},
+                {claim_id},
+            )
+            self.assertEqual(
+                {item["evaluation_feedback"]["status"] for item in saved["entries"]},
+                {"EVALUATED_EXPLORATORY_FIXED_SPEC"},
+            )
+            self.assertEqual(
+                {item["direction"] for item in saved["entries"]},
+                {"forward", "reverse"},
+            )
             invalid_feedback_entry = copy.deepcopy(saved["entries"][0])
             invalid_feedback_entry["evaluation_feedback"]["holdout_consumed"] = False
             invalid_feedback_entry["content_sha256"] = _hash_entry(invalid_feedback_entry)

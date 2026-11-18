@@ -1401,7 +1401,6 @@ def record_cycle(
             for item in existing_memory["entries"]
             if isinstance(item.get("evaluation_feedback"), dict)
             and item["evaluation_feedback"].get("claim_id") == claim_id
-            and item["evaluation_feedback"].get("status") == "EVALUATED_EXPLORATORY_FIXED_SPEC"
         }
         if recorded_directions == {"forward", "reverse"}:
             return {
