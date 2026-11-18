@@ -100,7 +100,7 @@ def _rank_frozen_forward_candidate(
             number_pool_size=60,
             execution_spec=spec,
             canonical_history=pre_target_rows,
-            excluded_dates=(),
+            excluded_dates=entry["previously_consumed_validation_dates"],
         )
     history = pre_target_rows[-execution_v1.MAX_HISTORY_DRAWS:]
     if not history:

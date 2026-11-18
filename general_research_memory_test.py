@@ -1076,6 +1076,7 @@ class SealedPlanBindingTests(unittest.TestCase):
             ledger = {
                 "entries": [{
                     "claim_id": claim_id,
+                    "state": "EVALUATED",
                     "target_date": archive["last_date"],
                     "archive_sha256": archive["archive_sha256"],
                     "previously_consumed_validation_dates": [prior_date],
@@ -1098,8 +1099,22 @@ class SealedPlanBindingTests(unittest.TestCase):
                 "target_date": archive["last_date"],
                 "archive_sha256": archive["archive_sha256"],
             }
-            memory._validate_sealed_plan_binding(plan, archive, ledger, reused_claim)
+            from general_sealed_evaluation import get_used_validation_dates
 
+            # On the retry, the claim's holdouts are already consumed. The new
+            # research plan uses the current ledger union, not the old snapshot.
+            reused_partition = split_archive(
+                rows,
+                archive_sha256=archive["archive_sha256"],
+                used_validation_dates=get_used_validation_dates(ledger),
+            )
+            reused_plan = public_plan(reused_partition)
+            memory._validate_sealed_plan_binding(reused_plan, archive, ledger, reused_claim)
+
+            ledger["entries"][0]["state"] = "CLAIMED"
+            with self.assertRaisesRegex(memory.ResearchMemoryError, "exact EVALUATED"):
+                memory._validate_sealed_plan_binding(reused_plan, archive, ledger, reused_claim)
+            ledger["entries"][0]["state"] = "EVALUATED"
             ledger["entries"][0]["previously_consumed_validation_dates"] = []
             with self.assertRaisesRegex(memory.ResearchMemoryError, "archive-derived chronological partition"):
                 memory._validate_sealed_plan_binding(plan, archive, ledger, claim)

@@ -415,9 +415,7 @@ def _validate_sealed_plan_binding(
     )
 
     prior_used_dates = get_used_validation_dates(ledger)
-    if isinstance(claim, dict) and (
-        claim.get("claim_created") is True or claim.get("claim_reused") is True
-    ):
+    if isinstance(claim, dict) and claim.get("claim_created") is True:
         claim_id = claim.get("claim_id")
         if not isinstance(claim_id, str) or not HEX64.fullmatch(claim_id):
             raise ResearchMemoryError("Current sealed claim ID is missing or invalid.")
@@ -431,8 +429,9 @@ def _validate_sealed_plan_binding(
         if (
             current_claim.get("archive_sha256") != archive.get("archive_sha256")
             or current_claim.get("target_date") != archive.get("last_date")
+            or current_claim.get("state") not in {"CLAIMED", "EVALUATED"}
         ):
-            raise ResearchMemoryError("Current sealed claim does not belong to this archive/target.")
+            raise ResearchMemoryError("Current sealed claim does not belong to this archive/target or ledger state.")
         prior_snapshot = current_claim.get("previously_consumed_validation_dates")
         if (
             not isinstance(prior_snapshot, list)
@@ -441,6 +440,26 @@ def _validate_sealed_plan_binding(
         ):
             raise ResearchMemoryError("Current claim lacks a valid prior-consumption snapshot.")
         prior_used_dates = set(prior_snapshot)
+    elif isinstance(claim, dict) and claim.get("claim_reused") is True:
+        claim_id = claim.get("claim_id")
+        if not isinstance(claim_id, str) or not HEX64.fullmatch(claim_id):
+            raise ResearchMemoryError("Reused sealed claim ID is missing or invalid.")
+        matches = [
+            item for item in ledger.get("entries", [])
+            if isinstance(item, dict) and item.get("claim_id") == claim_id
+        ]
+        if len(matches) != 1:
+            raise ResearchMemoryError("Reused sealed claim is not uniquely present in the evaluation ledger.")
+        current_claim = matches[0]
+        if (
+            current_claim.get("state") != "EVALUATED"
+            or current_claim.get("archive_sha256") != archive.get("archive_sha256")
+            or current_claim.get("target_date") != archive.get("last_date")
+        ):
+            raise ResearchMemoryError("Reused sealed claim must be the exact EVALUATED entry for this archive/target.")
+        # A reused claim is historical. The current plan is rebuilt against all
+        # validation dates already consumed by this and earlier EVALUATED claims.
+        # Do not roll back to the original claim's prior-consumption snapshot.
     elif claim is not None and not isinstance(claim, dict):
         raise ResearchMemoryError("Current claim metadata is malformed.")
 

@@ -154,6 +154,21 @@ class LocalTargetEvaluationTests(unittest.TestCase):
                 snapshot_directory=self.snapshot_directory,
             )
 
+    def test_target_input_pair_rejects_previously_consumed_holdout_dates(self):
+        docs = json.loads(self.ledger_path.read_text(encoding="utf-8"))
+        # This fixture deliberately marks one of the latest conditioning rows
+        # as already consumed, preserving the claim hash/archive binding.
+        rows = sealed.load_archive(self.archive_path)["rows"]
+        latest_prior_date = rows[-2]["date"]
+        docs["entries"][0]["previously_consumed_validation_dates"] = [latest_prior_date]
+        self.ledger_path.write_text(json.dumps(docs), encoding="utf-8")
+        with self.assertRaisesRegex(Exception, "previously consumed holdout row"):
+            evaluate_frozen_target(
+                self.claim["claim_id"], self.attempt_id, self.ledger_path,
+                self.proposals, self.specs, scheduler_state_path=self.state_path,
+                snapshot_directory=self.snapshot_directory,
+            )
+
     def test_snapshot_path_cannot_escape_approved_directory(self):
         doc = json.loads(self.ledger_path.read_text(encoding="utf-8"))
         doc["entries"][0]["archive_snapshot_path"] = "../outside/" + doc["entries"][0]["archive_sha256"] + ".json"
