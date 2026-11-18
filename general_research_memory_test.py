@@ -1091,6 +1091,15 @@ class SealedPlanBindingTests(unittest.TestCase):
             }
             memory._validate_sealed_plan_binding(plan, archive, ledger, claim)
 
+            reused_claim = {
+                "claim_created": False,
+                "claim_reused": True,
+                "claim_id": claim_id,
+                "target_date": archive["last_date"],
+                "archive_sha256": archive["archive_sha256"],
+            }
+            memory._validate_sealed_plan_binding(plan, archive, ledger, reused_claim)
+
             ledger["entries"][0]["previously_consumed_validation_dates"] = []
             with self.assertRaisesRegex(memory.ResearchMemoryError, "archive-derived chronological partition"):
                 memory._validate_sealed_plan_binding(plan, archive, ledger, claim)
@@ -1414,6 +1423,9 @@ class ResearchMemoryWorkflowWiringTests(unittest.TestCase):
         self.assertIn("general_evaluation_snapshots/", workflow)
         self.assertNotIn("git rebase origin/main", workflow)
         self.assertIn("steps.attempt_reservation.outputs.attempt_id != ''", workflow)
+        self.assertIn("python3 general_target_evaluator.py", workflow)
+        self.assertIn("steps.target_evaluation.outcome == 'success'", workflow)
+        self.assertIn("open_research_target_evaluation_report.json", workflow)
 
         memory_step = workflow.index("- name: Append sanitized GENERAL research memory")
         success_step = workflow.index("- name: Record successful evaluation outcome")

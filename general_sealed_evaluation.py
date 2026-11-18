@@ -1065,9 +1065,33 @@ def create_claim(
         and item.get("reverse_spec_sha256") == candidate["reverse_spec_sha256"]
     ), None)
     if completed_match is not None:
-        raise SealedEvaluationError(
-            "This exact directional candidate pair already completed its sealed evaluation; duplicate scoring is forbidden."
-        )
+        # Recovery path: the sealed historical evaluation is already complete,
+        # but a later local hidden-target scoring step may have been interrupted.
+        # Reuse the exact EVALUATED claim, never score its holdouts a second time.
+        return {
+            "status": "ALREADY_EVALUATED_CLAIM",
+            "claim_created": False,
+            "claim_resumed": False,
+            "claim_reused": True,
+            "claim_id": completed_match["claim_id"],
+            "target_date": completed_match["target_date"],
+            "archive_sha256": completed_match["archive_sha256"],
+            "archive_record_count": completed_match["archive_record_count"],
+            "hypothesis_id": completed_match["hypothesis_id"],
+            "spec_sha256": completed_match["spec_sha256"],
+            "execution_spec_dsl_version": completed_match["execution_spec_dsl_version"],
+            "reverse_hypothesis_id": completed_match["reverse_hypothesis_id"],
+            "reverse_spec_sha256": completed_match["reverse_spec_sha256"],
+            "validation_start_date": completed_match["validation_start_date"],
+            "validation_end_date": completed_match["validation_end_date"],
+            "validation_draw_count": completed_match["validation_count"],
+            "reverse_validation_start_date": completed_match["reverse_validation_start_date"],
+            "reverse_validation_end_date": completed_match["reverse_validation_end_date"],
+            "reverse_validation_draw_count": completed_match["reverse_validation_count"],
+            "current_target_included": False,
+            "current_target_numbers_exposed": False,
+            "duplicate_holdout_scoring_performed": False,
+        }
     used_dates = _used_validation_dates(ledger)
     split = split_archive(
         archive["rows"],
@@ -2093,6 +2117,7 @@ def _write_github_output(path: str | None, result: dict[str, Any]) -> None:
     with target.open("a", encoding="utf-8") as stream:
         stream.write("claim_created=" + ("true" if result.get("claim_created") is True else "false") + "\n")
         stream.write("claim_resumed=" + ("true" if result.get("claim_resumed") is True else "false") + "\n")
+        stream.write("claim_reused=" + ("true" if result.get("claim_reused") is True else "false") + "\n")
         if isinstance(result.get("claim_id"), str):
             stream.write("claim_id=" + result["claim_id"] + "\n")
 

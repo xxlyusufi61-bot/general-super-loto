@@ -1,0 +1,64 @@
+name: GENERAL Single Active Target Offline Tests
+
+'on':
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "general_target_queue.py"
+      - "general_target_queue_test.py"
+      - "general_autonomous_research.py"
+      - "general_autonomous_research_test.py"
+      - "general_target_evaluation_ledger.py"
+      - "general_target_evaluation_ledger_test.py"
+      - "general_target_evaluator.py"
+      - "general_target_evaluator_test.py"
+      - "general_sealed_evaluation.py"
+      - "general_sealed_evaluation_test.py"
+      - "general_research_memory.py"
+      - "general_research_memory_test.py"
+      - ".github/workflows/general-autonomous-research.yml"
+      - ".github/workflows/general-single-active-target-test.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  offline-target-lifecycle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Compile target lifecycle and existing isolation modules
+        run: |
+          python3 -m py_compile \
+            general_target_queue.py \
+            general_target_queue_test.py \
+            general_autonomous_research.py \
+            general_autonomous_research_test.py \
+            general_target_evaluation_ledger.py \
+            general_target_evaluation_ledger_test.py \
+            general_target_evaluator.py \
+            general_target_evaluator_test.py \
+            general_sealed_evaluation.py \
+            general_sealed_evaluation_test.py \
+            general_research_memory.py \
+            general_research_memory_test.py
+
+      - name: Run offline target lifecycle, leakage, and persistence tests
+        run: |
+          python3 -m unittest -v \
+            general_target_queue_test \
+            general_autonomous_research_test \
+            general_target_evaluation_ledger_test \
+            general_target_evaluator_test \
+            general_sealed_evaluation_test \
+            general_research_memory_test

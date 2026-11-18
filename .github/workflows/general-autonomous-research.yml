@@ -390,6 +390,22 @@ jobs:
           expected_generation: ${{ steps.persist_claim.outputs.generation }}
           objects: evaluation_ledger
           message: "Record autonomous sealed evaluation completion"
+      - name: Evaluate the hidden current target locally
+        id: target_evaluation
+        if: ${{ (steps.evaluation.outcome == 'success' && steps.persist_eval.outcome == 'success') || steps.sealed_claim.outputs.claim_reused == 'true' }}
+        env:
+          SEALED_CLAIM_ID: ${{ steps.sealed_claim.outputs.claim_id }}
+          ATTEMPT_ID: ${{ steps.attempt_reservation.outputs.attempt_id }}
+        run: |
+          python3 general_target_evaluator.py \
+            --claim-id "$SEALED_CLAIM_ID" \
+            --attempt-id "$ATTEMPT_ID" \
+            --ledger general_evaluation_ledger.json \
+            --proposals open_research_proposals.json \
+            --specs open_research_execution_specs.json \
+            --state general_autonomous_research_state.json \
+            --snapshot-directory general_evaluation_snapshots \
+            --output open_research_target_evaluation_report.json
       - name: Append sanitized GENERAL research memory
         id: research_memory
         if: ${{ always() && steps.attempt_reservation.outputs.attempt_id != '' }}
@@ -397,6 +413,7 @@ jobs:
           CLAIM_OUTCOME: ${{ steps.sealed_claim.outcome }}
           CLAIM_PERSIST_OUTCOME: ${{ steps.persist_claim.outcome }}
           EVALUATION_OUTCOME: ${{ steps.evaluation.outcome }}
+          TARGET_EVALUATION_OUTCOME: ${{ steps.target_evaluation.outcome }}
           RESEARCH_OUTCOME: ${{ steps.research.outcome }}
         run: |
           failure_stage=""
@@ -408,6 +425,8 @@ jobs:
             failure_stage="sealed_claim_persistence"
           elif [ "$EVALUATION_OUTCOME" = "failure" ]; then
             failure_stage="sealed_evaluation"
+          elif [ "$TARGET_EVALUATION_OUTCOME" = "failure" ]; then
+            failure_stage="local_target_evaluation"
           fi
           if python3 general_research_memory.py record-cycle \
             --run-id "$GITHUB_RUN_ID" \
@@ -423,7 +442,7 @@ jobs:
 
       - name: Record successful evaluation outcome
         id: finish_evaluation
-        if: ${{ always() && steps.attempt_reservation.outputs.attempt_id != '' && steps.sealed_claim.outputs.claim_created == 'true' && steps.evaluation.outcome == 'success' && steps.persist_eval.outcome == 'success' && steps.research_memory.outcome == 'success' }}
+        if: ${{ always() && steps.attempt_reservation.outputs.attempt_id != '' && ((steps.sealed_claim.outputs.claim_created == 'true' && steps.evaluation.outcome == 'success' && steps.persist_eval.outcome == 'success') || steps.sealed_claim.outputs.claim_reused == 'true') && steps.target_evaluation.outcome == 'success' && steps.research_memory.outcome == 'success' }}
         env:
           ATTEMPT_ID: ${{ steps.attempt_reservation.outputs.attempt_id }}
         run: |
@@ -434,7 +453,7 @@ jobs:
             --ledger general_evaluation_ledger.json
       - name: Record no-candidate outcome without scoring the archive
         id: finish_no_candidate
-        if: ${{ always() && steps.attempt_reservation.outputs.attempt_id != '' && steps.research.outcome == 'success' && steps.sealed_claim.outcome == 'success' && steps.sealed_claim.outputs.claim_created != 'true' && steps.research_memory.outcome == 'success' }}
+        if: ${{ always() && steps.attempt_reservation.outputs.attempt_id != '' && steps.research.outcome == 'success' && steps.sealed_claim.outcome == 'success' && steps.sealed_claim.outputs.claim_created != 'true' && steps.sealed_claim.outputs.claim_reused != 'true' && steps.research_memory.outcome == 'success' }}
         env:
           ATTEMPT_ID: ${{ steps.attempt_reservation.outputs.attempt_id }}
         run: |
@@ -444,12 +463,16 @@ jobs:
             --reason-code NO_FROZEN_DIRECTIONAL_CANDIDATE
       - name: Record failed claimed cycle
         id: finish_failed
-        if: ${{ always() && steps.attempt_reservation.outputs.attempt_id != '' && (steps.persist_attempt.outcome == 'failure' || steps.persist_claim_snapshot.outcome == 'failure' || steps.research.outcome == 'failure' || steps.sealed_claim.outcome == 'failure' || steps.persist_claim.outcome == 'failure' || steps.evaluation.outcome == 'failure' || steps.persist_eval.outcome == 'failure' || steps.research_memory.outcome == 'failure') }}
+        if: ${{ always() && steps.attempt_reservation.outputs.attempt_id != '' && (steps.persist_attempt.outcome == 'failure' || steps.persist_claim_snapshot.outcome == 'failure' || steps.research.outcome == 'failure' || steps.sealed_claim.outcome == 'failure' || steps.persist_claim.outcome == 'failure' || steps.evaluation.outcome == 'failure' || steps.persist_eval.outcome == 'failure' || steps.target_evaluation.outcome == 'failure' || steps.research_memory.outcome == 'failure' || steps.finish_evaluation.outcome == 'failure' || steps.finish_no_candidate.outcome == 'failure') }}
         env:
           ATTEMPT_ID: ${{ steps.attempt_reservation.outputs.attempt_id }}
           CLAIM_CREATED: ${{ steps.sealed_claim.outputs.claim_created }}
+          CLAIM_REUSED: ${{ steps.sealed_claim.outputs.claim_reused }}
           CLAIM_PERSIST_OUTCOME: ${{ steps.persist_claim.outcome }}
           EVALUATION_OUTCOME: ${{ steps.evaluation.outcome }}
+          TARGET_EVALUATION_OUTCOME: ${{ steps.target_evaluation.outcome }}
+          FINISH_EVALUATION_OUTCOME: ${{ steps.finish_evaluation.outcome }}
+          FINISH_NO_CANDIDATE_OUTCOME: ${{ steps.finish_no_candidate.outcome }}
           RESEARCH_MEMORY_OUTCOME: ${{ steps.research_memory.outcome }}
         run: |
           incomplete_request=false
@@ -470,7 +493,11 @@ jobs:
               fi
             fi
           done
-          if [ "$CLAIM_CREATED" = "true" ] && [ "$CLAIM_PERSIST_OUTCOME" = "success" ] && [ "$EVALUATION_OUTCOME" = "failure" ] && [ "$RESEARCH_MEMORY_OUTCOME" = "success" ]; then
+          if [ "$TARGET_EVALUATION_OUTCOME" = "failure" ] || [ "$FINISH_EVALUATION_OUTCOME" = "failure" ]; then
+            reason_code="SEALED_EVALUATION_INCOMPLETE"
+          elif [ "$FINISH_NO_CANDIDATE_OUTCOME" = "failure" ]; then
+            reason_code="WORKFLOW_FAILED"
+          elif [ "$CLAIM_CREATED" = "true" ] && [ "$CLAIM_PERSIST_OUTCOME" = "success" ] && [ "$EVALUATION_OUTCOME" = "failure" ] && [ "$RESEARCH_MEMORY_OUTCOME" = "success" ]; then
             reason_code="SEALED_EVALUATION_INCOMPLETE"
           elif [ -f "/tmp/general_directional_candidates_incomplete" ]; then
             reason_code="DIRECTIONAL_CANDIDATE_SET_INCOMPLETE"
@@ -513,7 +540,7 @@ jobs:
             --kind research \
             --report-log open_research_evaluation_report.json
       - name: Notify Telegram when no directional DSL candidate was eligible
-        if: ${{ steps.attempt_reservation.outputs.attempt_id != '' && steps.research.outcome == 'success' && steps.sealed_claim.outcome == 'success' && steps.sealed_claim.outputs.claim_created != 'true' && steps.persist_final_state.outcome == 'success' }}
+        if: ${{ steps.attempt_reservation.outputs.attempt_id != '' && steps.research.outcome == 'success' && steps.sealed_claim.outcome == 'success' && steps.sealed_claim.outputs.claim_created != 'true' && steps.sealed_claim.outputs.claim_reused != 'true' && steps.persist_final_state.outcome == 'success' }}
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -551,6 +578,7 @@ jobs:
             open_research_sealed_plan.json
             open_research_evaluation_claim.json
             open_research_evaluation_report.json
+            open_research_target_evaluation_report.json
             open_research_run_status.json
             open_research_retry_audit.json
           if-no-files-found: ignore

@@ -415,7 +415,9 @@ def _validate_sealed_plan_binding(
     )
 
     prior_used_dates = get_used_validation_dates(ledger)
-    if isinstance(claim, dict) and claim.get("claim_created") is True:
+    if isinstance(claim, dict) and (
+        claim.get("claim_created") is True or claim.get("claim_reused") is True
+    ):
         claim_id = claim.get("claim_id")
         if not isinstance(claim_id, str) or not HEX64.fullmatch(claim_id):
             raise ResearchMemoryError("Current sealed claim ID is missing or invalid.")
@@ -1381,7 +1383,9 @@ def record_cycle(
             raise ResearchMemoryError("A directional result requires its verified sealed discovery-window metadata.")
     outcome = "RESEARCH_COMPLETE_UNEVALUATED"
     claim_id = None
-    if isinstance(claim, dict) and claim.get("claim_created") is True:
+    if isinstance(claim, dict) and (
+        claim.get("claim_created") is True or claim.get("claim_reused") is True
+    ):
         claim_id = claim.get("claim_id")
     elif evaluation_report is not None:
         claim_id = evaluation_report.get("claim_id")
@@ -1414,6 +1418,15 @@ def record_cycle(
             outcome = "CLAIMED_EVALUATION_FAILED"
         else:
             raise ResearchMemoryError("Evaluation ledger state is not eligible for memory publication.")
+    elif isinstance(claim, dict) and claim.get("claim_reused") is True:
+        if (
+            ledger_entry is None
+            or ledger_entry.get("state") != "EVALUATED"
+            or ledger_entry.get("archive_sha256") != archive_hash
+            or ledger_entry.get("target_date") != target
+        ):
+            raise ResearchMemoryError("Reused sealed claim is not an exact EVALUATED ledger entry.")
+        outcome = "REUSED_EVALUATED_CLAIM"
     elif isinstance(claim, dict) and claim.get("claim_created") is True:
         if ledger_entry is None or ledger_entry.get("state") not in {"CLAIMED", "EVALUATED"}:
             raise ResearchMemoryError("Claimed holdout is not present in the append-only ledger.")
