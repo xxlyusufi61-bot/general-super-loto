@@ -10,6 +10,11 @@ from general_nvidia_guard import initial_lock_state, make_locked_state, make_unl
 from general_sealed_evaluation_test import write_candidate_documents
 
 
+def append_draws(rows, count):
+    next_date = (date.fromisoformat(rows[-1]["date"]) + timedelta(days=2)).isoformat()
+    return rows + synthetic_rows(count, start=next_date)
+
+
 AUTO_PHRASE = auto.AUTO_CONFIRMATION_PHRASE
 NOW = datetime(2026, 11, 1, 0, 0, tzinfo=timezone.utc)
 
@@ -544,6 +549,14 @@ class AutonomousResearchStateTests(unittest.TestCase):
         state["attempts"].append(first)
         report = self._safe_local_target_report(first)
         saved = auto.record_target_evaluation(state, report)
+        # The prior evaluated package is terminal before a later attempt is
+        # represented. This keeps the retry history internally consistent.
+        saved["events"].append({
+            "attempt_id": first["attempt_id"],
+            "outcome": "SUCCEEDED",
+            "recorded_at_utc": NOW.isoformat(),
+            "reason_code": "EVALUATION_COMPLETED",
+        })
 
         second = dict(first)
         second["attempt_id"] = "1" * 64

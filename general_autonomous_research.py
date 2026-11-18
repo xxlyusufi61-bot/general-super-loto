@@ -1128,8 +1128,10 @@ def prepare_cycle(
         "status": "READY",
         "eligible": True,
         "target_date": target_date,
-        "archive_sha256": archive["archive_sha256"],
-        "archive_record_count": archive["record_count"],
+        # Attempts and evaluation claims bind to the canonical immutable
+        # active snapshot, not to the byte representation of the source archive.
+        "archive_sha256": active_item["archive_sha256"],
+        "archive_record_count": active_item["archive_record_count"],
         "pre_target_draw_count": plan["pre_target_draw_count"],
         "discovery_count": discovery_count,
         "forward_validation_count": forward_count,

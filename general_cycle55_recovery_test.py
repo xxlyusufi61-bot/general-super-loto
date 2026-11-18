@@ -181,7 +181,7 @@ class Cycle55RecoveryTests(unittest.TestCase):
 
     def test_recovery_archives_false_terminal_records_and_restores_exact_fifo_snapshot(self):
         recovered = self.recover()
-        self.assertEqual(recovered["schema_version"], 5)
+        self.assertEqual(recovered["schema_version"], 6)
         self.assertEqual(recovered["events"][-1]["outcome"], "FAILED")
         self.assertEqual(recovered["events"][-1]["reason_code"], "WORKFLOW_FAILED")
         self.assertEqual(
@@ -269,7 +269,7 @@ class Cycle55RecoveryTests(unittest.TestCase):
             )
             lock.write_text(json.dumps(general_nvidia_guard.initial_lock_state()), encoding="utf-8")
             with self.assertRaisesRegex(
-                autonomous.AutonomousResearchError, "immutable FIFO head snapshot"
+                autonomous.AutonomousResearchError, "immutable active-target snapshot"
             ):
                 autonomous.prepare_cycle(
                     recovered,
@@ -384,7 +384,7 @@ class Cycle55RecoveryTests(unittest.TestCase):
                 )
                 self.assertTrue(output_path.exists())
                 self.assertEqual(result["status"], "LOCAL_RECOVERY_PREVIEW_CREATED")
-                self.assertEqual(result["schema_version"], 5)
+                self.assertEqual(result["schema_version"], 6)
                 self.assertFalse(result["production_state_written"])
                 self.assertEqual(current_path.read_bytes(), current_raw)
                 self.assertEqual(source_path.read_bytes(), source_raw)
