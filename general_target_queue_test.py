@@ -3,7 +3,6 @@ import hashlib
 import json
 import tempfile
 import unittest
-import zlib
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -33,8 +32,13 @@ def write_archive(path, rows):
     )
 
 
-class DurableTargetQueueTests(unittest.TestCase):
-    def test_bootstrap_queues_only_current_latest_target_then_captures_every_intermediate_draw(self):
+def append_draws(rows, count):
+    start = (date.fromisoformat(rows[-1]["date"]) + timedelta(days=2)).isoformat()
+    return rows + synthetic_rows(count, start=start)
+
+
+class SingleActiveTargetQueueTests(unittest.TestCase):
+    def test_bootstrap_and_archive_growth_keep_only_latest_target(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             archive = root / "archive.json"
@@ -45,56 +49,161 @@ class DurableTargetQueueTests(unittest.TestCase):
                 queue.initial_queue(), archive_path=archive,
                 attempts=[], events=[], now=NOW,
             )
-            self.assertTrue(summary["changed"])
+            self.assertEqual(initial["schema_version"], 2)
             self.assertEqual(summary["pending_target_count"], 1)
-            self.assertEqual(initial["items"][0]["target_date"], rows[-1]["date"])
-            self.assertEqual(initial["observed_through_date"], rows[-1]["date"])
+            self.assertEqual(initial["active"]["target_date"], rows[-1]["date"])
+            self.assertEqual(initial["latest_snapshot"]["target_date"], rows[-1]["date"])
+            self.assertEqual(initial["completed"], [])
 
-            rows.extend(synthetic_rows(2, start=(date.fromisoformat(rows[-1]["date"]) + timedelta(days=2)).isoformat()))
-            write_archive(archive, rows)
+            grown = append_draws(rows, 2)
+            write_archive(archive, grown)
             updated, summary = queue.capture_new_targets(
-                initial, archive_path=archive,
-                attempts=[], events=[], now=NOW + timedelta(hours=1),
+                initial, archive_path=archive, attempts=[], events=[],
+                now=NOW + timedelta(hours=1),
             )
-            self.assertEqual(summary["pending_target_count"], 3)
-            self.assertEqual(
-                [item["target_date"] for item in updated["items"]],
-                [row["date"] for row in rows[-3:]],
-            )
-            self.assertEqual(updated["observed_through_date"], rows[-1]["date"])
+            self.assertEqual(updated["active"]["target_date"], grown[-1]["date"])
+            self.assertEqual(updated["latest_snapshot"]["target_date"], grown[-1]["date"])
+            self.assertEqual(summary["pending_target_count"], 1)
+            self.assertEqual(summary["intermediate_draws_promoted_as_targets"], False)
+            self.assertEqual(updated["completed"], [])
 
             unchanged, summary = queue.capture_new_targets(
-                updated, archive_path=archive,
-                attempts=[], events=[], now=NOW + timedelta(hours=2),
+                updated, archive_path=archive, attempts=[], events=[],
+                now=NOW + timedelta(hours=2),
             )
             self.assertFalse(summary["changed"])
             self.assertEqual(unchanged, updated)
 
-    def test_materialize_returns_only_fifo_head_snapshot_and_validates_hash(self):
+    def test_in_progress_or_failed_target_is_preserved_while_latest_is_staged(self):
+        for outcome in ("IN_PROGRESS", "FAILED"):
+            with self.subTest(outcome=outcome), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                archive = root / "archive.json"
+                original_rows = synthetic_rows(90)
+                write_archive(archive, original_rows)
+                initial, _ = queue.capture_new_targets(
+                    queue.initial_queue(), archive_path=archive,
+                    attempts=[], events=[], now=NOW,
+                )
+                active = initial["active"]
+                attempt = {
+                    "attempt_id": "a" * 64,
+                    "target_date": active["target_date"],
+                    "archive_sha256": active["archive_sha256"],
+                    "archive_record_count": active["archive_record_count"],
+                    "claimed_at_utc": NOW.isoformat(),
+                    "github_run_id": "1234",
+                }
+                events = []
+                if outcome == "FAILED":
+                    events.append({
+                        "attempt_id": attempt["attempt_id"],
+                        "outcome": "FAILED",
+                        "recorded_at_utc": (NOW + timedelta(minutes=1)).isoformat(),
+                        "reason_code": "NO_PROVIDER_REQUEST_SENT",
+                    })
+                grown = append_draws(original_rows, 2)
+                write_archive(archive, grown)
+
+                updated, summary = queue.capture_new_targets(
+                    initial, archive_path=archive, attempts=[attempt],
+                    events=events, now=NOW + timedelta(hours=1),
+                )
+                self.assertEqual(updated["active"]["target_date"], active["target_date"])
+                self.assertEqual(updated["active"]["archive_sha256"], active["archive_sha256"])
+                self.assertEqual(updated["latest_snapshot"]["target_date"], grown[-1]["date"])
+                self.assertEqual(updated["completed"], [])
+                self.assertEqual(summary["active_target_date"], active["target_date"])
+
+                workspace_archive = root / "active-archive.json"
+                materialized = queue.materialize_front(updated, workspace_archive)
+                loaded = queue.sealed.load_archive(workspace_archive)
+                self.assertEqual(materialized["target_date"], active["target_date"])
+                self.assertEqual(loaded["last_date"], active["target_date"])
+                self.assertEqual(loaded["record_count"], len(original_rows))
+
+    def test_successful_package_is_archived_then_latest_target_is_promoted(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             archive = root / "archive.json"
-            output = root / "workspace-archive.json"
-            rows = synthetic_rows(90)
-            write_archive(archive, rows)
-            first, _ = queue.capture_new_targets(
+            original_rows = synthetic_rows(90)
+            write_archive(archive, original_rows)
+            initial, _ = queue.capture_new_targets(
                 queue.initial_queue(), archive_path=archive,
                 attempts=[], events=[], now=NOW,
             )
-            rows.extend(synthetic_rows(2, start=(date.fromisoformat(rows[-1]["date"]) + timedelta(days=2)).isoformat()))
-            write_archive(archive, rows)
-            populated, _ = queue.capture_new_targets(
-                first, archive_path=archive, attempts=[], events=[], now=NOW,
+            active = initial["active"]
+            attempt = {
+                "attempt_id": "b" * 64,
+                "target_date": active["target_date"],
+                "archive_sha256": active["archive_sha256"],
+                "archive_record_count": active["archive_record_count"],
+                "claimed_at_utc": NOW.isoformat(),
+                "github_run_id": "1235",
+            }
+            events = [{
+                "attempt_id": attempt["attempt_id"],
+                "outcome": "SUCCEEDED",
+                "recorded_at_utc": (NOW + timedelta(minutes=1)).isoformat(),
+                "reason_code": "EVALUATION_COMPLETED",
+            }]
+            grown = append_draws(original_rows, 3)
+            write_archive(archive, grown)
+            updated, summary = queue.capture_new_targets(
+                initial, archive_path=archive, attempts=[attempt],
+                events=events, now=NOW + timedelta(hours=1),
             )
-            result = queue.materialize_front(populated, output)
-            self.assertEqual(result["target_date"], rows[-3]["date"])
-            self.assertEqual(result["archive_record_count"], len(rows) - 2)
-            loaded = queue.sealed.load_archive(output)
-            self.assertEqual(loaded["last_date"], rows[-3]["date"])
-            self.assertEqual(loaded["record_count"], len(rows) - 2)
-            self.assertNotEqual(loaded["last_date"], rows[-1]["date"])
+            self.assertEqual(updated["active"]["target_date"], grown[-1]["date"])
+            self.assertEqual(updated["completed"][0]["target_date"], active["target_date"])
+            self.assertEqual(updated["completed"][0]["outcome"], "EVALUATED")
+            self.assertEqual(summary["pending_target_count"], 1)
 
-    def test_only_matching_terminal_outcome_releases_fifo_head(self):
+    def test_success_and_no_candidate_keep_same_target_active_until_new_draw(self):
+        for outcome, reason in (
+            ("SUCCEEDED", "EVALUATION_COMPLETED"),
+            ("NO_ELIGIBLE_CANDIDATE", "NO_FROZEN_DIRECTIONAL_CANDIDATE"),
+        ):
+            with self.subTest(outcome=outcome), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                archive = root / "archive.json"
+                rows = synthetic_rows(90)
+                write_archive(archive, rows)
+                initial, _ = queue.capture_new_targets(
+                    queue.initial_queue(), archive_path=archive,
+                    attempts=[], events=[], now=NOW,
+                )
+                active = initial["active"]
+                attempt = {
+                    "attempt_id": "c" * 64,
+                    "target_date": active["target_date"],
+                    "archive_sha256": active["archive_sha256"],
+                    "archive_record_count": active["archive_record_count"],
+                    "claimed_at_utc": NOW.isoformat(),
+                    "github_run_id": "1236",
+                }
+                events = [{
+                    "attempt_id": attempt["attempt_id"],
+                    "outcome": outcome,
+                    "recorded_at_utc": (NOW + timedelta(minutes=1)).isoformat(),
+                    "reason_code": reason,
+                }]
+                unchanged_target, _ = queue.capture_new_targets(
+                    initial, archive_path=archive, attempts=[attempt],
+                    events=events, now=NOW + timedelta(hours=1),
+                )
+                self.assertEqual(unchanged_target["active"]["target_date"], active["target_date"])
+                self.assertEqual(unchanged_target["completed"], [])
+
+                grown = append_draws(rows, 1)
+                write_archive(archive, grown)
+                promoted, _ = queue.capture_new_targets(
+                    unchanged_target, archive_path=archive, attempts=[attempt],
+                    events=events, now=NOW + timedelta(hours=2),
+                )
+                self.assertEqual(promoted["active"]["target_date"], grown[-1]["date"])
+                self.assertEqual(promoted["completed"][0]["target_date"], active["target_date"])
+
+    def test_only_exact_evaluated_completion_or_ten_failed_attempts_release_active_target(self):
         rows = synthetic_rows(90)
         raw = queue._snapshot_bytes(rows)
         item = queue._make_item(
@@ -102,91 +211,56 @@ class DurableTargetQueueTests(unittest.TestCase):
             enqueued_at_utc=NOW.isoformat(),
         )
         q = {
-            "schema_version": 1,
+            "schema_version": 2,
             "observed_through_date": rows[-1]["date"],
-            "items": [item],
+            "active": item,
+            "latest_snapshot": copy.deepcopy(item),
             "completed": [],
         }
         with self.assertRaisesRegex(queue.TargetQueueError, "Only an EVALUATED"):
             queue.complete_front(
-                q, target_date=rows[-1]["date"], archive_sha256=hashlib.sha256(raw).hexdigest(),
-                archive_record_count=len(rows), outcome="FAILED", now=NOW,
-            )
-        with self.assertRaisesRegex(queue.TargetQueueError, "Only an EVALUATED"):
-            queue.complete_front(
                 q, target_date=rows[-1]["date"], archive_sha256=item["archive_sha256"],
-                archive_record_count=len(rows), outcome="NO_ELIGIBLE_CANDIDATE", now=NOW,
-            )
-        with self.assertRaisesRegex(queue.TargetQueueError, "does not match"):
-            queue.complete_front(
-                q, target_date=rows[-2]["date"], archive_sha256=item["archive_sha256"],
-                archive_record_count=len(rows), outcome="EVALUATED", now=NOW,
+                archive_record_count=len(rows), outcome="FAILED", now=NOW,
             )
         completed = queue.complete_front(
             q, target_date=rows[-1]["date"], archive_sha256=item["archive_sha256"],
             archive_record_count=len(rows), outcome="EVALUATED", now=NOW,
         )
-        self.assertEqual(completed["items"], [])
-        self.assertEqual(completed["completed"][0]["target_date"], rows[-1]["date"])
+        self.assertIsNone(completed["active"])
         self.assertEqual(completed["completed"][0]["outcome"], "EVALUATED")
 
-        with self.assertRaisesRegex(queue.TargetQueueError, "fully failed attempts"):
+        with self.assertRaisesRegex(queue.TargetQueueError, "exactly ten failed attempts"):
             queue.retire_exhausted_front(
                 q, target_date=rows[-1]["date"], archive_sha256=item["archive_sha256"],
-                archive_record_count=len(rows), attempt_count=3, failed_event_count=2, now=NOW,
+                archive_record_count=len(rows), failed_attempt_count=9, now=NOW,
             )
-        exhausted = queue.retire_exhausted_front(
+        retired = queue.retire_exhausted_front(
             q, target_date=rows[-1]["date"], archive_sha256=item["archive_sha256"],
-            archive_record_count=len(rows), attempt_count=3, failed_event_count=3, now=NOW,
+            archive_record_count=len(rows), failed_attempt_count=10, now=NOW,
         )
-        self.assertEqual(exhausted["items"], [])
-        self.assertEqual(exhausted["completed"][0]["outcome"], "EXHAUSTED_RETRY_BUDGET")
-        self.assertEqual(len(q["items"]), 1, "input queue must remain immutable")
+        self.assertIsNone(retired["active"])
+        self.assertEqual(retired["completed"][0]["outcome"], "EXHAUSTED_RETRY_BUDGET")
+        self.assertEqual(len(q["completed"]), 0, "input queue must remain immutable")
 
-    def test_archive_mutation_under_pending_snapshot_fails_closed_without_changing_queue(self):
+    def test_archive_mutation_under_active_or_latest_snapshot_fails_closed(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             archive = root / "archive.json"
             rows = synthetic_rows(90)
             write_archive(archive, rows)
-            q, _ = queue.capture_new_targets(
+            initial, _ = queue.capture_new_targets(
                 queue.initial_queue(), archive_path=archive,
                 attempts=[], events=[], now=NOW,
             )
-            original = copy.deepcopy(q)
             changed = copy.deepcopy(rows)
             changed[10]["numbers"] = sorted([1, 2, 3, 4, 5, 7])
             write_archive(archive, changed)
+            before = copy.deepcopy(initial)
             with self.assertRaisesRegex(queue.TargetQueueError, "changed beneath"):
                 queue.capture_new_targets(
-                    q, archive_path=archive, attempts=[], events=[], now=NOW,
+                    initial, archive_path=archive, attempts=[], events=[], now=NOW,
                 )
-            self.assertEqual(q, original)
-
-    def test_capacity_failure_does_not_advance_cursor_or_drop_targets(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            archive = root / "archive.json"
-            rows = synthetic_rows(90)
-            write_archive(archive, rows)
-            q, _ = queue.capture_new_targets(
-                queue.initial_queue(), archive_path=archive,
-                attempts=[], events=[], now=NOW,
-            )
-            original_cursor = q["observed_through_date"]
-            rows.extend(synthetic_rows(2, start=(date.fromisoformat(rows[-1]["date"]) + timedelta(days=2)).isoformat()))
-            write_archive(archive, rows)
-            prior_limit = queue.MAX_PENDING_TARGETS
-            try:
-                queue.MAX_PENDING_TARGETS = 1
-                with self.assertRaisesRegex(queue.TargetQueueError, "capacity reached"):
-                    queue.capture_new_targets(
-                        q, archive_path=archive, attempts=[], events=[], now=NOW,
-                    )
-            finally:
-                queue.MAX_PENDING_TARGETS = prior_limit
-            self.assertEqual(q["observed_through_date"], original_cursor)
-            self.assertEqual(len(q["items"]), 1)
+            self.assertEqual(initial, before)
 
     def test_snapshot_payload_tampering_and_duplicate_json_keys_are_rejected(self):
         rows = synthetic_rows(90)
@@ -198,45 +272,50 @@ class DurableTargetQueueTests(unittest.TestCase):
         bad["snapshot_zlib_base64"] = bad["snapshot_zlib_base64"][:-4] + "AAAA"
         with self.assertRaises(queue.TargetQueueError):
             queue._decode_item(bad)
-
-        duplicate = b'{"draws":[],"draws":[]}'
         with self.assertRaisesRegex(queue.TargetQueueError, "Duplicate JSON key"):
-            queue._strict_json_loads(duplicate)
+            queue._strict_json_loads(b'{"draws":[],"draws":[]}')
 
-    def test_legacy_active_attempt_is_queued_only_when_snapshot_identity_is_proven(self):
+    def test_legacy_fifo_migration_preserves_first_unfinished_target_only(self):
+        rows = synthetic_rows(90)
+        legacy_items = [
+            queue._make_item(
+                rows[:index + 1],
+                source_archive_sha256=("c" * 63) + str(index % 10),
+                enqueued_at_utc=NOW.isoformat(),
+            )
+            for index in range(87, 90)
+        ]
+        legacy = {
+            "schema_version": 1,
+            "observed_through_date": rows[-1]["date"],
+            "items": legacy_items,
+            "completed": [],
+        }
+        attempt = {
+            "attempt_id": "d" * 64,
+            "target_date": legacy_items[0]["target_date"],
+            "archive_sha256": legacy_items[0]["archive_sha256"],
+            "archive_record_count": legacy_items[0]["archive_record_count"],
+            "claimed_at_utc": NOW.isoformat(),
+            "github_run_id": "1237",
+        }
+        event = {
+            "attempt_id": attempt["attempt_id"],
+            "outcome": "FAILED",
+            "recorded_at_utc": (NOW + timedelta(minutes=1)).isoformat(),
+            "reason_code": "NO_PROVIDER_REQUEST_SENT",
+        }
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            archive = root / "archive.json"
-            rows = synthetic_rows(90)
-            # Legacy attempts hash the original pretty-printed archive document,
-            # not the compact canonical FIFO snapshot representation.
-            legacy_raw = (
-                json.dumps({"source": "legacy-fixture", "draws": rows},
-                           ensure_ascii=False, indent=2).encode("utf-8") + b"\n"
+            archive = Path(directory) / "archive.json"
+            write_archive(archive, rows)
+            migrated, _ = queue.capture_new_targets(
+                legacy, archive_path=archive, attempts=[attempt],
+                events=[event], now=NOW + timedelta(hours=1),
             )
-            archive.write_bytes(legacy_raw)
-            attempt = {
-                "attempt_id": "c" * 64,
-                "target_date": rows[-1]["date"],
-                "archive_sha256": hashlib.sha256(legacy_raw).hexdigest(),
-                "archive_record_count": len(rows),
-                "claimed_at_utc": NOW.isoformat(),
-                "github_run_id": "123",
-            }
-            q, summary = queue.capture_new_targets(
-                queue.initial_queue(), archive_path=archive,
-                attempts=[attempt], events=[], now=NOW,
-            )
-            self.assertTrue(summary["has_pending"])
-            self.assertEqual(q["items"][0]["target_date"], rows[-1]["date"])
-
-            unproven = copy.deepcopy(attempt)
-            unproven["archive_sha256"] = "d" * 64
-            with self.assertRaisesRegex(queue.TargetQueueError, "cannot be proven"):
-                queue.capture_new_targets(
-                    queue.initial_queue(), archive_path=archive,
-                    attempts=[unproven], events=[], now=NOW,
-                )
+        self.assertEqual(migrated["schema_version"], 2)
+        self.assertEqual(migrated["active"]["target_date"], legacy_items[0]["target_date"])
+        self.assertEqual(migrated["latest_snapshot"]["target_date"], rows[-1]["date"])
+        self.assertEqual(migrated["completed"], [])
 
 
 if __name__ == "__main__":

@@ -374,6 +374,220 @@ class AutonomousResearchStateTests(unittest.TestCase):
             with self.assertRaisesRegex(auto.AutonomousResearchError, "ten-attempt limit"):
                 auto.validate_state(state)
 
+    def _safe_local_target_report(self, attempt):
+        return {
+            "status": "LOCAL_TARGET_EVALUATION_COMPLETED",
+            "claim_id": "9" * 64,
+            "attempt_id": attempt["attempt_id"],
+            "target_date": attempt["target_date"],
+            "archive_sha256": attempt["archive_sha256"],
+            "archive_record_count": attempt["archive_record_count"],
+            "forward_hypothesis_id": "HYP-901",
+            "forward_spec_sha256": "8" * 64,
+            "execution_spec_dsl_version": 2,
+            "candidate_count": 6,
+            "hit_count": 2,
+            "uniform_random_expected_hits_out_of_6": 0.6,
+            "evaluation_scope": "ONE_CURRENT_HIDDEN_TARGET",
+            "prior_draws_used_only_as_conditioning_context": True,
+            "prior_holdouts_reused_as_evaluation_targets": False,
+            "prior_draws_reused_for_discovery_or_tuning": False,
+            "target_numbers_exposed": False,
+            "target_numbers_reported": False,
+            "candidate_numbers_exposed": False,
+            "candidate_numbers_reported": False,
+            "predicted_number_values_reported": False,
+            "per_number_matches_reported": False,
+            "target_values_sent_to_model": False,
+            "target_score_sent_to_model": False,
+            "target_score_saved_to_research_memory": False,
+            "reverse_spec_used_for_prediction": False,
+            "live_hosted_model_request_made": False,
+            "telegram_request_made": False,
+            "method_registry_modified": False,
+            "completed_at_utc": NOW.isoformat(),
+        }
+
+    def test_ten_successful_research_packages_do_not_consume_failed_attempt_budget(self):
+        state = active_state()
+        for index in range(12):
+            attempt_id = format(index + 1, "x") * 64
+            claimed = NOW + timedelta(minutes=index * 2)
+            state["attempts"].append({
+                "attempt_id": attempt_id,
+                "target_date": "2026-10-29",
+                "archive_sha256": "a" * 64,
+                "archive_record_count": 978,
+                "claimed_at_utc": claimed.isoformat(),
+                "github_run_id": str(8400 + index),
+            })
+            state["events"].append({
+                "attempt_id": attempt_id,
+                "outcome": "SUCCEEDED",
+                "recorded_at_utc": (claimed + timedelta(minutes=1)).isoformat(),
+                "reason_code": "EVALUATION_COMPLETED",
+            })
+        auto.validate_state(state)
+        self.assertEqual(
+            sum(1 for event in state["events"] if event["outcome"] == "FAILED"),
+            0,
+        )
+
+    def test_retry_limit_is_enforced_after_ten_failures_even_if_last_package_succeeded(self):
+        rows = synthetic_rows(90)
+        item = auto.target_queue._make_item(
+            rows, source_archive_sha256="4" * 64,
+            enqueued_at_utc=NOW.isoformat(),
+        )
+        state = active_state()
+        state["target_queue"] = {
+            "schema_version": 2,
+            "observed_through_date": rows[-1]["date"],
+            "active": item,
+            "latest_snapshot": item,
+            "completed": [],
+        }
+        for index in range(auto.MAX_ATTEMPTS_PER_TARGET + 1):
+            attempt_id = format(index + 1, "x") * 64
+            claimed = NOW + timedelta(minutes=index * 2)
+            state["attempts"].append({
+                "attempt_id": attempt_id,
+                "target_date": item["target_date"],
+                "archive_sha256": item["archive_sha256"],
+                "archive_record_count": item["archive_record_count"],
+                "claimed_at_utc": claimed.isoformat(),
+                "github_run_id": str(8500 + index),
+            })
+            outcome = "FAILED" if index < auto.MAX_ATTEMPTS_PER_TARGET else "SUCCEEDED"
+            state["events"].append({
+                "attempt_id": attempt_id,
+                "outcome": outcome,
+                "recorded_at_utc": (claimed + timedelta(minutes=1)).isoformat(),
+                "reason_code": (
+                    "NO_PROVIDER_REQUEST_SENT" if outcome == "FAILED"
+                    else "EVALUATION_COMPLETED"
+                ),
+            })
+        auto.validate_state(state)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root / "archive.json"
+            ledger = root / "ledger.json"
+            lock = root / "lock.json"
+            archive.write_bytes(auto.target_queue._snapshot_bytes(rows))
+            ledger.write_text(
+                json.dumps({"schema_version": 1, "purpose": "test", "entries": []}),
+                encoding="utf-8",
+            )
+            lock.write_text(json.dumps(initial_lock_state()), encoding="utf-8")
+            result = auto.prepare_cycle(
+                state, archive_path=archive, ledger_path=ledger,
+                global_lock_path=lock, now=NOW + timedelta(hours=1),
+            )
+        self.assertFalse(result["eligible"])
+        self.assertEqual(result["status"], "TARGET_RETRY_LIMIT_REACHED")
+
+    def test_private_local_target_result_is_bound_and_idempotently_preserved(self):
+        rows = synthetic_rows(90)
+        item = auto.target_queue._make_item(
+            rows, source_archive_sha256="8" * 64,
+            enqueued_at_utc=NOW.isoformat(),
+        )
+        state = active_state()
+        state["target_queue"] = {
+            "schema_version": 2,
+            "observed_through_date": rows[-1]["date"],
+            "active": item,
+            "latest_snapshot": item,
+            "completed": [],
+        }
+        attempt = {
+            "attempt_id": "7" * 64,
+            "target_date": item["target_date"],
+            "archive_sha256": item["archive_sha256"],
+            "archive_record_count": item["archive_record_count"],
+            "claimed_at_utc": NOW.isoformat(),
+            "github_run_id": "99123",
+        }
+        state["attempts"].append(attempt)
+        report = self._safe_local_target_report(attempt)
+        updated = auto.record_target_evaluation(state, report)
+        self.assertEqual(len(updated["target_evaluations"]), 1)
+        self.assertEqual(updated["target_evaluations"][0]["hit_count"], 2)
+        self.assertNotIn("numbers", updated["target_evaluations"][0])
+        self.assertNotIn("candidate_numbers", updated["target_evaluations"][0])
+        again = auto.record_target_evaluation(updated, report)
+        self.assertEqual(len(again["target_evaluations"]), 1)
+
+    def test_private_target_result_can_be_recovered_under_later_attempt_without_duplicate_entry(self):
+        rows = synthetic_rows(90)
+        item = auto.target_queue._make_item(
+            rows, source_archive_sha256="3" * 64,
+            enqueued_at_utc=NOW.isoformat(),
+        )
+        state = active_state()
+        state["target_queue"] = {
+            "schema_version": 2,
+            "observed_through_date": rows[-1]["date"],
+            "active": item,
+            "latest_snapshot": item,
+            "completed": [],
+        }
+        first = {
+            "attempt_id": "2" * 64,
+            "target_date": item["target_date"],
+            "archive_sha256": item["archive_sha256"],
+            "archive_record_count": item["archive_record_count"],
+            "claimed_at_utc": NOW.isoformat(),
+            "github_run_id": "99125",
+        }
+        state["attempts"].append(first)
+        report = self._safe_local_target_report(first)
+        saved = auto.record_target_evaluation(state, report)
+
+        second = dict(first)
+        second["attempt_id"] = "1" * 64
+        second["claimed_at_utc"] = (NOW + timedelta(minutes=1)).isoformat()
+        second["github_run_id"] = "99126"
+        saved["attempts"].append(second)
+        replay = self._safe_local_target_report(second)
+        replay["completed_at_utc"] = (NOW + timedelta(minutes=1)).isoformat()
+        recovered = auto.record_target_evaluation(saved, replay)
+        self.assertEqual(len(recovered["target_evaluations"]), 1)
+        self.assertEqual(recovered["target_evaluations"][0]["attempt_id"], first["attempt_id"])
+
+    def test_private_local_target_result_rejects_target_data_and_wrong_attempt(self):
+        rows = synthetic_rows(90)
+        item = auto.target_queue._make_item(
+            rows, source_archive_sha256="6" * 64,
+            enqueued_at_utc=NOW.isoformat(),
+        )
+        state = active_state()
+        state["target_queue"] = {
+            "schema_version": 2,
+            "observed_through_date": rows[-1]["date"],
+            "active": item,
+            "latest_snapshot": item,
+            "completed": [],
+        }
+        attempt = {
+            "attempt_id": "5" * 64,
+            "target_date": item["target_date"],
+            "archive_sha256": item["archive_sha256"],
+            "archive_record_count": item["archive_record_count"],
+            "claimed_at_utc": NOW.isoformat(),
+            "github_run_id": "99124",
+        }
+        state["attempts"].append(attempt)
+        report = self._safe_local_target_report(attempt)
+        report["target_numbers_exposed"] = True
+        with self.assertRaisesRegex(auto.AutonomousResearchError, "safety flags"):
+            auto.record_target_evaluation(state, report)
+        report = self._safe_local_target_report(attempt)
+        report["attempt_id"] = "4" * 64
+        with self.assertRaisesRegex(auto.AutonomousResearchError, "does not match"):
+            auto.record_target_evaluation(state, report)
+
     def test_successful_target_cannot_be_recorded_without_exact_evaluated_ledger(self):
         state = active_state()
         attempt_id = "e" * 64
@@ -796,6 +1010,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
         state.pop("recovery_history")
         state.pop("manual_retry_history")
         state.pop("workflow_retry_history")
+        state.pop("target_evaluations")
         state["schema_version"] = 1
         state["attempts"].append({
             "attempt_id": "e" * 64,
@@ -806,8 +1021,9 @@ class AutonomousResearchStateTests(unittest.TestCase):
             "github_run_id": "98765",
         })
         upgraded = auto.validate_state(state)
-        self.assertEqual(upgraded["schema_version"], 5)
+        self.assertEqual(upgraded["schema_version"], 6)
         self.assertEqual(upgraded["workflow_retry_history"], [])
+        self.assertEqual(upgraded["target_evaluations"], [])
         self.assertEqual(upgraded["target_queue"], auto.target_queue.initial_queue())
         self.assertEqual(upgraded["recovery_history"], [])
         self.assertEqual(upgraded["attempts"][0]["attempt_id"], "e" * 64)

@@ -233,14 +233,19 @@ class SealedEvaluationTests(unittest.TestCase):
         )
         self.assertEqual(evaluated["status"], "EVALUATED_EXPLORATORY_FIXED_SPEC")
         self.assertIsNone(sealed.pending_claim_for_archive(self.archive_path, self.ledger_path))
-        with self.assertRaisesRegex(sealed.SealedEvaluationError, "already completed"):
-            sealed.create_claim(
-                self.archive_path,
-                self.ledger_path,
-                proposals,
-                specs,
-                snapshot_directory=self.snapshot_directory,
-            )
+        reused = sealed.create_claim(
+            self.archive_path,
+            self.ledger_path,
+            proposals,
+            specs,
+            snapshot_directory=self.snapshot_directory,
+        )
+        self.assertEqual(reused["status"], "ALREADY_EVALUATED_CLAIM")
+        self.assertIs(reused["claim_created"], False)
+        self.assertIs(reused["claim_reused"], True)
+        self.assertEqual(reused["claim_id"], first["claim_id"])
+        self.assertIs(reused["duplicate_holdout_scoring_performed"], False)
+        self.assertEqual(len(sealed.load_ledger(self.ledger_path)["entries"]), 1)
 
     def test_legacy_pending_claim_replays_partition_v1_and_rechecks_v2_adjacency(self):
         proposals, specs = write_candidate_documents(self.root)

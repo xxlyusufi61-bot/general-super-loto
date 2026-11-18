@@ -18,6 +18,7 @@ from typing import Any
 import general_sealed_evaluation as sealed
 from general_nvidia_guard import validate_lock_state
 import general_target_queue as target_queue
+import general_target_evaluation_ledger as target_evaluation_ledger
 
 VERSION = "0.2.0"
 PROJECT = "GENERAL Super Loto"
@@ -124,7 +125,7 @@ def _is_sha256(value: Any) -> bool:
 
 def initial_state() -> dict[str, Any]:
     return {
-        "schema_version": 5,
+        "schema_version": 6,
         "project": PROJECT,
         "authorization": {
             "enabled": False,
@@ -141,6 +142,7 @@ def initial_state() -> dict[str, Any]:
         "recovery_history": [],
         "manual_retry_history": [],
         "workflow_retry_history": [],
+        "target_evaluations": [],
     }
 
 
@@ -149,6 +151,7 @@ def validate_state(value: Any) -> dict[str, Any]:
     legacy_v2_keys = legacy_v1_keys | {"target_queue"}
     legacy_v3_keys = legacy_v2_keys | {"recovery_history"}
     legacy_v4_keys = legacy_v3_keys | {"manual_retry_history"}
+    legacy_v5_keys = legacy_v4_keys | {"workflow_retry_history"}
     if isinstance(value, dict) and set(value) == legacy_v1_keys and value.get("schema_version") == 1:
         value["schema_version"] = 5
         value["target_queue"] = target_queue.initial_queue()
@@ -167,13 +170,16 @@ def validate_state(value: Any) -> dict[str, Any]:
     elif isinstance(value, dict) and set(value) == legacy_v4_keys and value.get("schema_version") == 4:
         value["schema_version"] = 5
         value["workflow_retry_history"] = []
+    if isinstance(value, dict) and set(value) == legacy_v5_keys and value.get("schema_version") == 5:
+        value["schema_version"] = 6
+        value["target_evaluations"] = []
     if not isinstance(value, dict) or set(value) != {
         "schema_version", "project", "authorization", "attempts", "events",
         "target_queue", "recovery_history", "manual_retry_history",
-        "workflow_retry_history"
+        "workflow_retry_history", "target_evaluations"
     }:
         raise AutonomousResearchError("Autonomous scheduler state has an invalid schema.")
-    if type(value.get("schema_version")) is not int or value["schema_version"] != 5:
+    if type(value.get("schema_version")) is not int or value["schema_version"] != 6:
         raise AutonomousResearchError("Unsupported autonomous scheduler state schema version.")
     try:
         target_queue.validate_queue(value["target_queue"])
@@ -264,6 +270,28 @@ def validate_state(value: Any) -> dict[str, Any]:
         terminal_attempts.add(event["attempt_id"])
 
     event_by_attempt = {event["attempt_id"]: event for event in events}
+
+    target_evaluations = value.get("target_evaluations")
+    if not isinstance(target_evaluations, list) or len(target_evaluations) > 100_000:
+        raise AutonomousResearchError("Private local target-evaluation history is not a bounded list.")
+    try:
+        target_evaluation_ledger.validate_ledger({
+            "schema_version": target_evaluation_ledger.SCHEMA_VERSION,
+            "purpose": target_evaluation_ledger.PURPOSE,
+            "entries": target_evaluations,
+        })
+    except target_evaluation_ledger.TargetEvaluationLedgerError as exc:
+        raise AutonomousResearchError(
+            "Private local target-evaluation history failed validation: " + str(exc)
+        ) from None
+    for entry in target_evaluations:
+        attempt = attempt_by_id.get(entry["attempt_id"])
+        if attempt is None or (
+            attempt["target_date"] != entry["target_date"]
+            or attempt["archive_sha256"] != entry["archive_sha256"]
+            or attempt["archive_record_count"] != entry["archive_record_count"]
+        ):
+            raise AutonomousResearchError("Private local target result does not match a recorded scheduler attempt.")
 
     recovery_history = value.get("recovery_history")
     if not isinstance(recovery_history, list) or len(recovery_history) > 256:
@@ -627,16 +655,16 @@ def validate_state(value: Any) -> dict[str, Any]:
         workflow_retry_attempt_ids.add(retry_attempt_id)
         workflow_retry_by_prior_attempt[prior_id] = entry
 
-    target_counts: dict[str, int] = {}
-    for target in attempt_dates:
-        target_counts[target] = target_counts.get(target, 0) + 1
-    for target, count in target_counts.items():
-        if count > MAX_ATTEMPTS_PER_TARGET:
-            raise AutonomousResearchError("A target exceeded the ten-attempt limit.")
-
     attempts_by_target: dict[str, list[dict[str, Any]]] = {}
     for item in attempts:
         attempts_by_target.setdefault(item["target_date"], []).append(item)
+    for target, target_attempts in attempts_by_target.items():
+        failed_attempt_count = sum(
+            1 for attempt in target_attempts
+            if event_by_attempt.get(attempt["attempt_id"], {}).get("outcome") == "FAILED"
+        )
+        if failed_attempt_count > MAX_ATTEMPTS_PER_TARGET:
+            raise AutonomousResearchError("A target exceeded the ten-failed-attempt limit.")
     for target, target_attempts in attempts_by_target.items():
         if len(target_attempts) > 1:
             for index, prior_attempt in enumerate(target_attempts[:-1]):
@@ -647,6 +675,10 @@ def validate_state(value: Any) -> dict[str, Any]:
                         (
                             prior_event["outcome"] == "FAILED"
                             and prior_event["reason_code"] in RETRYABLE_FAILURE_REASON_CODES
+                        )
+                        or (
+                            prior_event["outcome"] == "SUCCEEDED"
+                            and prior_event["reason_code"] == "EVALUATION_COMPLETED"
                         )
                         or (
                             prior_event["outcome"] == "NO_ELIGIBLE_CANDIDATE"
@@ -852,16 +884,33 @@ def prepare_cycle(
     archive = sealed.load_archive(archive_path)
     target_date = _canonical_date(archive["last_date"], "archive.last_date")
     queue = target_queue.validate_queue(state["target_queue"])
-    if queue["items"]:
-        front = queue["items"][0]
-        if (
-            target_date != front["target_date"]
-            or archive["archive_sha256"] != front["archive_sha256"]
-            or archive["record_count"] != front["archive_record_count"]
-        ):
-            raise AutonomousResearchError(
-                "Prepared archive is not the immutable FIFO head snapshot."
-            )
+    active_item = target_queue.active_item(queue)
+    if active_item is None:
+        updated_queue, _ = target_queue.capture_new_targets(
+            queue,
+            archive_path=archive_path,
+            attempts=state["attempts"],
+            events=state["events"],
+            now=now,
+        )
+        state["target_queue"] = updated_queue
+        queue = target_queue.validate_queue(updated_queue)
+        active_item = target_queue.active_item(queue)
+    if active_item is None:
+        return {
+            "status": "WAITING_FOR_NEW_LATEST_DRAW",
+            "eligible": False,
+            "latest_observed_date": queue.get("observed_through_date"),
+            **status,
+        }
+    if (
+        target_date != active_item["target_date"]
+        or archive["archive_sha256"] != active_item["archive_sha256"]
+        or archive["record_count"] != active_item["archive_record_count"]
+    ):
+        raise AutonomousResearchError(
+            "Prepared archive is not the immutable active-target snapshot."
+        )
     attempts = state["attempts"]
     retryable = False
     retry_number = 1
@@ -877,10 +926,24 @@ def prepare_cycle(
             None,
         )
         same_target_attempts = sum(1 for item in attempts if item["target_date"] == target_date)
+        event_by_attempt = {event["attempt_id"]: event for event in state["events"]}
+        same_target_failed_attempts = sum(
+            1 for item in attempts
+            if item["target_date"] == target_date
+            and event_by_attempt.get(item["attempt_id"], {}).get("outcome") == "FAILED"
+        )
         if target_date == last_target:
             if last_event is None:
                 return {
                     "status": "TARGET_ATTEMPT_IN_PROGRESS",
+                    "eligible": False,
+                    "target_date": target_date,
+                    "archive_sha256": archive["archive_sha256"],
+                    **status,
+                }
+            if same_target_failed_attempts >= MAX_ATTEMPTS_PER_TARGET:
+                return {
+                    "status": "TARGET_RETRY_LIMIT_REACHED",
                     "eligible": False,
                     "target_date": target_date,
                     "archive_sha256": archive["archive_sha256"],
@@ -899,7 +962,7 @@ def prepare_cycle(
                     )
                 ):
                     retry_limit = MAX_ATTEMPTS_PER_TARGET
-                    if same_target_attempts >= retry_limit:
+                    if same_target_failed_attempts >= retry_limit:
                         return {
                             "status": "TARGET_RETRY_LIMIT_REACHED",
                             "eligible": False,
@@ -926,17 +989,13 @@ def prepare_cycle(
             elif (
                 last_event["outcome"] == "NO_ELIGIBLE_CANDIDATE"
                 and last_event["reason_code"] == "NO_FROZEN_DIRECTIONAL_CANDIDATE"
+            ) or (
+                last_event["outcome"] == "SUCCEEDED"
+                and last_event["reason_code"] == "EVALUATION_COMPLETED"
             ):
-                retry_limit = MAX_ATTEMPTS_PER_TARGET
-                if same_target_attempts >= retry_limit:
-                    return {
-                        "status": "TARGET_RETRY_LIMIT_REACHED",
-                        "eligible": False,
-                        "target_date": target_date,
-                        "archive_sha256": archive["archive_sha256"],
-                        **status,
-                    }
-                retryable = True
+                # A valid completed package may be followed by fresh discovery
+                # on the same target; this is not a failed retry.
+                retryable = False
                 retry_number = same_target_attempts + 1
             else:
                 return {
@@ -980,26 +1039,36 @@ def prepare_cycle(
                     )
                     if last_event["reason_code"] in MANUAL_UNLOCK_REQUIRED_FAILURE_REASON_CODES:
                         previous_retry_is_ready = manual_recovery_confirmed(lock, last_event)
-                elif (
-                    last_event["outcome"] == "NO_ELIGIBLE_CANDIDATE"
-                    and last_event["reason_code"] == "NO_FROZEN_DIRECTIONAL_CANDIDATE"
-                ):
-                    previous_retry_is_ready = True
-
-                previous_attempt_count = sum(
-                    1 for item in attempts if item["target_date"] == last_target
-                )
-                previous_retry_limit = MAX_ATTEMPTS_PER_TARGET
-                if previous_retry_is_ready and previous_attempt_count >= previous_retry_limit:
-                    blocking_status = "PREVIOUS_TARGET_RETRY_LIMIT_REACHED"
-                else:
-                    blocking_status = (
-                        "PREVIOUS_TARGET_RETRY_REQUIRED"
-                        if previous_retry_is_ready
-                        else "PREVIOUS_TARGET_MANUAL_RECOVERY_REQUIRED"
+                    previous_failed_count = sum(
+                        1 for item in attempts
+                        if item["target_date"] == last_target
+                        and event_by_attempt.get(item["attempt_id"], {}).get("outcome") == "FAILED"
                     )
+                    if previous_retry_is_ready and previous_failed_count >= MAX_ATTEMPTS_PER_TARGET:
+                        blocking_status = "PREVIOUS_TARGET_RETRY_LIMIT_REACHED"
+                    else:
+                        blocking_status = (
+                            "PREVIOUS_TARGET_RETRY_REQUIRED"
+                            if previous_retry_is_ready
+                            else "PREVIOUS_TARGET_MANUAL_RECOVERY_REQUIRED"
+                        )
+                    return {
+                        "status": blocking_status,
+                        "eligible": False,
+                        "target_date": target_date,
+                        "pending_target_date": last_target,
+                        **status,
+                    }
+                if last_event["outcome"] not in {"NO_ELIGIBLE_CANDIDATE", "SUCCEEDED"}:
+                    return {
+                        "status": "PREVIOUS_TARGET_INCOMPLETE",
+                        "eligible": False,
+                        "target_date": target_date,
+                        "pending_target_date": last_target,
+                        **status,
+                    }
                 return {
-                    "status": blocking_status,
+                    "status": "PREVIOUS_TARGET_COMPLETION_RECORD_REQUIRED",
                     "eligible": False,
                     "target_date": target_date,
                     "pending_target_date": last_target,
@@ -1095,15 +1164,15 @@ def claim_attempt(
         raise AutonomousResearchError("Plan archive record count is invalid.")
     attempt_number = 1
     workflow_failure_to_recover: tuple[dict[str, Any], dict[str, Any]] | None = None
+    event_by_attempt = {event["attempt_id"]: event for event in state["events"]}
     queue = target_queue.validate_queue(state["target_queue"])
-    if queue["items"]:
-        front = queue["items"][0]
-        if (
-            target_date != front["target_date"]
-            or archive_sha != front["archive_sha256"]
-            or plan["archive_record_count"] != front["archive_record_count"]
-        ):
-            raise AutonomousResearchError("Attempt does not match the immutable FIFO head.")
+    active_item = target_queue.active_item(queue)
+    if active_item is None or (
+        target_date != active_item["target_date"]
+        or archive_sha != active_item["archive_sha256"]
+        or plan["archive_record_count"] != active_item["archive_record_count"]
+    ):
+        raise AutonomousResearchError("Attempt does not match the immutable active-target snapshot.")
     if state["attempts"]:
         last_attempt = state["attempts"][-1]
         last_target = last_attempt["target_date"]
@@ -1117,8 +1186,16 @@ def claim_attempt(
             previous_count = sum(1 for item in state["attempts"] if item["target_date"] == target_date)
             retryable_no_candidate = (
                 last_event is not None
-                and last_event["outcome"] == "NO_ELIGIBLE_CANDIDATE"
-                and last_event["reason_code"] == "NO_FROZEN_DIRECTIONAL_CANDIDATE"
+                and (
+                    (
+                        last_event["outcome"] == "NO_ELIGIBLE_CANDIDATE"
+                        and last_event["reason_code"] == "NO_FROZEN_DIRECTIONAL_CANDIDATE"
+                    )
+                    or (
+                        last_event["outcome"] == "SUCCEEDED"
+                        and last_event["reason_code"] == "EVALUATION_COMPLETED"
+                    )
+                )
             )
             retryable_failure = (
                 last_event is not None
@@ -1143,9 +1220,13 @@ def claim_attempt(
                     ):
                         raise AutonomousResearchError("The manual unlock predates the WORKFLOW_FAILED event.")
                     workflow_failure_to_recover = (last_attempt, last_event)
-            retry_limit = MAX_ATTEMPTS_PER_TARGET
-            if previous_count >= retry_limit:
-                raise AutonomousResearchError("The ten-attempt target retry limit is exhausted.")
+            previous_failed_count = sum(
+                1 for item in state["attempts"]
+                if item["target_date"] == target_date
+                and event_by_attempt.get(item["attempt_id"], {}).get("outcome") == "FAILED"
+            )
+            if previous_failed_count >= MAX_ATTEMPTS_PER_TARGET:
+                raise AutonomousResearchError("The ten-failed-attempt target retry limit is exhausted.")
             attempt_number = previous_count + 1
         else:
             completed_previous_target = next(
@@ -1222,6 +1303,82 @@ def claim_attempt(
     return attempt
 
 
+def record_target_evaluation(
+    state: dict[str, Any],
+    report: dict[str, Any],
+) -> dict[str, Any]:
+    """Append only the number-free aggregate result of a local hidden-target score."""
+    validate_state(state)
+    if not isinstance(report, dict) or report.get("status") != "LOCAL_TARGET_EVALUATION_COMPLETED":
+        raise AutonomousResearchError("Only a completed local target-evaluation report may be recorded.")
+    required_safety_flags = {
+        "target_numbers_exposed": False,
+        "target_numbers_reported": False,
+        "candidate_numbers_exposed": False,
+        "candidate_numbers_reported": False,
+        "predicted_number_values_reported": False,
+        "per_number_matches_reported": False,
+        "target_values_sent_to_model": False,
+        "target_score_sent_to_model": False,
+        "target_score_saved_to_research_memory": False,
+        "reverse_spec_used_for_prediction": False,
+        "live_hosted_model_request_made": False,
+        "telegram_request_made": False,
+        "method_registry_modified": False,
+        "prior_draws_used_only_as_conditioning_context": True,
+        "prior_holdouts_reused_as_evaluation_targets": False,
+        "prior_draws_reused_for_discovery_or_tuning": False,
+    }
+    if any(report.get(key) is not expected for key, expected in required_safety_flags.items()):
+        raise AutonomousResearchError("Local target-evaluation report failed its no-leakage safety flags.")
+    entry = {
+        key: report.get(key)
+        for key in target_evaluation_ledger.ENTRY_KEYS
+    }
+    try:
+        checked_entry = target_evaluation_ledger.validate_entry(entry)
+    except target_evaluation_ledger.TargetEvaluationLedgerError as exc:
+        raise AutonomousResearchError(
+            "Local target-evaluation report failed its private result schema: " + str(exc)
+        ) from None
+    existing = next(
+        (item for item in state["target_evaluations"] if item["claim_id"] == checked_entry["claim_id"]),
+        None,
+    )
+    if existing is not None:
+        # A retry may have a new attempt id, but the exact EVALUATED claim and
+        # local score remain immutable. Accept only identical result metadata.
+        comparable_keys = set(target_evaluation_ledger.ENTRY_KEYS) - {
+            "attempt_id", "completed_at_utc"
+        }
+        if any(existing[key] != checked_entry[key] for key in comparable_keys):
+            raise AutonomousResearchError("A recorded local target claim has conflicting result metadata.")
+        return validate_state(state)
+
+    attempt = next(
+        (item for item in state["attempts"] if item["attempt_id"] == checked_entry["attempt_id"]),
+        None,
+    )
+    if attempt is None or (
+        attempt["target_date"] != checked_entry["target_date"]
+        or attempt["archive_sha256"] != checked_entry["archive_sha256"]
+        or attempt["archive_record_count"] != checked_entry["archive_record_count"]
+    ):
+        raise AutonomousResearchError("Local target result does not match its claimed attempt and archive.")
+    if any(event["attempt_id"] == checked_entry["attempt_id"] for event in state["events"]):
+        raise AutonomousResearchError("Local target result must be recorded before the attempt's terminal outcome.")
+    active = target_queue.active_item(state["target_queue"])
+    if active is None or (
+        active["target_date"] != checked_entry["target_date"]
+        or active["archive_sha256"] != checked_entry["archive_sha256"]
+        or active["archive_record_count"] != checked_entry["archive_record_count"]
+    ):
+        raise AutonomousResearchError("Local target result does not match the immutable active target.")
+    updated = copy.deepcopy(state)
+    updated["target_evaluations"].append(checked_entry)
+    return validate_state(updated)
+
+
 def _require_evaluated_target(
     ledger_path: str | Path,
     *,
@@ -1292,20 +1449,9 @@ def record_outcome(
         "recorded_at_utc": _now_utc(now).isoformat(),
         "reason_code": reason_code,
     })
-    if outcome == "SUCCEEDED" and state["target_queue"]["items"]:
-        try:
-            state["target_queue"] = target_queue.complete_front(
-                state["target_queue"],
-                target_date=attempt["target_date"],
-                archive_sha256=attempt["archive_sha256"],
-                archive_record_count=attempt["archive_record_count"],
-                outcome="EVALUATED",
-                now=now,
-            )
-        except target_queue.TargetQueueError as exc:
-            raise AutonomousResearchError(
-                "EVALUATED target cannot release the FIFO head: " + str(exc)
-            ) from None
+    # EVALUATED completes this frozen-formula test, not the target's entire
+    # research lifetime. The active target remains available for new discovery
+    # packages until a newer draw is observed.
     return validate_state(state)
 
 
@@ -1316,103 +1462,108 @@ def retire_exhausted_target(
     target_date: str,
     archive_sha256: str,
     archive_record_count: int,
-    expected_attempt_count: int,
-    expected_next_target_date: str,
-    expected_next_archive_sha256: str,
-    expected_next_archive_record_count: int,
+    expected_attempt_count: int | None = None,
+    expected_failed_attempt_count: int | None = None,
+    expected_next_target_date: str | None = None,
+    expected_next_archive_sha256: str | None = None,
+    expected_next_archive_record_count: int | None = None,
     now: datetime | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Close one FIFO head only when its exact retry budget is fully failed."""
+    """Manually retire an active target only after exactly ten failed attempts."""
     updated = copy.deepcopy(state)
     validate_state(updated)
-
     target = _canonical_date(target_date, "exhausted_target.target_date")
-    next_target = _canonical_date(
-        expected_next_target_date, "exhausted_target.expected_next_target_date"
+    expected_failures = (
+        expected_failed_attempt_count
+        if expected_failed_attempt_count is not None
+        else expected_attempt_count
     )
-    if not _is_sha256(archive_sha256) or not _is_sha256(expected_next_archive_sha256):
+    if expected_failures != MAX_ATTEMPTS_PER_TARGET:
+        raise AutonomousResearchError("Exhaustion retirement requires exactly ten failed attempts.")
+    if not _is_sha256(archive_sha256):
         raise AutonomousResearchError("Exhausted-target archive identity is invalid.")
     if type(archive_record_count) is not int or archive_record_count < 1:
         raise AutonomousResearchError("Exhausted-target archive record count is invalid.")
-    if (
-        type(expected_next_archive_record_count) is not int
-        or expected_next_archive_record_count < 1
-    ):
-        raise AutonomousResearchError("Next FIFO archive record count is invalid.")
-    if type(expected_attempt_count) is not int or expected_attempt_count != MAX_ATTEMPTS_PER_TARGET:
-        raise AutonomousResearchError("Exhaustion retirement requires exactly ten failed attempts.")
 
-    target_attempts = [
-        item for item in updated["attempts"] if item["target_date"] == target
-    ]
-    if len(target_attempts) != expected_attempt_count:
-        raise AutonomousResearchError("Target attempt count does not match the approved exhaustion evidence.")
+    target_attempts = [item for item in updated["attempts"] if item["target_date"] == target]
     if any(
         item["archive_sha256"] != archive_sha256
         or item["archive_record_count"] != archive_record_count
         for item in target_attempts
     ):
         raise AutonomousResearchError("Target attempts do not share the approved immutable archive identity.")
+    events_by_attempt = {event["attempt_id"]: event for event in updated["events"]}
+    if any(events_by_attempt.get(item["attempt_id"]) is None for item in target_attempts):
+        raise AutonomousResearchError("Every target attempt must have a terminal event before exhaustion.")
+    failed_count = sum(
+        1 for item in target_attempts
+        if events_by_attempt[item["attempt_id"]]["outcome"] == "FAILED"
+    )
+    if failed_count != MAX_ATTEMPTS_PER_TARGET:
+        raise AutonomousResearchError("Exhaustion retirement requires exactly ten failed attempts.")
+    if not target_attempts or events_by_attempt[target_attempts[-1]["attempt_id"]]["outcome"] != "FAILED":
+        raise AutonomousResearchError("The exhausted target must end with its tenth failed attempt.")
 
-    events_by_attempt = {
-        event["attempt_id"]: event for event in updated["events"]
-    }
-    if any(
-        events_by_attempt.get(item["attempt_id"]) is None
-        or events_by_attempt[item["attempt_id"]]["outcome"] != "FAILED"
-        for item in target_attempts
+    active = target_queue.active_item(updated["target_queue"])
+    if active is None or (
+        active["target_date"] != target
+        or active["archive_sha256"] != archive_sha256
+        or active["archive_record_count"] != archive_record_count
     ):
-        raise AutonomousResearchError("Every target attempt must have a terminal FAILED event before exhaustion.")
+        raise AutonomousResearchError("Exhausted target does not match the immutable active target.")
 
-    pending = updated["target_queue"]["items"]
-    if len(pending) < 2:
-        raise AutonomousResearchError("The exhausted target and its expected successor must both be in the FIFO.")
-    front = pending[0]
-    successor = pending[1]
-    if (
-        front["target_date"] != target
-        or front["archive_sha256"] != archive_sha256
-        or front["archive_record_count"] != archive_record_count
-    ):
-        raise AutonomousResearchError("Exhausted target does not match the immutable FIFO head.")
-    if (
-        successor["target_date"] != next_target
-        or successor["archive_sha256"] != expected_next_archive_sha256
-        or successor["archive_record_count"] != expected_next_archive_record_count
-    ):
-        raise AutonomousResearchError("Next FIFO target does not match the explicitly approved successor.")
-    if any(item["target_date"] == next_target for item in updated["attempts"]):
-        raise AutonomousResearchError("The successor target already has an attempt and cannot be promoted as untouched.")
-
+    expected_successor = None
+    if updated["target_queue"]["schema_version"] == 1:
+        items = updated["target_queue"]["items"]
+        expected_successor = items[1] if len(items) > 1 else None
+    else:
+        latest_item = target_queue.latest_snapshot_item(updated["target_queue"])
+        if latest_item is not None and latest_item["target_date"] > target:
+            expected_successor = latest_item
+    supplied_successor = (
+        expected_next_target_date,
+        expected_next_archive_sha256,
+        expected_next_archive_record_count,
+    )
+    if any(value is not None for value in supplied_successor):
+        if expected_successor is None or supplied_successor != (
+            expected_successor["target_date"],
+            expected_successor["archive_sha256"],
+            expected_successor["archive_record_count"],
+        ):
+            raise AutonomousResearchError("The manually confirmed next target does not match the staged latest snapshot.")
     try:
         updated["target_queue"] = target_queue.retire_exhausted_front(
             updated["target_queue"],
             target_date=target,
             archive_sha256=archive_sha256,
             archive_record_count=archive_record_count,
-            attempt_count=len(target_attempts),
-            failed_event_count=sum(
-                1 for item in target_attempts
-                if events_by_attempt[item["attempt_id"]]["outcome"] == "FAILED"
-            ),
+            failed_attempt_count=failed_count,
             now=now,
         )
     except target_queue.TargetQueueError as exc:
-        raise AutonomousResearchError(
-            "Exhausted target could not be closed in the FIFO: " + str(exc)
-        ) from None
+        raise AutonomousResearchError("Exhausted target could not be closed: " + str(exc)) from None
 
     validate_state(updated)
+    latest = target_queue.latest_snapshot_item(updated["target_queue"])
+    latest_available_date = (
+        latest["target_date"] if latest is not None and latest["target_date"] > target else None
+    )
     report = {
         "status": "EXHAUSTED_TARGET_RETIRED",
         "target_date": target,
         "outcome": "EXHAUSTED_RETRY_BUDGET",
         "attempts_preserved_count": len(target_attempts),
-        "next_target_date": updated["target_queue"]["items"][0]["target_date"],
-        "completed_target_count": len(updated["target_queue"]["completed"]),
-        "pending_target_count": len(updated["target_queue"]["items"]),
+        "failed_attempt_count": failed_count,
+        "latest_available_date": latest_available_date,
+        "next_target_date": (
+            expected_successor["target_date"] if expected_successor is not None else None
+        ),
+        "active_target_released": True,
         "target_values_rendered": False,
     }
+    if expected_next_target_date is not None:
+        report["legacy_expected_next_target_date"] = expected_next_target_date
     return updated, report
 
 
@@ -1489,10 +1640,13 @@ def main(argv: list[str] | None = None) -> int:
     retire_exhausted.add_argument("--target-date", required=True)
     retire_exhausted.add_argument("--archive-sha256", required=True)
     retire_exhausted.add_argument("--archive-record-count", type=int, required=True)
-    retire_exhausted.add_argument("--expected-attempt-count", type=int, required=True)
-    retire_exhausted.add_argument("--expected-next-target-date", required=True)
-    retire_exhausted.add_argument("--expected-next-archive-sha256", required=True)
-    retire_exhausted.add_argument("--expected-next-archive-record-count", type=int, required=True)
+    retire_exhausted.add_argument(
+        "--expected-failed-attempt-count", "--expected-attempt-count",
+        dest="expected_failed_attempt_count", type=int, required=True,
+    )
+    retire_exhausted.add_argument("--expected-next-target-date")
+    retire_exhausted.add_argument("--expected-next-archive-sha256")
+    retire_exhausted.add_argument("--expected-next-archive-record-count", type=int)
 
     args = parser.parse_args(argv)
     try:
@@ -1552,7 +1706,7 @@ def main(argv: list[str] | None = None) -> int:
                 target_date=args.target_date,
                 archive_sha256=args.archive_sha256,
                 archive_record_count=args.archive_record_count,
-                expected_attempt_count=args.expected_attempt_count,
+                expected_failed_attempt_count=args.expected_failed_attempt_count,
                 expected_next_target_date=args.expected_next_target_date,
                 expected_next_archive_sha256=args.expected_next_archive_sha256,
                 expected_next_archive_record_count=args.expected_next_archive_record_count,
