@@ -569,6 +569,11 @@ class AutonomousResearchStateTests(unittest.TestCase):
         self.assertEqual(len(recovered["target_evaluations"]), 1)
         self.assertEqual(recovered["target_evaluations"][0]["attempt_id"], first["attempt_id"])
 
+        forged_replay = self._safe_local_target_report(second)
+        forged_replay["attempt_id"] = "f" * 64
+        with self.assertRaisesRegex(auto.AutonomousResearchError, "does not match its claimed attempt"):
+            auto.record_target_evaluation(recovered, forged_replay)
+
     def test_private_local_target_result_rejects_target_data_and_wrong_attempt(self):
         rows = synthetic_rows(90)
         item = auto.target_queue._make_item(

@@ -463,7 +463,7 @@ jobs:
             --reason-code NO_FROZEN_DIRECTIONAL_CANDIDATE
       - name: Record failed claimed cycle
         id: finish_failed
-        if: ${{ always() && steps.attempt_reservation.outputs.attempt_id != '' && (steps.persist_attempt.outcome == 'failure' || steps.persist_claim_snapshot.outcome == 'failure' || steps.research.outcome == 'failure' || steps.sealed_claim.outcome == 'failure' || steps.persist_claim.outcome == 'failure' || steps.evaluation.outcome == 'failure' || steps.persist_eval.outcome == 'failure' || steps.target_evaluation.outcome == 'failure' || steps.research_memory.outcome == 'failure') }}
+        if: ${{ always() && steps.attempt_reservation.outputs.attempt_id != '' && (steps.persist_attempt.outcome == 'failure' || steps.persist_claim_snapshot.outcome == 'failure' || steps.research.outcome == 'failure' || steps.sealed_claim.outcome == 'failure' || steps.persist_claim.outcome == 'failure' || steps.evaluation.outcome == 'failure' || steps.persist_eval.outcome == 'failure' || steps.target_evaluation.outcome == 'failure' || steps.research_memory.outcome == 'failure' || steps.finish_evaluation.outcome == 'failure' || steps.finish_no_candidate.outcome == 'failure') }}
         env:
           ATTEMPT_ID: ${{ steps.attempt_reservation.outputs.attempt_id }}
           CLAIM_CREATED: ${{ steps.sealed_claim.outputs.claim_created }}
@@ -471,6 +471,8 @@ jobs:
           CLAIM_PERSIST_OUTCOME: ${{ steps.persist_claim.outcome }}
           EVALUATION_OUTCOME: ${{ steps.evaluation.outcome }}
           TARGET_EVALUATION_OUTCOME: ${{ steps.target_evaluation.outcome }}
+          FINISH_EVALUATION_OUTCOME: ${{ steps.finish_evaluation.outcome }}
+          FINISH_NO_CANDIDATE_OUTCOME: ${{ steps.finish_no_candidate.outcome }}
           RESEARCH_MEMORY_OUTCOME: ${{ steps.research_memory.outcome }}
         run: |
           incomplete_request=false
@@ -493,6 +495,8 @@ jobs:
           done
           if [ "$TARGET_EVALUATION_OUTCOME" = "failure" ]; then
             reason_code="SEALED_EVALUATION_INCOMPLETE"
+          elif [ "$FINISH_EVALUATION_OUTCOME" = "failure" ] || [ "$FINISH_NO_CANDIDATE_OUTCOME" = "failure" ]; then
+            reason_code="WORKFLOW_FAILED"
           elif [ "$CLAIM_CREATED" = "true" ] && [ "$CLAIM_PERSIST_OUTCOME" = "success" ] && [ "$EVALUATION_OUTCOME" = "failure" ] && [ "$RESEARCH_MEMORY_OUTCOME" = "success" ]; then
             reason_code="SEALED_EVALUATION_INCOMPLETE"
           elif [ -f "/tmp/general_directional_candidates_incomplete" ]; then

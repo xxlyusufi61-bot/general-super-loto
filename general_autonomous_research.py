@@ -1351,6 +1351,19 @@ def record_target_evaluation(
         raise AutonomousResearchError(
             "Local target-evaluation report failed its private result schema: " + str(exc)
         ) from None
+    attempt = next(
+        (item for item in state["attempts"] if item["attempt_id"] == checked_entry["attempt_id"]),
+        None,
+    )
+    if attempt is None or (
+        attempt["target_date"] != checked_entry["target_date"]
+        or attempt["archive_sha256"] != checked_entry["archive_sha256"]
+        or attempt["archive_record_count"] != checked_entry["archive_record_count"]
+    ):
+        raise AutonomousResearchError("Local target result does not match its claimed attempt and archive.")
+    if any(event["attempt_id"] == checked_entry["attempt_id"] for event in state["events"]):
+        raise AutonomousResearchError("Local target result must be recorded before the attempt's terminal outcome.")
+
     existing = next(
         (item for item in state["target_evaluations"] if item["claim_id"] == checked_entry["claim_id"]),
         None,
@@ -1364,19 +1377,6 @@ def record_target_evaluation(
         if any(existing[key] != checked_entry[key] for key in comparable_keys):
             raise AutonomousResearchError("A recorded local target claim has conflicting result metadata.")
         return validate_state(state)
-
-    attempt = next(
-        (item for item in state["attempts"] if item["attempt_id"] == checked_entry["attempt_id"]),
-        None,
-    )
-    if attempt is None or (
-        attempt["target_date"] != checked_entry["target_date"]
-        or attempt["archive_sha256"] != checked_entry["archive_sha256"]
-        or attempt["archive_record_count"] != checked_entry["archive_record_count"]
-    ):
-        raise AutonomousResearchError("Local target result does not match its claimed attempt and archive.")
-    if any(event["attempt_id"] == checked_entry["attempt_id"] for event in state["events"]):
-        raise AutonomousResearchError("Local target result must be recorded before the attempt's terminal outcome.")
     active = target_queue.active_item(state["target_queue"])
     if active is None or (
         active["target_date"] != checked_entry["target_date"]
