@@ -1064,13 +1064,13 @@ class AutonomousResearchStateTests(unittest.TestCase):
                 1, start=(date.fromisoformat(rows[-1]["date"]) + timedelta(days=2)).isoformat()
             )
             archive.write_bytes(auto.target_queue._snapshot_bytes(later_rows))
-            with self.assertRaisesRegex(auto.AutonomousResearchError, "immutable FIFO head"):
+            with self.assertRaisesRegex(auto.AutonomousResearchError, "immutable active-target snapshot"):
                 auto.prepare_cycle(
                     state, archive_path=archive, ledger_path=ledger,
                     global_lock_path=lock, now=NOW,
                 )
 
-    def test_terminal_scheduler_outcome_releases_only_the_matching_fifo_head(self):
+    def test_successful_package_keeps_active_target_until_a_new_draw_is_observed(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             archive = root / "archive.json"
@@ -1105,10 +1105,24 @@ class AutonomousResearchStateTests(unittest.TestCase):
                 reason_code="EVALUATION_COMPLETED",
                 evaluation_ledger_path=ledger, now=NOW,
             )
-            self.assertEqual(state["target_queue"]["items"], [])
-            self.assertEqual(len(state["target_queue"]["completed"]), 1)
+            self.assertEqual(state["target_queue"]["items"][0]["target_date"], rows[-1]["date"])
+            self.assertEqual(state["target_queue"]["completed"], [])
+
+            # A later draw is staged independently. Only once the existing
+            # package is terminal can the newest draw become the next target.
+            later_rows = append_draws(rows, 2)
+            write_archive(archive, later_rows)
+            updated_queue, summary = auto.target_queue.capture_new_targets(
+                state["target_queue"], archive_path=archive,
+                attempts=state["attempts"], events=state["events"],
+                now=NOW + timedelta(hours=1),
+            )
+            self.assertEqual(summary["pending_target_count"], 1)
+            self.assertEqual(summary["intermediate_draws_promoted_as_targets"], False)
+            self.assertEqual(updated_queue["active"]["target_date"], later_rows[-1]["date"])
             self.assertEqual(
-                state["target_queue"]["completed"][0]["target_date"], rows[-1]["date"]
+                [item["target_date"] for item in updated_queue["completed"]],
+                [rows[-1]["date"]],
             )
 
     def test_no_eligible_candidate_keeps_fifo_head_and_allows_same_target_retry(self):

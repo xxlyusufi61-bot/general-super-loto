@@ -7,8 +7,15 @@ import general_autonomous_research as auto
 import general_hypothesis_execution_v2 as execution_v2
 import general_sealed_evaluation as sealed
 from general_target_evaluator import TargetEvaluationError, evaluate_frozen_target
-from general_sealed_evaluation_test import make_rows, write_archive
+from general_sealed_evaluation_test import make_rows
 import general_target_queue as target_queue
+
+
+def write_archive(path, rows):
+    path.write_text(
+        json.dumps({"draws": rows}, ensure_ascii=False, separators=(",", ":")),
+        encoding="utf-8",
+    )
 
 
 def _v2_spec(direction):

@@ -94,6 +94,7 @@ class Cycle55RecoveryTests(unittest.TestCase):
         state.pop("recovery_history")
         state.pop("manual_retry_history")
         state.pop("workflow_retry_history")
+        state.pop("target_evaluations")
         state["schema_version"] = 2
         state["authorization"] = {
             "enabled": True,

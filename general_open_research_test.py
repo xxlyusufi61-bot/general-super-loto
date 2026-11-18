@@ -1981,7 +1981,7 @@ class OpenResearchWorkflowRegressionTests(unittest.TestCase):
         self.assertIn("--kind status", skipped_step)
 
         prepare_step = self._workflow_step(
-            workflow, "Prepare one cycle for the oldest queued target and fresh sealed windows"
+            workflow, "Prepare one research pass for the active target and fresh sealed windows"
         )
         self.assertIn("steps.status.outputs.lock_clear == 'true'", prepare_step)
         attempt_step = self._workflow_step(

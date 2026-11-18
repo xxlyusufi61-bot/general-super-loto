@@ -1,4 +1,4 @@
-"""Fail-closed scheduler state for one active FIFO target and its recorded attempts.
+"""Fail-closed scheduler state for one active target and its recorded attempts.
 
 This module never calls NVIDIA or Telegram. It only manages an expiring, explicit
 free-only authorization, verifies the shared lock and sealed-evaluation preflight,
@@ -270,6 +270,7 @@ def validate_state(value: Any) -> dict[str, Any]:
         terminal_attempts.add(event["attempt_id"])
 
     event_by_attempt = {event["attempt_id"]: event for event in events}
+    attempt_by_id = {item["attempt_id"]: item for item in attempts}
 
     target_evaluations = value.get("target_evaluations")
     if not isinstance(target_evaluations, list) or len(target_evaluations) > 100_000:
@@ -903,9 +904,11 @@ def prepare_cycle(
             "latest_observed_date": queue.get("observed_through_date"),
             **status,
         }
+    archive_hash_matches_snapshot = archive["archive_sha256"] == active_item["archive_sha256"]
+    archive_hash_matches_source = archive["archive_sha256"] == active_item["source_archive_sha256"]
     if (
         target_date != active_item["target_date"]
-        or archive["archive_sha256"] != active_item["archive_sha256"]
+        or not (archive_hash_matches_snapshot or archive_hash_matches_source)
         or archive["record_count"] != active_item["archive_record_count"]
     ):
         raise AutonomousResearchError(
@@ -993,9 +996,10 @@ def prepare_cycle(
                 last_event["outcome"] == "SUCCEEDED"
                 and last_event["reason_code"] == "EVALUATION_COMPLETED"
             ):
-                # A valid completed package may be followed by fresh discovery
-                # on the same target; this is not a failed retry.
-                retryable = False
+                # A completed package may be followed by fresh discovery on the
+                # same active target. A valid no-candidate pass is continuable,
+                # but neither outcome increments the FAILED-attempt budget.
+                retryable = last_event["outcome"] == "NO_ELIGIBLE_CANDIDATE"
                 retry_number = same_target_attempts + 1
             else:
                 return {
@@ -1494,7 +1498,9 @@ def retire_exhausted_target(
         raise AutonomousResearchError("Target attempts do not share the approved immutable archive identity.")
     events_by_attempt = {event["attempt_id"]: event for event in updated["events"]}
     if any(events_by_attempt.get(item["attempt_id"]) is None for item in target_attempts):
-        raise AutonomousResearchError("Every target attempt must have a terminal event before exhaustion.")
+        raise AutonomousResearchError(
+            "Every target attempt must be terminal; exhaustion requires exactly ten terminal FAILED attempts."
+        )
     failed_count = sum(
         1 for item in target_attempts
         if events_by_attempt[item["attempt_id"]]["outcome"] == "FAILED"
