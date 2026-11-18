@@ -1345,6 +1345,13 @@ class ResearchMemoryPersistenceTests(unittest.TestCase):
             self.assertEqual(reused_result["entries_added"], 0)
             self.assertEqual(len(memory.load_memory(memory_path)["entries"]), 2)
 
+            # The following assertion uses an independent empty memory sink
+            # to test the original claim-publication path, not a reused retry.
+            write_json(root / "claim.json", {
+                "claim_created": True,
+                "claim_id": claim_id,
+            })
+
             # The memory writer cross-checks report prose against every sealed
             # validation date already consumed in the authoritative ledger.
             (root / "forward.md").write_text(
