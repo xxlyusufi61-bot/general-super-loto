@@ -201,6 +201,26 @@ class Cycle55RecoveryTests(unittest.TestCase):
         )
         autonomous.validate_state(recovered)
 
+    def test_recovery_history_validates_after_migration_to_single_active_queue(self):
+        recovered = self.recover()
+        recovered["target_queue"] = {
+            "schema_version": 2,
+            "observed_through_date": self.tail_item["target_date"],
+            "active": copy.deepcopy(self.head_item),
+            "latest_snapshot": copy.deepcopy(self.tail_item),
+            "completed": [],
+        }
+
+        validated = autonomous.validate_state(recovered)
+        self.assertEqual(
+            target_queue.active_item(validated["target_queue"])["target_date"],
+            self.head_item["target_date"],
+        )
+        self.assertEqual(
+            target_queue.latest_snapshot_item(validated["target_queue"])["target_date"],
+            self.tail_item["target_date"],
+        )
+
     def test_inputs_are_not_mutated(self):
         current_before = copy.deepcopy(self.current_state)
         source_before = copy.deepcopy(self.source_state)
