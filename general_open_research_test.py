@@ -1935,6 +1935,23 @@ class OpenResearchWorkflowRegressionTests(unittest.TestCase):
         self.assertIn('/tmp/general_nvidia_api_known_http_5xx_${request_label}', lock_step)
         self.assertIn("uncertain_request=true", lock_step)
 
+        recovery_step = self._workflow_step(
+            workflow,
+            "Recover exact evaluated candidate pair for an interrupted local score without NVIDIA",
+        )
+        self.assertIn("general_target_evaluator.py --recover-candidates", recovery_step)
+        self.assertIn("open_research_evaluation_claim.json", recovery_step)
+        research_step = self._workflow_step(
+            workflow, "Run independent forward and reverse NVIDIA discovery"
+        )
+        self.assertIn("steps.frozen_recovery.outputs.recovery_required != 'true'", research_step)
+        self.assertIn("steps.frozen_recovery.outcome == 'success'", research_step)
+        target_step = self._workflow_step(workflow, "Evaluate the hidden current target locally")
+        self.assertIn("steps.frozen_recovery.outputs.recovery_available == 'true'", target_step)
+        self.assertIn("steps.frozen_recovery.outputs.claim_id || steps.sealed_claim.outputs.claim_id", target_step)
+        finish_success = self._workflow_step(workflow, "Record successful evaluation outcome")
+        self.assertIn("steps.frozen_recovery.outputs.recovery_available == 'true'", finish_success)
+
         pending_check = self._workflow_step(workflow, "Detect pending sealed claim before offline discovery")
         self.assertIn("general_sealed_evaluation.py pending-claim", pending_check)
         offline_step = self._workflow_step(workflow, "Run bounded offline hypothesis discovery and evaluation")
