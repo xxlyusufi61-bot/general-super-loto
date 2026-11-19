@@ -527,7 +527,7 @@ jobs:
           message: "Persist autonomous cycle outcome and sanitized research memory"
 
       - name: Send separate forward and reverse Telegram reports
-        if: ${{ steps.evaluation.outcome == 'success' && steps.persist_final_state.outcome == 'success' }}
+        if: ${{ steps.evaluation.outcome == 'success' && steps.target_evaluation.outcome == 'success' && steps.persist_final_state.outcome == 'success' }}
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -551,7 +551,7 @@ jobs:
             --branch general-automation-state \
             --run-url "https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
       - name: Notify Telegram after a failed claimed cycle
-        if: ${{ always() && steps.attempt_reservation.outputs.attempt_id != '' && (steps.persist_attempt.outcome == 'failure' || steps.research.outcome == 'failure' || steps.sealed_claim.outcome == 'failure' || steps.persist_claim.outcome == 'failure' || steps.evaluation.outcome == 'failure' || steps.persist_eval.outcome == 'failure' || steps.research_memory.outcome == 'failure' || steps.finish_evaluation.outcome == 'failure' || steps.finish_no_candidate.outcome == 'failure' || steps.finish_failed.outcome == 'failure' || steps.persist_final_state.outcome == 'failure') }}
+        if: ${{ always() && steps.attempt_reservation.outputs.attempt_id != '' && (steps.persist_attempt.outcome == 'failure' || steps.persist_claim_snapshot.outcome == 'failure' || steps.research.outcome == 'failure' || steps.sealed_claim.outcome == 'failure' || steps.persist_claim.outcome == 'failure' || steps.evaluation.outcome == 'failure' || steps.persist_eval.outcome == 'failure' || steps.target_evaluation.outcome == 'failure' || steps.research_memory.outcome == 'failure' || steps.finish_evaluation.outcome == 'failure' || steps.finish_no_candidate.outcome == 'failure' || steps.finish_failed.outcome == 'failure' || steps.persist_final_state.outcome == 'failure') }}
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -578,7 +578,6 @@ jobs:
             open_research_sealed_plan.json
             open_research_evaluation_claim.json
             open_research_evaluation_report.json
-            open_research_target_evaluation_report.json
             open_research_run_status.json
             open_research_retry_audit.json
           if-no-files-found: ignore
