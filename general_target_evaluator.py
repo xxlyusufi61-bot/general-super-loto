@@ -268,17 +268,26 @@ def recover_evaluated_claim_for_attempt(
             checked_proposal = research_memory._validate_proposal(proposal, canonical=True)
             checked_spec = research_memory.validate_execution_spec(spec)
             synthetic = research_memory.run_synthetic_contract_tests(checked_spec)
-            if (
-                checked_proposal != proposal
-                or checked_spec != spec
-                or proposal["hypothesis_id"] != expected_id
-                or proposal["discovery_direction"] != expected_direction
-                or research_memory._sha(research_memory._canonical(spec)) != expected_hash
-                or not research_memory.execution_spec_matches_proposal(proposal, spec)
-                or synthetic.get("status") != "PASS"
-                or synthetic.get("real_archive_used") is not False
-            ):
-                raise TargetEvaluationError("Recovered frozen candidate failed its original schema/hash/synthetic checks.")
+            failed_checks = []
+            if checked_proposal != proposal:
+                failed_checks.append("canonical_proposal")
+            if checked_spec != spec:
+                failed_checks.append("canonical_specification")
+            if proposal["hypothesis_id"] != expected_id:
+                failed_checks.append("hypothesis_identity")
+            if proposal["discovery_direction"] != expected_direction:
+                failed_checks.append("direction")
+            if research_memory._sha(research_memory._canonical(spec)) != expected_hash:
+                failed_checks.append("specification_hash")
+            if not research_memory.execution_spec_matches_proposal(proposal, spec):
+                failed_checks.append("proposal_specification_binding")
+            if synthetic.get("status") != "PASS" or synthetic.get("real_archive_used") is not False:
+                failed_checks.append("synthetic_contract")
+            if failed_checks:
+                raise TargetEvaluationError(
+                    "Recovered frozen candidate failed validation checks: "
+                    + ",".join(failed_checks)
+                )
     except (TypeError, ValueError, KeyError) as exc:
         raise TargetEvaluationError("Recovered frozen candidate failed validation: " + str(exc)) from None
 
