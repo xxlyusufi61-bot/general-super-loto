@@ -167,9 +167,26 @@ class LocalTargetEvaluationTests(unittest.TestCase):
     def test_target_scoring_uses_observed_prior_draws_only_as_frozen_conditioning_context(self):
         docs = json.loads(self.ledger_path.read_text(encoding="utf-8"))
         rows = sealed.load_archive(self.archive_path)["rows"]
-        docs["entries"][0]["previously_consumed_validation_dates"] = [
-            rows[-2]["date"], rows[-3]["date"]
+        current_claim = docs["entries"][0]
+        prior_dates = sorted([rows[-2]["date"], rows[-3]["date"]])
+
+        # Model two already-consumed dates as a real preceding ledger claim.
+        # The current claim must exclude those dates from its own holdout windows.
+        current_claim["validation_dates"] = [
+            day for day in current_claim["validation_dates"] if day not in prior_dates
         ]
+        current_claim["reverse_validation_dates"] = [
+            day for day in current_claim.get("reverse_validation_dates", [])
+            if day not in prior_dates
+        ]
+        prior_claim = {
+            "claim_id": "a" * 64,
+            "validation_dates": prior_dates,
+            "reverse_validation_dates": [],
+            "state": "EVALUATED",
+        }
+        current_claim["previously_consumed_validation_dates"] = prior_dates
+        docs["entries"] = [prior_claim, current_claim]
         self.ledger_path.write_text(json.dumps(docs), encoding="utf-8")
         report = evaluate_frozen_target(
             self.claim["claim_id"], self.attempt_id, self.ledger_path,
