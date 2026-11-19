@@ -5,6 +5,7 @@ from pathlib import Path
 
 import general_autonomous_research as auto
 import general_hypothesis_execution_v2 as execution_v2
+import general_research_memory as research_memory
 import general_sealed_evaluation as sealed
 from general_target_evaluator import TargetEvaluationError, evaluate_frozen_target
 from general_sealed_evaluation_test import make_rows
@@ -53,6 +54,78 @@ def _write_v2_documents(directory):
         ],
     }), encoding="utf-8")
     return proposals, specs
+
+
+def _write_evaluated_memory_pair(path, claim, specs, target_date, archive_sha, created_at):
+    memory = research_memory.empty_memory()
+    for direction, spec, hypothesis_id in (
+        ("forward", specs[0], "HYP-001"),
+        ("reverse", specs[1], "HYP-501"),
+    ):
+        raw_proposal = {
+            "hypothesis_id": hypothesis_id,
+            "discovery_direction": direction,
+            "proposed_family": "bounded transition hypothesis",
+            "research_rationale": "A fixed formal definition can be independently replayed.",
+            "known_risks": ["The single-target score must remain isolated."],
+            "formal_execution_spec": spec,
+        }
+        proposal = research_memory._validate_proposal(raw_proposal)
+        proposal = {key: proposal[key] for key in research_memory.PROPOSAL_KEYS}
+        spec_hash = research_memory._sha(research_memory._canonical(spec))
+        feedback = {
+            "status": "EVALUATED_EXPLORATORY_FIXED_SPEC",
+            "claim_id": claim["claim_id"],
+            "candidate_id": hypothesis_id,
+            "spec_sha256": spec_hash,
+            "holdout": {},
+            "cross_validation": {},
+            "holdout_consumed": True,
+            "retrospective_only": direction == "reverse",
+            "raw_holdout_dates_stored": False,
+            "per_draw_results_stored": False,
+            "draw_number_values_stored": False,
+            "interpretation": "Frozen historical feedback only; the sealed interval is consumed.",
+        }
+        entry_id = len(memory["entries"]) + 1
+        entry = {
+            "entry_id": entry_id,
+            "cycle_id": research_memory._sha(f"recovery-{claim['claim_id']}-{direction}".encode()),
+            "source": research_memory.SOURCE,
+            "research_epoch": research_memory.RESEARCH_EPOCH,
+            "direction": direction,
+            "created_at_utc": created_at,
+            "target_date": target_date,
+            "archive_sha256": archive_sha,
+            "runner_version": "0.9.0",
+            "status": "EVALUATED",
+            "research_report_sha256": "b" * 64,
+            "research_report_content": None,
+            "research_report_content_sha256": None,
+            "research_report_content_status": "OMITTED_NUMERIC_CONTENT",
+            "proposal_status": "VALID_PROPOSALS",
+            "proposals": [proposal],
+            "execution_spec_status": "VALIDATED_SPECS",
+            "execution_spec": spec,
+            "execution_spec_sha256": spec_hash,
+            "learning_notes": {
+                "observations": ["The formal specification is deterministic."],
+                "failed_approaches": ["Unbounded selection was rejected."],
+                "next_tests": ["Repeat the exact frozen evaluation locally."],
+            },
+            "evaluation_feedback": feedback,
+            "failure": None,
+            "discovery_window": {
+                "start_date": "2026-10-01",
+                "end_date": "2026-11-01",
+                "draw_count": 80,
+                "holdout_dates_copied": False,
+                "archive_rows_copied": False,
+            },
+        }
+        entry["content_sha256"] = research_memory._entry_hash(entry)
+        memory["entries"].append(entry)
+    research_memory._write_memory(memory, path)
 
 
 class LocalTargetEvaluationTests(unittest.TestCase):
@@ -141,6 +214,119 @@ class LocalTargetEvaluationTests(unittest.TestCase):
         state = auto.read_state(self.state_path)
         again = auto.record_target_evaluation(state, first)
         self.assertEqual(len(again["target_evaluations"]), 1)
+
+    def test_interrupted_local_score_recovers_exact_evaluated_pair_without_provider(self):
+        state = auto.read_state(self.state_path)
+        first_attempt = {
+            "attempt_id": "a" * 64,
+            "target_date": self.claim["target_date"],
+            "archive_sha256": state["target_queue"]["active"]["archive_sha256"],
+            "archive_record_count": len(self.rows),
+            "claimed_at_utc": "2026-11-18T11:00:00+00:00",
+            "github_run_id": "10000",
+        }
+        second_attempt = {
+            **first_attempt,
+            "attempt_id": self.attempt_id,
+            "claimed_at_utc": "2026-11-18T12:30:00+00:00",
+            "github_run_id": "10001",
+        }
+        state["attempts"] = [first_attempt, second_attempt]
+        state["events"] = [{
+            "attempt_id": first_attempt["attempt_id"],
+            "outcome": "FAILED",
+            "recorded_at_utc": "2026-11-18T12:00:00+00:00",
+            "reason_code": "SEALED_EVALUATION_INCOMPLETE",
+        }]
+        auto.write_state(self.state_path, state)
+
+        spec_doc = json.loads(self.specs.read_text(encoding="utf-8"))
+        specs = [item["execution_spec"] for item in spec_doc["specifications"]]
+        memory_path = self.root / "research-memory.json"
+        _write_evaluated_memory_pair(
+            memory_path,
+            self.claim,
+            specs,
+            self.claim["target_date"],
+            self.claim["archive_sha256"],
+            "2026-11-18T11:30:00+00:00",
+        )
+        claim_output = self.root / "recovered-claim.json"
+        recovered = auto_recover = __import__(
+            "general_target_evaluator"
+        ).recover_evaluated_claim_for_attempt(
+            self.attempt_id,
+            scheduler_state_path=self.state_path,
+            ledger_path=self.ledger_path,
+            memory_path=memory_path,
+            proposals_path=self.proposals,
+            specs_path=self.specs,
+            claim_output_path=claim_output,
+        )
+        self.assertTrue(recovered["recovery_required"])
+        self.assertTrue(recovered["recovery_available"])
+        self.assertEqual(recovered["claim_id"], self.claim["claim_id"])
+        recovered_claim = json.loads(claim_output.read_text(encoding="utf-8"))
+        self.assertTrue(recovered_claim["claim_reused"])
+        self.assertEqual(recovered_claim["claim_id"], self.claim["claim_id"])
+
+        # The recovered files feed the ordinary frozen evaluator. No model
+        # client or provider call is needed to reconstruct the candidate pair.
+        report = evaluate_frozen_target(
+            recovered_claim["claim_id"],
+            self.attempt_id,
+            self.ledger_path,
+            self.proposals,
+            self.specs,
+            scheduler_state_path=self.state_path,
+            snapshot_directory=self.snapshot_directory,
+        )
+        self.assertEqual(report["status"], "LOCAL_TARGET_EVALUATION_COMPLETED")
+        self.assertIn(report["hit_count"], range(7))
+        persisted = auto.read_state(self.state_path)["target_evaluations"]
+        self.assertEqual(len(persisted), 1)
+        self.assertNotIn("hit_count", persisted[0])
+
+    def test_local_score_recovery_fails_closed_when_exact_pair_is_missing(self):
+        state = auto.read_state(self.state_path)
+        first_attempt = {
+            "attempt_id": "a" * 64,
+            "target_date": self.claim["target_date"],
+            "archive_sha256": state["target_queue"]["active"]["archive_sha256"],
+            "archive_record_count": len(self.rows),
+            "claimed_at_utc": "2026-11-18T11:00:00+00:00",
+            "github_run_id": "10000",
+        }
+        second_attempt = {
+            **first_attempt,
+            "attempt_id": self.attempt_id,
+            "claimed_at_utc": "2026-11-18T12:30:00+00:00",
+            "github_run_id": "10001",
+        }
+        state["attempts"] = [first_attempt, second_attempt]
+        state["events"] = [{
+            "attempt_id": first_attempt["attempt_id"],
+            "outcome": "FAILED",
+            "recorded_at_utc": "2026-11-18T12:00:00+00:00",
+            "reason_code": "SEALED_EVALUATION_INCOMPLETE",
+        }]
+        auto.write_state(self.state_path, state)
+        empty_memory_path = self.root / "empty-memory.json"
+        empty_memory_path.write_text(
+            json.dumps(research_memory.empty_memory()), encoding="utf-8"
+        )
+        result = __import__("general_target_evaluator").recover_evaluated_claim_for_attempt(
+            self.attempt_id,
+            scheduler_state_path=self.state_path,
+            ledger_path=self.ledger_path,
+            memory_path=empty_memory_path,
+            proposals_path=self.proposals,
+            specs_path=self.specs,
+            claim_output_path=self.root / "missing-recovery-claim.json",
+        )
+        self.assertTrue(result["recovery_required"])
+        self.assertFalse(result["recovery_available"])
+        self.assertFalse((self.root / "missing-recovery-claim.json").exists())
 
     def test_target_evaluation_requires_evaluated_claim(self):
         doc = json.loads(self.ledger_path.read_text(encoding="utf-8"))
