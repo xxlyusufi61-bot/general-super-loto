@@ -1326,6 +1326,52 @@ class AutonomousResearchStateTests(unittest.TestCase):
         self.assertNotIn("numbers", report)
         self.assertIs(report["target_values_rendered"], False)
 
+    def test_exhaustion_limit_counts_failed_attempts_not_total_attempts(self):
+        state, item_target, item_next = self._exhausted_target_fixture()
+
+        # A valid no-candidate package remains in the immutable history but
+        # must not consume one of the ten failed-attempt slots.
+        state["events"][4]["outcome"] = "NO_ELIGIBLE_CANDIDATE"
+        state["events"][4]["reason_code"] = "NO_FROZEN_DIRECTIONAL_CANDIDATE"
+
+        extra_attempt_id = "c" * 64
+        extra_claimed_at = NOW + timedelta(minutes=100)
+        state["attempts"].append({
+            "attempt_id": extra_attempt_id,
+            "target_date": item_target["target_date"],
+            "archive_sha256": item_target["archive_sha256"],
+            "archive_record_count": item_target["archive_record_count"],
+            "claimed_at_utc": extra_claimed_at.isoformat(),
+            "github_run_id": "7010",
+        })
+        state["events"].append({
+            "attempt_id": extra_attempt_id,
+            "outcome": "FAILED",
+            "recorded_at_utc": (extra_claimed_at + timedelta(minutes=2)).isoformat(),
+            "reason_code": "PROVIDER_DELIVERY_UNCERTAIN",
+        })
+
+        updated, report = auto.retire_exhausted_target(
+            state,
+            target_date=item_target["target_date"],
+            archive_sha256=item_target["archive_sha256"],
+            archive_record_count=item_target["archive_record_count"],
+            expected_failed_attempt_count=auto.MAX_ATTEMPTS_PER_TARGET,
+            expected_next_target_date=item_next["target_date"],
+            expected_next_archive_sha256=item_next["archive_sha256"],
+            expected_next_archive_record_count=item_next["archive_record_count"],
+            now=NOW,
+        )
+
+        self.assertEqual(len(updated["attempts"]), 11)
+        self.assertEqual(len(updated["events"]), 11)
+        self.assertEqual(report["attempts_preserved_count"], 11)
+        self.assertEqual(report["failed_attempt_count"], 10)
+        self.assertEqual(
+            updated["target_queue"]["items"][0]["target_date"],
+            item_next["target_date"],
+        )
+
     def test_v2_exhausted_active_target_can_be_retired_without_a_newer_draw(self):
         state, item_target, _ = self._exhausted_target_fixture()
         state["target_queue"] = {
