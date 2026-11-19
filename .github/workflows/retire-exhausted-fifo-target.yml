@@ -1,14 +1,14 @@
-name: Retire exhausted GENERAL FIFO target
+name: Retire exhausted GENERAL active target
 
 on:
   workflow_dispatch:
     inputs:
       target_date:
-        description: Exact date of the current FIFO head.
+        description: Exact date of the current active target.
         required: true
         type: string
       archive_sha256:
-        description: Exact immutable FIFO snapshot SHA-256.
+        description: Exact immutable active-target snapshot SHA-256.
         required: true
         type: string
       archive_record_count:
@@ -20,11 +20,11 @@ on:
         required: true
         type: number
       expected_next_target_date:
-        description: Exact date of the next FIFO item.
+        description: Exact date of the staged latest archive snapshot that should follow retirement.
         required: true
         type: string
       expected_next_archive_sha256:
-        description: Exact SHA-256 of the next FIFO snapshot.
+        description: Exact SHA-256 of the staged latest archive snapshot.
         required: true
         type: string
       expected_next_archive_record_count:
@@ -157,7 +157,7 @@ jobs:
           print("Captured target attempt/event digests without exposing draw values.")
           PY
 
-      - name: Retire only the exact exhausted FIFO head
+      - name: Retire only the exact exhausted active target
         env:
           TARGET_DATE: ${{ inputs.target_date }}
           ARCHIVE_SHA256: ${{ inputs.archive_sha256 }}
@@ -183,7 +183,7 @@ jobs:
           token: ${{ github.token }}
           expected_generation: ${{ steps.hydrate.outputs.state_generation }}
           objects: autonomous_research_state
-          message: "Record explicit exhausted FIFO target retirement"
+          message: "Record explicit exhausted active-target retirement"
 
       - name: Re-hydrate and verify the authoritative result
         env:
@@ -237,8 +237,18 @@ jobs:
               raise SystemExit("An archived attempt identity changed.")
           if len(events) != expected_attempts or any(event_by_attempt.get(item["attempt_id"], {}).get("outcome") != "FAILED" for item in attempts):
               raise SystemExit("Every preserved target attempt must still have its original FAILED event.")
-          if not queue["items"] or queue["items"][0]["target_date"] != next_target or queue["items"][0]["archive_sha256"] != next_sha or queue["items"][0]["archive_record_count"] != next_count:
-              raise SystemExit("The exact expected successor is not the FIFO head.")
+          if queue.get("schema_version") == 2:
+              if queue.get("active") is not None:
+                  raise SystemExit("The exhausted active target was not released.")
+              staged = queue.get("latest_snapshot")
+              if not isinstance(staged, dict) or staged.get("target_date") != next_target or staged.get("archive_sha256") != next_sha or staged.get("archive_record_count") != next_count:
+                  raise SystemExit("The exact expected successor is not the staged latest archive snapshot.")
+          elif queue.get("schema_version") == 1:
+              items = queue.get("items")
+              if not items or items[0].get("target_date") != next_target or items[0].get("archive_sha256") != next_sha or items[0].get("archive_record_count") != next_count:
+                  raise SystemExit("The exact expected successor is not the legacy FIFO head.")
+          else:
+              raise SystemExit("Unsupported target queue schema after retirement.")
           if hashlib.sha256(canonical(attempts)).hexdigest() != os.environ["ATTEMPTS_SHA256"]:
               raise SystemExit("Target attempt history changed during retirement.")
           if hashlib.sha256(canonical(events)).hexdigest() != os.environ["EVENTS_SHA256"]:
@@ -247,7 +257,7 @@ jobs:
               "status": "VERIFIED",
               "outcome": "EXHAUSTED_RETRY_BUDGET",
               "preserved_attempts": len(attempts),
-              "next_fifo_target": next_target,
+              "staged_latest_target": next_target,
               "nvidia_requests": 0,
               "lock_changes": 0,
               "target_values_rendered": False,
