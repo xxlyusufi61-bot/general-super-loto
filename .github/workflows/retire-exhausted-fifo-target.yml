@@ -30,7 +30,7 @@ on:
       expected_next_archive_record_count:
         description: Optional exact record count of the newer staged latest archive snapshot.
         required: false
-        type: number
+        type: string
       confirmation:
         description: Exact manual confirmation required for this state-store write.
         required: true
