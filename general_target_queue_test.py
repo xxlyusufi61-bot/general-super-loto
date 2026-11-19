@@ -292,6 +292,36 @@ class SingleActiveTargetQueueTests(unittest.TestCase):
         with self.assertRaisesRegex(queue.TargetQueueError, "Duplicate JSON key"):
             queue._strict_json_loads(b'{"draws":[],"draws":[]}')
 
+    def test_legacy_fifo_migration_rejects_snapshot_prefix_mutation(self):
+        rows = synthetic_rows(90)
+        legacy_items = [
+            queue._make_item(
+                rows[:index + 1],
+                source_archive_sha256=("e" * 63) + str(index % 10),
+                enqueued_at_utc=NOW.isoformat(),
+            )
+            for index in range(87, 90)
+        ]
+        legacy = {
+            "schema_version": 1,
+            "observed_through_date": rows[-1]["date"],
+            "items": legacy_items,
+            "completed": [],
+        }
+        changed_rows = copy.deepcopy(rows)
+        changed_rows[0]["numbers"] = [2, 13, 24, 35, 46, 57]
+
+        with tempfile.TemporaryDirectory() as directory:
+            archive = Path(directory) / "archive.json"
+            write_archive(archive, changed_rows)
+            with self.assertRaisesRegex(
+                queue.TargetQueueError,
+                "Canonical archive changed beneath the preserved active snapshot",
+            ):
+                queue.capture_new_targets(
+                    legacy, archive_path=archive, attempts=[], events=[], now=NOW,
+                )
+
     def test_legacy_fifo_migration_pins_unattempted_head_before_newer_queued_draws(self):
         rows = synthetic_rows(90)
         legacy_items = [
