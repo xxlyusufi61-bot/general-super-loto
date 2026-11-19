@@ -417,10 +417,12 @@ def validate_state(value: Any) -> dict[str, Any]:
             or active_event["recorded_at_utc"] != entry["failure_at_utc"]
         ):
             raise AutonomousResearchError("Recovered attempt is not actively classified as WORKFLOW_FAILED.")
-        queue_items = value["target_queue"]["items"]
+        # The recovery journal may outlive the legacy FIFO schema. Resolve
+        # the current head through the queue API so schema-v2 uses its single
+        # active snapshot rather than dereferencing the removed "items" field.
+        queue_head = target_queue.active_item(value["target_queue"])
         queue_head_matches = False
-        if queue_items:
-            queue_head = queue_items[0]
+        if queue_head is not None:
             queue_head_sha = hashlib.sha256(
                 json.dumps(queue_head, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
             ).hexdigest()
