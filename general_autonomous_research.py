@@ -1539,13 +1539,18 @@ def retire_exhausted_target(
         expected_next_archive_sha256,
         expected_next_archive_record_count,
     )
-    if any(value is not None for value in supplied_successor):
-        if expected_successor is None or supplied_successor != (
-            expected_successor["target_date"],
-            expected_successor["archive_sha256"],
-            expected_successor["archive_record_count"],
-        ):
-            raise AutonomousResearchError("The manually confirmed next target does not match the staged latest snapshot.")
+    successor_was_supplied = any(value is not None for value in supplied_successor)
+    if expected_successor is None:
+        if successor_was_supplied:
+            raise AutonomousResearchError("A next-target identity was supplied when no newer successor is staged.")
+    elif supplied_successor != (
+        expected_successor["target_date"],
+        expected_successor["archive_sha256"],
+        expected_successor["archive_record_count"],
+    ):
+        raise AutonomousResearchError(
+            "Manual retirement must confirm the exact staged latest archive snapshot."
+        )
     try:
         updated["target_queue"] = target_queue.retire_exhausted_front(
             updated["target_queue"],
