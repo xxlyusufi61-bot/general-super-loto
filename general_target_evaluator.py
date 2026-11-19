@@ -269,10 +269,14 @@ def recover_evaluated_claim_for_attempt(
             checked_spec = research_memory.validate_execution_spec(spec)
             synthetic = research_memory.run_synthetic_contract_tests(checked_spec)
             failed_checks = []
-            if checked_proposal != proposal:
+            canonical_proposal = {
+                key: checked_proposal[key]
+                for key in research_memory.PROPOSAL_KEYS
+            }
+            if canonical_proposal != proposal:
                 differing_fields = sorted(
-                    key for key in set(checked_proposal) | set(proposal)
-                    if checked_proposal.get(key) != proposal.get(key)
+                    key for key in set(canonical_proposal) | set(proposal)
+                    if canonical_proposal.get(key) != proposal.get(key)
                 )
                 failed_checks.append(
                     "canonical_proposal:" + ",".join(differing_fields)
