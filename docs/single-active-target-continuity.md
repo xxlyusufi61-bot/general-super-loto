@@ -6,6 +6,12 @@ The autonomous scheduler keeps one active Super Loto target at a time. It also r
 
 The active target is bound to an immutable content-addressed archive prefix. The scheduler verifies its archive hash, record count and target date before materialization or research. Archive mutation beneath either the active or latest snapshot fails closed.
 
+## Migration from the legacy queue
+
+The first queue-capture after the code is deployed converts the legacy FIFO representation to the single-active-target schema. It does not erase attempt or event history. An in-progress or failed legacy target remains pinned to its exact snapshot. When no such unfinished target exists, the latest canonical archive snapshot becomes the sole active target; intermediate queued draws are not promoted one by one. The latest full archive snapshot remains staged separately.
+
+This migration is code in the PR, not a live state-store operation performed during PR preparation. It occurs only when the normal queue-capture workflow runs after the PR has been merged.
+
 ## Continuation and recovery
 
 - An active target remains pinned even before its first attempt is reserved. Offline discovery or checkpoints may already exist, so a newer archive cannot replace an unattempted active snapshot.
@@ -14,7 +20,7 @@ The active target is bound to an immutable content-addressed archive prefix. The
 - A successful sealed evaluation completes one frozen formula test, not the target's whole research lifetime. The same current target may therefore receive a later independent discovery package.
 - A valid no-candidate outcome also completes a package without consuming the failed-attempt budget.
 - Once a later canonical draw is observed, a terminal active package is recorded in history and only the newest archive snapshot is promoted. An unattempted, in-progress or failed target is not silently skipped; its exact snapshot remains pinned while the latest archive cursor is staged separately.
-- Target retirement after exhaustion remains a separate explicit manual action.
+- Target retirement after exhaustion remains a separate explicit manual action. If a newer archive snapshot is staged, the operator must confirm its exact date/hash/count. If the exhausted target is still the latest draw, the successor fields are left empty; retirement releases the target and the scheduler waits for a future draw.
 
 ## Failed-attempt budget
 
@@ -30,7 +36,7 @@ The immediate pre-target canonical draws are conditioning context only. They are
 
 Only the following number-free metadata is retained in the private scheduler state's `target_evaluations` list: sealed claim/attempt identifiers, target date, archive hash/count, forward hypothesis/specification identifiers, DSL version, six-candidate count, aggregate hit count (0–6), the fixed 0.600/6 R60 reference and completion timestamp. Raw target numbers, candidate numbers, rankings and per-number matches are rejected by the result schema.
 
-This private result list is part of the existing autonomous scheduler state object. It is not copied into GENERAL's model-readable research memory or Telegram. The existing research memory remains available for GENERAL-origin formulas, synthetic tests and sanitized historical research feedback.
+This private result list is part of the existing autonomous scheduler state object. It is not copied into GENERAL's model-readable research memory or Telegram. The full local score report is excluded from uploaded GitHub Actions artifacts; the workflow prints only a number-free summary. The existing research memory remains available for GENERAL-origin formulas, synthetic tests and sanitized historical research feedback.
 
 If a workflow fails after the sealed claim is already `EVALUATED`, an identical later proposal pair reuses the exact completed claim. The local scoring step can then be retried without re-running sealed holdout scoring or consuming the same validation dates twice.
 
