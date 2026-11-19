@@ -453,7 +453,12 @@ def capture_new_targets(
 
         for item in legacy_items:
             state, _, event = _attempt_state_for_item(item, attempts, events)
-            if state in {"IN_PROGRESS", "FAILED"}:
+            if state in {"IN_PROGRESS", "FAILED", "UNATTEMPTED"}:
+                # In the legacy FIFO workflow, the head was materialized for
+                # offline discovery before a provider attempt was reserved.
+                # Treat its first unattempted item as active too; otherwise a
+                # migration could silently skip durable work already tied to
+                # that snapshot and jump to a newer queued draw.
                 active = copy.deepcopy(item)
                 break
             if state in {"SUCCEEDED", "NO_ELIGIBLE_CANDIDATE"}:
