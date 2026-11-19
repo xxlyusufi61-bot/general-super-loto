@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Strict schema for private local target-evaluation results, never model context."""
+"""Strict schema for score-free target-evaluation receipts stored in shared state."""
 from __future__ import annotations
 
 import copy
@@ -19,7 +19,7 @@ ENTRY_KEYS = {
 
 
 class TargetEvaluationLedgerError(ValueError):
-    """Raised when a private local target result is unsafe or inconsistent."""
+    """Raised when a shared-state target-evaluation receipt is unsafe or inconsistent."""
 
 
 def _date(value: Any) -> str:
