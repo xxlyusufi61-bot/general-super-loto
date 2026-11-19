@@ -126,11 +126,11 @@ def _write_github_output(path: str | None, values: dict[str, Any]) -> None:
         for key, value in values.items():
             if type(value) is bool:
                 rendered = "true" if value else "false"
-            elif isinstance(value, str) and "\\n" not in value and "\\r" not in value:
+            elif isinstance(value, str) and "\n" not in value and "\r" not in value:
                 rendered = value
             else:
                 raise TargetEvaluationError("Recovery output contains an unsupported value.")
-            stream.write(key + "=" + rendered + "\\n")
+            stream.write(key + "=" + rendered + "\n")
 
 
 def recover_evaluated_claim_for_attempt(

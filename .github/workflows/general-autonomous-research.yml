@@ -307,14 +307,14 @@ jobs:
         env:
           ATTEMPT_ID: ${{ steps.attempt_reservation.outputs.attempt_id }}
         run: |
-          python3 general_target_evaluator.py --recover-candidates \\
-            --attempt-id "$ATTEMPT_ID" \\
-            --ledger general_evaluation_ledger.json \\
-            --memory general_research_memory.json \\
-            --state general_autonomous_research_state.json \\
-            --proposals open_research_proposals.json \\
-            --specs open_research_execution_specs.json \\
-            --claim-output open_research_evaluation_claim.json \\
+          python3 general_target_evaluator.py --recover-candidates \
+            --attempt-id "$ATTEMPT_ID" \
+            --ledger general_evaluation_ledger.json \
+            --memory general_research_memory.json \
+            --state general_autonomous_research_state.json \
+            --proposals open_research_proposals.json \
+            --specs open_research_execution_specs.json \
+            --claim-output open_research_evaluation_claim.json \
             --github-output "$GITHUB_OUTPUT"
       - name: Run independent forward and reverse NVIDIA discovery
         id: research
@@ -409,7 +409,7 @@ jobs:
         id: target_evaluation
         if: ${{ steps.frozen_recovery.outputs.recovery_available == 'true' || (steps.evaluation.outcome == 'success' && steps.persist_eval.outcome == 'success') || steps.sealed_claim.outputs.claim_reused == 'true' }}
         env:
-          SEALED_CLAIM_ID: ${{ steps.sealed_claim.outputs.claim_id }}
+          SEALED_CLAIM_ID: ${{ steps.frozen_recovery.outputs.claim_id || steps.sealed_claim.outputs.claim_id }}
           ATTEMPT_ID: ${{ steps.attempt_reservation.outputs.attempt_id }}
         run: |
           python3 general_target_evaluator.py \

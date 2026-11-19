@@ -2,6 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from datetime import date, timedelta
 
 import general_autonomous_research as auto
 import general_hypothesis_execution_v2 as execution_v2
@@ -11,6 +12,7 @@ from general_target_evaluator import (
     TargetEvaluationError,
     evaluate_frozen_target,
     recover_evaluated_claim_for_attempt,
+    _write_github_output,
 )
 from general_sealed_evaluation_test import make_rows
 import general_target_queue as target_queue
@@ -120,8 +122,8 @@ def _write_evaluated_memory_pair(path, claim, specs, target_date, archive_sha, c
             "evaluation_feedback": feedback,
             "failure": None,
             "discovery_window": {
-                "start_date": "2026-10-01",
-                "end_date": "2026-11-01",
+                "start_date": (date.fromisoformat(target_date) - timedelta(days=80)).isoformat(),
+                "end_date": (date.fromisoformat(target_date) - timedelta(days=1)).isoformat(),
                 "draw_count": 80,
                 "holdout_dates_copied": False,
                 "archive_rows_copied": False,
@@ -329,6 +331,23 @@ class LocalTargetEvaluationTests(unittest.TestCase):
         self.assertTrue(result["recovery_required"])
         self.assertFalse(result["recovery_available"])
         self.assertFalse((self.root / "missing-recovery-claim.json").exists())
+
+    def test_github_output_recovery_values_are_written_as_separate_lines(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "github-output.txt"
+            _write_github_output(str(output), {
+                "recovery_required": True,
+                "recovery_available": False,
+                "claim_id": "",
+            })
+            self.assertEqual(
+                output.read_text(encoding="utf-8").splitlines(),
+                [
+                    "recovery_required=true",
+                    "recovery_available=false",
+                    "claim_id=",
+                ],
+            )
 
     def test_target_evaluation_requires_evaluated_claim(self):
         doc = json.loads(self.ledger_path.read_text(encoding="utf-8"))

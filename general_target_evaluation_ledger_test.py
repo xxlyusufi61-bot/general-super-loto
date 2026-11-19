@@ -22,7 +22,7 @@ class PrivateTargetEvaluationSchemaTests(unittest.TestCase):
         self.assertNotIn("numbers", checked)
 
     def test_attempt_and_claim_ids_must_be_unique(self):
-        value = {"schema_version": 1, "purpose": ledger.PURPOSE, "entries": [entry(), entry()]}
+        value = {"schema_version": ledger.SCHEMA_VERSION, "purpose": ledger.PURPOSE, "entries": [entry(), entry()]}
         with self.assertRaisesRegex(ledger.TargetEvaluationLedgerError, "duplicate"):
             ledger.validate_ledger(value)
 
