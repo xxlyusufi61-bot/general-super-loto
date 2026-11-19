@@ -1326,6 +1326,59 @@ class AutonomousResearchStateTests(unittest.TestCase):
         self.assertNotIn("numbers", report)
         self.assertIs(report["target_values_rendered"], False)
 
+    def test_v2_exhausted_active_target_can_be_retired_without_a_newer_draw(self):
+        state, item_target, _ = self._exhausted_target_fixture()
+        state["target_queue"] = {
+            "schema_version": 2,
+            "observed_through_date": item_target["target_date"],
+            "active": json.loads(json.dumps(item_target)),
+            "latest_snapshot": json.loads(json.dumps(item_target)),
+            "completed": [],
+        }
+
+        updated, report = auto.retire_exhausted_target(
+            state,
+            target_date=item_target["target_date"],
+            archive_sha256=item_target["archive_sha256"],
+            archive_record_count=item_target["archive_record_count"],
+            expected_failed_attempt_count=auto.MAX_ATTEMPTS_PER_TARGET,
+            now=NOW,
+        )
+
+        self.assertIsNone(updated["target_queue"]["active"])
+        self.assertEqual(
+            updated["target_queue"]["latest_snapshot"]["target_date"],
+            item_target["target_date"],
+        )
+        self.assertIsNone(report["next_target_date"])
+        self.assertEqual(
+            updated["target_queue"]["completed"][0]["outcome"],
+            "EXHAUSTED_RETRY_BUDGET",
+        )
+
+    def test_v2_exhausted_target_requires_confirmation_of_staged_latest_successor(self):
+        state, item_target, item_next = self._exhausted_target_fixture()
+        state["target_queue"] = {
+            "schema_version": 2,
+            "observed_through_date": item_next["target_date"],
+            "active": json.loads(json.dumps(item_target)),
+            "latest_snapshot": json.loads(json.dumps(item_next)),
+            "completed": [],
+        }
+
+        with self.assertRaisesRegex(
+            auto.AutonomousResearchError,
+            "must confirm the exact staged latest archive snapshot",
+        ):
+            auto.retire_exhausted_target(
+                state,
+                target_date=item_target["target_date"],
+                archive_sha256=item_target["archive_sha256"],
+                archive_record_count=item_target["archive_record_count"],
+                expected_failed_attempt_count=auto.MAX_ATTEMPTS_PER_TARGET,
+                now=NOW,
+            )
+
     def test_exhausted_retry_target_refuses_missing_terminal_failure_record(self):
         state, item_target, item_next = self._exhausted_target_fixture(omit_last_event=True)
         with self.assertRaisesRegex(auto.AutonomousResearchError, "terminal FAILED"):
