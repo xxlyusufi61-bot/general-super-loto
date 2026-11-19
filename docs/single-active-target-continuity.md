@@ -8,7 +8,7 @@ The active target is bound to an immutable content-addressed archive prefix. The
 
 ## Migration from the legacy queue
 
-The first queue-capture after the code is deployed converts the legacy FIFO representation to the single-active-target schema. It does not erase attempt or event history. An in-progress or failed legacy target remains pinned to its exact snapshot. When no such unfinished target exists, the latest canonical archive snapshot becomes the sole active target; intermediate queued draws are not promoted one by one. The latest full archive snapshot remains staged separately.
+The first queue-capture after the code is deployed converts the legacy FIFO representation to the single-active-target schema. It does not erase attempt or event history. An in-progress, failed, or unattempted legacy FIFO head remains pinned to its exact snapshot because the legacy workflow materialized that head for offline research before reserving a provider attempt. Later queued draws are not promoted one by one. Once that active target is completed, only the then-latest canonical archive snapshot is promoted; intermediate queued draws are not promoted as separate targets. The latest full archive snapshot remains staged separately.
 
 This migration is code in the PR, not a live state-store operation performed during PR preparation. It occurs only when the normal queue-capture workflow runs after the PR has been merged.
 
