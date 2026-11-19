@@ -131,7 +131,6 @@ class LocalTargetEvaluationTests(unittest.TestCase):
         self.assertNotIn("candidate_numbers", stored)
         self.assertNotIn("target_numbers", stored)
         self.assertTrue(report["persistent_result_status"] == "RECORDED")
-        self.assertEqual(report["hit_count"], len(set(self.rows[-1]["numbers"]).intersection({item["number"] for item in sealed._select_one_frozen_candidate(self.proposals, self.specs) and []}))) if False else None
 
     def test_local_target_result_is_idempotent_for_exact_attempt_claim_pair(self):
         first = evaluate_frozen_target(
