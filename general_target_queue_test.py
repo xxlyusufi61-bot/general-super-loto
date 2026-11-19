@@ -292,6 +292,41 @@ class SingleActiveTargetQueueTests(unittest.TestCase):
         with self.assertRaisesRegex(queue.TargetQueueError, "Duplicate JSON key"):
             queue._strict_json_loads(b'{"draws":[],"draws":[]}')
 
+    def test_legacy_fifo_migration_pins_unattempted_head_before_newer_queued_draws(self):
+        rows = synthetic_rows(90)
+        legacy_items = [
+            queue._make_item(
+                rows[:index + 1],
+                source_archive_sha256=("d" * 63) + str(index % 10),
+                enqueued_at_utc=NOW.isoformat(),
+            )
+            for index in range(87, 90)
+        ]
+        legacy = {
+            "schema_version": 1,
+            "observed_through_date": rows[-1]["date"],
+            "items": legacy_items,
+            "completed": [],
+        }
+
+        with tempfile.TemporaryDirectory() as directory:
+            archive = Path(directory) / "archive.json"
+            write_archive(archive, rows)
+            migrated, summary = queue.capture_new_targets(
+                legacy, archive_path=archive, attempts=[], events=[],
+                now=NOW + timedelta(hours=1),
+            )
+
+        # The old scheduled workflow materialized the FIFO head for offline
+        # discovery before reserving a provider attempt. Migration must retain
+        # that exact unattempted head while staging the newest archive cursor.
+        self.assertEqual(migrated["schema_version"], 2)
+        self.assertEqual(migrated["active"]["target_date"], legacy_items[0]["target_date"])
+        self.assertEqual(migrated["active"]["archive_sha256"], legacy_items[0]["archive_sha256"])
+        self.assertEqual(migrated["latest_snapshot"]["target_date"], rows[-1]["date"])
+        self.assertEqual(summary["pending_target_count"], 1)
+        self.assertNotIn("items", migrated)
+
     def test_legacy_fifo_migration_preserves_first_unfinished_target_only(self):
         rows = synthetic_rows(90)
         legacy_items = [
