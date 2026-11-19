@@ -32,7 +32,10 @@ name: Single Active Target Continuity CI
       - "general_offline_hypothesis_discovery_test.py"
       - "general_method_registry_test.py"
       - ".github/workflows/general-autonomous-research.yml"
+      - ".github/workflows/retire-exhausted-fifo-target.yml"
       - ".github/workflows/single-active-target-continuity-test.yml"
+      - "general_cycle55_recovery.py"
+      - "general_cycle55_recovery_test.py"
 
 permissions:
   contents: read
@@ -55,6 +58,8 @@ jobs:
           python3 -m py_compile \
             general_autonomous_research.py \
             general_autonomous_research_test.py \
+            general_cycle55_recovery.py \
+            general_cycle55_recovery_test.py \
             general_target_queue.py \
             general_target_queue_test.py \
             general_target_evaluator.py \
@@ -83,6 +88,7 @@ jobs:
           python3 -m unittest -v \
             general_target_queue_test \
             general_autonomous_research_test \
+            general_cycle55_recovery_test \
             general_target_evaluator_test \
             general_target_evaluation_ledger_test \
             general_sealed_evaluation_test \
