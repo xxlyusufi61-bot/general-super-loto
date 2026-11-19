@@ -518,7 +518,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
         report = self._safe_local_target_report(attempt)
         updated = auto.record_target_evaluation(state, report)
         self.assertEqual(len(updated["target_evaluations"]), 1)
-        self.assertEqual(updated["target_evaluations"][0]["hit_count"], 2)
+        self.assertNotIn("hit_count", updated["target_evaluations"][0])
         self.assertNotIn("numbers", updated["target_evaluations"][0])
         self.assertNotIn("candidate_numbers", updated["target_evaluations"][0])
         again = auto.record_target_evaluation(updated, report)
