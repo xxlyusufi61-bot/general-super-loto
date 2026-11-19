@@ -7,7 +7,11 @@ import general_autonomous_research as auto
 import general_hypothesis_execution_v2 as execution_v2
 import general_research_memory as research_memory
 import general_sealed_evaluation as sealed
-from general_target_evaluator import TargetEvaluationError, evaluate_frozen_target
+from general_target_evaluator import (
+    TargetEvaluationError,
+    evaluate_frozen_target,
+    recover_evaluated_claim_for_attempt,
+)
 from general_sealed_evaluation_test import make_rows
 import general_target_queue as target_queue
 
@@ -252,9 +256,7 @@ class LocalTargetEvaluationTests(unittest.TestCase):
             "2026-11-18T11:30:00+00:00",
         )
         claim_output = self.root / "recovered-claim.json"
-        recovered = auto_recover = __import__(
-            "general_target_evaluator"
-        ).recover_evaluated_claim_for_attempt(
+        recovered = recover_evaluated_claim_for_attempt(
             self.attempt_id,
             scheduler_state_path=self.state_path,
             ledger_path=self.ledger_path,
@@ -315,7 +317,7 @@ class LocalTargetEvaluationTests(unittest.TestCase):
         empty_memory_path.write_text(
             json.dumps(research_memory.empty_memory()), encoding="utf-8"
         )
-        result = __import__("general_target_evaluator").recover_evaluated_claim_for_attempt(
+        result = recover_evaluated_claim_for_attempt(
             self.attempt_id,
             scheduler_state_path=self.state_path,
             ledger_path=self.ledger_path,
