@@ -7,13 +7,13 @@ import re
 from datetime import date, datetime, timezone
 from typing import Any
 
-SCHEMA_VERSION = 1
-PURPOSE = "PRIVATE_LOCAL_TARGET_EVALUATION_RESULTS_NOT_MODEL_CONTEXT"
+SCHEMA_VERSION = 2
+PURPOSE = "PUBLIC_STATE_SAFE_TARGET_EVALUATION_RECEIPTS_WITHOUT_SCORES"
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 ENTRY_KEYS = {
     "claim_id", "attempt_id", "target_date", "archive_sha256",
     "archive_record_count", "forward_hypothesis_id", "forward_spec_sha256",
-    "execution_spec_dsl_version", "candidate_count", "hit_count",
+    "execution_spec_dsl_version", "candidate_count",
     "uniform_random_expected_hits_out_of_6", "evaluation_scope", "completed_at_utc",
 }
 
@@ -69,8 +69,6 @@ def validate_entry(value: Any) -> dict[str, Any]:
         raise TargetEvaluationLedgerError("execution specification DSL version is invalid")
     if type(value.get("candidate_count")) is not int or value["candidate_count"] != 6:
         raise TargetEvaluationLedgerError("candidate count must be exactly six")
-    if type(value.get("hit_count")) is not int or not 0 <= value["hit_count"] <= 6:
-        raise TargetEvaluationLedgerError("aggregate hit count must be an integer in 0..6")
     if type(value.get("uniform_random_expected_hits_out_of_6")) not in (int, float) or value["uniform_random_expected_hits_out_of_6"] != 0.6:
         raise TargetEvaluationLedgerError("uniform random R60 reference must equal 0.600/6")
     if value.get("evaluation_scope") != "ONE_CURRENT_HIDDEN_TARGET":
