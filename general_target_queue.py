@@ -451,6 +451,13 @@ def capture_new_targets(
             if any(row["date"] < cursor for row in rows[cursor_index + 1:]):
                 raise TargetQueueError("Canonical archive chronology regressed after the legacy queue cursor.")
 
+        # Prove every legacy queue snapshot against the current canonical
+        # archive before migration. Checking only the cursor date would allow
+        # a same-date/same-count archive mutation to be silently carried into
+        # the new active-target state.
+        for item in legacy_items:
+            _verify_item_against_archive(item, rows)
+
         for item in legacy_items:
             state, _, event = _attempt_state_for_item(item, attempts, events)
             if state in {"IN_PROGRESS", "FAILED", "UNATTEMPTED"}:
