@@ -1319,7 +1319,7 @@ def record_target_evaluation(
     state: dict[str, Any],
     report: dict[str, Any],
 ) -> dict[str, Any]:
-    """Append only the number-free aggregate result of a local hidden-target score."""
+    """Append only the score-free receipt for a local hidden-target evaluation."""
     validate_state(state)
     if not isinstance(report, dict) or report.get("status") != "LOCAL_TARGET_EVALUATION_COMPLETED":
         raise AutonomousResearchError("Only a completed local target-evaluation report may be recorded.")
