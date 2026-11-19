@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Locally score one frozen forward specification against the isolated current target.
 
-Target numbers are read only in this local process. Persistent scheduler state
-receives only the aggregate hit count and non-sensitive formula/archive hashes.
-This module makes no network, NVIDIA, or Telegram requests.
+Target numbers and the computed score remain inside the local evaluator process.
+Persistent scheduler state receives only a score-free receipt. This module makes
+no network, NVIDIA, or Telegram requests.
 """
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import sys
 from datetime import datetime, timezone
@@ -18,6 +19,7 @@ import general_autonomous_research as autonomous
 import general_execution_spec_dispatch as execution_dispatch
 import general_hypothesis_execution as execution_v1
 import general_hypothesis_execution_v2 as execution_v2
+import general_research_memory as research_memory
 import general_sealed_evaluation as sealed
 import general_target_evaluation_ledger as target_eval_schema
 
@@ -115,6 +117,234 @@ def _rank_frozen_forward_candidate(
     )
 
 
+def _write_github_output(path: str | None, values: dict[str, Any]) -> None:
+    if not path:
+        return
+    output = Path(path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with output.open("a", encoding="utf-8") as stream:
+        for key, value in values.items():
+            if type(value) is bool:
+                rendered = "true" if value else "false"
+            elif isinstance(value, str) and "\\n" not in value and "\\r" not in value:
+                rendered = value
+            else:
+                raise TargetEvaluationError("Recovery output contains an unsupported value.")
+            stream.write(key + "=" + rendered + "\\n")
+
+
+def recover_evaluated_claim_for_attempt(
+    attempt_id: str,
+    *,
+    scheduler_state_path: str | Path,
+    ledger_path: str | Path,
+    memory_path: str | Path,
+    proposals_path: str | Path,
+    specs_path: str | Path,
+    claim_output_path: str | Path,
+) -> dict[str, Any]:
+    """Restore the exact evaluated candidate pair after a local-score failure.
+
+    This path is deliberately offline. It is activated only when the immediately
+    preceding attempt for the immutable active target ended with
+    SEALED_EVALUATION_INCOMPLETE and its exact EVALUATED candidate pair can be
+    recovered from GENERAL's validated research memory.
+    """
+    state = autonomous.read_state(scheduler_state_path)
+    attempts_by_id = {item["attempt_id"]: item for item in state["attempts"]}
+    attempt = attempts_by_id.get(attempt_id)
+    if attempt is None or not state["attempts"] or state["attempts"][-1]["attempt_id"] != attempt_id:
+        raise TargetEvaluationError("Local-score recovery must bind to the newest reserved target attempt.")
+    if any(event["attempt_id"] == attempt_id for event in state["events"]):
+        raise TargetEvaluationError("Local-score recovery cannot run after the current attempt is terminal.")
+
+    active = autonomous.target_queue.active_item(state["target_queue"])
+    if active is None or (
+        active["target_date"] != attempt["target_date"]
+        or active["archive_sha256"] != attempt["archive_sha256"]
+        or active["archive_record_count"] != attempt["archive_record_count"]
+    ):
+        raise TargetEvaluationError("Local-score recovery does not match the immutable active target.")
+
+    prior_attempts = [
+        item for item in state["attempts"]
+        if item["target_date"] == attempt["target_date"]
+        and item["archive_sha256"] == attempt["archive_sha256"]
+        and item["archive_record_count"] == attempt["archive_record_count"]
+    ]
+    if len(prior_attempts) < 2 or prior_attempts[-1]["attempt_id"] != attempt_id:
+        return {
+            "status": "NO_LOCAL_SCORE_RECOVERY_REQUIRED",
+            "recovery_required": False,
+            "recovery_available": False,
+            "claim_id": None,
+        }
+    prior_attempt = prior_attempts[-2]
+    prior_event = next(
+        (item for item in state["events"] if item["attempt_id"] == prior_attempt["attempt_id"]),
+        None,
+    )
+    if (
+        prior_event is None
+        or prior_event["outcome"] != "FAILED"
+        or prior_event["reason_code"] != "SEALED_EVALUATION_INCOMPLETE"
+    ):
+        return {
+            "status": "NO_LOCAL_SCORE_RECOVERY_REQUIRED",
+            "recovery_required": False,
+            "recovery_available": False,
+            "claim_id": None,
+        }
+
+    ledger = sealed.load_ledger(ledger_path)
+    memory = research_memory.load_memory(memory_path)
+    evaluated_claims = [
+        entry for entry in ledger["entries"]
+        if entry.get("state") == "EVALUATED"
+        and entry.get("target_date") == attempt["target_date"]
+        and entry.get("archive_sha256") == attempt["archive_sha256"]
+        and entry.get("archive_record_count") == attempt["archive_record_count"]
+        and not any(
+            receipt["claim_id"] == entry.get("claim_id")
+            for receipt in state["target_evaluations"]
+        )
+    ]
+    memory_groups: dict[str, dict[str, dict[str, Any]]] = {}
+    for entry in memory["entries"]:
+        feedback = entry.get("evaluation_feedback")
+        if (
+            entry.get("target_date") != attempt["target_date"]
+            or entry.get("archive_sha256") != attempt["archive_sha256"]
+            or entry.get("status") != "EVALUATED"
+            or not isinstance(feedback, dict)
+            or not isinstance(feedback.get("claim_id"), str)
+        ):
+            continue
+        memory_groups.setdefault(feedback["claim_id"], {})[entry["direction"]] = entry
+
+    matches = []
+    for claim in evaluated_claims:
+        group = memory_groups.get(claim["claim_id"], {})
+        forward = group.get("forward")
+        reverse = group.get("reverse")
+        if forward is None or reverse is None:
+            continue
+        if (
+            forward["execution_spec_sha256"] != claim.get("spec_sha256")
+            or reverse["execution_spec_sha256"] != claim.get("reverse_spec_sha256")
+            or forward["evaluation_feedback"]["spec_sha256"] != claim.get("spec_sha256")
+            or reverse["evaluation_feedback"]["spec_sha256"] != claim.get("reverse_spec_sha256")
+            or research_memory.execution_spec_version(forward["execution_spec"])
+                != claim.get("execution_spec_dsl_version")
+            or research_memory.execution_spec_version(reverse["execution_spec"])
+                != claim.get("reverse_execution_spec_dsl_version")
+        ):
+            continue
+        matches.append((claim, forward, reverse))
+
+    if len(matches) != 1:
+        # Do not guess between multiple frozen candidates and never fall back
+        # to a new model request for a target whose local evaluation failed.
+        return {
+            "status": "LOCAL_SCORE_RECOVERY_REQUIRED_BUT_UNAVAILABLE",
+            "recovery_required": True,
+            "recovery_available": False,
+            "claim_id": None,
+        }
+
+    claim, forward, reverse = matches[0]
+    proposal_forward = copy.deepcopy(forward["proposals"][0])
+    proposal_reverse = copy.deepcopy(reverse["proposals"][0])
+    proposal_forward["hypothesis_id"] = claim["hypothesis_id"]
+    proposal_reverse["hypothesis_id"] = claim["reverse_hypothesis_id"]
+    spec_forward = copy.deepcopy(forward["execution_spec"])
+    spec_reverse = copy.deepcopy(reverse["execution_spec"])
+
+    try:
+        for proposal, spec, expected_id, expected_hash, expected_direction in (
+            (proposal_forward, spec_forward, claim["hypothesis_id"], claim["spec_sha256"], "forward"),
+            (proposal_reverse, spec_reverse, claim["reverse_hypothesis_id"], claim["reverse_spec_sha256"], "reverse"),
+        ):
+            checked_proposal = research_memory._validate_proposal(proposal, canonical=True)
+            checked_spec = research_memory.validate_execution_spec(spec)
+            synthetic = research_memory.run_synthetic_contract_tests(checked_spec)
+            if (
+                checked_proposal != proposal
+                or checked_spec != spec
+                or proposal["hypothesis_id"] != expected_id
+                or proposal["discovery_direction"] != expected_direction
+                or research_memory._sha(research_memory._canonical(spec)) != expected_hash
+                or not research_memory.execution_spec_matches_proposal(proposal, spec)
+                or synthetic.get("status") != "PASS"
+                or synthetic.get("real_archive_used") is not False
+            ):
+                raise TargetEvaluationError("Recovered frozen candidate failed its original schema/hash/synthetic checks.")
+    except (TypeError, ValueError, KeyError) as exc:
+        raise TargetEvaluationError("Recovered frozen candidate failed validation: " + str(exc)) from None
+
+    proposals_doc = {
+        "schema_version": 2,
+        "status": "VALID_PROPOSALS",
+        "proposals": [proposal_forward, proposal_reverse],
+    }
+    specs_doc = {
+        "schema_version": 1,
+        "status": "VALIDATED_SPECS",
+        "dsl_validated": True,
+        "synthetic_tests_passed": True,
+        "specifications": [
+            {
+                "hypothesis_id": claim["hypothesis_id"],
+                "execution_spec": spec_forward,
+                "dsl_validated": True,
+                "synthetic_tests_passed": True,
+            },
+            {
+                "hypothesis_id": claim["reverse_hypothesis_id"],
+                "execution_spec": spec_reverse,
+                "dsl_validated": True,
+                "synthetic_tests_passed": True,
+            },
+        ],
+    }
+    recovered_claim = {
+        "status": "RECOVERED_EVALUATED_CLAIM",
+        "claim_created": False,
+        "claim_resumed": False,
+        "claim_reused": True,
+        "claim_id": claim["claim_id"],
+        "target_date": claim["target_date"],
+        "archive_sha256": claim["archive_sha256"],
+        "archive_record_count": claim["archive_record_count"],
+        "hypothesis_id": claim["hypothesis_id"],
+        "spec_sha256": claim["spec_sha256"],
+        "execution_spec_dsl_version": claim["execution_spec_dsl_version"],
+        "reverse_hypothesis_id": claim["reverse_hypothesis_id"],
+        "reverse_spec_sha256": claim["reverse_spec_sha256"],
+        "reverse_execution_spec_dsl_version": claim["reverse_execution_spec_dsl_version"],
+        "validation_start_date": claim["validation_start_date"],
+        "validation_end_date": claim["validation_end_date"],
+        "validation_draw_count": claim["validation_count"],
+        "reverse_validation_start_date": claim["reverse_validation_start_date"],
+        "reverse_validation_end_date": claim["reverse_validation_end_date"],
+        "reverse_validation_draw_count": claim["reverse_validation_count"],
+        "archive_snapshot_path": claim["archive_snapshot_path"],
+        "current_target_included": False,
+        "current_target_numbers_exposed": False,
+        "duplicate_holdout_scoring_performed": False,
+        "local_target_score_recovery": True,
+    }
+    _write_json_atomic(Path(proposals_path), proposals_doc)
+    _write_json_atomic(Path(specs_path), specs_doc)
+    _write_json_atomic(Path(claim_output_path), recovered_claim)
+    return {
+        "status": "EXACT_EVALUATED_CANDIDATE_PAIR_RECOVERED",
+        "recovery_required": True,
+        "recovery_available": True,
+        "claim_id": claim["claim_id"],
+    }
+
+
 def evaluate_frozen_target(
     claim_id: str,
     attempt_id: str,
@@ -206,7 +436,7 @@ def evaluate_frozen_target(
         result_ledger = autonomous.record_target_evaluation(result_ledger, report)
         autonomous.write_state(scheduler_state_path, result_ledger)
     except Exception as exc:
-        raise TargetEvaluationError("Private local target result could not be persisted: " + str(exc)) from None
+        raise TargetEvaluationError("Score-free target-evaluation receipt could not be persisted: " + str(exc)) from None
     report["persistent_result_status"] = "ALREADY_RECORDED" if existing else "RECORDED"
     if output_path is not None:
         _write_json_atomic(Path(output_path), report)
@@ -215,16 +445,45 @@ def evaluate_frozen_target(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--claim-id", required=True)
-    parser.add_argument("--attempt-id", required=True)
+    parser.add_argument("--recover-candidates", action="store_true")
+    parser.add_argument("--claim-id")
+    parser.add_argument("--attempt-id")
     parser.add_argument("--ledger", type=Path, default=Path("general_evaluation_ledger.json"))
     parser.add_argument("--proposals", type=Path, default=Path("open_research_proposals.json"))
     parser.add_argument("--specs", type=Path, default=Path("open_research_execution_specs.json"))
     parser.add_argument("--state", type=Path, default=Path("general_autonomous_research_state.json"))
+    parser.add_argument("--memory", type=Path, default=Path("general_research_memory.json"))
+    parser.add_argument("--claim-output", type=Path, default=Path("open_research_evaluation_claim.json"))
+    parser.add_argument("--github-output")
     parser.add_argument("--snapshot-directory", type=Path, default=Path("general_evaluation_snapshots"))
     parser.add_argument("--output", type=Path, default=Path("open_research_target_evaluation_report.json"))
     args = parser.parse_args(argv)
     try:
+        if args.recover_candidates:
+            if not args.attempt_id:
+                raise TargetEvaluationError("--attempt-id is required for recovery.")
+            result = recover_evaluated_claim_for_attempt(
+                args.attempt_id,
+                scheduler_state_path=args.state,
+                ledger_path=args.ledger,
+                memory_path=args.memory,
+                proposals_path=args.proposals,
+                specs_path=args.specs,
+                claim_output_path=args.claim_output,
+            )
+            _write_github_output(args.github_output, {
+                "recovery_required": result["recovery_required"],
+                "recovery_available": result["recovery_available"],
+                "claim_id": result["claim_id"] or "",
+            })
+            print(json.dumps({
+                "status": result["status"],
+                "recovery_required": result["recovery_required"],
+                "recovery_available": result["recovery_available"],
+            }, ensure_ascii=False, sort_keys=True))
+            return 0
+        if not args.claim_id or not args.attempt_id:
+            raise TargetEvaluationError("--claim-id and --attempt-id are required for local scoring.")
         report = evaluate_frozen_target(
             args.claim_id, args.attempt_id, args.ledger, args.proposals, args.specs,
             scheduler_state_path=args.state,
