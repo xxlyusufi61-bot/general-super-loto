@@ -199,6 +199,20 @@ class LocalTargetEvaluationTests(unittest.TestCase):
         self.assertFalse(report["prior_draws_reused_for_discovery_or_tuning"])
         self.assertFalse(report["target_score_sent_to_model"])
 
+    def test_private_target_score_report_is_excluded_from_workflow_artifacts(self):
+        workflow_path = (
+            Path(__file__).resolve().parent
+            / ".github"
+            / "workflows"
+            / "general-autonomous-research.yml"
+        )
+        workflow = workflow_path.read_text(encoding="utf-8")
+        artifact_step = workflow.split(
+            "- name: Upload number-safe autonomous cycle artifacts", 1
+        )[1]
+        artifact_paths = artifact_step.split("retention-days:", 1)[0]
+        self.assertNotIn("open_research_target_evaluation_report.json", artifact_paths)
+
     def test_snapshot_path_cannot_escape_approved_directory(self):
         doc = json.loads(self.ledger_path.read_text(encoding="utf-8"))
         doc["entries"][0]["archive_snapshot_path"] = "../outside/" + doc["entries"][0]["archive_sha256"] + ".json"
