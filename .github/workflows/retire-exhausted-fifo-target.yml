@@ -12,7 +12,7 @@ on:
         required: true
         type: string
       archive_record_count:
-        description: Exact FIFO snapshot record count.
+        description: Exact record count of the active-target archive snapshot.
         required: true
         type: number
       expected_attempt_count:
@@ -20,16 +20,16 @@ on:
         required: true
         type: number
       expected_next_target_date:
-        description: Exact date of the staged latest archive snapshot that should follow retirement.
-        required: true
+        description: Optional exact date of a newer staged latest archive snapshot. Leave all three successor fields empty when no newer draw exists.
+        required: false
         type: string
       expected_next_archive_sha256:
-        description: Exact SHA-256 of the staged latest archive snapshot.
-        required: true
+        description: Optional exact SHA-256 of the newer staged latest archive snapshot.
+        required: false
         type: string
       expected_next_archive_record_count:
-        description: Exact record count of the next FIFO snapshot.
-        required: true
+        description: Optional exact record count of the newer staged latest archive snapshot.
+        required: false
         type: number
       confirmation:
         description: Exact manual confirmation required for this state-store write.
@@ -112,15 +112,27 @@ jobs:
               return value
 
           exact_date("TARGET_DATE")
-          exact_date("NEXT_TARGET_DATE")
           exact_sha("ARCHIVE_SHA256")
-          exact_sha("NEXT_ARCHIVE_SHA256")
           exact_int("ARCHIVE_RECORD_COUNT")
           attempts = exact_int("EXPECTED_ATTEMPT_COUNT", 10)
           if attempts != 10:
               raise SystemExit("Exhaustion retirement requires exactly ten failed attempts.")
-          exact_int("NEXT_ARCHIVE_RECORD_COUNT")
-          print("Request identity and field formats validated. No provider call is permitted.")
+
+          successor_values = (
+              os.environ.get("NEXT_TARGET_DATE", "").strip(),
+              os.environ.get("NEXT_ARCHIVE_SHA256", "").strip(),
+              os.environ.get("NEXT_ARCHIVE_RECORD_COUNT", "").strip(),
+          )
+          supplied = tuple(bool(value) for value in successor_values)
+          if any(supplied) and not all(supplied):
+              raise SystemExit("Supply all three staged-successor fields together, or leave all three empty.")
+          if all(supplied):
+              exact_date("NEXT_TARGET_DATE")
+              exact_sha("NEXT_ARCHIVE_SHA256")
+              exact_int("NEXT_ARCHIVE_RECORD_COUNT")
+              print("Exact staged successor identity validated. No provider call is permitted.")
+          else:
+              print("No newer draw is staged; retirement will leave the queue waiting. No provider call is permitted.")
           PY
 
       - name: Hydrate the authoritative state snapshot
@@ -167,15 +179,22 @@ jobs:
           NEXT_ARCHIVE_SHA256: ${{ inputs.expected_next_archive_sha256 }}
           NEXT_ARCHIVE_RECORD_COUNT: ${{ inputs.expected_next_archive_record_count }}
         run: |
-          python3 general_autonomous_research.py retire-exhausted-target \
-            --state general_autonomous_research_state.json \
-            --target-date "$TARGET_DATE" \
-            --archive-sha256 "$ARCHIVE_SHA256" \
-            --archive-record-count "$ARCHIVE_RECORD_COUNT" \
-            --expected-attempt-count "$EXPECTED_ATTEMPT_COUNT" \
-            --expected-next-target-date "$NEXT_TARGET_DATE" \
-            --expected-next-archive-sha256 "$NEXT_ARCHIVE_SHA256" \
-            --expected-next-archive-record-count "$NEXT_ARCHIVE_RECORD_COUNT"
+          retire_args=(
+            python3 general_autonomous_research.py retire-exhausted-target
+            --state general_autonomous_research_state.json
+            --target-date "$TARGET_DATE"
+            --archive-sha256 "$ARCHIVE_SHA256"
+            --archive-record-count "$ARCHIVE_RECORD_COUNT"
+            --expected-attempt-count "$EXPECTED_ATTEMPT_COUNT"
+          )
+          if [ -n "$NEXT_TARGET_DATE" ]; then
+            retire_args+=(
+              --expected-next-target-date "$NEXT_TARGET_DATE"
+              --expected-next-archive-sha256 "$NEXT_ARCHIVE_SHA256"
+              --expected-next-archive-record-count "$NEXT_ARCHIVE_RECORD_COUNT"
+            )
+          fi
+          "${retire_args[@]}"
 
       - name: Publish the single guarded state-store update
         uses: ./.github/actions/publish-automation-state
@@ -216,7 +235,8 @@ jobs:
           expected_attempts = int(os.environ["EXPECTED_ATTEMPT_COUNT"])
           next_target = os.environ["NEXT_TARGET_DATE"]
           next_sha = os.environ["NEXT_ARCHIVE_SHA256"]
-          next_count = int(os.environ["NEXT_ARCHIVE_RECORD_COUNT"])
+          next_count_raw = os.environ.get("NEXT_ARCHIVE_RECORD_COUNT", "").strip()
+          next_count = int(next_count_raw) if next_count_raw else None
 
           retired = [
               item for item in queue["completed"]
@@ -241,12 +261,20 @@ jobs:
               if queue.get("active") is not None:
                   raise SystemExit("The exhausted active target was not released.")
               staged = queue.get("latest_snapshot")
-              if not isinstance(staged, dict) or staged.get("target_date") != next_target or staged.get("archive_sha256") != next_sha or staged.get("archive_record_count") != next_count:
-                  raise SystemExit("The exact expected successor is not the staged latest archive snapshot.")
+              if not isinstance(staged, dict):
+                  raise SystemExit("The latest archive snapshot is missing after retirement.")
+              if next_target:
+                  if staged.get("target_date") != next_target or staged.get("archive_sha256") != next_sha or staged.get("archive_record_count") != next_count:
+                      raise SystemExit("The exact expected successor is not the staged latest archive snapshot.")
+              elif staged.get("target_date") != target or staged.get("archive_sha256") != archive_sha or staged.get("archive_record_count") != record_count:
+                  raise SystemExit("No successor was supplied, but the latest snapshot is not the retired target.")
           elif queue.get("schema_version") == 1:
               items = queue.get("items")
-              if not items or items[0].get("target_date") != next_target or items[0].get("archive_sha256") != next_sha or items[0].get("archive_record_count") != next_count:
-                  raise SystemExit("The exact expected successor is not the legacy FIFO head.")
+              if next_target:
+                  if not items or items[0].get("target_date") != next_target or items[0].get("archive_sha256") != next_sha or items[0].get("archive_record_count") != next_count:
+                      raise SystemExit("The exact expected successor is not the legacy FIFO head.")
+              elif items:
+                  raise SystemExit("A legacy successor exists but no successor identity was supplied.")
           else:
               raise SystemExit("Unsupported target queue schema after retirement.")
           if hashlib.sha256(canonical(attempts)).hexdigest() != os.environ["ATTEMPTS_SHA256"]:
@@ -257,7 +285,8 @@ jobs:
               "status": "VERIFIED",
               "outcome": "EXHAUSTED_RETRY_BUDGET",
               "preserved_attempts": len(attempts),
-              "staged_latest_target": next_target,
+              "staged_latest_target": next_target or None,
+              "waiting_for_new_draw": not bool(next_target),
               "nvidia_requests": 0,
               "lock_changes": 0,
               "target_values_rendered": False,
