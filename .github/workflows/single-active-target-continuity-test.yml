@@ -86,7 +86,6 @@ jobs:
             general_offline_hypothesis_discovery_test.py
       - name: Compile production migration rehearsal
         run: python3 -m py_compile general_production_migration_rehearsal.py
-            general_production_migration_rehearsal.py
       - name: Rehearse production migration on an isolated read-only copy
         env:
           GITHUB_REPOSITORY: ${{ github.repository }}
