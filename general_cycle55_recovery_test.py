@@ -94,6 +94,7 @@ class Cycle55RecoveryTests(unittest.TestCase):
         state.pop("recovery_history")
         state.pop("manual_retry_history")
         state.pop("workflow_retry_history")
+        state.pop("target_evaluations")
         state["schema_version"] = 2
         state["authorization"] = {
             "enabled": True,
@@ -180,7 +181,7 @@ class Cycle55RecoveryTests(unittest.TestCase):
 
     def test_recovery_archives_false_terminal_records_and_restores_exact_fifo_snapshot(self):
         recovered = self.recover()
-        self.assertEqual(recovered["schema_version"], 5)
+        self.assertEqual(recovered["schema_version"], 6)
         self.assertEqual(recovered["events"][-1]["outcome"], "FAILED")
         self.assertEqual(recovered["events"][-1]["reason_code"], "WORKFLOW_FAILED")
         self.assertEqual(
@@ -199,6 +200,26 @@ class Cycle55RecoveryTests(unittest.TestCase):
             recovery._canonical_sha256(self.head_item),
         )
         autonomous.validate_state(recovered)
+
+    def test_recovery_history_validates_after_migration_to_single_active_queue(self):
+        recovered = self.recover()
+        recovered["target_queue"] = {
+            "schema_version": 2,
+            "observed_through_date": self.tail_item["target_date"],
+            "active": copy.deepcopy(self.head_item),
+            "latest_snapshot": copy.deepcopy(self.tail_item),
+            "completed": [],
+        }
+
+        validated = autonomous.validate_state(recovered)
+        self.assertEqual(
+            target_queue.active_item(validated["target_queue"])["target_date"],
+            self.head_item["target_date"],
+        )
+        self.assertEqual(
+            target_queue.latest_snapshot_item(validated["target_queue"])["target_date"],
+            self.tail_item["target_date"],
+        )
 
     def test_inputs_are_not_mutated(self):
         current_before = copy.deepcopy(self.current_state)
@@ -268,7 +289,7 @@ class Cycle55RecoveryTests(unittest.TestCase):
             )
             lock.write_text(json.dumps(general_nvidia_guard.initial_lock_state()), encoding="utf-8")
             with self.assertRaisesRegex(
-                autonomous.AutonomousResearchError, "immutable FIFO head snapshot"
+                autonomous.AutonomousResearchError, "immutable active-target snapshot"
             ):
                 autonomous.prepare_cycle(
                     recovered,
@@ -383,7 +404,7 @@ class Cycle55RecoveryTests(unittest.TestCase):
                 )
                 self.assertTrue(output_path.exists())
                 self.assertEqual(result["status"], "LOCAL_RECOVERY_PREVIEW_CREATED")
-                self.assertEqual(result["schema_version"], 5)
+                self.assertEqual(result["schema_version"], 6)
                 self.assertFalse(result["production_state_written"])
                 self.assertEqual(current_path.read_bytes(), current_raw)
                 self.assertEqual(source_path.read_bytes(), source_raw)

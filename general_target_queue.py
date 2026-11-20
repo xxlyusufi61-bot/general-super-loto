@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Durable FIFO snapshots for every newly observed canonical Super Loto draw.
+"""One active target snapshot plus a staged latest canonical archive snapshot.
 
-The queue stores compressed, content-addressed archive prefixes inside the existing
-autonomous scheduler state object. It never calls a hosted model or edits the
-canonical archive/state store by itself.
+The queue keeps unfinished research bound to an immutable target snapshot while
+tracking the newest archive independently. Intermediate draws are never promoted
+into separate target work items.
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from typing import Any
 
 import general_sealed_evaluation as sealed
 
-QUEUE_SCHEMA_VERSION = 1
+QUEUE_SCHEMA_VERSION = 2
 RESEARCH_SCOPE_START = date(2020, 8, 2)
 MAX_PENDING_TARGETS = 128
 MAX_COMPLETED_TARGETS = 10_000
@@ -162,17 +162,18 @@ def initial_queue() -> dict[str, Any]:
     return {
         "schema_version": QUEUE_SCHEMA_VERSION,
         "observed_through_date": None,
-        "items": [],
+        "active": None,
+        "latest_snapshot": None,
         "completed": [],
     }
 
 
-def validate_queue(value: Any) -> dict[str, Any]:
+def _validate_queue_v1(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict) or set(value) != {
         "schema_version", "observed_through_date", "items", "completed"
     }:
         raise TargetQueueError("Target queue has an invalid schema.")
-    if type(value.get("schema_version")) is not int or value["schema_version"] != QUEUE_SCHEMA_VERSION:
+    if type(value.get("schema_version")) is not int or value["schema_version"] != 1:
         raise TargetQueueError("Unsupported target queue schema version.")
     cursor = value.get("observed_through_date")
     if cursor is not None:
@@ -256,6 +257,104 @@ def validate_queue(value: Any) -> dict[str, Any]:
     return value
 
 
+def _validate_snapshot_item(item: Any, field: str) -> dict[str, Any]:
+    required_item = {
+        "target_date", "archive_sha256", "source_archive_sha256",
+        "archive_record_count", "snapshot_byte_count", "snapshot_zlib_base64",
+        "enqueued_at_utc",
+    }
+    if not isinstance(item, dict) or set(item) != required_item:
+        raise TargetQueueError(field + " has an invalid schema.")
+    _canonical_date(item.get("target_date"), field + ".target_date")
+    for name in ("archive_sha256", "source_archive_sha256"):
+        digest = item.get(name)
+        if not isinstance(digest, str) or len(digest) != 64 or any(
+            char not in "0123456789abcdef" for char in digest
+        ):
+            raise TargetQueueError(field + " hash is invalid.")
+    if type(item.get("archive_record_count")) is not int or item["archive_record_count"] < 1:
+        raise TargetQueueError(field + " record count is invalid.")
+    if type(item.get("snapshot_byte_count")) is not int or not 1 <= item["snapshot_byte_count"] <= MAX_SNAPSHOT_BYTES:
+        raise TargetQueueError(field + " byte count is invalid.")
+    _timestamp(item.get("enqueued_at_utc"), field + ".enqueued_at_utc")
+    _decode_item(item)
+    return item
+
+
+def validate_queue(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict) and value.get("schema_version") == 1:
+        return _validate_queue_v1(value)
+    if not isinstance(value, dict) or set(value) != {
+        "schema_version", "observed_through_date", "active",
+        "latest_snapshot", "completed"
+    }:
+        raise TargetQueueError("Target queue has an invalid schema.")
+    if type(value.get("schema_version")) is not int or value["schema_version"] != QUEUE_SCHEMA_VERSION:
+        raise TargetQueueError("Unsupported target queue schema version.")
+    cursor = value.get("observed_through_date")
+    if cursor is not None:
+        cursor = _canonical_date(cursor, "queue.observed_through_date")
+    active, latest = value.get("active"), value.get("latest_snapshot")
+    if active is not None:
+        _validate_snapshot_item(active, "queue.active")
+    if latest is not None:
+        _validate_snapshot_item(latest, "queue.latest_snapshot")
+    if (cursor is None) != (latest is None):
+        raise TargetQueueError("Latest archive snapshot and observed-through cursor must be present together.")
+    if latest is not None and latest["target_date"] != cursor:
+        raise TargetQueueError("Latest archive snapshot does not match the observed-through cursor.")
+    completed = value.get("completed")
+    if not isinstance(completed, list) or len(completed) > MAX_COMPLETED_TARGETS:
+        raise TargetQueueError("Completed target history exceeds its bounded capacity.")
+    required_completed = {
+        "target_date", "archive_sha256", "archive_record_count",
+        "completed_at_utc", "outcome",
+    }
+    completed_dates = []
+    for item in completed:
+        if not isinstance(item, dict) or set(item) != required_completed:
+            raise TargetQueueError("Completed target record has an invalid schema.")
+        day = _canonical_date(item.get("target_date"), "queue.completed.target_date")
+        digest = item.get("archive_sha256")
+        if not isinstance(digest, str) or len(digest) != 64 or any(
+            char not in "0123456789abcdef" for char in digest
+        ):
+            raise TargetQueueError("Completed target hash is invalid.")
+        if type(item.get("archive_record_count")) is not int or item["archive_record_count"] < 1:
+            raise TargetQueueError("Completed target record count is invalid.")
+        _timestamp(item.get("completed_at_utc"), "queue.completed.completed_at_utc")
+        if item.get("outcome") not in TERMINAL_TARGET_OUTCOMES:
+            raise TargetQueueError("Completed target outcome is not an approved terminal target outcome.")
+        completed_dates.append(day)
+    if completed_dates != sorted(completed_dates) or len(set(completed_dates)) != len(completed_dates):
+        raise TargetQueueError("Completed target history must be unique and chronological.")
+    last_completed = completed_dates[-1] if completed_dates else None
+    if latest is not None and last_completed is not None and latest["target_date"] < last_completed:
+        raise TargetQueueError("Latest archive snapshot predates completed target history.")
+    if active is not None:
+        if last_completed is not None and active["target_date"] <= last_completed:
+            raise TargetQueueError("Active target is not newer than completed target history.")
+        if latest is None or active["target_date"] > latest["target_date"]:
+            raise TargetQueueError("Active target is newer than the latest canonical archive snapshot.")
+        if active["target_date"] == latest["target_date"] and active["archive_sha256"] != latest["archive_sha256"]:
+            raise TargetQueueError("Active/latest snapshots disagree for the same target date.")
+    return value
+
+
+def active_item(queue_value: Any) -> dict[str, Any] | None:
+    queue = validate_queue(queue_value)
+    if queue["schema_version"] == 1:
+        return queue["items"][0] if queue["items"] else None
+    return queue["active"]
+
+
+def latest_snapshot_item(queue_value: Any) -> dict[str, Any] | None:
+    queue = validate_queue(queue_value)
+    if queue["schema_version"] == 1:
+        return queue["items"][-1] if queue["items"] else None
+    return queue["latest_snapshot"]
+
+
 def _make_item(
     rows: list[dict[str, Any]],
     *,
@@ -277,6 +376,48 @@ def _make_item(
     return item
 
 
+def _attempt_state_for_item(
+    item: dict[str, Any],
+    attempts: list[dict[str, Any]],
+    events: list[dict[str, Any]],
+) -> tuple[str, dict[str, Any] | None, dict[str, Any] | None]:
+    matches = [
+        attempt for attempt in attempts
+        if attempt.get("target_date") == item["target_date"]
+        and attempt.get("archive_sha256") == item["archive_sha256"]
+        and attempt.get("archive_record_count") == item["archive_record_count"]
+    ]
+    if not matches:
+        return "UNATTEMPTED", None, None
+    attempt = matches[-1]
+    event = next(
+        (entry for entry in reversed(events) if entry.get("attempt_id") == attempt.get("attempt_id")),
+        None,
+    )
+    if event is None:
+        return "IN_PROGRESS", attempt, None
+    return event.get("outcome", "UNKNOWN"), attempt, event
+
+
+def _completed_record(item: dict[str, Any], outcome: str, completed_at_utc: str) -> dict[str, Any]:
+    return {
+        "target_date": item["target_date"],
+        "archive_sha256": item["archive_sha256"],
+        "archive_record_count": item["archive_record_count"],
+        "completed_at_utc": completed_at_utc,
+        "outcome": outcome,
+    }
+
+
+def _verify_item_against_archive(item: dict[str, Any], rows: list[dict[str, Any]]) -> None:
+    prefix = [row for row in rows if row["date"] <= item["target_date"]]
+    if not prefix or prefix[-1]["date"] != item["target_date"]:
+        raise TargetQueueError("A preserved active target is absent from the canonical archive.")
+    snapshot = _snapshot_bytes(prefix)
+    if hashlib.sha256(snapshot).hexdigest() != item["archive_sha256"] or len(prefix) != item["archive_record_count"]:
+        raise TargetQueueError("Canonical archive changed beneath the preserved active snapshot.")
+
+
 def capture_new_targets(
     queue_value: Any,
     *,
@@ -285,8 +426,7 @@ def capture_new_targets(
     events: list[dict[str, Any]],
     now: datetime | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Append every unseen canonical draw, preserving a legacy active target safely."""
-    queue = copy.deepcopy(validate_queue(queue_value))
+    """Keep one active target and stage only the newest canonical archive snapshot."""
     archive = sealed.load_archive(archive_path)
     rows = _copy_rows(archive["rows"])
     source_sha = archive["archive_sha256"]
@@ -294,113 +434,154 @@ def capture_new_targets(
     if current.tzinfo is None or current.utcoffset() is None:
         raise TargetQueueError("Queue timestamp must include a timezone.")
     stamp = current.astimezone(timezone.utc).isoformat()
-    original = json.dumps(queue, sort_keys=True, separators=(",", ":"))
+    latest_date = rows[-1]["date"]
+    original = json.dumps(queue_value, sort_keys=True, separators=(",", ":"))
+    previous = validate_queue(queue_value)
+    completed = copy.deepcopy(previous["completed"])
+    active = None
 
-    if queue["observed_through_date"] is None:
-        anchor: str | None = None
-        if attempts:
+    if previous["schema_version"] == 1:
+        legacy_items = previous["items"]
+        if previous["observed_through_date"] is not None:
+            cursor = previous["observed_through_date"]
+            matching = [index for index, row in enumerate(rows) if row["date"] == cursor]
+            if not matching:
+                raise TargetQueueError("Canonical archive no longer contains the persisted legacy queue cursor.")
+            cursor_index = matching[-1]
+            if any(row["date"] < cursor for row in rows[cursor_index + 1:]):
+                raise TargetQueueError("Canonical archive chronology regressed after the legacy queue cursor.")
+
+        # Prove every legacy queue snapshot against the current canonical
+        # archive before migration. Checking only the cursor date would allow
+        # a same-date/same-count archive mutation to be silently carried into
+        # the new active-target state.
+        for item in legacy_items:
+            _verify_item_against_archive(item, rows)
+
+        for item in legacy_items:
+            state, _, event = _attempt_state_for_item(item, attempts, events)
+            if state in {"IN_PROGRESS", "FAILED", "UNATTEMPTED"}:
+                # In the legacy FIFO workflow, the head was materialized for
+                # offline discovery before a provider attempt was reserved.
+                # Treat its first unattempted item as active too; otherwise a
+                # migration could silently skip durable work already tied to
+                # that snapshot and jump to a newer queued draw.
+                active = copy.deepcopy(item)
+                break
+            if state in {"SUCCEEDED", "NO_ELIGIBLE_CANDIDATE"}:
+                if latest_date > item["target_date"]:
+                    outcome = "EVALUATED" if state == "SUCCEEDED" else "NO_ELIGIBLE_CANDIDATE"
+                    if not any(done["target_date"] == item["target_date"] for done in completed):
+                        completed.append(_completed_record(item, outcome, event["recorded_at_utc"]))
+                elif latest_date == item["target_date"]:
+                    active = copy.deepcopy(item)
+                    break
+
+        if active is None and legacy_items:
+            last_legacy = legacy_items[-1]
+            state, _, _ = _attempt_state_for_item(last_legacy, attempts, events)
+            completed_dates = [entry["target_date"] for entry in completed]
+            if state == "UNATTEMPTED" and (
+                not completed_dates or last_legacy["target_date"] > completed_dates[-1]
+            ) and latest_date == last_legacy["target_date"]:
+                active = copy.deepcopy(last_legacy)
+
+        if active is None and previous["observed_through_date"] is None and attempts:
             last_attempt = attempts[-1]
-            anchor = _canonical_date(last_attempt.get("target_date"), "last_attempt.target_date")
             last_event = next(
-                (event for event in reversed(events) if event.get("attempt_id") == last_attempt.get("attempt_id")),
+                (entry for entry in reversed(events) if entry.get("attempt_id") == last_attempt.get("attempt_id")),
                 None,
             )
             if last_event is None or last_event.get("outcome") == "FAILED":
-                prefix = [row for row in rows if row["date"] <= anchor]
                 if (
-                    not prefix
-                    or prefix[-1]["date"] != anchor
-                    or archive["last_date"] != anchor
+                    latest_date != last_attempt.get("target_date")
                     or source_sha != last_attempt.get("archive_sha256")
-                    or archive["record_count"] != last_attempt.get("archive_record_count")
+                    or len(rows) != last_attempt.get("archive_record_count")
                 ):
                     raise TargetQueueError(
                         "Legacy active target source archive identity cannot be proven; manual recovery is required."
                     )
-                # The legacy attempt hash covers the original raw archive document
-                # (including its formatting and metadata), while this FIFO snapshot
-                # has a new canonical serialization. Prove legacy identity using
-                # the exact raw source hash/count, then bind future FIFO processing
-                # to the canonical snapshot's own independent digest.
-                legacy_item = _make_item(
-                    prefix, source_archive_sha256=source_sha,
+                active = _make_item(
+                    rows, source_archive_sha256=source_sha,
                     enqueued_at_utc=last_attempt["claimed_at_utc"],
                 )
-                queue["items"].append(legacy_item)
-        else:
-            anchor = rows[-2]["date"] if len(rows) > 1 else None
-
-        start_index = 0
-        if anchor is not None:
-            matching = [index for index, row in enumerate(rows) if row["date"] == anchor]
-            if not matching:
-                raise TargetQueueError("Queue bootstrap cursor is absent from the canonical archive.")
-            start_index = matching[-1] + 1
-        for index in range(start_index, len(rows)):
-            if len(queue["items"]) >= MAX_PENDING_TARGETS:
-                raise TargetQueueError("FIFO capacity reached; no cursor was advanced and no target was dropped.")
-            queue["items"].append(
-                _make_item(
-                    rows[: index + 1],
-                    source_archive_sha256=source_sha,
-                    enqueued_at_utc=stamp,
-                )
-            )
-        queue["observed_through_date"] = rows[-1]["date"]
     else:
-        cursor = queue["observed_through_date"]
-        matching = [index for index, row in enumerate(rows) if row["date"] == cursor]
-        if not matching:
-            raise TargetQueueError("Canonical archive no longer contains the persisted queue cursor.")
-        cursor_index = matching[-1]
-        if any(row["date"] < cursor for row in rows[cursor_index + 1:]):
-            raise TargetQueueError("Canonical archive chronology regressed after the queue cursor.")
-        for item in queue["items"]:
-            prefix = [row for row in rows if row["date"] <= item["target_date"]]
-            if not prefix or prefix[-1]["date"] != item["target_date"]:
-                raise TargetQueueError("A queued target is absent from the canonical archive.")
-            snapshot = _snapshot_bytes(prefix)
-            if (
-                hashlib.sha256(snapshot).hexdigest() != item["archive_sha256"]
-                or len(prefix) != item["archive_record_count"]
-            ):
-                raise TargetQueueError("Canonical archive changed beneath a queued immutable snapshot.")
-        for index in range(cursor_index + 1, len(rows)):
-            if len(queue["items"]) >= MAX_PENDING_TARGETS:
-                raise TargetQueueError("FIFO capacity reached; no cursor was advanced and no target was dropped.")
-            queue["items"].append(
-                _make_item(
-                    rows[: index + 1],
-                    source_archive_sha256=source_sha,
-                    enqueued_at_utc=stamp,
-                )
-            )
-        queue["observed_through_date"] = rows[-1]["date"]
+        if previous["latest_snapshot"] is not None:
+            _verify_item_against_archive(previous["latest_snapshot"], rows)
+        if previous["active"] is not None:
+            _verify_item_against_archive(previous["active"], rows)
+            active = copy.deepcopy(previous["active"])
+            state, _, event = _attempt_state_for_item(active, attempts, events)
+            if state in {"SUCCEEDED", "NO_ELIGIBLE_CANDIDATE"} and latest_date > active["target_date"]:
+                outcome = "EVALUATED" if state == "SUCCEEDED" else "NO_ELIGIBLE_CANDIDATE"
+                if not any(done["target_date"] == active["target_date"] for done in completed):
+                    completed.append(_completed_record(active, outcome, event["recorded_at_utc"]))
+                active = None
+            # Keep an active snapshot pinned even before the first attempt is
+            # reserved. Offline discovery and its checkpoints may already exist;
+            # a newer archive cursor must never discard that unfinished work.
+            # In-progress/failed attempts are also pinned. A completed package
+            # is released only when a newer canonical draw is observed.
 
-    validate_queue(queue)
-    changed = original != json.dumps(queue, sort_keys=True, separators=(",", ":"))
-    return queue, {
+    completed.sort(key=lambda item: item["target_date"])
+    if len({item["target_date"] for item in completed}) != len(completed):
+        raise TargetQueueError("Completed target history contains duplicate dates.")
+    previous_latest = (
+        previous["latest_snapshot"]
+        if previous["schema_version"] == 2
+        else (previous["items"][-1] if previous["items"] else None)
+    )
+    if (
+        previous_latest is not None
+        and previous_latest["target_date"] == latest_date
+        and previous_latest["source_archive_sha256"] == source_sha
+        and previous_latest["archive_record_count"] == len(rows)
+    ):
+        latest_item = copy.deepcopy(previous_latest)
+    else:
+        latest_item = _make_item(rows, source_archive_sha256=source_sha, enqueued_at_utc=stamp)
+    latest_completed = completed[-1]["target_date"] if completed else None
+    if active is None and (latest_completed is None or latest_date > latest_completed):
+        active = copy.deepcopy(latest_item)
+    if active is not None:
+        _verify_item_against_archive(active, rows)
+        if latest_completed is not None and active["target_date"] <= latest_completed:
+            raise TargetQueueError("Selected active target was already completed.")
+
+    next_queue = {
+        "schema_version": QUEUE_SCHEMA_VERSION,
+        "observed_through_date": latest_date,
+        "active": active,
+        "latest_snapshot": latest_item,
+        "completed": completed[-MAX_COMPLETED_TARGETS:],
+    }
+    validate_queue(next_queue)
+    changed = original != json.dumps(next_queue, sort_keys=True, separators=(",", ":"))
+    return next_queue, {
         "changed": changed,
-        "pending_target_count": len(queue["items"]),
-        "completed_target_count": len(queue["completed"]),
-        "has_pending": bool(queue["items"]),
-        "front_target_date": queue["items"][0]["target_date"] if queue["items"] else None,
-        "observed_through_date": queue["observed_through_date"],
+        "pending_target_count": 1 if active is not None else 0,
+        "completed_target_count": len(next_queue["completed"]),
+        "has_pending": active is not None,
+        "front_target_date": active["target_date"] if active is not None else None,
+        "active_target_date": active["target_date"] if active is not None else None,
+        "latest_observed_date": latest_date,
+        "observed_through_date": latest_date,
         "source_archive_sha256": source_sha,
         "target_values_rendered": False,
+        "intermediate_draws_promoted_as_targets": False,
     }
 
 
 def materialize_front(queue_value: Any, output_path: str | Path) -> dict[str, Any]:
-    """Write only the oldest sealed snapshot to the workspace archive path."""
-    queue = validate_queue(queue_value)
-    if not queue["items"]:
-        raise TargetQueueError("FIFO target queue is empty.")
-    item = queue["items"][0]
+    """Write only the active immutable target snapshot to the workspace."""
+    validate_queue(queue_value)
+    item = active_item(queue_value)
+    if item is None:
+        raise TargetQueueError("There is no active target snapshot.")
     raw, rows = _decode_item(item)
     target = Path(output_path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    temporary = target.with_name(target.name + ".fifo.tmp")
+    temporary = target.with_name(target.name + ".active.tmp")
     temporary.write_bytes(raw)
     try:
         loaded = sealed.load_archive(temporary)
@@ -409,13 +590,13 @@ def materialize_front(queue_value: Any, output_path: str | Path) -> dict[str, An
             or loaded["archive_sha256"] != item["archive_sha256"]
             or loaded["record_count"] != item["archive_record_count"]
         ):
-            raise TargetQueueError("Materialized FIFO snapshot failed archive identity checks.")
+            raise TargetQueueError("Materialized active snapshot failed archive identity checks.")
         temporary.replace(target)
     except Exception:
         temporary.unlink(missing_ok=True)
         raise
     return {
-        "status": "FIFO_FRONT_SNAPSHOT_MATERIALIZED",
+        "status": "ACTIVE_TARGET_SNAPSHOT_MATERIALIZED",
         "target_date": item["target_date"],
         "archive_sha256": item["archive_sha256"],
         "archive_record_count": len(rows),
@@ -432,9 +613,9 @@ def complete_front(
     outcome: str,
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    """Remove the FIFO head only after a persisted EVALUATED outcome."""
+    """Explicitly close the active target after an EVALUATED ledger claim."""
     if outcome != "EVALUATED":
-        raise TargetQueueError("Only an EVALUATED sealed claim may release a FIFO target.")
+        raise TargetQueueError("Only an EVALUATED sealed claim may close a target.")
     return _record_terminal_front(
         queue_value,
         target_date=target_date,
@@ -451,18 +632,15 @@ def retire_exhausted_front(
     target_date: str,
     archive_sha256: str,
     archive_record_count: int,
-    attempt_count: int,
-    failed_event_count: int,
+    failed_attempt_count: int | None = None,
+    attempt_count: int | None = None,
+    failed_event_count: int | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    """Close a FIFO head as exhausted only when every expected attempt failed."""
-    if (
-        type(attempt_count) is not int
-        or attempt_count < 3
-        or type(failed_event_count) is not int
-        or failed_event_count != attempt_count
-    ):
-        raise TargetQueueError("Retry-budget exhaustion requires at least three fully failed attempts.")
+    """Manually close the active target only after exactly ten failed attempts."""
+    failures = failed_attempt_count if failed_attempt_count is not None else failed_event_count
+    if type(failures) is not int or failures != 10:
+        raise TargetQueueError("Retry-budget retirement requires exactly ten failed attempts.")
     return _record_terminal_front(
         queue_value,
         target_date=target_date,
@@ -484,17 +662,22 @@ def _record_terminal_front(
 ) -> dict[str, Any]:
     queue = copy.deepcopy(validate_queue(queue_value))
     target = _canonical_date(target_date, "completed.target_date")
-    if not queue["items"]:
-        raise TargetQueueError("Cannot complete a target when the FIFO is empty.")
-    front = queue["items"][0]
+    if queue["schema_version"] == 1:
+        if not queue["items"]:
+            raise TargetQueueError("Cannot complete a target when the legacy FIFO is empty.")
+        front = queue["items"][0]
+    else:
+        front = queue["active"]
+        if front is None:
+            raise TargetQueueError("Cannot complete a target when there is no active target.")
     if (
         front["target_date"] != target
         or front["archive_sha256"] != archive_sha256
         or front["archive_record_count"] != archive_record_count
     ):
-        raise TargetQueueError("Terminal outcome does not match the immutable FIFO head.")
+        raise TargetQueueError("Terminal outcome does not match the active immutable snapshot.")
     if len(queue["completed"]) >= MAX_COMPLETED_TARGETS:
-        raise TargetQueueError("Completed target history is full; the FIFO head was not removed.")
+        raise TargetQueueError("Completed target history is full; the active target was not released.")
     current = now or datetime.now(timezone.utc)
     if current.tzinfo is None or current.utcoffset() is None:
         raise TargetQueueError("Completion timestamp must include a timezone.")
@@ -505,5 +688,9 @@ def _record_terminal_front(
         "completed_at_utc": current.astimezone(timezone.utc).isoformat(),
         "outcome": outcome,
     })
-    queue["items"].pop(0)
+    if queue["schema_version"] == 1:
+        queue["items"].pop(0)
+        return _validate_queue_v1(queue)
+    queue["active"] = None
     return validate_queue(queue)
+

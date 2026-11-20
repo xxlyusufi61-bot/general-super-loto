@@ -1076,6 +1076,7 @@ class SealedPlanBindingTests(unittest.TestCase):
             ledger = {
                 "entries": [{
                     "claim_id": claim_id,
+                    "state": "EVALUATED",
                     "target_date": archive["last_date"],
                     "archive_sha256": archive["archive_sha256"],
                     "previously_consumed_validation_dates": [prior_date],
@@ -1091,6 +1092,26 @@ class SealedPlanBindingTests(unittest.TestCase):
             }
             memory._validate_sealed_plan_binding(plan, archive, ledger, claim)
 
+            reused_claim = {
+                "claim_created": False,
+                "claim_reused": True,
+                "claim_id": claim_id,
+                "target_date": archive["last_date"],
+                "archive_sha256": archive["archive_sha256"],
+            }
+            from general_sealed_evaluation import get_used_validation_dates
+            reused_partition = split_archive(
+                rows,
+                archive_sha256=archive["archive_sha256"],
+                used_validation_dates=get_used_validation_dates(ledger),
+            )
+            reused_plan = public_plan(reused_partition)
+            memory._validate_sealed_plan_binding(reused_plan, archive, ledger, reused_claim)
+
+            ledger["entries"][0]["state"] = "CLAIMED"
+            with self.assertRaisesRegex(memory.ResearchMemoryError, "exact EVALUATED"):
+                memory._validate_sealed_plan_binding(reused_plan, archive, ledger, reused_claim)
+            ledger["entries"][0]["state"] = "EVALUATED"
             ledger["entries"][0]["previously_consumed_validation_dates"] = []
             with self.assertRaisesRegex(memory.ResearchMemoryError, "archive-derived chronological partition"):
                 memory._validate_sealed_plan_binding(plan, archive, ledger, claim)
@@ -1261,6 +1282,18 @@ class ResearchMemoryPersistenceTests(unittest.TestCase):
             self.assertEqual(saved["entries"][0]["proposals"][0]["hypothesis_id"], "HYP-001")
             self.assertEqual(saved["entries"][1]["proposals"][0]["hypothesis_id"], "HYP-501")
             self.assertTrue(saved["entries"][0]["evaluation_feedback"]["holdout_consumed"])
+            self.assertEqual(
+                {item["evaluation_feedback"]["claim_id"] for item in saved["entries"]},
+                {claim_id},
+            )
+            self.assertEqual(
+                {item["evaluation_feedback"]["status"] for item in saved["entries"]},
+                {"EVALUATED_EXPLORATORY_FIXED_SPEC"},
+            )
+            self.assertEqual(
+                {item["direction"] for item in saved["entries"]},
+                {"forward", "reverse"},
+            )
             invalid_feedback_entry = copy.deepcopy(saved["entries"][0])
             invalid_feedback_entry["evaluation_feedback"]["holdout_consumed"] = False
             invalid_feedback_entry["content_sha256"] = _hash_entry(invalid_feedback_entry)
@@ -1285,6 +1318,39 @@ class ResearchMemoryPersistenceTests(unittest.TestCase):
             self.assertTrue(forward_context[0]["research_report_content_is_unverified"])
             self.assertTrue(reverse_context[0]["research_report_content_is_unverified"])
             self.assertEqual(saved["entries"][0]["research_report_content_status"], "STORED")
+
+            # A reused EVALUATED claim must not be mislabeled as no-candidate
+            # or append a second copy of its existing formula feedback.
+            write_json(root / "claim.json", {
+                "claim_created": False,
+                "claim_reused": True,
+                "claim_id": claim_id,
+                "target_date": target,
+                "archive_sha256": archive_hash,
+            })
+            reused_result = memory.record_cycle(
+                memory_path=memory_path,
+                archive_path=archive_path,
+                ledger_path=ledger_path,
+                run_status_path=root / "run-status.json",
+                forward_report_path=root / "forward.md",
+                reverse_report_path=root / "reverse.md",
+                sealed_plan_path=root / "sealed-plan.json",
+                claim_path=root / "claim.json",
+                evaluation_path=root / "evaluation.json",
+                run_id="123456789",
+                run_attempt="2",
+            )
+            self.assertEqual(reused_result["status"], "REUSED_EVALUATED_CLAIM_ALREADY_RECORDED")
+            self.assertEqual(reused_result["entries_added"], 0)
+            self.assertEqual(len(memory.load_memory(memory_path)["entries"]), 2)
+
+            # The following assertion uses an independent empty memory sink
+            # to test the original claim-publication path, not a reused retry.
+            write_json(root / "claim.json", {
+                "claim_created": True,
+                "claim_id": claim_id,
+            })
 
             # The memory writer cross-checks report prose against every sealed
             # validation date already consumed in the authoritative ledger.
@@ -1432,6 +1498,9 @@ class ResearchMemoryWorkflowWiringTests(unittest.TestCase):
         self.assertIn("steps.research_memory.outcome == 'success'", workflow[no_candidate_step:failure_step])
         failed_block = workflow[failure_step:persist_step]
         self.assertIn("steps.research_memory.outcome == 'failure'", failed_block)
+        self.assertIn("steps.finish_evaluation.outcome == 'failure'", failed_block)
+        self.assertIn("steps.finish_no_candidate.outcome == 'failure'", failed_block)
+        self.assertIn("FINISH_EVALUATION_OUTCOME", failed_block)
         self.assertIn('reason_code="WORKFLOW_FAILED"', failed_block)
         self.assertIn('reason_code="PROVIDER_DELIVERY_UNCERTAIN"', failed_block)
         self.assertIn('reason_code="PROVIDER_HTTP_REJECTION_NO_RETRY"', failed_block)
@@ -1482,21 +1551,12 @@ class AutonomousResearchMemoryIntegrationTests(unittest.TestCase):
         sealed_plan_path = root / "sealed-plan.json"
 
         write_json(archive_path, {"draws": rows})
-        archive = sealed.load_archive(archive_path)
         write_json(ledger_path, {
             "schema_version": 1,
             "purpose": "synthetic autonomous memory integration test",
             "entries": [],
         })
         write_json(lock_path, initial_lock_state())
-
-        partition = sealed.split_archive(
-            archive["rows"],
-            archive_sha256=archive["archive_sha256"],
-            used_validation_dates=set(),
-        )
-        sealed_plan = sealed.public_plan(partition)
-        write_json(sealed_plan_path, sealed_plan)
 
         state = autonomous.activate_state(
             autonomous.initial_state(),
@@ -1506,6 +1566,24 @@ class AutonomousResearchMemoryIntegrationTests(unittest.TestCase):
             global_lock=initial_lock_state(),
             now=self.AUTONOMOUS_NOW,
         )
+        captured_queue, _ = autonomous.target_queue.capture_new_targets(
+            state["target_queue"],
+            archive_path=archive_path,
+            attempts=state["attempts"],
+            events=state["events"],
+            now=self.AUTONOMOUS_NOW,
+        )
+        state["target_queue"] = captured_queue
+        autonomous.target_queue.materialize_front(captured_queue, archive_path)
+        archive = sealed.load_archive(archive_path)
+
+        partition = sealed.split_archive(
+            archive["rows"],
+            archive_sha256=archive["archive_sha256"],
+            used_validation_dates=set(),
+        )
+        sealed_plan = sealed.public_plan(partition)
+        write_json(sealed_plan_path, sealed_plan)
         prepared = autonomous.prepare_cycle(
             state,
             archive_path=archive_path,
