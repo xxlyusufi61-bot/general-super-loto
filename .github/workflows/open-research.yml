@@ -98,12 +98,12 @@ name: GENERAL Blank-Slate Research
         type: string
         default: "Explore the pre-target archive from scratch and propose testable hypotheses."
       confirm_live_calls:
-        description: "Leave NO to block all live calls. The exact free-only phrase authorizes at most four NVIDIA requests in this job package; use it only after verifying there is no paid-charge risk."
+        description: "Leave NO to block all live calls. The exact phrase authorizes requests within the shared 1,500-reservation rolling 24-hour budget and category ceilings; there is no per-job request cap. Normal 30-per-minute and hard 40-per-minute limits remain. Use only after independently verifying free-only/no-billing status."
         required: true
         type: string
         default: "NO"
       confirm_free_usage_verified:
-        description: "Only true if NVIDIA account UI and current terms clearly verify BOTH planned directional requests are within free use with no paid charge risk. If only rate limits are visible and free allowance cannot be verified, leave false."
+        description: "Only true if the current NVIDIA account status verifies all planned requests are free with no billing or paid-conversion risk. The internal shared budget is not proof of provider free quota. If uncertain, leave false."
         required: true
         type: boolean
         default: false
@@ -134,7 +134,7 @@ jobs:
           python3 -m unittest -v general_live_consent_test general_hypothesis_proposals_test general_open_research_test general_target_queue_test general_autonomous_research_test general_single_request_token_test_test general_hypothesis_execution_test general_execution_spec_dispatch_test general_hypothesis_execution_v2_test general_bidirectional_evaluation_test general_execution_spec_parser_test general_sealed_evaluation_test general_sealed_evaluation_v2_test general_source_context_test general_research_memory_test general_offline_hypothesis_discovery_test
 
   research:
-    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.confirm_live_calls == 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_4_NVIDIA_REQUESTS' && inputs.confirm_free_usage_verified == true }}
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.confirm_live_calls == 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_SHARED_1500_PER_24H_NVIDIA_BUDGET' && inputs.confirm_free_usage_verified == true }}
     needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 60

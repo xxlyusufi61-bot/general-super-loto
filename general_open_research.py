@@ -63,7 +63,7 @@ DOCUMENTATION_REVIEW_DATE = "2026-10-25"
 # byte ceiling is deliberately more conservative than tokenizer estimation;
 # this leaves room for message framing, provider templates, and completion.
 MAX_PROMPT_MESSAGE_BYTES = 900_000
-MAX_NVIDIA_REQUESTS_PER_RUN = 4
+MAX_DIRECTIONAL_REQUEST_ATTEMPTS = 2  # one initial request plus one explicitly reserved HTTP 5xx retry
 DEFAULT_MAX_COMPLETION_TOKENS = 8192
 DIAGNOSTIC_MAX_COMPLETION_TOKENS = 8192
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 600
@@ -775,7 +775,7 @@ def record_retry_audit_event(
     """Persist only allowlisted retry telemetry; never retain prompts or provider bodies."""
     if direction not in {"forward", "reverse", "forward_critique", "between_draws", "unlabelled"}:
         return False
-    if type(attempt_number) is not int or not 0 <= attempt_number <= MAX_NVIDIA_REQUESTS_PER_RUN:
+    if type(attempt_number) is not int or not 0 <= attempt_number <= MAX_DIRECTIONAL_REQUEST_ATTEMPTS:
         return False
     if http_status is not None and (type(http_status) is not int or not 100 <= http_status <= 599):
         return False
@@ -1393,18 +1393,16 @@ def call_model(
     if not key:
         raise RuntimeError("NVIDIA_API_KEY missing; research stopped.")
 
-    request_limit = 1 if (diagnostic_mode or single_request_mode) else MAX_NVIDIA_REQUESTS_PER_RUN
-    if _NVIDIA_REQUESTS_ATTEMPTED >= request_limit:
+    # One-request diagnostic/token-test modes stay one-shot. Ordinary research
+    # has no per-process or per-job request cap; the shared daily/category ledger
+    # and the unchanged 30/40-per-minute controls remain authoritative.
+    if (diagnostic_mode or single_request_mode) and _NVIDIA_REQUESTS_ATTEMPTED >= 1:
         if diagnostic_mode:
             raise RuntimeError(
                 "Single-request diagnostic cap reached; no additional provider request was sent."
             )
-        if single_request_mode:
-            raise RuntimeError(
-                "Normal-mode one-request cap reached; no additional provider request was sent."
-            )
         raise RuntimeError(
-            "Autonomous research request cap reached (4 per job package); no additional provider request was sent."
+            "Normal-mode one-request cap reached; no additional provider request was sent."
         )
     request_key = request_label or "unlabelled"
     if type(_retry_attempt) is not int or _retry_attempt not in {0, 1}:

@@ -17,7 +17,6 @@ from general_nvidia_guard import (
     NVIDIA_NORMAL_REQUESTS_PER_MINUTE,
     NVIDIA_DAILY_REQUEST_BUDGET,
     NVIDIA_BUDGET_CATEGORY_LIMITS,
-    NVIDIA_MAX_REQUESTS_PER_PACKAGE,
     migrate_legacy_rate_limit_state,
     RATE_LIMIT_BRANCH,
     DIAGNOSTIC_REPOSITORY,
@@ -484,21 +483,18 @@ class GlobalNvidiaLockTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "not chronological"):
             validate_rate_limit_state(legacy)
 
-    def test_rolling_day_budget_and_category_allocations_sum_to_200(self):
+    def test_rolling_day_budget_and_category_allocations_sum_to_1500(self):
         self.assertEqual(sum(NVIDIA_BUDGET_CATEGORY_LIMITS.values()), NVIDIA_DAILY_REQUEST_BUDGET)
-        self.assertEqual(NVIDIA_DAILY_REQUEST_BUDGET, 200)
+        self.assertEqual(NVIDIA_DAILY_REQUEST_BUDGET, 1500)
         self.assertEqual(NVIDIA_BUDGET_CATEGORY_LIMITS, {
-            "forward_discovery": 100,
-            "forward_critique": 30,
-            "reverse_diagnostic": 20,
-            "between_draws": 30,
-            "retry_reserve": 20,
+            "forward_discovery": 750, "forward_critique": 225,
+            "reverse_diagnostic": 150, "between_draws": 225, "retry_reserve": 150,
         })
         now = datetime(2026, 11, 1, 1, 0, 0, tzinfo=timezone.utc)
         state = initial_rate_limit_state()
         counts = (
-            ("forward_discovery", 100), ("forward_critique", 30),
-            ("reverse_diagnostic", 20), ("between_draws", 30), ("retry_reserve", 20),
+            ("forward_discovery", 750), ("forward_critique", 225),
+            ("reverse_diagnostic", 150), ("between_draws", 225), ("retry_reserve", 150),
         )
         index = 0
         for category, count in counts:
@@ -510,29 +506,26 @@ class GlobalNvidiaLockTests(unittest.TestCase):
                 )
                 self.assertEqual(wait, 0)
                 index += 1
-        self.assertEqual(len(state["daily_requests"]), 200)
+        self.assertEqual(len(state["daily_requests"]), 1500)
         with self.assertRaisesRegex(ValueError, "24-hour NVIDIA budget"):
             reserve_rate_limit_slot(
                 state, "extra-request", now=now + timedelta(seconds=3 * index),
                 budget_category="retry_reserve", package_id="package-extra",
             )
 
-    def test_schema_v2_72_request_ledger_is_upgraded_in_memory_without_losing_history(self):
+    def test_schema_v2_72_request_ledger_migrates_to_1500_without_losing_history(self):
         now = datetime(2026, 11, 1, 1, 0, 0, tzinfo=timezone.utc)
         old_ledger = initial_rate_limit_state()
+        old_ledger["schema_version"] = 2
+        old_ledger["package_max_requests"] = 4
         old_ledger["daily_max_requests"] = 72
         old_ledger["category_limits"] = {
-            "forward_discovery": 40,
-            "forward_critique": 12,
-            "reverse_diagnostic": 8,
-            "between_draws": 8,
-            "retry_reserve": 4,
+            "forward_discovery": 40, "forward_critique": 12,
+            "reverse_diagnostic": 8, "between_draws": 8, "retry_reserve": 4,
         }
         reservation = {
-            "reserved_at_utc": now.isoformat(),
-            "source": "legacy-forward-critique",
-            "category": "forward_critique",
-            "package_id": "old-run:1",
+            "reserved_at_utc": now.isoformat(), "source": "legacy-forward-critique",
+            "category": "forward_critique", "package_id": "old-run:1",
             "reservation_id": "legacy-reservation-1",
         }
         old_ledger["daily_requests"] = [reservation]
@@ -540,86 +533,120 @@ class GlobalNvidiaLockTests(unittest.TestCase):
         tampered_legacy = dict(old_ledger)
         tampered_legacy["category_limits"] = dict(old_ledger["category_limits"])
         tampered_legacy["category_limits"]["retry_reserve"] = 5
-        with self.assertRaisesRegex(ValueError, "daily category allocations or budget are unknown"):
+        with self.assertRaisesRegex(ValueError, "legacy daily category allocations or budget are unknown"):
             validate_rate_limit_state(tampered_legacy)
 
+        bad_package_limit = dict(old_ledger)
+        bad_package_limit["package_max_requests"] = 5
+        with self.assertRaisesRegex(ValueError, "package_max_requests"):
+            validate_rate_limit_state(bad_package_limit)
+
         normalized = validate_rate_limit_state(old_ledger)
-        self.assertEqual(normalized["daily_max_requests"], 200)
+        self.assertEqual(normalized["schema_version"], 3)
+        self.assertEqual(normalized["daily_max_requests"], 1500)
         self.assertEqual(normalized["category_limits"], NVIDIA_BUDGET_CATEGORY_LIMITS)
         self.assertEqual(normalized["daily_requests"], [reservation])
+        self.assertNotIn("package_max_requests", normalized)
         self.assertEqual(old_ledger["daily_max_requests"], 72)
         self.assertEqual(old_ledger["category_limits"]["forward_discovery"], 40)
+        self.assertEqual(old_ledger["package_max_requests"], 4)
 
         reserved, wait = reserve_rate_limit_slot(
-            old_ledger,
-            "new-forward-discovery",
-            now=now + timedelta(seconds=2),
-            budget_category="forward_discovery",
-            package_id="new-run:1",
+            old_ledger, "new-forward-discovery", now=now + timedelta(seconds=2),
+            budget_category="forward_discovery", package_id="new-run:1",
         )
         self.assertEqual(wait, 0)
-        self.assertEqual(reserved["daily_max_requests"], 200)
+        self.assertEqual(reserved["schema_version"], 3)
+        self.assertEqual(reserved["daily_max_requests"], 1500)
         self.assertEqual(reserved["category_limits"], NVIDIA_BUDGET_CATEGORY_LIMITS)
         self.assertEqual(len(reserved["daily_requests"]), 2)
         self.assertEqual(reserved["daily_requests"][0], reservation)
+        self.assertNotIn("package_max_requests", reserved)
+
+    def test_schema_v2_200_request_ledger_migrates_all_reservations_to_schema_v3(self):
+        now = datetime(2026, 11, 1, 1, 0, 0, tzinfo=timezone.utc)
+        old_ledger = initial_rate_limit_state()
+        old_ledger["schema_version"] = 2
+        old_ledger["package_max_requests"] = 4
+        old_ledger["daily_max_requests"] = 200
+        old_ledger["category_limits"] = {
+            "forward_discovery": 100, "forward_critique": 30,
+            "reverse_diagnostic": 20, "between_draws": 30, "retry_reserve": 20,
+        }
+        old_reservations = []
+        for index in range(6):
+            old_reservations.append({
+                "reserved_at_utc": (now + timedelta(seconds=2 * index)).isoformat(),
+                "source": "open-research-forward-critique", "category": "forward_critique",
+                "package_id": "same-run:1", "reservation_id": "old-schema-v2-" + str(index),
+            })
+        old_ledger["daily_requests"] = old_reservations
+
+        migrated = validate_rate_limit_state(old_ledger)
+        self.assertEqual(migrated["schema_version"], 3)
+        self.assertEqual(migrated["daily_max_requests"], 1500)
+        self.assertEqual(migrated["daily_requests"], old_reservations)
+        self.assertNotIn("package_max_requests", migrated)
+
+        next_state, wait = reserve_rate_limit_slot(
+            old_ledger, "additional-package-request", now=now + timedelta(seconds=20),
+            budget_category="forward_critique", package_id="same-run:1",
+        )
+        self.assertEqual(wait, 0)
+        self.assertEqual(len(next_state["daily_requests"]), 7)
+        self.assertEqual(next_state["daily_requests"][:6], old_reservations)
 
     def test_category_allocation_is_enforced_independently(self):
         now = datetime(2026, 11, 1, 1, 0, 0, tzinfo=timezone.utc)
         state = initial_rate_limit_state()
         for index in range(NVIDIA_BUDGET_CATEGORY_LIMITS["reverse_diagnostic"]):
             state, _ = reserve_rate_limit_slot(
-                state, "reverse", now=now + timedelta(seconds=2 * index),
+                state, "reverse", now=now + timedelta(seconds=3 * index),
                 budget_category="reverse_diagnostic", package_id="reverse-" + str(index),
             )
         with self.assertRaisesRegex(ValueError, "allocation for reverse_diagnostic"):
             reserve_rate_limit_slot(
-                state, "reverse", now=now + timedelta(seconds=40),
+                state, "reverse",
+                now=now + timedelta(seconds=3 * NVIDIA_BUDGET_CATEGORY_LIMITS["reverse_diagnostic"]),
                 budget_category="reverse_diagnostic", package_id="reverse-over",
             )
 
-    def test_job_package_is_limited_to_four_requests(self):
+    def test_job_package_can_reserve_more_than_four_requests(self):
         now = datetime(2026, 11, 1, 1, 0, 0, tzinfo=timezone.utc)
         state = initial_rate_limit_state()
-        for index in range(NVIDIA_MAX_REQUESTS_PER_PACKAGE):
-            state, _ = reserve_rate_limit_slot(
+        for index in range(9):
+            state, wait = reserve_rate_limit_slot(
                 state, "package-source-" + str(index),
-                now=now + timedelta(seconds=index),
-                budget_category="forward_discovery", package_id="run-123:1",
+                now=now + timedelta(seconds=3 * index),
+                budget_category="forward_discovery", package_id="same-run:1",
             )
-        with self.assertRaisesRegex(ValueError, "four-request maximum"):
-            reserve_rate_limit_slot(
-                state, "package-source-5",
-                now=now + timedelta(seconds=5),
-                budget_category="forward_discovery", package_id="run-123:1",
-            )
+            self.assertEqual(wait, 0)
+        self.assertEqual(len(state["daily_requests"]), 9)
+        self.assertEqual({item["package_id"] for item in state["daily_requests"]}, {"same-run:1"})
+        self.assertNotIn("package_max_requests", state)
 
-    def test_legacy_migration_preserves_over_budget_history_until_it_expires(self):
+    def test_legacy_migration_preserves_1500_reservations_and_blocks_until_window_recovers(self):
         now = datetime(2026, 11, 1, 12, 0, 0, tzinfo=timezone.utc)
         history = []
-        for index in range(201):
-            stamp = now - timedelta(hours=23) + timedelta(seconds=414 * index)
+        for index in range(1500):
+            stamp = now - timedelta(hours=23) + timedelta(seconds=3 * index)
             history.append({
                 "commit_sha": format(index + 1, "040x"),
                 "reserved_at_utc": stamp.isoformat(),
                 "source": "open-research-forward",
             })
         legacy = {
-            "schema_version": 1,
-            "window_seconds": 60,
-            "max_requests": 40,
-            "requests": [],
-            "diagnostic_run_ids": [],
+            "schema_version": 1, "window_seconds": 60, "max_requests": 40,
+            "requests": [], "diagnostic_run_ids": [],
             "updated_at_utc": history[-1]["reserved_at_utc"],
         }
         migrated = migrate_legacy_rate_limit_state(legacy, history, now=now)
-        self.assertEqual(len(migrated["daily_requests"]), 201)
+        self.assertEqual(migrated["schema_version"], 3)
+        self.assertEqual(len(migrated["daily_requests"]), 1500)
         with self.assertRaisesRegex(ValueError, "24-hour NVIDIA budget"):
             reserve_rate_limit_slot(
-                migrated,
-                "new-forward-call",
-                now=now,
-                budget_category="forward_discovery",
-                package_id="after-migration",
+                migrated, "new-forward-call", now=now,
+                budget_category="forward_discovery", package_id="after-migration",
             )
 
     def test_legacy_budget_migration_requires_reconstructed_reservations(self):
@@ -635,7 +662,7 @@ class GlobalNvidiaLockTests(unittest.TestCase):
             [{"commit_sha": "a" * 40, "reserved_at_utc": stamp, "source": "open-research-forward"}],
             now=now,
         )
-        self.assertEqual(migrated["schema_version"], 2)
+        self.assertEqual(migrated["schema_version"], 3)
         self.assertEqual(len(migrated["daily_requests"]), 1)
         self.assertEqual(migrated["daily_requests"][0]["category"], "forward_discovery")
         self.assertEqual(migrated["requests"], legacy["requests"])
@@ -688,7 +715,7 @@ class GlobalNvidiaLockTests(unittest.TestCase):
             ):
                 state, head = nvidia_guard.read_remote_rate_limit()
 
-            self.assertEqual(state["schema_version"], 2)
+            self.assertEqual(state["schema_version"], 3)
             self.assertEqual(len(state["daily_requests"]), 1)
             self.assertEqual(head, "full-history-head")
             fetch.assert_called_once_with(RATE_LIMIT_BRANCH, full_history=True)

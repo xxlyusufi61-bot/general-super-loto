@@ -12,7 +12,7 @@ from general_live_consent import (
 
 
 EXPECTED_CONFIRMATION_PHRASE = (
-    "I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_4_NVIDIA_REQUESTS"
+    "I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_SHARED_1500_PER_24H_NVIDIA_BUDGET"
 )
 EXPECTED_COORDINATOR_PHRASE = (
     "I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_3_NVIDIA_REQUESTS"
@@ -29,7 +29,7 @@ COORDINATOR_WORKFLOW_PATH = ".github/workflows/general-coordinator-execute.yml"
 
 
 class LiveNvidiaConsentTests(unittest.TestCase):
-    def test_canonical_phrases_match_their_operation_caps(self):
+    def test_canonical_phrases_match_their_operation_scopes(self):
         self.assertEqual(CONFIRMATION_PHRASE, EXPECTED_CONFIRMATION_PHRASE)
         self.assertEqual(COORDINATOR_CONFIRMATION_PHRASE, EXPECTED_COORDINATOR_PHRASE)
         self.assertNotEqual(CONFIRMATION_PHRASE, COORDINATOR_CONFIRMATION_PHRASE)
@@ -51,7 +51,7 @@ class LiveNvidiaConsentTests(unittest.TestCase):
         self.assertFalse(has_explicit_single_request_consent(" " + SINGLE_REQUEST_CONFIRMATION_PHRASE))
         self.assertFalse(has_explicit_live_consent(SINGLE_REQUEST_CONFIRMATION_PHRASE))
 
-    def test_standard_live_workflows_use_the_four_request_package_phrase(self):
+    def test_standard_live_workflows_use_the_shared_1500_budget_phrase(self):
         root = Path(__file__).resolve().parent
         for relative_path in LIVE_WORKFLOW_PATHS:
             with self.subTest(workflow=relative_path):
@@ -59,6 +59,7 @@ class LiveNvidiaConsentTests(unittest.TestCase):
                 self.assertTrue(workflow_path.is_file(), relative_path + " is missing")
                 workflow_text = workflow_path.read_text(encoding="utf-8")
                 self.assertIn(CONFIRMATION_PHRASE, workflow_text)
+                self.assertNotIn("UP_TO_4_NVIDIA_REQUESTS", workflow_text)
                 self.assertNotIn(COORDINATOR_CONFIRMATION_PHRASE, workflow_text)
 
     def test_single_request_workflow_is_manual_one_shot_and_relocks(self):

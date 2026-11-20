@@ -970,15 +970,21 @@ class NvidiaUsageObservationTests(unittest.TestCase):
             client_factory.assert_not_called()
         self.assertEqual(research._NVIDIA_REQUESTS_ATTEMPTED, 0)
 
-    def test_four_request_package_allows_two_directions_critique_and_between_draws(self):
+    def test_research_run_can_make_more_than_four_requests(self):
         env = self.live_env()
+        labels_and_responses = [
+            ("forward", "forward final content"),
+            ("reverse", "reverse final content"),
+            ("forward_critique", "forward critique content"),
+            ("between_draws", "between draws content"),
+            ("extended_review", "fifth request completed"),
+        ]
         clients = [
-            self.client_with_response(self.sdk_response("forward final content")),
-            self.client_with_response(self.sdk_response("reverse final content")),
-            self.client_with_response(self.sdk_response("forward critique content")),
-            self.client_with_response(self.sdk_response("between draws content")),
+            self.client_with_response(self.sdk_response(response_text))
+            for _label, response_text in labels_and_responses
         ]
         saved = []
+        results = []
         with patch.dict(os.environ, env, clear=True), patch.object(
             research, "save_usage_observation",
             side_effect=lambda observation, **kwargs: saved.append((observation, kwargs)),
@@ -986,35 +992,18 @@ class NvidiaUsageObservationTests(unittest.TestCase):
             "general_open_research._create_nvidia_client",
             side_effect=clients,
         ) as client_factory:
-            forward = research.call_model(
-                [{"role": "user", "content": "forward"}],
-                request_label="forward",
-            )
-            reverse = research.call_model(
-                [{"role": "user", "content": "reverse"}],
-                request_label="reverse",
-            )
-            critique = research.call_model(
-                [{"role": "user", "content": "critique the validated forward proposal"}],
-                request_label="forward_critique",
-            )
-            between = research.call_model(
-                [{"role": "user", "content": "independent between-draw research"}],
-                request_label="between_draws",
-            )
-            self.assertEqual(forward, "forward final content")
-            self.assertEqual(reverse, "reverse final content")
-            self.assertEqual(critique, "forward critique content")
-            self.assertEqual(between, "between draws content")
-            with self.assertRaisesRegex(RuntimeError, "request cap reached"):
-                research.call_model(
-                    [{"role": "user", "content": "fifth request must be blocked"}],
+            for label, expected in labels_and_responses:
+                result = research.call_model(
+                    [{"role": "user", "content": "synthetic request " + label}],
+                    request_label=label,
                 )
+                results.append(result)
+                self.assertEqual(result, expected)
 
-        self.assertEqual(client_factory.call_count, 4)
-        self.assertEqual([call.args[1] for call in client_factory.call_args_list], [600, 600, 600, 600])
-        self.assertEqual(reserve.call_count, 4)
-        self.assertEqual(research.MAX_NVIDIA_REQUESTS_PER_RUN, 4)
+        self.assertEqual(results, [expected for _label, expected in labels_and_responses])
+        self.assertEqual(client_factory.call_count, 5)
+        self.assertEqual([call.args[1] for call in client_factory.call_args_list], [600] * 5)
+        self.assertEqual(reserve.call_count, 5)
         for client in clients:
             client.chat.completions.create.assert_called_once()
             call = client.chat.completions.create.call_args.kwargs
@@ -1030,10 +1019,10 @@ class NvidiaUsageObservationTests(unittest.TestCase):
                 },
             )
             client.close.assert_called_once()
-        self.assertEqual(len(saved), 4)
+        self.assertEqual(len(saved), 5)
         self.assertEqual(
             [item[1]["request_label"] for item in saved],
-            ["forward", "reverse", "forward_critique", "between_draws"],
+            [label for label, _response in labels_and_responses],
         )
         for observation, _kwargs in saved:
             self.assertEqual(observation["response_mode"], "sse")
