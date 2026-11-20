@@ -37,6 +37,7 @@ name: Single Active Target Continuity CI
       - "general_cycle55_recovery.py"
       - "general_cycle55_recovery_test.py"
       - "general_production_migration_rehearsal.py"
+      - "general_production_migration_rehearsal_test.py"
 
 permissions:
   contents: read
@@ -83,9 +84,10 @@ jobs:
             general_research_memory.py \
             general_research_memory_test.py \
             general_offline_hypothesis_discovery.py \
-            general_offline_hypothesis_discovery_test.py
+            general_offline_hypothesis_discovery_test.py \\
+            general_production_migration_rehearsal_test.py
       - name: Compile production migration rehearsal
-        run: python3 -m py_compile general_production_migration_rehearsal.py
+        run: python3 -m py_compile general_production_migration_rehearsal.py general_production_migration_rehearsal_test.py
       - name: Rehearse production migration on an isolated read-only copy
         env:
           GITHUB_REPOSITORY: ${{ github.repository }}
@@ -108,4 +110,5 @@ jobs:
             general_hypothesis_proposals_test \
             general_research_memory_test \
             general_offline_hypothesis_discovery_test \
+            general_production_migration_rehearsal_test \\
             general_method_registry_test
