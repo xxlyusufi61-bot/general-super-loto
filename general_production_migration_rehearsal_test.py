@@ -62,6 +62,14 @@ class ProductionMigrationRehearsalTests(unittest.TestCase):
         self.assertEqual(state["schema_version"], 6)
         self.assertEqual(state["target_queue"]["schema_version"], 2)
 
+    def test_new_archive_rows_do_not_replace_the_pinned_active_snapshot(self):
+        rows = make_rows()
+        prior_snapshot = rows[:-1]
+        state = current_state(prior_snapshot)
+        result = rehearsal.validate_current_schema_snapshot(state, rows)
+        self.assertEqual(result["active_target_date"], prior_snapshot[-1]["date"])
+        self.assertEqual(result["latest_snapshot_date"], prior_snapshot[-1]["date"])
+
     def test_already_migrated_idle_queue_is_valid_when_latest_snapshot_matches(self):
         rows = make_rows()
         state = current_state(rows, include_active=False)
