@@ -139,7 +139,7 @@ def main() -> None:
         # Verify every migrated document still passes the real validators.
         ledger_path = root / "general_evaluation_ledger.json"
         ledger_path.write_text(
-            json.dumps(source_ledger, ensure_ascii=False, indent=2, allow_nan=False) + "\\n",
+            json.dumps(source_ledger, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
             encoding="utf-8",
         )
         sealed.load_ledger(ledger_path)
