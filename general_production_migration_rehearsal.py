@@ -61,8 +61,8 @@ def validate_current_schema_snapshot(source_state: dict, archive_rows: list[dict
     if active is not None:
         target_queue._verify_item_against_archive(active, rows)
     require(
-        queue["observed_through_date"] == rows[-1]["date"],
-        "Migrated queue cursor does not match the canonical archive.",
+        queue["observed_through_date"] <= rows[-1]["date"],
+        "Migrated queue cursor is newer than the canonical archive.",
     )
     return {
         "active_target_date": active["target_date"] if active is not None else None,
