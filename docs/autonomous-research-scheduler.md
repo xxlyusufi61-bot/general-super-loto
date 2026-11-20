@@ -53,7 +53,7 @@ scheduler does not expose target values to discovery.
 - An explicit HTTP 500-599 response is distinguishable from an unknown delivery
   outcome. For each ordinary directional request, GENERAL may make at most one
   additional attempt after an explicit provider HTTP 5xx response was received.
-  The retry has to reserve a slot from the dedicated 20-per-day retry reserve
+  The retry has to reserve a slot from the dedicated 150-per-day retry reserve
   before network access. The second 5xx ends that request; no third call is made.
   The retry is not used in one-request diagnostic or token-test modes. If the
   retry reservation cannot be committed, no retry request is sent.
