@@ -518,7 +518,12 @@ jobs:
           elif [ "$FINISH_EVALUATION_OUTCOME" = "failure" ] || [ "$FINISH_NO_CANDIDATE_OUTCOME" = "failure" ]; then
             reason_code="WORKFLOW_FAILED"
           elif [ "$CLAIM_CREATED" = "true" ] && [ "$CLAIM_PERSIST_OUTCOME" = "success" ] && [ "$EVALUATION_OUTCOME" = "failure" ] && [ "$RESEARCH_MEMORY_OUTCOME" = "success" ]; then
-            reason_code="SEALED_EVALUATION_INCOMPLETE"
+            # The append-only entry is still CLAIMED, not EVALUATED. Route through
+            # WORKFLOW_FAILED so the existing manual-unlock gate applies; the next
+            # run can reuse the exact candidates from GENERAL memory and resume the
+            # pending claim. SEALED_EVALUATION_INCOMPLETE is reserved for a failure
+            # after the sealed claim reached EVALUATED and local scoring was pending.
+            reason_code="WORKFLOW_FAILED"
           elif [ -f "/tmp/general_directional_candidates_incomplete" ]; then
             reason_code="DIRECTIONAL_CANDIDATE_SET_INCOMPLETE"
           elif [ "$http_rejection_no_retry" = "true" ]; then
