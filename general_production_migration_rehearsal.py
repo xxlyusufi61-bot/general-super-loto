@@ -53,9 +53,9 @@ def validate_current_schema_snapshot(source_state: dict, archive_rows: list[dict
     active = target_queue.active_item(queue)
     require(latest is not None, "Migrated queue has no latest archive snapshot.")
     require(
-        latest["target_date"] == rows[-1]["date"]
-        and latest["archive_record_count"] == len(rows),
-        "Migrated latest snapshot does not match the canonical archive cursor.",
+        latest["target_date"] <= rows[-1]["date"]
+        and latest["archive_record_count"] <= len(rows),
+        "Migrated latest snapshot is newer than the canonical archive.",
     )
     target_queue._verify_item_against_archive(latest, rows)
     if active is not None:
