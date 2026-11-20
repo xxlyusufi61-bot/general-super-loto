@@ -994,7 +994,7 @@ class NvidiaUsageObservationTests(unittest.TestCase):
         ) as client_factory:
             for label, expected in labels_and_responses:
                 result = research.call_model(
-                    [{"role": "user", "content": "synthetic request " + label}],
+                    [{"role": "user", "content": "synthetic request " + (label or "unlabelled")}],
                     request_label=label,
                 )
                 results.append(result)
