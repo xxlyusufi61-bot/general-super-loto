@@ -332,6 +332,75 @@ class LocalTargetEvaluationTests(unittest.TestCase):
         self.assertFalse(result["recovery_available"])
         self.assertFalse((self.root / "missing-recovery-claim.json").exists())
 
+    def test_pre_evaluated_claim_failure_uses_manual_workflow_recovery(self):
+        # A sealed-evaluation failure leaves the ledger entry CLAIMED. It must
+        # not be sent through the local-score recovery path, which only restores
+        # an EVALUATED claim after hidden-target scoring was interrupted.
+        ledger = json.loads(self.ledger_path.read_text(encoding="utf-8"))
+        ledger["entries"][0]["state"] = "CLAIMED"
+        self.ledger_path.write_text(json.dumps(ledger), encoding="utf-8")
+
+        state = auto.read_state(self.state_path)
+        current_attempt = state["attempts"][0]
+        prior_attempt = {
+            **current_attempt,
+            "attempt_id": "a" * 64,
+            "claimed_at_utc": "2026-11-18T11:00:00+00:00",
+            "github_run_id": "10000",
+        }
+        state["attempts"] = [prior_attempt, current_attempt]
+        state["events"] = [{
+            "attempt_id": prior_attempt["attempt_id"],
+            "outcome": "FAILED",
+            "recorded_at_utc": "2026-11-18T11:30:00+00:00",
+            "reason_code": "WORKFLOW_FAILED",
+        }]
+        auto.write_state(self.state_path, state)
+
+        result = recover_evaluated_claim_for_attempt(
+            self.attempt_id,
+            scheduler_state_path=self.state_path,
+            ledger_path=self.ledger_path,
+            memory_path=self.root / "unused-memory.json",
+            proposals_path=self.proposals,
+            specs_path=self.specs,
+            claim_output_path=self.root / "must-not-be-created.json",
+        )
+        self.assertFalse(result["recovery_required"])
+        self.assertFalse(result["recovery_available"])
+        self.assertFalse((self.root / "must-not-be-created.json").exists())
+        self.assertIn("WORKFLOW_FAILED", auto.MANUAL_UNLOCK_REQUIRED_FAILURE_REASON_CODES)
+        self.assertNotIn(
+            "SEALED_EVALUATION_INCOMPLETE",
+            auto.MANUAL_UNLOCK_REQUIRED_FAILURE_REASON_CODES,
+        )
+
+        workflow_path = (
+            Path(__file__).resolve().parent
+            / ".github"
+            / "workflows"
+            / "general-autonomous-research.yml"
+        )
+        workflow = workflow_path.read_text(encoding="utf-8")
+        failed_step = workflow.split("- name: Record failed claimed cycle", 1)[1]
+        local_score_branch = failed_step.split(
+            'elif [ "$FROZEN_RECOVERY_OUTCOME" = "failure" ]', 1
+        )[0]
+        self.assertIn('reason_code="SEALED_EVALUATION_INCOMPLETE"', local_score_branch)
+        pending_claim_branch = failed_step.split(
+            'elif [ "$CLAIM_CREATED" = "true"]', 1
+        )
+        if len(pending_claim_branch) == 1:
+            pending_claim_branch = failed_step.split(
+                'elif [ "$CLAIM_CREATED" = "true" ]', 1
+            )
+        self.assertEqual(len(pending_claim_branch), 2)
+        pending_claim_branch = pending_claim_branch[1].split(
+            'elif [ -f "/tmp/general_directional_candidates_incomplete" ]', 1
+        )[0]
+        self.assertIn('reason_code="WORKFLOW_FAILED"', pending_claim_branch)
+        self.assertNotIn('reason_code="SEALED_EVALUATION_INCOMPLETE"', pending_claim_branch)
+
     def test_github_output_recovery_values_are_written_as_separate_lines(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "github-output.txt"
