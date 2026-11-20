@@ -146,7 +146,7 @@ def main() -> None:
 
         memory_path = root / "general_research_memory.json"
         memory_path.write_text(
-            json.dumps(source_memory, ensure_ascii=False, indent=2, allow_nan=False) + "\\n",
+            json.dumps(source_memory, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
             encoding="utf-8",
         )
         general_research_memory.load_memory(memory_path)
