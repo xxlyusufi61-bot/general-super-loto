@@ -977,7 +977,7 @@ class NvidiaUsageObservationTests(unittest.TestCase):
             ("reverse", "reverse final content"),
             ("forward_critique", "forward critique content"),
             ("between_draws", "between draws content"),
-            ("extended_review", "fifth request completed"),
+            (None, "fifth request completed"),
         ]
         clients = [
             self.client_with_response(self.sdk_response(response_text))

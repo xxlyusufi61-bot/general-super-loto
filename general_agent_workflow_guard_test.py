@@ -84,7 +84,7 @@ class LiveModelConsentGateTests(unittest.TestCase):
         self.assert_default_no_and_phrase_present(source)
         self.assertIn("inputs.confirm_live_calls == '" + CONFIRMATION + "'", source)
         self.assertIn("inputs.confirm_free_usage_verified == true", source)
-        self.assertIn("verify BOTH planned directional requests", source)
+        self.assertIn("verifies all planned requests are free", source)
         self.assertIn("GENERAL_CONFIRM_LIVE_CALLS:", source)
         self.assertIn("GENERAL_NVIDIA_GUARD_PASSED=1", source)
         guard_step = read_step(source, "Check global NVIDIA safety lock")
