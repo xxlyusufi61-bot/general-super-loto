@@ -341,7 +341,11 @@ class LocalTargetEvaluationTests(unittest.TestCase):
         self.ledger_path.write_text(json.dumps(ledger), encoding="utf-8")
 
         state = auto.read_state(self.state_path)
-        current_attempt = state["attempts"][0]
+        current_attempt = {
+            **state["attempts"][0],
+            "claimed_at_utc": "2026-11-18T12:30:00+00:00",
+            "github_run_id": "10001",
+        }
         prior_attempt = {
             **current_attempt,
             "attempt_id": "a" * 64,
@@ -349,12 +353,34 @@ class LocalTargetEvaluationTests(unittest.TestCase):
             "github_run_id": "10000",
         }
         state["attempts"] = [prior_attempt, current_attempt]
+        failure_at = "2026-11-18T11:30:00+00:00"
         state["events"] = [{
             "attempt_id": prior_attempt["attempt_id"],
             "outcome": "FAILED",
-            "recorded_at_utc": "2026-11-18T11:30:00+00:00",
+            "recorded_at_utc": failure_at,
             "reason_code": "WORKFLOW_FAILED",
         }]
+        workflow_retry = {
+            "schema_version": 1,
+            "target_date": current_attempt["target_date"],
+            "archive_sha256": current_attempt["archive_sha256"],
+            "archive_record_count": current_attempt["archive_record_count"],
+            "prior_attempt_id": prior_attempt["attempt_id"],
+            "prior_failure_reason_code": "WORKFLOW_FAILED",
+            "prior_failure_at_utc": failure_at,
+            "manual_unlocked_at_utc": "2026-11-18T12:00:00+00:00",
+            "retry_attempt_id": current_attempt["attempt_id"],
+            "retry_github_run_id": current_attempt["github_run_id"],
+            "claimed_at_utc": current_attempt["claimed_at_utc"],
+            "consumed": True,
+        }
+        workflow_retry["retry_id"] = __import__("hashlib").sha256(
+            json.dumps(
+                workflow_retry, ensure_ascii=False, sort_keys=True,
+                separators=(",", ":"), allow_nan=False,
+            ).encode("utf-8")
+        ).hexdigest()
+        state["workflow_retry_history"] = [workflow_retry]
         auto.write_state(self.state_path, state)
 
         result = recover_evaluated_claim_for_attempt(
