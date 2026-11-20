@@ -33,6 +33,43 @@ def require(condition: bool, message: str) -> None:
         raise RuntimeError(message)
 
 
+def rehearsal_mode(source_state: dict, source_queue: dict) -> str:
+    """Select the one-time legacy migration or current-schema validation path."""
+    pair = (source_state.get("schema_version"), source_queue.get("schema_version"))
+    if pair == (5, 1):
+        return "MIGRATE_LEGACY"
+    if pair == (6, 2):
+        return "VALIDATE_CURRENT"
+    raise RuntimeError("Production scheduler/queue schema pair is unsupported; rehearsal stopped.")
+
+
+def validate_current_schema_snapshot(source_state: dict, archive_rows: list[dict]) -> dict:
+    """Validate an already-migrated production state without mutating it."""
+    checked_state = copy.deepcopy(source_state)
+    autonomous.validate_state(checked_state)
+    queue = target_queue.validate_queue(checked_state["target_queue"])
+    rows = target_queue._copy_rows(archive_rows)
+    latest = target_queue.latest_snapshot_item(queue)
+    active = target_queue.active_item(queue)
+    require(latest is not None, "Migrated queue has no latest archive snapshot.")
+    require(
+        latest["target_date"] == rows[-1]["date"]
+        and latest["archive_record_count"] == len(rows),
+        "Migrated latest snapshot does not match the canonical archive cursor.",
+    )
+    target_queue._verify_item_against_archive(latest, rows)
+    if active is not None:
+        target_queue._verify_item_against_archive(active, rows)
+    require(
+        queue["observed_through_date"] == rows[-1]["date"],
+        "Migrated queue cursor does not match the canonical archive.",
+    )
+    return {
+        "active_target_date": active["target_date"] if active is not None else None,
+        "latest_snapshot_date": latest["target_date"],
+    }
+
+
 def main() -> None:
     repository = os.environ.get("GITHUB_REPOSITORY", REPOSITORY)
     token = os.environ.get("GITHUB_TOKEN")
@@ -52,14 +89,10 @@ def main() -> None:
     source_memory = copy.deepcopy(documents["research_memory"])
     source_queue = source_state.get("target_queue")
 
-    state_schema = source_state.get("schema_version")
-    queue_schema = source_queue.get("schema_version") if isinstance(source_queue, dict) else None
-    migration_required = state_schema == 5 and queue_schema == 1
-    already_migrated = state_schema == 6 and queue_schema == 2
-    require(
-        migration_required or already_migrated,
-        "Production scheduler/queue schema pair is unsupported; rehearsal stopped.",
-    )
+    require(isinstance(source_queue, dict), "Production target queue is missing.")
+    mode = rehearsal_mode(source_state, source_queue)
+    migration_required = mode == "MIGRATE_LEGACY"
+    already_migrated = mode == "VALIDATE_CURRENT"
     if migration_required:
         require(isinstance(source_queue.get("items"), list), "Legacy FIFO items are missing.")
         legacy_dates = [item.get("target_date") for item in source_queue["items"]]
@@ -156,27 +189,16 @@ def main() -> None:
                     "Legacy FIFO items remain after queue-v2 migration.")
         else:
             # Production has already completed this one-time migration. Validate
-            # the real v6/v2 state and prove both stored snapshots against the
-            # exact canonical archive without trying to migrate it a second time.
+            # the real v6/v2 state against the exact archive without assuming the
+            # original active target is still current or trying to migrate twice.
             migrated_state = copy.deepcopy(source_state)
-            autonomous.validate_state(migrated_state)
-            migrated_queue = target_queue.validate_queue(migrated_state["target_queue"])
             archive_view = sealed.load_archive(archive_path)
+            validated = validate_current_schema_snapshot(
+                migrated_state, archive_view["rows"]
+            )
+            migrated_queue = target_queue.validate_queue(migrated_state["target_queue"])
             active = target_queue.active_item(migrated_queue)
             latest = target_queue.latest_snapshot_item(migrated_queue)
-            require(latest is not None, "Migrated queue has no latest archive snapshot.")
-            require(
-                latest["target_date"] == archive_view["last_date"]
-                and latest["archive_record_count"] == archive_view["record_count"],
-                "Migrated latest snapshot does not match the canonical archive cursor.",
-            )
-            target_queue._verify_item_against_archive(latest, archive_view["rows"])
-            if active is not None:
-                target_queue._verify_item_against_archive(active, archive_view["rows"])
-            require(
-                migrated_queue["observed_through_date"] == archive_view["last_date"],
-                "Migrated queue cursor does not match the canonical archive.",
-            )
         for key, value in preserved_before.items():
             require(migrated_state[key] == value,
                     "Historical scheduler field changed during migration: " + key)
