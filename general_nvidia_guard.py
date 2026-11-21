@@ -851,6 +851,8 @@ def read_remote_lock():
 
 def write_remote_lock(state, sha, message):
     url, branch = _lock_url()
+    if branch != "main":
+        raise RuntimeError("global NVIDIA lock writer is restricted to the main branch")
     raw = (json.dumps(validate_lock_state(state), ensure_ascii=False, indent=2) + "\n").encode("utf-8")
     payload = {
         "message": message,
