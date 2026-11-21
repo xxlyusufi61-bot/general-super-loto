@@ -1132,6 +1132,23 @@ class GlobalNvidiaLockTests(unittest.TestCase):
         reserve_request.assert_not_called()
         unlock.assert_not_called()
 
+    def test_global_lock_writer_rejects_non_main_branch(self):
+        with patch.dict(
+            os.environ,
+            {
+                "GITHUB_REPOSITORY": DIAGNOSTIC_REPOSITORY,
+                "GENERAL_DEFAULT_BRANCH": RATE_LIMIT_BRANCH,
+            },
+            clear=True,
+        ), patch.object(nvidia_guard, "_api_request") as mocked_api:
+            with self.assertRaisesRegex(RuntimeError, "restricted to the main branch"):
+                nvidia_guard.write_remote_lock(
+                    initial_lock_state(),
+                    "offline-lock-blob-sha",
+                    "offline lock branch-scope test",
+                )
+        mocked_api.assert_not_called()
+
     def test_manual_lock_workflow_requires_confirmation_and_cannot_call_provider_or_unlock(self):
         workflow_path = Path(".github/workflows/general-nvidia-manual-lock.yml")
         workflow = workflow_path.read_text(encoding="utf-8")
@@ -1142,7 +1159,10 @@ class GlobalNvidiaLockTests(unittest.TestCase):
         self.assertIn('default: "no"', workflow)
         self.assertIn('inputs.confirm == \'yes\'', workflow)
         self.assertIn("github.ref == 'refs/heads/main'", workflow)
-        self.assertIn("permissions:\n  contents: write", workflow)
+        self.assertIn("permissions:\n  contents: read", workflow)
+        self.assertIn("id: main-writer", workflow)
+        self.assertIn("GENERAL_MAIN_WRITER_TOKEN:", workflow)
+        self.assertIn("persist-credentials: false", workflow)
         self.assertIn("group: general-nvidia-api", workflow)
         self.assertIn("python3 general_nvidia_guard.py lock --reason", workflow)
         self.assertIn("from general_nvidia_guard import read_remote_lock, validate_lock_state", workflow)
