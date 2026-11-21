@@ -102,7 +102,7 @@ class ScopedWriterWorkflowGuardTests(unittest.TestCase):
             "WORKFLOW_REF": workflow_ref,
         })
         return subprocess.run(
-            ["bash", "-euo", "pipefail", "-c", "\\n".join(script_lines)],
+            ["bash", "-e", "-u", "-o", "pipefail", "-c", "\\n".join(script_lines)],
             env=env,
             capture_output=True,
             text=True,
