@@ -24,6 +24,15 @@ Workflow token minting is scoped to the one repository and explicitly requests o
 
 Do not add the general GitHub Actions bot or repository administrators as broad bypass actors. Apply these Rulesets before merging/enabling the writer integration, after the dedicated Apps and six credential entries have been configured and the offline writer tests/guards have passed. The live installation-token validation workflow in this PR cannot be dispatched until it exists on the default branch; run it after merge and before enabling any writer-dependent live workflow. The validation workflow only mints the three repository-scoped installation tokens and performs GET requests to `/installation/repositories`; it does not write repository data.
 
+## Legacy workflow caveat
+
+Two historical workflow files are not migrated to the new writer-action input contract in this PR:
+
+- `.github/workflows/general-recovery-20261105.yml`
+- `.github/workflows/retire-exhausted-fifo-target.yml`
+
+They still pass the former `token` input to `publish-automation-state`, which the new composite action no longer defines, and they still declare `contents: write`. The shared writer gate blocks their new scoped-token path while validation is closed, but these legacy workflows are not supported by the new App-only writer contract and may fail when called after the gate is enabled. Do not dispatch them under this PR. Migrate them to the proper dedicated App inputs with read-only `GITHUB_TOKEN` permissions, or explicitly retire them, in a separate reviewed change.
+
 ## Workflow permissions
 
 - Default `GITHUB_TOKEN`: `contents: read`; use `pull-requests: write` only in the agent/coordinator workflows that open review-only memory PRs. Keep `issues: write` only in workflows that call `general_rule_change.py`, which creates and updates user-approval issues.
