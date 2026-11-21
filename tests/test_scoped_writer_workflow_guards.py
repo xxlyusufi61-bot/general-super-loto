@@ -82,9 +82,9 @@ class ScopedWriterWorkflowGuardTests(unittest.TestCase):
         action = (
             ROOT / ".github/actions/create-scoped-writer-token/action.yml"
         ).read_text(encoding="utf-8")
-        marker = "    - name: Verify scoped writer deployment gate\\n"
+        marker = "    - name: Verify scoped writer deployment gate\n"
         start = action.index(marker)
-        run_marker = "      run: |\\n"
+        run_marker = "      run: |\n"
         run_start = action.index(run_marker, start) + len(run_marker)
         script_lines = []
         for line in action[run_start:].splitlines():
@@ -102,7 +102,7 @@ class ScopedWriterWorkflowGuardTests(unittest.TestCase):
             "WORKFLOW_REF": workflow_ref,
         })
         return subprocess.run(
-            ["bash", "-e", "-u", "-o", "pipefail", "-c", "\\n".join(script_lines)],
+            ["bash", "-e", "-u", "-o", "pipefail", "-c", "\n".join(script_lines)],
             env=env,
             capture_output=True,
             text=True,
