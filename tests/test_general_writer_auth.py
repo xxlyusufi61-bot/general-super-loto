@@ -64,9 +64,13 @@ class WriterAuthTests(unittest.TestCase):
             args, kwargs = run.call_args
             self.assertEqual(args[0], ["git", "push", "origin", "general-agent-memory-12345-1"])
             self.assertIn("GENERAL_MAIN_WRITER_TOKEN", kwargs["env"])
+            auth.run_git_push("main", "origin", "general-memory-proposal-12345-1")
+            args, _ = run.call_args
+            self.assertEqual(args[0], ["git", "push", "origin", "general-memory-proposal-12345-1"])
         for remote, ref in (
             ("other", "HEAD:main"),
             ("origin", "HEAD:general-nvidia-rate-limit-state"),
+            ("origin", "general-coordinator-memory-12345-1"),
             ("origin", "--force"),
         ):
             with self.subTest(remote=remote, ref=ref):
