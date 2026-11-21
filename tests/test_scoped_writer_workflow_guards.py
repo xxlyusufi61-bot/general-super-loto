@@ -196,6 +196,17 @@ class ScopedWriterWorkflowGuardTests(unittest.TestCase):
                 direct_mints.append(workflow)
         self.assertEqual(direct_mints, [validation_workflow])
 
+    def test_legacy_unscoped_writer_workflows_are_disabled(self):
+        targets = (
+            ".github/workflows/general-recovery-20261105.yml",
+            ".github/workflows/retire-exhausted-fifo-target.yml",
+        )
+        for relative in targets:
+            with self.subTest(workflow=relative):
+                workflow = (ROOT / relative).read_text(encoding="utf-8")
+                self.assertIn("if: ${{ false }}", workflow)
+                self.assertNotIn("contents: write", workflow)
+
     def test_scheduled_autonomous_writer_jobs_require_validation_flag(self):
         for job in ("archive-refresh", "scheduled-cycle"):
             with self.subTest(job=job):
