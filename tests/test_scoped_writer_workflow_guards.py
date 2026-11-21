@@ -54,6 +54,111 @@ class ScopedWriterWorkflowGuardTests(unittest.TestCase):
         )
         self.assertIn("inputs.confirm == 'yes'", condition)
 
+    def test_scoped_writer_token_action_defaults_to_fail_closed(self):
+        action = (
+            ROOT / ".github/actions/create-scoped-writer-token/action.yml"
+        ).read_text(encoding="utf-8")
+        gate_index = action.index("Verify scoped writer deployment gate")
+        token_index = action.index("uses: actions/create-github-app-token@")
+        self.assertLess(gate_index, token_index)
+        self.assertIn(
+            "WRITERS_VALIDATED: ${{ vars.GENERAL_SCOPED_WRITERS_VALIDATED }}",
+            action,
+        )
+        self.assertIn("default: 'false'", action)
+        self.assertIn("inputs.allow_prevalidation_safety_lock", action)
+        self.assertIn("vars.GENERAL_MAIN_WRITER_APP_CLIENT_ID", action)
+        self.assertIn("github.workflow_ref", action)
+        self.assertIn(
+            "GENERAL_SCOPED_WRITERS_VALIDATED=true",
+            action,
+        )
+
+    def test_prevalidation_exception_is_limited_to_emergency_main_writer_locks(self):
+        expected = {
+            ".github/workflows/general-agent.yml": {
+                "Create short-lived main writer token for safety-lock persistence"
+            },
+            ".github/workflows/general-autonomous-research.yml": {
+                "Create short-lived main writer token for safety-lock persistence"
+            },
+            ".github/workflows/general-coordinator-execute.yml": {
+                "Create short-lived main writer token for coordinator safety-lock persistence"
+            },
+            ".github/workflows/general-nvidia-manual-lock.yml": {
+                "Create short-lived main writer token for manual safety-lock activation"
+            },
+            ".github/workflows/nvidia-chat-test.yml": {
+                "Create short-lived main writer token for safety-lock persistence"
+            },
+            ".github/workflows/nvidia-diagnostic.yml": {
+                "Create short-lived main writer token for safety-lock persistence"
+            },
+            ".github/workflows/nvidia-test.yml": {
+                "Create short-lived main writer token for safety-lock persistence"
+            },
+            ".github/workflows/open-research.yml": {
+                "Create short-lived main writer token for failed research safety lock"
+            },
+        }
+        found = {}
+        for workflow in sorted((ROOT / ".github/workflows").glob("*.yml")):
+            lines = workflow.read_text(encoding="utf-8").splitlines()
+            for index, line in enumerate(lines):
+                if "allow_prevalidation_safety_lock: 'true'" not in line:
+                    continue
+                start = index
+                while start >= 0 and not lines[start].strip().startswith("- name:"):
+                    start -= 1
+                self.assertGreaterEqual(start, 0, str(workflow))
+                end = index + 1
+                while end < len(lines) and not lines[end].strip().startswith("- name:"):
+                    end += 1
+                block = lines[start:end]
+                step_name = lines[start].split("- name:", 1)[1].strip()
+                self.assertTrue(
+                    any(
+                        "client_id: ${{ vars.GENERAL_MAIN_WRITER_APP_CLIENT_ID }}"
+                        in item
+                        for item in block
+                    ),
+                    f"{workflow}: pre-validation exception must use Main Writer",
+                )
+                relative = workflow.relative_to(ROOT).as_posix()
+                found.setdefault(relative, set()).add(step_name)
+        self.assertEqual(found, expected)
+
+    def test_direct_app_token_minting_is_reserved_for_read_only_validation(self):
+        validation_workflow = (
+            ROOT / ".github/workflows/general-github-app-read-only-validation.yml"
+        )
+        direct_mints = []
+        for workflow in sorted((ROOT / ".github/workflows").glob("*.yml")):
+            if "uses: actions/create-github-app-token@" in workflow.read_text(
+                encoding="utf-8"
+            ):
+                direct_mints.append(workflow)
+        self.assertEqual(direct_mints, [validation_workflow])
+
+    def test_scheduled_autonomous_writer_jobs_require_validation_flag(self):
+        for job in ("archive-refresh", "scheduled-cycle"):
+            with self.subTest(job=job):
+                condition = job_level_if(
+                    ".github/workflows/general-autonomous-research.yml", job
+                )
+                self.assertIn(
+                    "vars.GENERAL_SCOPED_WRITERS_VALIDATED == 'true'",
+                    condition,
+                )
+
+    def test_post_merge_token_validation_remains_available_before_gate_enablement(self):
+        workflow = (
+            ROOT / ".github/workflows/general-github-app-read-only-validation.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("workflow_dispatch:", workflow)
+        self.assertIn("GET /installation/repositories", workflow)
+        self.assertNotIn("GENERAL_SCOPED_WRITERS_VALIDATED", workflow)
+
     def test_single_request_checkout_uses_one_with_mapping(self):
         path = ROOT / ".github/workflows/general-single-request-normal-token-test.yml"
         lines = path.read_text(encoding="utf-8").splitlines()
