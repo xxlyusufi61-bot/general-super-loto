@@ -6,7 +6,7 @@ Keep the default `GITHUB_TOKEN` read-only in runtime workflows. A write operatio
 
 ## Three separate GitHub Apps
 
-Create and install these identities in a later, separately approved setup step. Each App must be installed only on `xxlyusufi61-bot/general-super-loto` and granted **Contents: read and write only**. Do not grant Actions, Administration, Issues, Pull requests, or workflow permissions.
+User reports that all three identities have been created and installed only on `xxlyusufi61-bot/general-super-loto`, with the six repository variable/secret names configured. This is user-reported setup status; this integration cannot read secret values or independently inspect App settings. Verify each installation in GitHub settings without exposing PEM keys or secret values. Each App must have **Contents: read and write only**. Do not grant Actions, Administration, Issues, Pull requests, or workflow permissions.
 
 | Writer role | Repository variable | Repository secret | Intended branch scope, enforced by code plus Rulesets |
 |---|---|---|---|
@@ -22,7 +22,7 @@ Workflow token minting is scoped to the one repository and explicitly requests o
 - `general-automation-state`: restrict updates and deletions to the Automation-state writer App. Keep the existing manifest generation, content hashes, domain validation, expected commit SHA, single atomic commit, and fast-forward-only ref update unchanged.
 - `general-nvidia-rate-limit-state`: restrict updates and deletions to the NVIDIA-budget writer App. Keep the existing one-reservation-per-commit history and normal fast-forward push; never force-push or rewrite prior reservations.
 
-Do not add the general GitHub Actions bot or repository administrators as broad bypass actors. Do not apply these rulesets until the dedicated Apps are installed and their workflows have been tested.
+Do not add the general GitHub Actions bot or repository administrators as broad bypass actors. Apply these Rulesets before merging/enabling the writer integration, after the dedicated Apps and six credential entries have been configured and the offline writer tests/guards have passed. The live installation-token validation workflow in this PR cannot be dispatched until it exists on the default branch; run it after merge and before enabling any writer-dependent live workflow. The validation workflow only mints the three repository-scoped installation tokens and performs GET requests to `/installation/repositories`; it does not write repository data.
 
 ## Workflow permissions
 
@@ -32,4 +32,8 @@ Do not add the general GitHub Actions bot or repository administrators as broad 
 
 ## Deployment gate
 
-This PR adds integration code and workflow references only. It does **not** create GitHub Apps, install Apps, create repository variables/secrets, or change branch protection/rulesets. Write-enabled paths stop if their required dedicated App configuration is missing; read-only paths continue using `GITHUB_TOKEN`. Do not merge this PR or enable branch rulesets until all six App variables/secrets are configured, each App's repository permission is verified, and each writer has passed dry-run checks. Because installation tokens are not branch-scoped, the three branch Rulesets are required before the integration is considered enforced.
+This PR adds integration code and workflow references only. It does **not** create GitHub Apps, install Apps, create repository variables/secrets, or change branch protection/rulesets. Write-enabled paths stop if their required dedicated App configuration is missing; read-only paths continue using `GITHUB_TOKEN`.
+
+**Before merge:** verify all six App variable/secret entries exist (without revealing values), verify each App is installed only on this repository with Contents read/write only, pass the offline writer tests, and apply the three branch Rulesets described above. The live token validation workflow is intentionally dispatchable only from `main`; GitHub does not allow a workflow_dispatch definition that exists only on a PR branch to be run as the trusted default-branch workflow. Therefore, after merge, run `GENERAL GitHub App Read-Only Validation` and require all three token identity/repository-scope checks to pass before enabling any writer-dependent live operation. This post-merge validation performs token issuance and GET-only scope checks; it does not write repository contents, refs, issues, pull requests, or Rulesets and does not call NVIDIA or start Super Loto research.
+
+Because installation tokens are repository-scoped, not branch-scoped, the three branch Rulesets are required before the integration is considered enforced.
