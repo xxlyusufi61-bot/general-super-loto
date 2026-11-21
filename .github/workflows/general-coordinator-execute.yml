@@ -30,6 +30,7 @@ name: GENERAL Coordinator Execute (Explicit Free-Only Gate)
 permissions:
   contents: read
   pull-requests: write
+  issues: write # Required by general_rule_change.py issue creation and status updates
 
 concurrency:
   group: general-nvidia-api
