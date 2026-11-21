@@ -55,7 +55,11 @@ class WriterAuthTests(unittest.TestCase):
             auth.resolve_writer_token("main", {"GENERAL_MAIN_WRITER_TOKEN": "bad token"})
 
     def test_main_git_push_allows_only_main_and_agent_memory_proposals(self):
-        with patch.object(auth.subprocess, "run") as run:
+        with patch.dict(
+            "os.environ",
+            {"GENERAL_MAIN_WRITER_TOKEN": "offline-main-writer-token"},
+            clear=True,
+        ), patch.object(auth.subprocess, "run") as run:
             auth.run_git_push(
                 "main",
                 "origin",
