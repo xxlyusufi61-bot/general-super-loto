@@ -142,6 +142,7 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: read
+      issues: write # Required by general_rule_change.py issue creation and status updates
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
