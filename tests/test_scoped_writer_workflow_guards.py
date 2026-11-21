@@ -1,4 +1,6 @@
+import os
 import re
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -73,6 +75,60 @@ class ScopedWriterWorkflowGuardTests(unittest.TestCase):
             "GENERAL_SCOPED_WRITERS_VALIDATED=true",
             action,
         )
+
+    def run_deployment_gate(self, *, validated=None, allow_lock="false",
+                            requested_client="main-app", main_client="main-app",
+                            workflow_ref="xxlyusufi61-bot/general-super-loto/.github/workflows/general-nvidia-manual-lock.yml@refs/heads/main"):
+        action = (
+            ROOT / ".github/actions/create-scoped-writer-token/action.yml"
+        ).read_text(encoding="utf-8")
+        marker = "    - name: Verify scoped writer deployment gate\\n"
+        start = action.index(marker)
+        run_marker = "      run: |\\n"
+        run_start = action.index(run_marker, start) + len(run_marker)
+        script_lines = []
+        for line in action[run_start:].splitlines():
+            if line and not line.startswith("        "):
+                break
+            script_lines.append(line[8:] if line.startswith("        ") else "")
+        env = os.environ.copy()
+        env.pop("WRITERS_VALIDATED", None)
+        if validated is not None:
+            env["WRITERS_VALIDATED"] = validated
+        env.update({
+            "ALLOW_PREVALIDATION_SAFETY_LOCK": allow_lock,
+            "REQUESTED_CLIENT_ID": requested_client,
+            "MAIN_WRITER_CLIENT_ID": main_client,
+            "WORKFLOW_REF": workflow_ref,
+        })
+        return subprocess.run(
+            ["bash", "-euo", "pipefail", "-c", "\\n".join(script_lines)],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def test_deployment_gate_runtime_defaults_closed_and_accepts_only_validated(self):
+        self.assertNotEqual(self.run_deployment_gate().returncode, 0)
+        self.assertNotEqual(self.run_deployment_gate(validated="false").returncode, 0)
+        self.assertNotEqual(self.run_deployment_gate(validated="TRUE").returncode, 0)
+        self.assertEqual(self.run_deployment_gate(validated="true").returncode, 0)
+
+    def test_deployment_gate_runtime_limits_emergency_exception(self):
+        allowed = self.run_deployment_gate(allow_lock="true")
+        self.assertEqual(allowed.returncode, 0, allowed.stderr)
+        wrong_app = self.run_deployment_gate(
+            allow_lock="true", requested_client="budget-app"
+        )
+        self.assertNotEqual(wrong_app.returncode, 0)
+        wrong_workflow = self.run_deployment_gate(
+            allow_lock="true",
+            workflow_ref="xxlyusufi61-bot/general-super-loto/.github/workflows/general-autonomous-research.yml@refs/heads/feature",
+        )
+        self.assertNotEqual(wrong_workflow.returncode, 0)
+        exception_disabled = self.run_deployment_gate(allow_lock="false")
+        self.assertNotEqual(exception_disabled.returncode, 0)
 
     def test_prevalidation_exception_is_limited_to_emergency_main_writer_locks(self):
         expected = {
