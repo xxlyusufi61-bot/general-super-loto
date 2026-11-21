@@ -28,9 +28,8 @@ name: GENERAL Coordinator Execute (Explicit Free-Only Gate)
         default: "NO"
 
 permissions:
-  contents: write
+  contents: read
   pull-requests: write
-  issues: write
 
 concurrency:
   group: general-nvidia-api
@@ -45,6 +44,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           ref: main
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -137,7 +137,8 @@ jobs:
         if: ${{ steps.consent.outputs.enabled == 'true' && steps.build-plan.outputs.task_type == 'data' }}
         uses: ./.github/actions/publish-automation-state
         with:
-          token: ${{ github.token }}
+          app_client_id: ${{ vars.GENERAL_AUTOMATION_STATE_WRITER_APP_CLIENT_ID }}
+          private_key: ${{ secrets.GENERAL_AUTOMATION_STATE_WRITER_APP_PRIVATE_KEY }}
           expected_generation: ${{ steps.state_bootstrap.outputs.generation }}
           objects: archive
           message: "Publish validated coordinator archive refresh"
@@ -149,6 +150,14 @@ jobs:
           mkdir -p "$RUNNER_TEMP/general-memory"
           cp general_memory.json "$RUNNER_TEMP/general-memory/baseline.json"
           sha256sum "$RUNNER_TEMP/general-memory/baseline.json" | awk '{print "sha256=" $1}' >> "$GITHUB_OUTPUT"
+
+      - name: Create short-lived NVIDIA budget writer token
+        if: ${{ steps.consent.outputs.enabled == 'true' }}
+        id: nvidia-budget-writer
+        uses: ./.github/actions/create-scoped-writer-token
+        with:
+          client_id: ${{ vars.GENERAL_NVIDIA_BUDGET_WRITER_APP_CLIENT_ID }}
+          private_key: ${{ secrets.GENERAL_NVIDIA_BUDGET_WRITER_APP_PRIVATE_KEY }}
 
       - name: Run coordinator agents sequentially
         id: run-coordinator
@@ -162,6 +171,7 @@ jobs:
           CONFIRM_LIVE_CALLS: ${{ inputs.confirm_live_calls }}
           GENERAL_CONFIRM_LIVE_CALLS: ${{ inputs.confirm_live_calls }}
           GENERAL_NVIDIA_FREE_USAGE_VERIFIED: "true"
+          GENERAL_NVIDIA_BUDGET_WRITER_TOKEN: ${{ steps.nvidia-budget-writer.outputs.token }}
           GENERAL_AGENT_REPORT_DIR: general-agent-reports
           GENERAL_SAVE_MEMORY: "1"
         run: |
@@ -193,10 +203,19 @@ jobs:
             python3 general_rule_change.py submit-report --report "$report"
           done
 
+      - name: Create short-lived main writer token for coordinator safety-lock persistence
+        if: ${{ failure() && steps.run-coordinator.outcome == 'failure' }}
+        id: main-writer-lock
+        uses: ./.github/actions/create-scoped-writer-token
+        with:
+          client_id: ${{ vars.GENERAL_MAIN_WRITER_APP_CLIENT_ID }}
+          private_key: ${{ secrets.GENERAL_MAIN_WRITER_APP_PRIVATE_KEY }}
+
       - name: Activate global lock after an incomplete NVIDIA request
         if: ${{ failure() && steps.run-coordinator.outcome == 'failure' }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          GENERAL_MAIN_WRITER_TOKEN: ${{ steps.main-writer-lock.outputs.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           GENERAL_DEFAULT_BRANCH: main
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -269,10 +288,19 @@ jobs:
                   report.write("- No PR was opened because the publication input is NO. The run workspace is temporary.\n")
           PY
 
+      - name: Create short-lived main writer token for review-only memory proposal branch
+        if: ${{ always() && steps.memory-proposal.outputs.has_new_entries == 'true' && inputs.publish_memory_pr == 'YES' }}
+        id: main-writer-memory
+        uses: ./.github/actions/create-scoped-writer-token
+        with:
+          client_id: ${{ vars.GENERAL_MAIN_WRITER_APP_CLIENT_ID }}
+          private_key: ${{ secrets.GENERAL_MAIN_WRITER_APP_PRIVATE_KEY }}
+
       - name: Publish validated shared-memory update for human review
         if: ${{ always() && steps.memory-proposal.outputs.has_new_entries == 'true' && inputs.publish_memory_pr == 'YES' }}
         env:
           GH_TOKEN: ${{ github.token }}
+          GENERAL_MAIN_WRITER_TOKEN: ${{ steps.main-writer-memory.outputs.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           RUN_OUTCOME: ${{ steps.run-coordinator.outcome }}
           PUBLISH_MEMORY_PR: ${{ inputs.publish_memory_pr }}
@@ -311,7 +339,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "Propose validated GENERAL shared-memory update"
-          git push origin "$branch"
+          python3 general_writer_auth.py git-push --role main --remote origin --ref "$branch"
 
           body="$(cat <<EOF
           ## Review-only shared-memory update
