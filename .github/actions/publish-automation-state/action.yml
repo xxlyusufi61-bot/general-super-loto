@@ -1,8 +1,11 @@
 name: Publish GENERAL automation state
 description: Atomically publish selected runtime objects with a generation guard.
 inputs:
-  token:
-    description: GitHub token with contents write access.
+  app_client_id:
+    description: Client ID for the dedicated automation-state writer GitHub App.
+    required: true
+  private_key:
+    description: Private key for the dedicated automation-state writer GitHub App.
     required: true
   expected_generation:
     description: Manifest generation read at the beginning of the operation.
@@ -23,10 +26,16 @@ outputs:
 runs:
   using: composite
   steps:
+    - name: Create short-lived automation-state writer token
+      id: app-token
+      uses: ./.github/actions/create-scoped-writer-token
+      with:
+        client_id: ${{ inputs.app_client_id }}
+        private_key: ${{ inputs.private_key }}
     - id: publish
       shell: bash
       env:
-        GITHUB_TOKEN: ${{ inputs.token }}
+        GENERAL_AUTOMATION_STATE_WRITER_TOKEN: ${{ steps.app-token.outputs.token }}
         GITHUB_REPOSITORY: ${{ github.repository }}
         EXPECTED_GENERATION: ${{ inputs.expected_generation }}
         STATE_OBJECTS: ${{ inputs.objects }}
