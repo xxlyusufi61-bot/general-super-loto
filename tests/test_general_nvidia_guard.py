@@ -736,10 +736,12 @@ class GlobalNvidiaLockTests(unittest.TestCase):
                 encoding="utf-8",
             )
             git_calls = []
+            writer_roles = []
             rev_calls = {"count": 0}
 
-            def fake_git(arguments, *, cwd=None):
+            def fake_git(arguments, *, cwd=None, writer_role=None):
                 git_calls.append(list(arguments))
+                writer_roles.append(writer_role)
                 if arguments[:2] == ["rev-parse", "HEAD"]:
                     rev_calls["count"] += 1
                     return "head-before" if rev_calls["count"] <= 2 else "head-after"
@@ -765,6 +767,7 @@ class GlobalNvidiaLockTests(unittest.TestCase):
                 git_calls,
             )
             self.assertIn(["commit", "-m", "chore: reserve shared NVIDIA request slot"], git_calls)
+            self.assertEqual(writer_roles[-1], "nvidia_budget")
             mocked_api.assert_not_called()
 
     def test_rate_limit_state_uses_a_separate_persistent_branch(self):
