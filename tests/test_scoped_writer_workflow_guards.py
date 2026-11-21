@@ -15,7 +15,7 @@ def job_level_if(workflow_path: str, job_name: str) -> str:
     if jobs_index is None:
         raise AssertionError(f"{workflow_path}: missing jobs section")
 
-    job_header = re.compile(r"^  ([A-Za-z0-9_-]+):\\s*$")
+    job_header = re.compile(r"^  ([A-Za-z0-9_-]+):\s*$")
     for index in range(jobs_index + 1, len(lines)):
         match = job_header.match(lines[index])
         if not match or match.group(1) != job_name:
@@ -23,7 +23,7 @@ def job_level_if(workflow_path: str, job_name: str) -> str:
         for line in lines[index + 1:]:
             if job_header.match(line) or (line and not line.startswith(" ")):
                 break
-            condition = re.match(r"^    if:\\s*(.+)$", line)
+            condition = re.match(r"^    if:\s*(.+)$", line)
             if condition:
                 return condition.group(1)
         return ""
@@ -64,7 +64,7 @@ class ScopedWriterWorkflowGuardTests(unittest.TestCase):
                 break
             step.append(line)
 
-        with_lines = [line for line in step if re.match(r"^        with:\\s*$", line)]
+        with_lines = [line for line in step if re.match(r"^        with:\s*$", line)]
         self.assertEqual(len(with_lines), 1, "checkout step must contain exactly one with: mapping")
         self.assertTrue(any("persist-credentials: false" in line for line in step))
         self.assertTrue(any("ref: ${{ github.sha }}" in line for line in step))
