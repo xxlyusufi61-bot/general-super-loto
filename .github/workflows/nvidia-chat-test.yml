@@ -23,6 +23,7 @@ concurrency:
 
 jobs:
   chat-test:
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source
