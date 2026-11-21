@@ -25,26 +25,33 @@ NVIDIA_REQUESTS_PER_MINUTE = 40  # immutable hard ceiling
 NVIDIA_NORMAL_REQUESTS_PER_MINUTE = 30
 NVIDIA_RATE_WINDOW_SECONDS = 60
 NVIDIA_DAILY_WINDOW_SECONDS = 86400
-NVIDIA_DAILY_REQUEST_BUDGET = 200
-NVIDIA_MAX_REQUESTS_PER_PACKAGE = 4
+NVIDIA_DAILY_REQUEST_BUDGET = 1500
 NVIDIA_BUDGET_CATEGORY_LIMITS = {
-    "forward_discovery": 100,
-    "forward_critique": 30,
-    "reverse_diagnostic": 20,
-    "between_draws": 30,
-    "retry_reserve": 20,
+    "forward_discovery": 750,
+    "forward_critique": 225,
+    "reverse_diagnostic": 150,
+    "between_draws": 225,
+    "retry_reserve": 150,
 }
-# The shared state branch currently stores schema-v2 ledgers using this exact
-# former budget. Accept it only as a known predecessor, normalize it in memory,
-# and preserve every reservation; the next authorized reservation persists v2
-# with the new limits. No zero-fill or history rewrite is performed.
-LEGACY_NVIDIA_DAILY_REQUEST_BUDGET = 72
-LEGACY_NVIDIA_BUDGET_CATEGORY_LIMITS = {
+# Schema-v2 ledgers used two known daily-budget configurations. Both carried
+# the old four-reservations-per-job field. Migration accepts only these exact
+# predecessors, preserves every reservation, and upgrades in memory to schema
+# v3. The v3 ledger is persisted only with the next authorized reservation.
+LEGACY_NVIDIA_V2_72_DAILY_BUDGET = 72
+LEGACY_NVIDIA_V2_72_CATEGORY_LIMITS = {
     "forward_discovery": 40,
     "forward_critique": 12,
     "reverse_diagnostic": 8,
     "between_draws": 8,
     "retry_reserve": 4,
+}
+LEGACY_NVIDIA_V2_200_DAILY_BUDGET = 200
+LEGACY_NVIDIA_V2_200_CATEGORY_LIMITS = {
+    "forward_discovery": 100,
+    "forward_critique": 30,
+    "reverse_diagnostic": 20,
+    "between_draws": 30,
+    "retry_reserve": 20,
 }
 RATE_LIMIT_RESERVATION_SAFETY_SECONDS = 30
 MAX_REASON_LENGTH = 320
@@ -189,14 +196,13 @@ def _parse_aware_timestamp(value, field_name):
 
 def initial_rate_limit_state():
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "window_seconds": NVIDIA_RATE_WINDOW_SECONDS,
         "max_requests": NVIDIA_REQUESTS_PER_MINUTE,
         "normal_max_requests": NVIDIA_NORMAL_REQUESTS_PER_MINUTE,
         "daily_window_seconds": NVIDIA_DAILY_WINDOW_SECONDS,
         "daily_max_requests": NVIDIA_DAILY_REQUEST_BUDGET,
         "category_limits": dict(NVIDIA_BUDGET_CATEGORY_LIMITS),
-        "package_max_requests": NVIDIA_MAX_REQUESTS_PER_PACKAGE,
         "requests": [],
         "daily_requests": [],
         "diagnostic_run_ids": [],
@@ -207,9 +213,11 @@ def initial_rate_limit_state():
 def validate_rate_limit_state(value):
     if not isinstance(value, dict):
         raise ValueError("NVIDIA rate-limit state must be a JSON object")
+
+    version = value.get("schema_version")
     # Schema v1 is readable only so its accounting can be reconstructed from
     # the append-only state-branch commit history before any new provider call.
-    if value.get("schema_version") == 1:
+    if type(version) is int and version == 1:
         allowed = {
             "schema_version", "window_seconds", "max_requests", "requests",
             "diagnostic_run_ids", "updated_at_utc",
@@ -217,9 +225,9 @@ def validate_rate_limit_state(value):
         legacy_allowed = allowed - {"diagnostic_run_ids"}
         if set(value) not in (allowed, legacy_allowed):
             raise ValueError("legacy NVIDIA rate-limit schema is invalid")
-        if value.get("window_seconds") != NVIDIA_RATE_WINDOW_SECONDS:
+        if type(value.get("window_seconds")) is not int or value["window_seconds"] != NVIDIA_RATE_WINDOW_SECONDS:
             raise ValueError("NVIDIA rate-limit window was changed or is invalid")
-        if value.get("max_requests") != NVIDIA_REQUESTS_PER_MINUTE:
+        if type(value.get("max_requests")) is not int or value["max_requests"] != NVIDIA_REQUESTS_PER_MINUTE:
             raise ValueError("NVIDIA hard request cap was changed or is invalid")
         requests = value.get("requests")
         if not isinstance(requests, list) or len(requests) > NVIDIA_REQUESTS_PER_MINUTE:
@@ -255,51 +263,74 @@ def validate_rate_limit_state(value):
             _parse_aware_timestamp(value["updated_at_utc"], "NVIDIA rate-limit updated_at_utc")
         return value
 
-    required = {
+    required_v3 = {
         "schema_version", "window_seconds", "max_requests", "normal_max_requests",
         "daily_window_seconds", "daily_max_requests", "category_limits",
-        "package_max_requests", "requests", "daily_requests",
-        "diagnostic_run_ids", "updated_at_utc",
+        "requests", "daily_requests", "diagnostic_run_ids", "updated_at_utc",
     }
-    if value.get("schema_version") != 2 or set(value) != required:
+
+    if type(version) is int and version == 2:
+        # Only the exact known schema-v2 formats are accepted. In particular,
+        # the old package cap must still be the historical value 4; unexpected
+        # predecessor configurations are not silently adopted.
+        required_v2 = required_v3 | {"package_max_requests"}
+        if set(value) != required_v2:
+            raise ValueError("unsupported or malformed legacy NVIDIA budget ledger schema")
+        fixed_v2 = (
+            ("window_seconds", NVIDIA_RATE_WINDOW_SECONDS),
+            ("max_requests", NVIDIA_REQUESTS_PER_MINUTE),
+            ("normal_max_requests", NVIDIA_NORMAL_REQUESTS_PER_MINUTE),
+            ("daily_window_seconds", NVIDIA_DAILY_WINDOW_SECONDS),
+            ("package_max_requests", 4),
+        )
+        for key, expected in fixed_v2:
+            if type(value.get(key)) is not int or value[key] != expected:
+                raise ValueError("legacy NVIDIA budget constant was changed: " + key)
+
+        stored_daily_budget = value.get("daily_max_requests")
+        stored_category_limits = value.get("category_limits")
+        if type(stored_daily_budget) is not int:
+            raise ValueError("legacy NVIDIA daily budget has an invalid type")
+        known_legacy_v2 = (
+            stored_daily_budget == LEGACY_NVIDIA_V2_72_DAILY_BUDGET
+            and stored_category_limits == LEGACY_NVIDIA_V2_72_CATEGORY_LIMITS
+        ) or (
+            stored_daily_budget == LEGACY_NVIDIA_V2_200_DAILY_BUDGET
+            and stored_category_limits == LEGACY_NVIDIA_V2_200_CATEGORY_LIMITS
+        )
+        if not known_legacy_v2:
+            raise ValueError("NVIDIA legacy daily category allocations or budget are unknown")
+
+        # Reservation entries are retained; package identity remains audit
+        # metadata, but no longer has a request ceiling.
+        migrated = {key: value[key] for key in required_v3}
+        migrated["schema_version"] = 3
+        migrated["daily_max_requests"] = NVIDIA_DAILY_REQUEST_BUDGET
+        migrated["category_limits"] = dict(NVIDIA_BUDGET_CATEGORY_LIMITS)
+        value = migrated
+    elif type(version) is not int or version != 3 or set(value) != required_v3:
         raise ValueError("unsupported or malformed NVIDIA budget ledger schema")
-    fixed = (
+
+    fixed_v3 = (
         ("window_seconds", NVIDIA_RATE_WINDOW_SECONDS),
         ("max_requests", NVIDIA_REQUESTS_PER_MINUTE),
         ("normal_max_requests", NVIDIA_NORMAL_REQUESTS_PER_MINUTE),
         ("daily_window_seconds", NVIDIA_DAILY_WINDOW_SECONDS),
-        ("package_max_requests", NVIDIA_MAX_REQUESTS_PER_PACKAGE),
     )
-    for key, expected in fixed:
+    for key, expected in fixed_v3:
         if type(value.get(key)) is not int or value[key] != expected:
             raise ValueError("NVIDIA budget constant was changed: " + key)
 
-    stored_daily_budget = value.get("daily_max_requests")
-    stored_category_limits = value.get("category_limits")
-    if type(stored_daily_budget) is not int:
-        raise ValueError("NVIDIA daily budget constant has an invalid type")
-    is_current_budget = (
-        stored_daily_budget == NVIDIA_DAILY_REQUEST_BUDGET
-        and stored_category_limits == NVIDIA_BUDGET_CATEGORY_LIMITS
-    )
-    is_known_legacy_budget = (
-        stored_daily_budget == LEGACY_NVIDIA_DAILY_REQUEST_BUDGET
-        and stored_category_limits == LEGACY_NVIDIA_BUDGET_CATEGORY_LIMITS
-    )
-    if not (is_current_budget or is_known_legacy_budget):
+    if (
+        type(value.get("daily_max_requests")) is not int
+        or value["daily_max_requests"] != NVIDIA_DAILY_REQUEST_BUDGET
+        or value.get("category_limits") != NVIDIA_BUDGET_CATEGORY_LIMITS
+    ):
         raise ValueError("NVIDIA daily category allocations or budget are unknown")
-
-    # Upgrade only the in-memory configuration. Reservation records are
-    # validated and retained unchanged; persistence occurs only with the next
-    # separately authorized reservation.
-    if is_known_legacy_budget:
-        value = dict(value)
-        value["daily_max_requests"] = NVIDIA_DAILY_REQUEST_BUDGET
-        value["category_limits"] = dict(NVIDIA_BUDGET_CATEGORY_LIMITS)
 
     requests = value.get("requests")
     if not isinstance(requests, list) or len(requests) > NVIDIA_REQUESTS_PER_MINUTE:
-        raise ValueError("NVIDIA rolling rate history is invalid")
+        raise ValueError("NVIDIA rolling request history is invalid")
     previous = None
     for entry in requests:
         if not isinstance(entry, dict) or set(entry) != {"reserved_at_utc", "source"}:
@@ -307,7 +338,7 @@ def validate_rate_limit_state(value):
         stamp = _parse_aware_timestamp(entry.get("reserved_at_utc"), "NVIDIA request timestamp")
         source = entry.get("source")
         if not isinstance(source, str) or not source or len(source) > 80:
-            raise ValueError("NVIDIA request source is invalid")
+            raise ValueError("NVIDIA rolling request source is invalid")
         if previous is not None and stamp < previous:
             raise ValueError("NVIDIA rolling request history is not chronological")
         previous = stamp
@@ -341,9 +372,8 @@ def validate_rate_limit_state(value):
             raise ValueError("NVIDIA reservation identifier is duplicated")
         reservation_ids.add(reservation_id)
         category_counts[category] += 1
-    # Historical migration may legitimately discover that the old system used
-    # more than the new budget. Preserve every such reservation and let the
-    # reservation function block new calls until the rolling window recovers.
+    # Historical entries are preserved even if an old category exceeded its new
+    # ceiling. New reservations remain blocked until the rolling window recovers.
 
     ids = value.get("diagnostic_run_ids")
     if not isinstance(ids, list) or len(ids) > MAX_DIAGNOSTIC_RUN_IDS:
@@ -372,7 +402,7 @@ def reserve_rate_limit_slot(
     package_id=None,
 ):
     previous = validate_rate_limit_state(previous)
-    if previous.get("schema_version") != 2:
+    if previous.get("schema_version") != 3:
         raise ValueError("legacy NVIDIA budget history must be reconstructed before reservation")
     source = " ".join(str(source).split())[:80]
     if not source:
@@ -438,9 +468,6 @@ def reserve_rate_limit_slot(
         package_id = (run_id + ":" + run_attempt) if run_id else ("local:" + str(os.getpid()))
     if not isinstance(package_id, str) or not package_id or len(package_id) > 160:
         raise ValueError("NVIDIA job-package identity is invalid")
-    if sum(1 for item in daily if item["package_id"] == package_id) >= NVIDIA_MAX_REQUESTS_PER_PACKAGE:
-        raise ValueError("NVIDIA job package has reached its four-request maximum")
-
     reservation = {
         "reserved_at_utc": effective_now.isoformat(),
         "source": source,
@@ -451,14 +478,13 @@ def reserve_rate_limit_slot(
     daily.append(reservation)
     active.append({"reserved_at_utc": effective_now.isoformat(), "source": source})
     next_state = {
-        "schema_version": 2,
+        "schema_version": 3,
         "window_seconds": NVIDIA_RATE_WINDOW_SECONDS,
         "max_requests": NVIDIA_REQUESTS_PER_MINUTE,
         "normal_max_requests": NVIDIA_NORMAL_REQUESTS_PER_MINUTE,
         "daily_window_seconds": NVIDIA_DAILY_WINDOW_SECONDS,
         "daily_max_requests": NVIDIA_DAILY_REQUEST_BUDGET,
         "category_limits": dict(NVIDIA_BUDGET_CATEGORY_LIMITS),
-        "package_max_requests": NVIDIA_MAX_REQUESTS_PER_PACKAGE,
         "requests": active,
         "daily_requests": daily,
         "diagnostic_run_ids": diagnostic_run_ids + ([diagnostic_run_id] if diagnostic_run_id is not None else []),

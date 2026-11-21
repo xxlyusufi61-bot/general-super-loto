@@ -25,13 +25,16 @@ scheduler does not expose target values to discovery.
   The separate manual unlock workflow remains the only way to clear that lock.
 - The former target-wide two-request cap is removed. All requests from all GENERAL
   agents now share the same provider reservation ledger.
-- Shared rolling budget: at most 200 reservations in any 24-hour window.
+- Shared rolling budget: at most 1,500 reservations in any 24-hour window.
 - Normal operating ceiling: 30 reservations in any 60-second window. Immutable
   hard ceiling: 40 reservations in any 60-second window.
-- Every workflow run package may reserve at most four requests.
-- Daily category allocations are forward discovery 100, forward critique 30,
-  reverse retrospective diagnostics 20, between-draw research 30, and controlled
-  retry reserve 20. The allocations total exactly 200 and are enforced separately.
+- There is no per-workflow or per-job request ceiling. Every request still reserves
+  one slot in the shared rolling budget and exactly one daily category.
+- Daily category allocations are forward discovery 750, forward critique 225,
+  reverse retrospective diagnostics 150, between-draw research 225, and controlled
+  retry reserve 150. The allocations total exactly 1,500 and are enforced separately.
+- The internal budget is shared across all agents and workflows; it is not a
+  provider free-tier quota or a promise that the provider will accept that volume.
 - Each call's requested completion limit is at most 8,192 tokens. This is a
   response-token ceiling, not a promise that the model will use that many tokens.
 - The rolling daily budget is an internal safety ceiling, not a provider free-tier
@@ -50,7 +53,7 @@ scheduler does not expose target values to discovery.
 - An explicit HTTP 500-599 response is distinguishable from an unknown delivery
   outcome. For each ordinary directional request, GENERAL may make at most one
   additional attempt after an explicit provider HTTP 5xx response was received.
-  The retry has to reserve a slot from the dedicated 20-per-day retry reserve
+  The retry has to reserve a slot from the dedicated 150-per-day retry reserve
   before network access. The second 5xx ends that request; no third call is made.
   The retry is not used in one-request diagnostic or token-test modes. If the
   retry reservation cannot be committed, no retry request is sent.
@@ -100,16 +103,23 @@ through the same shared ledger before the HTTP request is sent. The ledger is st
 on the separate `general-nvidia-rate-limit-state` branch so rate accounting does not
 change the canonical archive, evaluation ledger, or `main` branch.
 
-The guard enforces a rolling limit of at most 200 reservations in any 24-hour
+The guard enforces a rolling limit of at most 1,500 reservations in any 24-hour
 window, a 30-per-minute normal operating ceiling, and the immutable 40-per-minute
-hard limit across the repository's shared NVIDIA key. It reads the current safety lock
+hard limit across the repository's shared NVIDIA key. There is no per-job/package
+request cap; the rolling total and the five independent category ceilings are the
+daily controls. It reads the current safety lock
 and initializes a dedicated Git worktree for the ledger, then records each request
 reservation by a normal fast-forward Git push before the provider call. This avoids
 a per-request GitHub REST Contents API read/write pair and its hourly/content-write
-quotas. The existing `general-nvidia-api` concurrency group serializes all six
-provider workflows; a non-fast-forward push or other Git failure blocks the
-provider request instead of overwriting a reservation. A 30-second reservation
-timestamp safety margin accounts for the bounded state-operation time. When 30 minute slots are occupied, GENERAL waits for an expired slot; the hard
+quotas. The existing `general-nvidia-api` concurrency group serializes all provider
+workflows; a non-fast-forward push or other Git failure blocks the
+provider request instead of overwriting a reservation. The schema-v3 ledger
+accepts only the two known schema-v2 predecessors (72/day with its original
+category split, or 200/day with its original category split and four-per-package
+field). Migration preserves every reservation and package identifier, updates
+the daily/category policy in memory, and is persisted only with the next
+separately authorized reservation. Unknown legacy configurations fail closed.
+A 30-second reservation timestamp safety margin accounts for the bounded state-operation time. When 30 minute slots are occupied, GENERAL waits for an expired slot; the hard
 40-per-minute validation remains a separate guardrail. When the rolling daily or
 category budget is exhausted, the request is blocked until an eligible reservation
 expires. A missing, malformed, unreadable, or unwriteable ledger blocks the

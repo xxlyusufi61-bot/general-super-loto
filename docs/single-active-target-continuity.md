@@ -44,4 +44,6 @@ If a local target-scoring step fails after a sealed claim is already `EVALUATED`
 
 The change preserves the 2020-08-02+ 6/60 scope, true chronology, forward/reverse holdout separation, canonical adjacency checks, one-shot sealed claims, target isolation, the method-registry approval boundary and append-only research memory.
 
-This PR does not change the NVIDIA limits: 30 normal requests/minute, 40 hard requests/minute, 200 requests per rolling 24 hours, or four requests per workflow package. It adds no live provider or Telegram calls.
+This PR did not perform a live provider or Telegram call. NVIDIA budget and
+rate-limit policy is maintained independently in
+`docs/autonomous-research-scheduler.md`.

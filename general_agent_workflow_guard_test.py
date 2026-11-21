@@ -3,7 +3,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 WORKFLOWS = ROOT / ".github" / "workflows"
-CONFIRMATION = "I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_4_NVIDIA_REQUESTS"
+CONFIRMATION = "I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_SHARED_1500_PER_24H_NVIDIA_BUDGET"
 COORDINATOR_CONFIRMATION = "I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_UP_TO_3_NVIDIA_REQUESTS"
 
 WORKFLOW_CASES = (
@@ -29,6 +29,8 @@ class LiveModelConsentGateTests(unittest.TestCase):
         self.assertIn("      confirm_live_calls:", source)
         self.assertIn('        default: "NO"', source)
         self.assertIn(CONFIRMATION, source)
+        self.assertIn("shared 1,500-reservation rolling 24-hour budget", source)
+        self.assertIn("no per-job request cap", source.lower())
 
     def test_live_request_workflows_default_to_no_and_gate_lock_and_request(self):
         for filename, guard_name, request_name in WORKFLOW_CASES:
@@ -82,7 +84,7 @@ class LiveModelConsentGateTests(unittest.TestCase):
         self.assert_default_no_and_phrase_present(source)
         self.assertIn("inputs.confirm_live_calls == '" + CONFIRMATION + "'", source)
         self.assertIn("inputs.confirm_free_usage_verified == true", source)
-        self.assertIn("verify BOTH planned directional requests", source)
+        self.assertIn("verifies all planned requests are free", source)
         self.assertIn("GENERAL_CONFIRM_LIVE_CALLS:", source)
         self.assertIn("GENERAL_NVIDIA_GUARD_PASSED=1", source)
         guard_step = read_step(source, "Check global NVIDIA safety lock")
