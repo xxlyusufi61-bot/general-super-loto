@@ -92,9 +92,7 @@ class ScopedWriterWorkflowGuardTests(unittest.TestCase):
                 break
             script_lines.append(line[8:] if line.startswith("        ") else "")
         env = os.environ.copy()
-        env.pop("WRITERS_VALIDATED", None)
-        if validated is not None:
-            env["WRITERS_VALIDATED"] = validated
+        env["WRITERS_VALIDATED"] = "" if validated is None else validated
         env.update({
             "ALLOW_PREVALIDATION_SAFETY_LOCK": allow_lock,
             "REQUESTED_CLIENT_ID": requested_client,
