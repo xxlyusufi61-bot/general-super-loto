@@ -94,7 +94,7 @@ jobs:
           echo "No NVIDIA request is made by activation, pause, or status actions." >> "$GITHUB_STEP_SUMMARY"
 
   archive-refresh:
-    if: ${{ github.event_name == 'schedule' }}
+    if: ${{ github.event_name == 'schedule' && vars.GENERAL_SCOPED_WRITERS_VALIDATED == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -133,7 +133,7 @@ jobs:
           message: "Refresh validated Super Loto archive"
 
   scheduled-cycle:
-    if: ${{ github.event_name == 'schedule' && needs.archive-refresh.result == 'success' }}
+    if: ${{ github.event_name == 'schedule' && vars.GENERAL_SCOPED_WRITERS_VALIDATED == 'true' && needs.archive-refresh.result == 'success' }}
     needs: archive-refresh
     runs-on: ubuntu-latest
     timeout-minutes: 60
