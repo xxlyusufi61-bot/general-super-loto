@@ -13,7 +13,7 @@ name: GENERAL NVIDIA Manual Lock
         default: "no"
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: general-nvidia-api
@@ -27,15 +27,25 @@ jobs:
     steps:
       - name: Checkout source
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
+      - name: Create short-lived main writer token for manual safety-lock activation
+        id: main-writer
+        uses: ./.github/actions/create-scoped-writer-token
+        with:
+          client_id: ${{ vars.GENERAL_MAIN_WRITER_APP_CLIENT_ID }}
+          private_key: ${{ secrets.GENERAL_MAIN_WRITER_APP_PRIVATE_KEY }}
+
       - name: Activate global NVIDIA safety lock
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          GENERAL_MAIN_WRITER_TOKEN: ${{ steps.main-writer.outputs.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           GENERAL_DEFAULT_BRANCH: main
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}

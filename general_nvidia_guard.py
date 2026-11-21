@@ -17,6 +17,7 @@ import urllib.request
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import general_writer_auth
 
 LOCK_PATH = "general_nvidia_lock.json"
 RATE_LIMIT_PATH = "general_nvidia_rate_limit.json"
@@ -552,7 +553,7 @@ def migrate_legacy_rate_limit_state(previous, reservation_history, now=None):
     state["updated_at_utc"] = now.astimezone(timezone.utc).isoformat()
     return validate_rate_limit_state(state)
 
-def _run_git(arguments, *, cwd=None):
+def _run_git(arguments, *, cwd=None, writer_role=None):
     try:
         completed = subprocess.run(
             ["git"] + list(arguments),
@@ -562,6 +563,11 @@ def _run_git(arguments, *, cwd=None):
             text=True,
             encoding="utf-8",
             timeout=GIT_COMMAND_TIMEOUT_SECONDS,
+            env=(
+                general_writer_auth.git_auth_environment(writer_role)
+                if writer_role is not None
+                else None
+            ),
         )
     except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
         # Do not echo Git stderr: it may include remote details. All state
@@ -605,8 +611,12 @@ def _required_env(name):
     return value
 
 
-def _api_request(method, url, payload=None):
-    token = _required_env("GITHUB_TOKEN")
+def _api_request(method, url, payload=None, *, writer_role=None):
+    token = (
+        general_writer_auth.resolve_writer_token(writer_role)
+        if writer_role is not None
+        else _required_env("GITHUB_TOKEN")
+    )
     headers = {
         "Authorization": "Bearer " + token,
         "Accept": "application/vnd.github+json",
@@ -841,6 +851,8 @@ def read_remote_lock():
 
 def write_remote_lock(state, sha, message):
     url, branch = _lock_url()
+    if branch != "main":
+        raise RuntimeError("global NVIDIA lock writer is restricted to the main branch")
     raw = (json.dumps(validate_lock_state(state), ensure_ascii=False, indent=2) + "\n").encode("utf-8")
     payload = {
         "message": message,
@@ -848,7 +860,7 @@ def write_remote_lock(state, sha, message):
         "sha": sha,
         "branch": branch,
     }
-    response = _api_request("PUT", url.split("?ref=", 1)[0], payload)
+    response = _api_request("PUT", url.split("?ref=", 1)[0], payload, writer_role="main")
     commit = response.get("commit")
     if not isinstance(commit, dict) or not isinstance(commit.get("sha"), str):
         raise RuntimeError("GitHub did not confirm the global lock commit")
@@ -975,6 +987,7 @@ def write_remote_rate_limit(state, sha):
     _run_git(
         ["push", "origin", "HEAD:refs/heads/" + RATE_LIMIT_BRANCH],
         cwd=worktree,
+        writer_role="nvidia_budget",
     )
     return new_head
 

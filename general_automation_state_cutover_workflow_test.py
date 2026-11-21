@@ -100,11 +100,17 @@ class AutomationStateCutoverWorkflowTests(unittest.TestCase):
     def test_only_immutable_evaluation_snapshots_remain_a_main_branch_data_push(self):
         auto = read(WORKFLOWS / "general-autonomous-research.yml")
         open_research = read(WORKFLOWS / "open-research.yml")
-        self.assertEqual(auto.count("git push origin HEAD:main"), 1)
-        self.assertEqual(open_research.count("git push origin HEAD:main"), 1)
+        safe_snapshot_push = (
+            "python3 general_writer_auth.py git-push --role main "
+            "--remote origin --ref HEAD:main"
+        )
+        self.assertEqual(auto.count(safe_snapshot_push), 1)
+        self.assertEqual(open_research.count(safe_snapshot_push), 1)
         for workflow in (auto, open_research):
             self.assertIn("general_evaluation_snapshots/", workflow)
-            self.assertIn("git push origin HEAD:main", workflow)
+            self.assertIn(safe_snapshot_push, workflow)
+            self.assertNotIn("git push origin HEAD:main", workflow)
+            self.assertIn("GENERAL_MAIN_WRITER_TOKEN:", workflow)
         self.assertIn("git add general_evaluation_snapshots/", auto)
         self.assertIn("git add general_evaluation_snapshots/", open_research)
 

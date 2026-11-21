@@ -1,0 +1,24 @@
+name: Create scoped GENERAL writer token
+description: Mint a short-lived, single-repository GitHub App token with contents write only.
+inputs:
+  client_id:
+    description: Client ID for the dedicated writer GitHub App.
+    required: true
+  private_key:
+    description: Private key for the dedicated writer GitHub App.
+    required: true
+outputs:
+  token:
+    description: Short-lived installation token scoped to this repository and contents write.
+    value: ${{ steps.app-token.outputs.token }}
+runs:
+  using: composite
+  steps:
+    - id: app-token
+      uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+      with:
+        client-id: ${{ inputs.client_id }}
+        private-key: ${{ inputs.private_key }}
+        owner: ${{ github.repository_owner }}
+        repositories: general-super-loto
+        permission-contents: write

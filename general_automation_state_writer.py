@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 import general_automation_state as contract
+import general_writer_auth
 from general_automation_state_reader import (
     GitHubStateStoreReader,
     StateStoreReadError,
@@ -417,7 +418,6 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("hydrate", "publish"))
     parser.add_argument("--repository", default=os.environ.get("GITHUB_REPOSITORY"))
-    parser.add_argument("--token", default=os.environ.get("GITHUB_TOKEN"))
     parser.add_argument("--workspace", type=Path, default=Path("."))
     parser.add_argument("--expected-generation", type=int)
     parser.add_argument("--objects", nargs="+", choices=WRITABLE_OBJECTS)
@@ -427,9 +427,17 @@ def main(argv: list[str] | None = None) -> int:
 
     if not args.repository:
         parser.error("--repository or GITHUB_REPOSITORY is required")
-    if not args.token:
-        parser.error("--token or GITHUB_TOKEN is required")
-    writer = GitHubStateStoreWriter(args.repository, args.token)
+    try:
+        token = (
+            general_writer_auth.resolve_writer_token("automation_state")
+            if args.action == "publish"
+            else os.environ.get("GITHUB_TOKEN", "").strip()
+        )
+    except general_writer_auth.WriterAuthorizationError as exc:
+        parser.error(str(exc))
+    if not token:
+        parser.error("a read-only GITHUB_TOKEN is required for hydrate or a dedicated automation-state writer token is required for publish")
+    writer = GitHubStateStoreWriter(args.repository, token)
     try:
         if args.action == "hydrate":
             result = writer.hydrate(args.workspace)

@@ -1465,7 +1465,12 @@ class ResearchMemoryWorkflowWiringTests(unittest.TestCase):
         self.assertIn("objects: evaluation_ledger", workflow)
         self.assertIn("objects: research_memory", workflow)
         self.assertIn("general_evaluation_snapshots/", workflow)
-        self.assertIn("git push origin HEAD:main", workflow)
+        self.assertIn(
+            "python3 general_writer_auth.py git-push --role main --remote origin --ref HEAD:main",
+            workflow,
+        )
+        self.assertIn("GENERAL_MAIN_WRITER_TOKEN:", workflow)
+        self.assertNotIn("git push origin HEAD:main", workflow)
         self.assertNotIn("git rebase origin/main", workflow)
         self.assertNotIn("git add general_evaluation_ledger.json", workflow)
         self.assertNotIn("git add general_research_memory.json", workflow)
