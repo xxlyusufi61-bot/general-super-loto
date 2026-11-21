@@ -39,9 +39,8 @@ name: GENERAL Agent
         default: "NO"
 
 permissions:
-  contents: write
+  contents: read
   pull-requests: write
-  issues: write
 
 concurrency:
   group: general-nvidia-api
@@ -56,6 +55,8 @@ jobs:
     steps:
       - name: Get GENERAL source code
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -138,7 +139,8 @@ jobs:
         if: ${{ inputs.agent == 'archive' }}
         uses: ./.github/actions/publish-automation-state
         with:
-          token: ${{ github.token }}
+          app_client_id: ${{ vars.GENERAL_AUTOMATION_STATE_WRITER_APP_CLIENT_ID }}
+          private_key: ${{ secrets.GENERAL_AUTOMATION_STATE_WRITER_APP_PRIVATE_KEY }}
           expected_generation: ${{ steps.state_bootstrap.outputs.generation }}
           objects: archive
           message: "Publish validated archive agent refresh"
@@ -238,6 +240,14 @@ jobs:
           cp general_memory.json "$RUNNER_TEMP/general-agent-memory/baseline.json"
           sha256sum "$RUNNER_TEMP/general-agent-memory/baseline.json" | awk '{print "sha256=" $1}' >> "$GITHUB_OUTPUT"
 
+      - name: Create short-lived NVIDIA budget writer token
+        if: ${{ inputs.agent != 'archive' && inputs.agent != 'isolation-test' && inputs.confirm_live_calls == 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_SHARED_1500_PER_24H_NVIDIA_BUDGET' && inputs.confirm_free_usage_verified == true }}
+        id: nvidia-budget-writer
+        uses: ./.github/actions/create-scoped-writer-token
+        with:
+          client_id: ${{ vars.GENERAL_NVIDIA_BUDGET_WRITER_APP_CLIENT_ID }}
+          private_key: ${{ secrets.GENERAL_NVIDIA_BUDGET_WRITER_APP_PRIVATE_KEY }}
+
       - name: Run selected GENERAL agent
         id: run-agent
         if: ${{ inputs.agent != 'archive' && inputs.agent != 'isolation-test' && inputs.confirm_live_calls == 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_SHARED_1500_PER_24H_NVIDIA_BUDGET' && inputs.confirm_free_usage_verified == true }}
@@ -253,6 +263,7 @@ jobs:
           GENERAL_NVIDIA_FREE_USAGE_VERIFIED: ${{ inputs.confirm_free_usage_verified && 'true' || 'false' }}
           GENERAL_AGENT_REPORT_PATH: general-agent-report.md
           GENERAL_NVIDIA_BUDGET_CATEGORY: ${{ inputs.agent == 'research' && 'forward_discovery' || inputs.agent == 'crossover' && 'between_draws' || 'forward_critique' }}
+          GENERAL_NVIDIA_BUDGET_WRITER_TOKEN: ${{ steps.nvidia-budget-writer.outputs.token }}
         run: |
           python3 general_core.py "$AGENT_ID" "$TASK_TEXT"
 
@@ -271,10 +282,19 @@ jobs:
           echo "::notice::Live agent execution was not authorized; no NVIDIA request was made."
           echo "Supply the exact confirmation phrase only after verifying free-only provider settings."
 
+      - name: Create short-lived main writer token for safety-lock persistence
+        if: ${{ failure() && steps.run-agent.outcome == 'failure' }}
+        id: main-writer-lock
+        uses: ./.github/actions/create-scoped-writer-token
+        with:
+          client_id: ${{ vars.GENERAL_MAIN_WRITER_APP_CLIENT_ID }}
+          private_key: ${{ secrets.GENERAL_MAIN_WRITER_APP_PRIVATE_KEY }}
+
       - name: Activate global lock if an NVIDIA request failed
         if: ${{ failure() && steps.run-agent.outcome == 'failure' }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          GENERAL_MAIN_WRITER_TOKEN: ${{ steps.main-writer-lock.outputs.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           GENERAL_DEFAULT_BRANCH: main
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -344,10 +364,19 @@ jobs:
                   report.write("- No new report was added; no PR will be opened.\n")
           PY
 
+      - name: Create short-lived main writer token for review-only memory branch
+        if: ${{ always() && steps.memory-proposal.outputs.has_new_entries == 'true' && inputs.publish_memory_pr == 'YES' }}
+        id: main-writer-memory
+        uses: ./.github/actions/create-scoped-writer-token
+        with:
+          client_id: ${{ vars.GENERAL_MAIN_WRITER_APP_CLIENT_ID }}
+          private_key: ${{ secrets.GENERAL_MAIN_WRITER_APP_PRIVATE_KEY }}
+
       - name: Publish single-agent memory for human review only
         if: ${{ always() && steps.memory-proposal.outputs.has_new_entries == 'true' && inputs.publish_memory_pr == 'YES' }}
         env:
           GH_TOKEN: ${{ github.token }}
+          GENERAL_MAIN_WRITER_TOKEN: ${{ steps.main-writer-memory.outputs.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
@@ -375,7 +404,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "Propose validated GENERAL agent report"
-          git push origin "$branch"
+          python3 general_writer_auth.py git-push --role main --remote origin --ref "$branch"
 
           body="$(cat <<EOF
           ## Review-only GENERAL agent memory update
