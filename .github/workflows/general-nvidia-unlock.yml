@@ -21,7 +21,7 @@ concurrency:
 
 jobs:
   unlock:
-    if: ${{ inputs.confirm == 'yes' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.confirm == 'yes' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
