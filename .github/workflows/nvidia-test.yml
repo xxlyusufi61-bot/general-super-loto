@@ -161,6 +161,7 @@ jobs:
         with:
           client_id: ${{ vars.GENERAL_MAIN_WRITER_APP_CLIENT_ID }}
           private_key: ${{ secrets.GENERAL_MAIN_WRITER_APP_PRIVATE_KEY }}
+          allow_prevalidation_safety_lock: 'true'
 
       - name: Activate global lock after NVIDIA request failure
         if: ${{ failure() && steps.nvidia-api-test.outcome == 'failure' }}
