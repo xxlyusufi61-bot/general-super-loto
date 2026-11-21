@@ -8,13 +8,13 @@ Keep the default `GITHUB_TOKEN` read-only in runtime workflows. A write operatio
 
 Create and install these identities in a later, separately approved setup step. Each App must be installed only on `xxlyusufi61-bot/general-super-loto` and granted **Contents: read and write only**. Do not grant Actions, Administration, Issues, Pull requests, or workflow permissions.
 
-| Writer role | Repository variable | Repository secret | Only permitted branch scope |
+| Writer role | Repository variable | Repository secret | Intended branch scope, enforced by code plus Rulesets |
 |---|---|---|---|
 | Main writer | `GENERAL_MAIN_WRITER_APP_CLIENT_ID` | `GENERAL_MAIN_WRITER_APP_PRIVATE_KEY` | `main` |
 | Automation-state writer | `GENERAL_AUTOMATION_STATE_WRITER_APP_CLIENT_ID` | `GENERAL_AUTOMATION_STATE_WRITER_APP_PRIVATE_KEY` | `general-automation-state` |
 | NVIDIA-budget writer | `GENERAL_NVIDIA_BUDGET_WRITER_APP_CLIENT_ID` | `GENERAL_NVIDIA_BUDGET_WRITER_APP_PRIVATE_KEY` | `general-nvidia-rate-limit-state` |
 
-Workflow token minting is scoped to the one repository and explicitly requests only `contents: write`. Tokens are created immediately before the write path. The official `actions/create-github-app-token` action revokes its token at job completion; installation tokens expire after one hour.
+Workflow token minting is scoped to the one repository and explicitly requests only `contents: write`. The action is pinned to the immutable v3.3.0 commit. Tokens are created immediately before the write path. The official action revokes its token at job completion; installation tokens expire after one hour. The installation token itself is repository-scoped, not branch-scoped. The writer code enforces its role's destination; the separate Rulesets are required to enforce that branch boundary on GitHub.
 
 ## Required branch rulesets, to be configured separately
 
@@ -32,4 +32,4 @@ Do not add the general GitHub Actions bot or repository administrators as broad 
 
 ## Deployment gate
 
-This PR adds the integration code and workflow references only. It does **not** create GitHub Apps, install Apps, create repository variables/secrets, or change branch protection/rulesets. The write-enabled workflows intentionally stop if their required dedicated App configuration is missing. Do not merge this PR or enable branch rulesets until all six App variables/secrets are configured and each writer is validated with an offline/dry-run permission check.
+This PR adds integration code and workflow references only. It does **not** create GitHub Apps, install Apps, create repository variables/secrets, or change branch protection/rulesets. Write-enabled paths stop if their required dedicated App configuration is missing; read-only paths continue using `GITHUB_TOKEN`. Do not merge this PR or enable branch rulesets until all six App variables/secrets are configured, each App's repository permission is verified, and each writer has passed dry-run checks. Because installation tokens are not branch-scoped, the three branch Rulesets are required before the integration is considered enforced.
