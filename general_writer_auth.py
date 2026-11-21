@@ -61,7 +61,7 @@ def run_git_push(role: str, remote: str, ref: str) -> None:
         raise WriterAuthorizationError("Git push role or remote is not allowlisted")
     if not isinstance(ref, str) or (
         ref != "HEAD:main"
-        and re.fullmatch(r"general-agent-memory-[0-9]+-[0-9]+", ref) is None
+        and re.fullmatch(r"(?:general-agent-memory|general-memory-proposal)-[0-9]+-[0-9]+", ref) is None
     ):
         raise WriterAuthorizationError("Git push ref is not allowlisted for the main writer")
     try:
