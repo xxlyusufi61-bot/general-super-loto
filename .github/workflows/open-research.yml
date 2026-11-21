@@ -109,7 +109,7 @@ name: GENERAL Blank-Slate Research
         default: false
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: general-nvidia-api
@@ -122,6 +122,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
@@ -139,11 +141,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
-      contents: write
-      issues: write
+      contents: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
@@ -183,13 +186,21 @@ jobs:
         id: publish-archive
         uses: ./.github/actions/publish-automation-state
         with:
-          token: ${{ github.token }}
+          app_client_id: ${{ vars.GENERAL_AUTOMATION_STATE_WRITER_APP_CLIENT_ID }}
+          private_key: ${{ secrets.GENERAL_AUTOMATION_STATE_WRITER_APP_PRIVATE_KEY }}
           expected_generation: ${{ steps.state_bootstrap.outputs.generation }}
           objects: archive
           message: "Refresh validated Super Loto archive"
       - name: Preflight both sealed directional intervals before hosted inference
         run: |
           python3 general_sealed_evaluation.py preflight --archive super_loto_archive.json --ledger general_evaluation_ledger.json
+      - name: Create short-lived NVIDIA budget writer token
+        id: nvidia-budget-writer
+        uses: ./.github/actions/create-scoped-writer-token
+        with:
+          client_id: ${{ vars.GENERAL_NVIDIA_BUDGET_WRITER_APP_CLIENT_ID }}
+          private_key: ${{ secrets.GENERAL_NVIDIA_BUDGET_WRITER_APP_PRIVATE_KEY }}
+
       - name: Run separate forward and reverse blank-slate discovery requests
         id: nvidia-research
         env:
@@ -201,6 +212,7 @@ jobs:
           GENERAL_CONFIRM_LIVE_CALLS: ${{ inputs.confirm_live_calls }}
           GENERAL_ALLOW_NVIDIA_CALL: "true"
           GENERAL_NVIDIA_FREE_USAGE_VERIFIED: "true"
+          GENERAL_NVIDIA_BUDGET_WRITER_TOKEN: ${{ steps.nvidia-budget-writer.outputs.token }}
         run: |
           python3 general_open_research.py
       - name: Claim one sealed interval before real-archive scoring
@@ -215,21 +227,32 @@ jobs:
             --output open_research_evaluation_claim.json \
             --sealed-plan open_research_sealed_plan.json \
             --github-output "$GITHUB_OUTPUT"
+      - name: Create short-lived main writer token for sealed snapshot persistence
+        if: ${{ steps.sealed-claim.outputs.claim_created == 'true' }}
+        id: main-writer-snapshot
+        uses: ./.github/actions/create-scoped-writer-token
+        with:
+          client_id: ${{ vars.GENERAL_MAIN_WRITER_APP_CLIENT_ID }}
+          private_key: ${{ secrets.GENERAL_MAIN_WRITER_APP_PRIVATE_KEY }}
+
       - name: Persist immutable sealed archive snapshot on main
         id: persist-sealed-snapshot
         if: ${{ steps.sealed-claim.outputs.claim_created == 'true' }}
+        env:
+          GENERAL_MAIN_WRITER_TOKEN: ${{ steps.main-writer-snapshot.outputs.token }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add general_evaluation_snapshots/
           git commit -m "Store immutable Super Loto evaluation snapshot"
-          git push origin HEAD:main
+          python3 general_writer_auth.py git-push --role main --remote origin --ref HEAD:main
       - name: Publish sealed claim to the state store
         id: persist-sealed-claim
         if: ${{ steps.sealed-claim.outputs.claim_created == 'true' }}
         uses: ./.github/actions/publish-automation-state
         with:
-          token: ${{ github.token }}
+          app_client_id: ${{ vars.GENERAL_AUTOMATION_STATE_WRITER_APP_CLIENT_ID }}
+          private_key: ${{ secrets.GENERAL_AUTOMATION_STATE_WRITER_APP_PRIVATE_KEY }}
           expected_generation: ${{ steps.publish-archive.outputs.generation }}
           objects: evaluation_ledger
           message: "Reserve one-shot Super Loto validation interval"
@@ -250,14 +273,24 @@ jobs:
         if: ${{ success() && steps.sealed-claim.outputs.claim_created == 'true' }}
         uses: ./.github/actions/publish-automation-state
         with:
-          token: ${{ github.token }}
+          app_client_id: ${{ vars.GENERAL_AUTOMATION_STATE_WRITER_APP_CLIENT_ID }}
+          private_key: ${{ secrets.GENERAL_AUTOMATION_STATE_WRITER_APP_PRIVATE_KEY }}
           expected_generation: ${{ steps.persist-sealed-claim.outputs.generation }}
           objects: evaluation_ledger
           message: "Record sealed evaluation completion"
+      - name: Create short-lived main writer token for failed research safety lock
+        if: ${{ failure() && steps.nvidia-research.outcome == 'failure' }}
+        id: main-writer-lock
+        uses: ./.github/actions/create-scoped-writer-token
+        with:
+          client_id: ${{ vars.GENERAL_MAIN_WRITER_APP_CLIENT_ID }}
+          private_key: ${{ secrets.GENERAL_MAIN_WRITER_APP_PRIVATE_KEY }}
+
       - name: Activate global lock after an incomplete NVIDIA research request
         if: ${{ failure() && steps.nvidia-research.outcome == 'failure' }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          GENERAL_MAIN_WRITER_TOKEN: ${{ steps.main-writer-lock.outputs.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           GENERAL_DEFAULT_BRANCH: main
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -318,7 +351,8 @@ jobs:
         if: ${{ always() && (steps.nvidia-research.outcome == 'success' || steps.nvidia-research.outcome == 'failure') }}
         uses: ./.github/actions/publish-automation-state
         with:
-          token: ${{ github.token }}
+          app_client_id: ${{ vars.GENERAL_AUTOMATION_STATE_WRITER_APP_CLIENT_ID }}
+          private_key: ${{ secrets.GENERAL_AUTOMATION_STATE_WRITER_APP_PRIVATE_KEY }}
           expected_generation: ${{ steps.persist-sealed-evaluation.outputs.generation || steps.persist-sealed-claim.outputs.generation || steps.publish-archive.outputs.generation || steps.state_bootstrap.outputs.generation }}
           objects: research_memory
           message: "Record sanitized GENERAL directional research memory"
