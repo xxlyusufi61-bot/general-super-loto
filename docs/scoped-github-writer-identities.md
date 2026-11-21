@@ -10,7 +10,7 @@ Create and install these identities in a later, separately approved setup step. 
 
 | Writer role | Repository variable | Repository secret | Intended branch scope, enforced by code plus Rulesets |
 |---|---|---|---|
-| Main writer | `GENERAL_MAIN_WRITER_APP_CLIENT_ID` | `GENERAL_MAIN_WRITER_APP_PRIVATE_KEY` | `main` |
+| Main writer | `GENERAL_MAIN_WRITER_APP_CLIENT_ID` | `GENERAL_MAIN_WRITER_APP_PRIVATE_KEY` | `main` plus strictly named review-memory proposal branches |
 | Automation-state writer | `GENERAL_AUTOMATION_STATE_WRITER_APP_CLIENT_ID` | `GENERAL_AUTOMATION_STATE_WRITER_APP_PRIVATE_KEY` | `general-automation-state` |
 | NVIDIA-budget writer | `GENERAL_NVIDIA_BUDGET_WRITER_APP_CLIENT_ID` | `GENERAL_NVIDIA_BUDGET_WRITER_APP_PRIVATE_KEY` | `general-nvidia-rate-limit-state` |
 
@@ -26,7 +26,7 @@ Do not add the general GitHub Actions bot or repository administrators as broad 
 
 ## Workflow permissions
 
-- Default `GITHUB_TOKEN`: `contents: read`; use `pull-requests: write` only in the agent workflow that opens review-only memory PRs.
+- Default `GITHUB_TOKEN`: `contents: read`; use `pull-requests: write` only in the agent/coordinator workflows that open review-only memory PRs. Keep `issues: write` only in workflows that call `general_rule_change.py`, which creates and updates user-approval issues.
 - Writer Apps: `contents: write` only, with one App per write domain.
 - Checkout credentials are not persisted. Git pushes use an in-memory Git HTTP extra-header derived from the role-specific token; the token is not placed in command arguments or printed to logs.
 
