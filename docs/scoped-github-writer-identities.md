@@ -30,6 +30,22 @@ Do not add the general GitHub Actions bot or repository administrators as broad 
 - Writer Apps: `contents: write` only, with one App per write domain.
 - Checkout credentials are not persisted. Git pushes use an in-memory Git HTTP extra-header derived from the role-specific token; the token is not placed in command arguments or printed to logs.
 
+## Default-off deployment validation gate
+
+The repository Actions variable `GENERAL_SCOPED_WRITERS_VALIDATED` is a required deployment switch for every normal scoped-writer token. It must be absent or anything other than the exact string `true` until all deployment checks are complete. In that state, the shared `create-scoped-writer-token` action fails before it creates an installation token. This also protects calls made indirectly through `publish-automation-state`.
+
+The autonomous schedule has an additional job-level gate: both `archive-refresh` and `scheduled-cycle` are skipped unless the variable is exactly `true`. The read-only status action remains available. Manual activation/pause or other writer-dependent workflows remain blocked by the shared token gate.
+
+A narrowly restricted exception preserves the ability to activate the global NVIDIA safety lock before deployment validation. Only the Main Writer client ID, only the explicit Main Writer lock operation, and only these workflow references may use that exception: `general-nvidia-manual-lock.yml`, plus the failure-handler lock persistence steps in `general-agent.yml`, `general-autonomous-research.yml`, `general-coordinator-execute.yml`, `nvidia-chat-test.yml`, `nvidia-diagnostic.yml`, `nvidia-test.yml`, and `open-research.yml`. The exception cannot be used for unlocks, snapshots, memory publication, automation-state writes, NVIDIA-budget writes, or research execution. CI checks the allowlist and exact call sites.
+
+**Enable sequence after merge:**
+1. Verify the three App installations, their installed permissions, and all six variable/secret names without exposing secret values.
+2. Apply and verify the three required branch Rulesets.
+3. Separately authorize and run `GENERAL GitHub App Read-Only Validation` from `main`; require all three App slug and single-repository scope checks to pass.
+4. Only after all three checks above pass, manually create or set the repository Actions variable `GENERAL_SCOPED_WRITERS_VALIDATED` to the exact value `true`.
+
+If an App, installation, permission, credential, or Ruleset changes, remove the variable or change it away from `true` until validation is repeated. The validation workflow itself intentionally does not depend on this variable, so it can run while the default-off gate is closed.
+
 ## Deployment gate
 
 This PR adds integration code and workflow references only. It does **not** create GitHub Apps, install Apps, create repository variables/secrets, or change branch protection/rulesets. Write-enabled paths stop if their required dedicated App configuration is missing; read-only paths continue using `GITHUB_TOKEN`.
