@@ -57,6 +57,7 @@ jobs:
           exit 1
 
   retire-exhausted-target:
+    if: ${{ false }} # Disabled until migrated to validated scoped writer Apps; legacy GITHUB_TOKEN write path is not permitted.
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
