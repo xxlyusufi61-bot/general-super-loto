@@ -261,7 +261,7 @@ puts JSON.generate(jobs.transform_values { |job| job.is_a?(Hash) ? job["if"] : n
                 )
                 workflow = (ROOT / relative).read_text(encoding="utf-8")
                 self.assertNotIn("contents: write", workflow)
-                self.assertIn("permissions:\\n  contents: read", workflow)
+                self.assertIn("permissions:\n  contents: read", workflow)
 
     def test_scheduled_autonomous_writer_jobs_require_validation_flag(self):
         for job in ("archive-refresh", "scheduled-cycle"):
