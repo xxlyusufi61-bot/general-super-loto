@@ -50,6 +50,8 @@ jobs:
     steps:
       - name: Checkout source
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
@@ -86,7 +88,7 @@ jobs:
     timeout-minutes: 35
     permissions:
       actions: read
-      contents: write
+      contents: read
     concurrency:
       group: general-nvidia-api
       cancel-in-progress: false
@@ -94,6 +96,7 @@ jobs:
       - name: Checkout exact main workflow commit
         uses: actions/checkout@v7
         with:
+          persist-credentials: false
           ref: ${{ github.sha }}
           fetch-depth: 0
       - name: Set up Python
@@ -147,10 +150,18 @@ jobs:
           print("Fresh disjoint forward/reverse preflight: READY")
           print("Target values and holdout rows emitted: NO")
           PY
+      - name: Create short-lived main writer token for temporary unlock and restoration
+        id: main-writer
+        uses: ./.github/actions/create-scoped-writer-token
+        with:
+          client_id: ${{ vars.GENERAL_MAIN_WRITER_APP_CLIENT_ID }}
+          private_key: ${{ secrets.GENERAL_MAIN_WRITER_APP_PRIVATE_KEY }}
+
       - name: Temporarily unlock only for this verified workflow run
         id: temporary-unlock
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          GENERAL_MAIN_WRITER_TOKEN: ${{ steps.main-writer.outputs.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_RUN_ID: ${{ github.run_id }}
           GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
@@ -173,6 +184,13 @@ jobs:
         run: |
           python3 general_nvidia_guard.py check
           echo "GENERAL_NVIDIA_GUARD_PASSED=1" >> "$GITHUB_ENV"
+      - name: Create short-lived NVIDIA budget writer token
+        id: nvidia-budget-writer
+        uses: ./.github/actions/create-scoped-writer-token
+        with:
+          client_id: ${{ vars.GENERAL_NVIDIA_BUDGET_WRITER_APP_CLIENT_ID }}
+          private_key: ${{ secrets.GENERAL_NVIDIA_BUDGET_WRITER_APP_PRIVATE_KEY }}
+
       - name: Run one normal-mode forward request with DEFAULT_MAX_COMPLETION_TOKENS
         id: normal-token-test
         timeout-minutes: 18
@@ -191,11 +209,13 @@ jobs:
           GENERAL_SINGLE_REQUEST_MODE: "true"
           GENERAL_ALLOW_NVIDIA_CALL: "true"
           GENERAL_NVIDIA_FREE_USAGE_VERIFIED: "true"
+          GENERAL_NVIDIA_BUDGET_WRITER_TOKEN: ${{ steps.nvidia-budget-writer.outputs.token }}
         run: python3 general_single_request_token_test.py
       - name: Restore the global fail-closed NVIDIA lock
         if: ${{ always() && steps.temporary-unlock.outputs.unlock_started == 'true' }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          GENERAL_MAIN_WRITER_TOKEN: ${{ steps.main-writer.outputs.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           GENERAL_DEFAULT_BRANCH: main
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}

@@ -15,7 +15,7 @@ on:
         default: false
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: general-nvidia-api
@@ -23,10 +23,13 @@ concurrency:
 
 jobs:
   nvidia-test:
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -43,6 +46,14 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python3 general_nvidia_guard.py check
 
+      - name: Create short-lived NVIDIA budget writer token
+        if: ${{ inputs.confirm_live_calls == 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_SHARED_1500_PER_24H_NVIDIA_BUDGET' && inputs.confirm_free_usage_verified == true }}
+        id: nvidia-budget-writer
+        uses: ./.github/actions/create-scoped-writer-token
+        with:
+          client_id: ${{ vars.GENERAL_NVIDIA_BUDGET_WRITER_APP_CLIENT_ID }}
+          private_key: ${{ secrets.GENERAL_NVIDIA_BUDGET_WRITER_APP_PRIVATE_KEY }}
+
       - name: Test NVIDIA API connection
         id: nvidia-api-test
         if: ${{ inputs.confirm_live_calls == 'I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_SHARED_1500_PER_24H_NVIDIA_BUDGET' && inputs.confirm_free_usage_verified == true }}
@@ -51,6 +62,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           GENERAL_DEFAULT_BRANCH: main
+          GENERAL_NVIDIA_BUDGET_WRITER_TOKEN: ${{ steps.nvidia-budget-writer.outputs.token }}
           GENERAL_NVIDIA_FREE_USAGE_VERIFIED: "true"
         run: |
           python3 - <<'PY'
@@ -142,10 +154,20 @@ jobs:
           echo "::notice::No live NVIDIA request was authorized or made."
           echo "This workflow requires the exact free-only confirmation phrase for any live request."
 
+      - name: Create short-lived main writer token for safety-lock persistence
+        if: ${{ failure() && steps.nvidia-api-test.outcome == 'failure' }}
+        id: main-writer-lock
+        uses: ./.github/actions/create-scoped-writer-token
+        with:
+          client_id: ${{ vars.GENERAL_MAIN_WRITER_APP_CLIENT_ID }}
+          private_key: ${{ secrets.GENERAL_MAIN_WRITER_APP_PRIVATE_KEY }}
+          allow_prevalidation_safety_lock: 'true'
+
       - name: Activate global lock after NVIDIA request failure
         if: ${{ failure() && steps.nvidia-api-test.outcome == 'failure' }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          GENERAL_MAIN_WRITER_TOKEN: ${{ steps.main-writer-lock.outputs.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           GENERAL_DEFAULT_BRANCH: main
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}

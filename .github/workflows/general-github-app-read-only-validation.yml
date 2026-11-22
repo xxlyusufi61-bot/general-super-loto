@@ -1,0 +1,95 @@
+name: GENERAL GitHub App Read-Only Validation
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-writer-installations:
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.repository == 'xxlyusufi61-bot/general-super-loto' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Create Main Writer token (contents write, this repository only)
+        id: main-writer
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.GENERAL_MAIN_WRITER_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GENERAL_MAIN_WRITER_APP_PRIVATE_KEY }}
+          owner: xxlyusufi61-bot
+          repositories: general-super-loto
+          permission-contents: write
+
+      - name: Verify Main Writer identity and repository scope
+        env:
+          GH_TOKEN: ${{ steps.main-writer.outputs.token }}
+          APP_SLUG: ${{ steps.main-writer.outputs.app-slug }}
+        run: |
+          set -euo pipefail
+          test "$APP_SLUG" = "general-main-writer"
+          gh api /installation/repositories --jq '
+            if .total_count == 1 and .repositories[0].full_name == "xxlyusufi61-bot/general-super-loto"
+            then "PASS: Main Writer token is limited to general-super-loto"
+            else error("Main Writer token repository scope mismatch")
+            end
+          '
+
+      - name: Create Automation State Writer token (contents write, this repository only)
+        id: automation-state-writer
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.GENERAL_AUTOMATION_STATE_WRITER_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GENERAL_AUTOMATION_STATE_WRITER_APP_PRIVATE_KEY }}
+          owner: xxlyusufi61-bot
+          repositories: general-super-loto
+          permission-contents: write
+
+      - name: Verify Automation State Writer identity and repository scope
+        env:
+          GH_TOKEN: ${{ steps.automation-state-writer.outputs.token }}
+          APP_SLUG: ${{ steps.automation-state-writer.outputs.app-slug }}
+        run: |
+          set -euo pipefail
+          test "$APP_SLUG" = "general-automation-state-writer"
+          gh api /installation/repositories --jq '
+            if .total_count == 1 and .repositories[0].full_name == "xxlyusufi61-bot/general-super-loto"
+            then "PASS: Automation State Writer token is limited to general-super-loto"
+            else error("Automation State Writer token repository scope mismatch")
+            end
+          '
+
+      - name: Create NVIDIA Budget Writer token (contents write, this repository only)
+        id: nvidia-budget-writer
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.GENERAL_NVIDIA_BUDGET_WRITER_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GENERAL_NVIDIA_BUDGET_WRITER_APP_PRIVATE_KEY }}
+          owner: xxlyusufi61-bot
+          repositories: general-super-loto
+          permission-contents: write
+
+      - name: Verify NVIDIA Budget Writer identity and repository scope
+        env:
+          GH_TOKEN: ${{ steps.nvidia-budget-writer.outputs.token }}
+          APP_SLUG: ${{ steps.nvidia-budget-writer.outputs.app-slug }}
+        run: |
+          set -euo pipefail
+          test "$APP_SLUG" = "general-nvidia-budget-writer"
+          gh api /installation/repositories --jq '
+            if .total_count == 1 and .repositories[0].full_name == "xxlyusufi61-bot/general-super-loto"
+            then "PASS: NVIDIA Budget Writer token is limited to general-super-loto"
+            else error("NVIDIA Budget Writer token repository scope mismatch")
+            end
+          '
+
+      - name: Report read-only validation boundary
+        if: success()
+        run: |
+          echo "PASS: all three GitHub App installation tokens were created with contents:write explicitly scoped to this repository."
+          echo "PASS: only GET /installation/repositories requests were made with installation tokens."
+          echo "PASS: no repository contents, refs, issues, pull requests, rulesets, NVIDIA APIs, or project state were changed."
+          echo "NOTE: installation-token creation is a GitHub authentication operation; the token action revokes each token automatically when the job finishes."

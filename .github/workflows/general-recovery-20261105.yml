@@ -11,7 +11,7 @@ name: GENERAL One-Time 2026-11-05 Recovery
 
 permissions:
   actions: read
-  contents: write
+  contents: read
 
 concurrency:
   group: general-nvidia-api
@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   recovery:
-    if: ${{ github.event_name == 'workflow_dispatch' }}
+    if: ${{ false }} # Disabled until migrated to validated scoped writer Apps; legacy GITHUB_TOKEN write path is not permitted.
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:

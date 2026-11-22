@@ -1,0 +1,63 @@
+name: Create scoped GENERAL writer token
+description: Mint a short-lived, single-repository GitHub App token with contents write only.
+inputs:
+  client_id:
+    description: Client ID for the dedicated writer GitHub App.
+    required: true
+  private_key:
+    description: Private key for the dedicated writer GitHub App.
+    required: true
+  allow_prevalidation_safety_lock:
+    description: Allow only an explicitly allowlisted Main Writer safety-lock operation before deployment validation.
+    required: false
+    default: 'false'
+outputs:
+  token:
+    description: Short-lived installation token scoped to this repository and contents write.
+    value: ${{ steps.app-token.outputs.token }}
+runs:
+  using: composite
+  steps:
+    - name: Verify scoped writer deployment gate
+      shell: bash
+      env:
+        WRITERS_VALIDATED: ${{ vars.GENERAL_SCOPED_WRITERS_VALIDATED }}
+        ALLOW_PREVALIDATION_SAFETY_LOCK: ${{ inputs.allow_prevalidation_safety_lock }}
+        REQUESTED_CLIENT_ID: ${{ inputs.client_id }}
+        MAIN_WRITER_CLIENT_ID: ${{ vars.GENERAL_MAIN_WRITER_APP_CLIENT_ID }}
+        WORKFLOW_REF: ${{ github.workflow_ref }}
+      run: |
+        set -euo pipefail
+        if [ "$WRITERS_VALIDATED" = "true" ]; then
+          echo "SCOPED WRITER DEPLOYMENT GATE: PASS"
+          exit 0
+        fi
+
+        if [ "$ALLOW_PREVALIDATION_SAFETY_LOCK" = "true" ]; then
+          if [ -z "$MAIN_WRITER_CLIENT_ID" ] || [ "$REQUESTED_CLIENT_ID" != "$MAIN_WRITER_CLIENT_ID" ]; then
+            echo "::error::Pre-validation exception is restricted to the configured Main Writer identity."
+            exit 1
+          fi
+          case "$WORKFLOW_REF" in
+            xxlyusufi61-bot/general-super-loto/.github/workflows/general-nvidia-manual-lock.yml@refs/heads/main|xxlyusufi61-bot/general-super-loto/.github/workflows/general-agent.yml@refs/heads/main|xxlyusufi61-bot/general-super-loto/.github/workflows/general-autonomous-research.yml@refs/heads/main|xxlyusufi61-bot/general-super-loto/.github/workflows/general-coordinator-execute.yml@refs/heads/main|xxlyusufi61-bot/general-super-loto/.github/workflows/nvidia-chat-test.yml@refs/heads/main|xxlyusufi61-bot/general-super-loto/.github/workflows/nvidia-diagnostic.yml@refs/heads/main|xxlyusufi61-bot/general-super-loto/.github/workflows/nvidia-test.yml@refs/heads/main|xxlyusufi61-bot/general-super-loto/.github/workflows/open-research.yml@refs/heads/main)
+              echo "SCOPED WRITER DEPLOYMENT GATE: emergency Main Writer safety-lock exception"
+              exit 0
+              ;;
+            *)
+              echo "::error::Pre-validation safety-lock exception is not allowed from this workflow."
+              exit 1
+              ;;
+          esac
+        fi
+
+        echo "::error::Scoped writer operations are disabled until GENERAL_SCOPED_WRITERS_VALIDATED=true."
+        echo "::error::Run the post-merge read-only App validation, verify all three branch Rulesets, then set the repository variable."
+        exit 1
+    - id: app-token
+      uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+      with:
+        client-id: ${{ inputs.client_id }}
+        private-key: ${{ inputs.private_key }}
+        owner: ${{ github.repository_owner }}
+        repositories: general-super-loto
+        permission-contents: write

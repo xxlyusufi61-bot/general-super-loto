@@ -1,0 +1,79 @@
+name: PR Offline Required
+
+'on':
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  pr-offline-required:
+    name: pr-offline-required
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout source without persisting credentials
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Validate workflow and composite-action YAML syntax
+        run: |
+          set -euo pipefail
+          ruby -e 'require "yaml"; paths = Dir.glob(".github/workflows/*.{yml,yaml}") + Dir.glob(".github/actions/**/action.{yml,yaml}"); abort "No workflow/action YAML files found" if paths.empty?; paths.each { |path| YAML.parse_file(path) }; puts "Parsed #{paths.length} workflow/action YAML files."'
+
+      - name: Compile scoped-writer and state-store Python modules
+        run: |
+          python3 -m py_compile \
+            general_automation_state.py \
+            general_automation_state_reader.py \
+            general_automation_state_sync.py \
+            general_automation_state_writer.py \
+            general_writer_auth.py \
+            general_automation_state_runtime_audit.py \
+            general_automation_state_runtime_audit_test.py \
+            general_automation_state_integrity_audit.py \
+            general_automation_state_integrity_audit_test.py \
+            general_automation_state_cutover_workflow_test.py \
+            general_research_memory.py \
+            general_research_memory_test.py \
+            general_nvidia_guard.py \
+            tests/test_general_nvidia_guard.py \
+            tests/test_general_writer_auth.py \
+            tests/test_scoped_writer_workflow_guards.py
+
+      - name: Run scoped-writer, state-store, and cutover regression tests
+        run: |
+          python3 -m unittest -v \
+            general_automation_state_writer_test \
+            general_automation_state_runtime_audit_test \
+            general_automation_state_integrity_audit_test \
+            general_automation_state_cutover_workflow_test \
+            general_research_memory_test
+
+      - name: Run coordinator offline regression tests
+        run: |
+          python3 -m unittest -v \
+            general_core_archive_regime_test \
+            general_coordinator_test \
+            general_memory_pr_guard_test \
+            general_coordinator_memory_publication_test \
+            general_core_output_safety_test \
+            general_agent_report_guard_test \
+            general_agent_workflow_guard_test \
+            general_core_live_consent_test \
+            general_open_research_test \
+            general_rule_change_test \
+            general_core_registry_test \
+            general_walkforward_test
+
+      - name: Run repository offline test suite
+        run: python3 -m unittest discover -s tests -v
+
+      - name: Run scoped-writer workflow security guards
+        run: python3 tests/test_scoped_writer_workflow_guards.py
