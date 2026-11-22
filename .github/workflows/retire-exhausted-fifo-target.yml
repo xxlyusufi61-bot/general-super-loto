@@ -57,8 +57,6 @@ jobs:
           exit 1
 
   retire-exhausted-target:
-    if: ${{ false }} # Disabled until migrated to validated scoped writer Apps; legacy GITHUB_TOKEN write path is not permitted.
-    if: ${{ github.ref == 'refs/heads/main' && inputs.confirmation == 'I_CONFIRM_EXHAUSTED_FIFO_TARGET_RETIREMENT' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
