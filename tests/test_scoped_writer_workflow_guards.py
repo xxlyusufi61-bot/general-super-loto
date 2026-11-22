@@ -194,16 +194,74 @@ class ScopedWriterWorkflowGuardTests(unittest.TestCase):
                 direct_mints.append(workflow)
         self.assertEqual(direct_mints, [validation_workflow])
 
-    def test_legacy_unscoped_writer_workflows_are_disabled(self):
-        targets = (
-            ".github/workflows/general-recovery-20261105.yml",
-            ".github/workflows/retire-exhausted-fifo-target.yml",
+    def load_yaml_jobs_without_duplicate_keys(self, relative: str) -> dict:
+        # Use the same Psych YAML parser family available on GitHub's ubuntu runners.
+        # The AST pass rejects duplicate mapping keys before loading the effective job.
+        ruby = r"""
+require "yaml"
+require "json"
+
+def inspect_node(node, path, duplicates)
+  if node.is_a?(Psych::Nodes::Mapping)
+    seen = {}
+    node.children.each_slice(2) do |key, value|
+      if key.is_a?(Psych::Nodes::Scalar)
+        name = key.value
+        duplicates << "#{path}.#{name}" if seen.key?(name)
+        seen[name] = true
+        inspect_node(value, "#{path}.#{name}", duplicates)
+      else
+        inspect_node(key, path, duplicates)
+        inspect_node(value, path, duplicates)
+      end
+    end
+  elsif node.respond_to?(:children) && node.children
+    node.children.each_with_index do |child, index|
+      inspect_node(child, "#{path}[#{index}]", duplicates)
+    end
+  end
+end
+
+path = ARGV.fetch(0)
+ast = YAML.parse_file(path)
+duplicates = []
+inspect_node(ast, "$", duplicates)
+abort "duplicate YAML mapping keys: #{duplicates.join(', ')}" unless duplicates.empty?
+data = YAML.load_file(path)
+jobs = data.fetch("jobs")
+puts JSON.generate(jobs.transform_values { |job| job.is_a?(Hash) ? job["if"] : nil })
+"""
+        result = subprocess.run(
+            ["ruby", "-e", ruby, str(ROOT / relative)],
+            capture_output=True,
+            text=True,
+            check=False,
         )
-        for relative in targets:
+        self.assertEqual(
+            result.returncode,
+            0,
+            f"{relative}: YAML must parse without duplicate keys: {result.stderr}",
+        )
+        import json
+        return json.loads(result.stdout)
+
+    def test_legacy_unscoped_writer_workflows_are_structurally_disabled(self):
+        targets = (
+            (".github/workflows/general-recovery-20261105.yml", "recovery"),
+            (".github/workflows/retire-exhausted-fifo-target.yml", "retire-exhausted-target"),
+        )
+        for relative, job_name in targets:
             with self.subTest(workflow=relative):
+                jobs = self.load_yaml_jobs_without_duplicate_keys(relative)
+                self.assertIn(job_name, jobs)
+                self.assertEqual(
+                    jobs[job_name],
+                    "${{ false }}",
+                    "legacy writer job must remain unconditionally disabled",
+                )
                 workflow = (ROOT / relative).read_text(encoding="utf-8")
-                self.assertIn("if: ${{ false }}", workflow)
                 self.assertNotIn("contents: write", workflow)
+                self.assertIn("permissions:\\n  contents: read", workflow)
 
     def test_scheduled_autonomous_writer_jobs_require_validation_flag(self):
         for job in ("archive-refresh", "scheduled-cycle"):
