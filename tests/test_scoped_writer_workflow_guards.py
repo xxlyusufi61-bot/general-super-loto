@@ -229,7 +229,7 @@ inspect_node(ast, "$", duplicates)
 abort "duplicate YAML mapping keys: #{duplicates.join(', ')}" unless duplicates.empty?
 data = YAML.load_file(path)
 jobs = data.fetch("jobs")
-puts JSON.generate(jobs.transform_values { |job| job.is_a?(Hash) ? job["if"] : nil })
+puts JSON.generate({"jobs" => jobs.transform_values { |job| job.is_a?(Hash) ? job["if"] : nil }, "permissions" => data.fetch("permissions")})
 """
         result = subprocess.run(
             ["ruby", "-e", ruby, str(ROOT / relative)],
@@ -252,16 +252,17 @@ puts JSON.generate(jobs.transform_values { |job| job.is_a?(Hash) ? job["if"] : n
         )
         for relative, job_name in targets:
             with self.subTest(workflow=relative):
-                jobs = self.load_yaml_jobs_without_duplicate_keys(relative)
+                parsed = self.load_yaml_jobs_without_duplicate_keys(relative)
+                jobs = parsed["jobs"]
                 self.assertIn(job_name, jobs)
                 self.assertEqual(
                     jobs[job_name],
                     "${{ false }}",
                     "legacy writer job must remain unconditionally disabled",
                 )
+                self.assertEqual(parsed["permissions"]["contents"], "read")
                 workflow = (ROOT / relative).read_text(encoding="utf-8")
                 self.assertNotIn("contents: write", workflow)
-                self.assertIn("permissions:\n  contents: read", workflow)
 
     def test_scheduled_autonomous_writer_jobs_require_validation_flag(self):
         for job in ("archive-refresh", "scheduled-cycle"):
