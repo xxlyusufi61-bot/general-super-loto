@@ -27,7 +27,9 @@ research attempts.
   extends its original deadline.
 - Only the scheduled event can create iteration 1. A successor is accepted only
   on main, through workflow_dispatch, with action continue, and actor
-  github-actions[bot]. Manually selecting continue does not authorize a run.
+  github-actions[bot]. The child verifies its parent run is this workflow and
+  that the parent's dedicated continue-research job actually dispatched it.
+  Manually selecting continue does not authorize a run.
 - The dispatch job gets only contents: read and actions: write. Existing
   scoped writer Apps and their permissions are unchanged.
 
@@ -95,10 +97,14 @@ WORKFLOW_FAILED and PROVIDER_DELIVERY_UNCERTAIN are unchanged.
 ## Telegram and dispatch reliability
 
 A successor is dispatched only after the iteration's state/report stages and
-Telegram outcome step complete successfully. If Telegram delivery is uncertain
-or not confirmed, the chain stops to avoid duplicate reporting. The controller
-sends one workflow-dispatch request and never retries an ambiguous dispatch;
-an uncertain dispatch is reported as blocked rather than risking two children.
+Telegram outcome step complete successfully. If an actual research attempt was
+made, a confirmed Telegram success, no-candidate, or failure report is required.
+If no research attempt was made because the queue has no new target, the session
+can stop with WAITING_FOR_NEW_LATEST_DRAW without inventing a missing research
+report. If Telegram delivery for an actual attempt is uncertain, the chain
+stops to avoid duplicate reporting. The controller sends one workflow-dispatch
+request and never retries an ambiguous dispatch; an uncertain dispatch is
+reported as blocked rather than risking two children.
 
 A separate stop-status message reports session expiry, budget exhaustion,
 authorization or lock failure, missing eligible work, and other safe stop
