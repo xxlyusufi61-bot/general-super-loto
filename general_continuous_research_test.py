@@ -169,6 +169,7 @@ class ContinuousSessionContextTests(unittest.TestCase):
             context=self.context,
             current_run_id="45150000001",
             report_delivered=False,
+            research_attempt_made=True,
             probe_result=(True, "NEXT_CYCLE_ELIGIBLE"),
             now=current,
         )
@@ -179,6 +180,7 @@ class ContinuousSessionContextTests(unittest.TestCase):
             context=self.context,
             current_run_id="45150000001",
             report_delivered=True,
+            research_attempt_made=True,
             probe_result=(False, "NO_EXECUTABLE_HYPOTHESIS"),
             now=current,
         )
@@ -189,6 +191,7 @@ class ContinuousSessionContextTests(unittest.TestCase):
             context=self.context,
             current_run_id="45150000001",
             report_delivered=False,
+            research_attempt_made=False,
             probe_result=(False, "WAITING_FOR_NEW_LATEST_DRAW"),
             now=current,
         )
@@ -199,6 +202,7 @@ class ContinuousSessionContextTests(unittest.TestCase):
             context=self.context,
             current_run_id="45150000001",
             report_delivered=True,
+            research_attempt_made=True,
             probe_result=(True, "NEXT_CYCLE_ELIGIBLE"),
             now=current,
         )
