@@ -57,13 +57,16 @@ def git_auth_environment(
 
 def run_git_push(role: str, remote: str, ref: str) -> None:
     """Push only the explicitly approved main-branch writer destinations."""
-    if role != "main" or remote != "origin":
+    allowed_refs = {
+        "main": lambda value: value == "HEAD:main" or re.fullmatch(
+            r"(?:general-agent-memory|general-memory-proposal)-[0-9]+-[0-9]+", value
+        ) is not None,
+        "nvidia_budget": lambda value: value == "HEAD:general-nvidia-rate-limit-state",
+    }
+    if remote != "origin" or role not in allowed_refs:
         raise WriterAuthorizationError("Git push role or remote is not allowlisted")
-    if not isinstance(ref, str) or (
-        ref != "HEAD:main"
-        and re.fullmatch(r"(?:general-agent-memory|general-memory-proposal)-[0-9]+-[0-9]+", ref) is None
-    ):
-        raise WriterAuthorizationError("Git push ref is not allowlisted for the main writer")
+    if not isinstance(ref, str) or not allowed_refs[role](ref):
+        raise WriterAuthorizationError("Git push ref is not allowlisted for the selected writer")
     try:
         subprocess.run(
             ["git", "push", remote, ref],
