@@ -47,13 +47,9 @@ class ContinuousSessionContextTests(unittest.TestCase):
             now=NOW,
         )
 
-    def test_schedule_creates_exactly_five_hour_session(self):
+    def test_schedule_creates_open_ended_session_identity(self):
         self.assertEqual(self.context["session_id"], "45150000001")
-        self.assertEqual(
-            continuous._parse_utc(self.context["deadline_at_utc"], "deadline")
-            - continuous._parse_utc(self.context["started_at_utc"], "start"),
-            continuous.SESSION_WINDOW,
-        )
+        self.assertEqual(self.context["started_at_utc"], "2026-11-23T16:30:00Z")
         self.assertEqual(self.context["iteration"], 1)
 
     def test_schedule_rejects_inherited_session_inputs(self):
@@ -88,7 +84,6 @@ class ContinuousSessionContextTests(unittest.TestCase):
             "run_id": "45150000002",
             "session_id": self.context["session_id"],
             "started_at_utc": self.context["started_at_utc"],
-            "deadline_at_utc": self.context["deadline_at_utc"],
             "iteration": "2",
             "parent_run_id": self.context["session_id"],
             "now": NOW + timedelta(minutes=3),
@@ -110,7 +105,6 @@ class ContinuousSessionContextTests(unittest.TestCase):
             "run_id": "45150000002",
             "session_id": self.context["session_id"],
             "started_at_utc": self.context["started_at_utc"],
-            "deadline_at_utc": self.context["deadline_at_utc"],
             "iteration": "2",
             "now": NOW + timedelta(minutes=3),
         }
@@ -121,7 +115,7 @@ class ContinuousSessionContextTests(unittest.TestCase):
         with self.assertRaises(continuous.ContinuousResearchError):
             continuous.build_session_context(**args)
 
-    def test_successor_rejects_wrong_action_same_run_expiry_and_iteration_overflow(self):
+    def test_successor_rejects_wrong_action_and_same_run(self):
         args = {
             "event_name": "workflow_dispatch",
             "action": "continue",
@@ -130,16 +124,14 @@ class ContinuousSessionContextTests(unittest.TestCase):
             "run_id": "45150000002",
             "session_id": self.context["session_id"],
             "started_at_utc": self.context["started_at_utc"],
-            "deadline_at_utc": self.context["deadline_at_utc"],
             "iteration": "2",
             "parent_run_id": self.context["session_id"],
-            "now": NOW + timedelta(minutes=3),
+            "now": NOW + timedelta(days=3650),
         }
         for changes in (
             {"action": "pause"},
             {"run_id": self.context["session_id"]},
-            {"iteration": str(continuous.MAX_CONTINUOUS_ITERATIONS + 1)},
-            {"now": NOW + continuous.SESSION_WINDOW},
+            {"iteration": "01"},
             {"ref": "refs/heads/feature"},
         ):
             trial = dict(args)
@@ -147,6 +139,22 @@ class ContinuousSessionContextTests(unittest.TestCase):
             with self.subTest(changes=changes):
                 with self.assertRaises(continuous.ContinuousResearchError):
                     continuous.build_session_context(**trial)
+
+    def test_successor_accepts_more_than_150_turns_after_many_years(self):
+        successor = continuous.build_session_context(
+            event_name="workflow_dispatch",
+            action="continue",
+            actor=continuous.BOT_ACTOR,
+            ref="refs/heads/main",
+            run_id="45150000002",
+            session_id=self.context["session_id"],
+            started_at_utc=self.context["started_at_utc"],
+            iteration="151",
+            parent_run_id=self.context["session_id"],
+            now=NOW + timedelta(days=3650),
+        )
+        self.assertEqual(successor["iteration"], 151)
+        self.assertEqual(successor["session_id"], self.context["session_id"])
 
     def test_plan_revalidates_scheduled_session_without_resetting_its_clock(self):
         checked = continuous.validate_current_session_context(
@@ -157,12 +165,10 @@ class ContinuousSessionContextTests(unittest.TestCase):
             run_id="45150000001",
             session_id=self.context["session_id"],
             started_at_utc=self.context["started_at_utc"],
-            deadline_at_utc=self.context["deadline_at_utc"],
             iteration="1",
             now=NOW + timedelta(minutes=1),
         )
         self.assertEqual(checked["started_at_utc"], self.context["started_at_utc"])
-        self.assertEqual(checked["deadline_at_utc"], self.context["deadline_at_utc"])
 
     def test_plan_requires_report_probe_and_remaining_session_budget(self):
         current = NOW + timedelta(minutes=2)
@@ -211,18 +217,18 @@ class ContinuousSessionContextTests(unittest.TestCase):
         self.assertEqual(ready["next_iteration"], 2)
         self.assertFalse(ready["session_values_rendered"])
 
-    def test_iteration_cap_stops_without_dispatch(self):
-        capped = dict(self.context, iteration=continuous.MAX_CONTINUOUS_ITERATIONS)
+    def test_session_does_not_expire_or_stop_at_150_iterations(self):
+        long_running = dict(self.context, iteration=150)
         plan = continuous.build_continuation_plan(
-            context=capped,
+            context=long_running,
             current_run_id="45150000001",
             report_delivered=True,
             research_attempt_made=True,
             probe_result=(True, "NEXT_CYCLE_ELIGIBLE"),
-            now=NOW + timedelta(minutes=1),
+            now=NOW + timedelta(days=3650),
         )
-        self.assertFalse(plan["continue_enabled"])
-        self.assertEqual(plan["stop_reason"], "ITERATION_SAFETY_LIMIT_REACHED")
+        self.assertTrue(plan["continue_enabled"])
+        self.assertEqual(plan["next_iteration"], 151)
 
     def test_dispatch_rejects_non_bot_before_network_access(self):
         with self.assertRaises(continuous.ContinuousResearchError):
@@ -235,8 +241,7 @@ class ContinuousSessionContextTests(unittest.TestCase):
                 ref="refs/heads/main",
                 session_id=self.context["session_id"],
                 started_at_utc=self.context["started_at_utc"],
-                deadline_at_utc=self.context["deadline_at_utc"],
-                next_iteration=2,
+                    next_iteration=2,
                 parent_run_id=self.context["session_id"],
                 now=NOW + timedelta(minutes=1),
             )
@@ -287,16 +292,14 @@ class ContinuousSessionContextTests(unittest.TestCase):
                 ref="refs/heads/main",
                 session_id=self.context["session_id"],
                 started_at_utc=self.context["started_at_utc"],
-                deadline_at_utc=self.context["deadline_at_utc"],
-                next_iteration=2,
+                    next_iteration=151,
                 parent_run_id="45150000001",
-                now=NOW + timedelta(minutes=1),
             )
         request = send.call_args.args[0]
         payload = __import__("json").loads(request.data.decode("utf-8"))
         self.assertEqual(payload["ref"], "main")
         self.assertEqual(payload["inputs"]["continuous_parent_run_id"], "45150000001")
-        self.assertEqual(payload["inputs"]["continuous_iteration"], "2")
+        self.assertEqual(payload["inputs"]["continuous_iteration"], "151")
 
     def test_parent_run_verification_requires_exact_workflow_and_dispatch_job(self):
         parent = {
