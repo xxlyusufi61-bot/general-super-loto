@@ -139,6 +139,52 @@ def build_session_context(
     }
 
 
+def validate_current_session_context(
+    *,
+    event_name: str,
+    action: str,
+    actor: str,
+    ref: str,
+    run_id: str,
+    session_id: str,
+    started_at_utc: str,
+    deadline_at_utc: str,
+    iteration: str,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Validate the envelope already created by session-context for this run."""
+    current = _now_utc(now)
+    current_run_id = _positive_run_id(run_id)
+    sid = _positive_run_id(session_id, "session ID")
+    start = _parse_utc(started_at_utc, "session start")
+    deadline = _parse_utc(deadline_at_utc, "session deadline")
+    current_iteration = _positive_iteration(iteration)
+
+    if ref != "refs/heads/main" or deadline - start != SESSION_WINDOW:
+        raise ContinuousResearchError("The continuous session envelope is invalid.")
+    if start > current + timedelta(minutes=1) or current >= deadline:
+        raise ContinuousResearchError("The continuous session is not currently active.")
+
+    if event_name == "schedule":
+        if sid != current_run_id or current_iteration != 1 or action:
+            raise ContinuousResearchError("The scheduled session identity does not match this run.")
+    elif (
+        event_name != "workflow_dispatch"
+        or action != "continue"
+        or actor != BOT_ACTOR
+        or sid == current_run_id
+        or current_iteration < 2
+    ):
+        raise ContinuousResearchError("The successor session identity is not authorized.")
+
+    return {
+        "session_id": sid,
+        "started_at_utc": _format_utc(start),
+        "deadline_at_utc": _format_utc(deadline),
+        "iteration": current_iteration,
+    }
+
+
 def _write_github_output(path: str | None, values: dict[str, Any]) -> None:
     if not path:
         return
@@ -467,7 +513,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "plan-next":
-            context = build_session_context(
+            context = validate_current_session_context(
                 event_name=args.event,
                 action=args.action,
                 actor=args.actor,
