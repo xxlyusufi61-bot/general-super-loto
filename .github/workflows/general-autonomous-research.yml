@@ -54,6 +54,11 @@ name: GENERAL Autonomous Research Cycle
         required: false
         type: string
         default: ""
+      continuous_parent_run_id:
+        description: "Internal bot-only parent workflow run ID. Do not set manually."
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -197,6 +202,9 @@ jobs:
           STARTED_AT_UTC: ${{ inputs.continuous_started_at_utc }}
           DEADLINE_AT_UTC: ${{ inputs.continuous_deadline_at_utc }}
           ITERATION: ${{ inputs.continuous_iteration }}
+          PARENT_RUN_ID: ${{ inputs.continuous_parent_run_id }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
           if [ "$EVENT_NAME" = "schedule" ]; then
@@ -217,6 +225,7 @@ jobs:
               --started-at-utc "$STARTED_AT_UTC" \
               --deadline-at-utc "$DEADLINE_AT_UTC" \
               --iteration "$ITERATION" \
+              --parent-run-id "$PARENT_RUN_ID" \
               --github-output "$GITHUB_OUTPUT"
           fi
       - name: Verify active state-store authority and global safety lock
@@ -727,6 +736,7 @@ jobs:
           STARTED_AT_UTC: ${{ steps.continuous_context.outputs.started_at_utc }}
           DEADLINE_AT_UTC: ${{ steps.continuous_context.outputs.deadline_at_utc }}
           ITERATION: ${{ steps.continuous_context.outputs.iteration }}
+          PARENT_RUN_ID: ${{ steps.continuous_context.outputs.parent_run_id }}
           SUCCESS_REPORT_OUTCOME: ${{ steps.telegram_success.outcome }}
           NO_CANDIDATE_REPORT_OUTCOME: ${{ steps.telegram_no_candidate.outcome }}
           FAILURE_REPORT_OUTCOME: ${{ steps.telegram_failure.outcome }}
@@ -749,6 +759,7 @@ jobs:
             --started-at-utc "$STARTED_AT_UTC" \
             --deadline-at-utc "$DEADLINE_AT_UTC" \
             --iteration "$ITERATION" \
+            --parent-run-id "$PARENT_RUN_ID" \
             --report-delivered "$report_delivered" \
             --github-output "$GITHUB_OUTPUT"
       - name: Report why the continuous research session stopped
