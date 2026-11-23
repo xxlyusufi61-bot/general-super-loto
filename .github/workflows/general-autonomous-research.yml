@@ -44,11 +44,6 @@ name: GENERAL Autonomous Research Cycle
         required: false
         type: string
         default: ""
-      continuous_deadline_at_utc:
-        description: "Internal bot-only fixed session deadline. Do not set manually."
-        required: false
-        type: string
-        default: ""
       continuous_iteration:
         description: "Internal bot-only research iteration number. Do not set manually."
         required: false
@@ -166,7 +161,6 @@ jobs:
       stop_reason: ${{ steps.continuation_plan.outputs.stop_reason }}
       session_id: ${{ steps.continuation_plan.outputs.session_id }}
       started_at_utc: ${{ steps.continuation_plan.outputs.started_at_utc }}
-      deadline_at_utc: ${{ steps.continuation_plan.outputs.deadline_at_utc }}
       next_iteration: ${{ steps.continuation_plan.outputs.next_iteration }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -200,7 +194,6 @@ jobs:
           RUN_ID: ${{ github.run_id }}
           SESSION_ID: ${{ inputs.continuous_session_id }}
           STARTED_AT_UTC: ${{ inputs.continuous_started_at_utc }}
-          DEADLINE_AT_UTC: ${{ inputs.continuous_deadline_at_utc }}
           ITERATION: ${{ inputs.continuous_iteration }}
           PARENT_RUN_ID: ${{ inputs.continuous_parent_run_id }}
           GITHUB_TOKEN: ${{ github.token }}
@@ -223,7 +216,6 @@ jobs:
               --run-id "$RUN_ID" \
               --session-id "$SESSION_ID" \
               --started-at-utc "$STARTED_AT_UTC" \
-              --deadline-at-utc "$DEADLINE_AT_UTC" \
               --iteration "$ITERATION" \
               --parent-run-id "$PARENT_RUN_ID" \
               --github-output "$GITHUB_OUTPUT"
@@ -734,7 +726,6 @@ jobs:
           RUN_ID: ${{ github.run_id }}
           SESSION_ID: ${{ steps.continuous_context.outputs.session_id }}
           STARTED_AT_UTC: ${{ steps.continuous_context.outputs.started_at_utc }}
-          DEADLINE_AT_UTC: ${{ steps.continuous_context.outputs.deadline_at_utc }}
           ITERATION: ${{ steps.continuous_context.outputs.iteration }}
           PARENT_RUN_ID: ${{ steps.continuous_context.outputs.parent_run_id }}
           RESEARCH_ATTEMPT_MADE: ${{ steps.attempt_reservation.outputs.attempt_id != '' && 'true' || 'false' }}
@@ -758,7 +749,6 @@ jobs:
             --repository "$GITHUB_REPOSITORY" \
             --session-id "$SESSION_ID" \
             --started-at-utc "$STARTED_AT_UTC" \
-            --deadline-at-utc "$DEADLINE_AT_UTC" \
             --iteration "$ITERATION" \
             --parent-run-id "$PARENT_RUN_ID" \
             --report-delivered "$report_delivered" \
@@ -807,12 +797,10 @@ jobs:
           GITHUB_REF: ${{ github.ref }}
           SESSION_ID: ${{ needs.scheduled-cycle.outputs.session_id }}
           STARTED_AT_UTC: ${{ needs.scheduled-cycle.outputs.started_at_utc }}
-          DEADLINE_AT_UTC: ${{ needs.scheduled-cycle.outputs.deadline_at_utc }}
           NEXT_ITERATION: ${{ needs.scheduled-cycle.outputs.next_iteration }}
         run: |
           python3 general_continuous_research.py dispatch \
             --repository "$GITHUB_REPOSITORY" \
             --session-id "$SESSION_ID" \
             --started-at-utc "$STARTED_AT_UTC" \
-            --deadline-at-utc "$DEADLINE_AT_UTC" \
             --next-iteration "$NEXT_ITERATION"
