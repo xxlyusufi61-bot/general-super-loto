@@ -1,4 +1,6 @@
+import os
 import unittest
+from unittest.mock import patch
 
 from general_nvidia_writer_preflight import (
     EXPECTED_APP_PERMISSIONS,
@@ -6,6 +8,7 @@ from general_nvidia_writer_preflight import (
     EXPECTED_REPOSITORY,
     EXPECTED_RULESET_ID,
     EXPECTED_RULESET_NAME,
+    run_preflight,
     validate_preflight_payloads,
 )
 
@@ -109,6 +112,36 @@ class NVIDIAWriterPreflightTests(unittest.TestCase):
         ruleset["rules"].append({"type": "pull_request"})
         with self.assertRaises(ValueError):
             validate_preflight_payloads(app, repositories, ruleset)
+
+
+    def test_ruleset_read_uses_scoped_writer_token(self):
+        app, repositories, ruleset = payloads()
+        calls = []
+
+        def fake_request_json(path, token="", *, jwt=False):
+            calls.append((path, token, jwt))
+            if path.startswith("/repos/"):
+                return ruleset
+            if path == "/app":
+                return app
+            if path == "/installation/repositories":
+                return repositories
+            raise AssertionError(f"Unexpected API path: {path}")
+
+        with patch.dict(os.environ, {
+            "GENERAL_NVIDIA_BUDGET_WRITER_TOKEN": "scoped-token",
+            "GENERAL_NVIDIA_BUDGET_WRITER_APP_PRIVATE_KEY": "test-private-key",
+            "GITHUB_REPOSITORY": EXPECTED_REPOSITORY,
+        }), patch("general_nvidia_writer_preflight.request_json", side_effect=fake_request_json), patch(
+            "general_nvidia_writer_preflight.create_app_jwt", return_value="app-jwt"
+        ):
+            run_preflight()
+
+        self.assertEqual(calls, [
+            (f"/repos/{EXPECTED_REPOSITORY}/rulesets/{EXPECTED_RULESET_ID}", "scoped-token", False),
+            ("/app", "app-jwt", True),
+            ("/installation/repositories", "scoped-token", False),
+        ])
 
 
 if __name__ == "__main__":

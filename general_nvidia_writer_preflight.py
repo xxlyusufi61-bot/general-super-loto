@@ -143,7 +143,7 @@ def run_preflight() -> dict:
         raise ValueError("Preflight was invoked from an unexpected repository")
 
     ruleset = request_json(
-        f"/repos/{EXPECTED_REPOSITORY}/rulesets/{EXPECTED_RULESET_ID}",
+        f"/repos/{EXPECTED_REPOSITORY}/rulesets/{EXPECTED_RULESET_ID}", writer_token,
     )
     bypass = ruleset.get("bypass_actors")
     if not isinstance(bypass, list) or len(bypass) != 1 or not isinstance(bypass[0], dict):
