@@ -413,6 +413,8 @@ def _dispatch_workflow(
     *,
     repository: str,
     token: str,
+    actor: str,
+    ref: str,
     session_id: str,
     started_at_utc: str,
     deadline_at_utc: str,
@@ -420,6 +422,8 @@ def _dispatch_workflow(
     now: datetime | None = None,
 ) -> None:
     """Make one non-retried workflow_dispatch request; uncertain delivery is reported, not replayed."""
+    if actor != BOT_ACTOR or ref != "refs/heads/main":
+        raise ContinuousResearchError("Only the main-branch workflow bot may dispatch a successor.")
     if repository != REPOSITORY:
         raise ContinuousResearchError("Continuation dispatch is restricted to the canonical repository.")
     if not token:
