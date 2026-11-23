@@ -6,13 +6,14 @@ name: GENERAL Autonomous Research Cycle
   workflow_dispatch:
     inputs:
       action:
-        description: "Read status, activate scheduled research, or pause it."
+        description: "Read status, activate, pause, or accept an internal bot-only continuation."
         required: true
         type: choice
         options:
           - status
           - activate
           - pause
+          - continue
         default: status
       authorization_phrase:
         description: "For activation only, enter the exact autonomous free-only authorization phrase."
@@ -33,6 +34,26 @@ name: GENERAL Autonomous Research Cycle
           - "7"
           - "30"
         default: "7"
+      continuous_session_id:
+        description: "Internal bot-only session identifier. Do not set manually."
+        required: false
+        type: string
+        default: ""
+      continuous_started_at_utc:
+        description: "Internal bot-only fixed session start. Do not set manually."
+        required: false
+        type: string
+        default: ""
+      continuous_iteration:
+        description: "Internal bot-only research iteration number. Do not set manually."
+        required: false
+        type: string
+        default: ""
+      continuous_parent_run_id:
+        description: "Internal bot-only parent workflow run ID. Do not set manually."
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -43,7 +64,7 @@ concurrency:
 
 jobs:
   control:
-    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.action != 'continue' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -94,7 +115,7 @@ jobs:
           echo "No NVIDIA request is made by activation, pause, or status actions." >> "$GITHUB_STEP_SUMMARY"
 
   archive-refresh:
-    if: ${{ github.event_name == 'schedule' && vars.GENERAL_SCOPED_WRITERS_VALIDATED == 'true' }}
+    if: ${{ (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.action == 'continue' && github.actor == 'github-actions[bot]' && github.ref == 'refs/heads/main')) && vars.GENERAL_SCOPED_WRITERS_VALIDATED == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -133,8 +154,14 @@ jobs:
           message: "Refresh validated Super Loto archive"
 
   scheduled-cycle:
-    if: ${{ github.event_name == 'schedule' && vars.GENERAL_SCOPED_WRITERS_VALIDATED == 'true' && needs.archive-refresh.result == 'success' }}
+    if: ${{ (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.action == 'continue' && github.actor == 'github-actions[bot]' && github.ref == 'refs/heads/main')) && vars.GENERAL_SCOPED_WRITERS_VALIDATED == 'true' && needs.archive-refresh.result == 'success' }}
     needs: archive-refresh
+    outputs:
+      continue_enabled: ${{ steps.continuation_plan.outputs.continue_enabled }}
+      stop_reason: ${{ steps.continuation_plan.outputs.stop_reason }}
+      session_id: ${{ steps.continuation_plan.outputs.session_id }}
+      started_at_utc: ${{ steps.continuation_plan.outputs.started_at_utc }}
+      next_iteration: ${{ steps.continuation_plan.outputs.next_iteration }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -157,6 +184,42 @@ jobs:
         uses: ./.github/actions/hydrate-automation-state
         with:
           token: ${{ github.token }}
+      - name: Validate continuous research session envelope
+        id: continuous_context
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          ACTION: ${{ inputs.action }}
+          ACTOR: ${{ github.actor }}
+          REF: ${{ github.ref }}
+          RUN_ID: ${{ github.run_id }}
+          SESSION_ID: ${{ inputs.continuous_session_id }}
+          STARTED_AT_UTC: ${{ inputs.continuous_started_at_utc }}
+          ITERATION: ${{ inputs.continuous_iteration }}
+          PARENT_RUN_ID: ${{ inputs.continuous_parent_run_id }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "schedule" ]; then
+            python3 general_continuous_research.py session-context \
+              --event schedule \
+              --actor "$ACTOR" \
+              --ref "$REF" \
+              --run-id "$RUN_ID" \
+              --github-output "$GITHUB_OUTPUT"
+          else
+            python3 general_continuous_research.py session-context \
+              --event "$EVENT_NAME" \
+              --action "$ACTION" \
+              --actor "$ACTOR" \
+              --ref "$REF" \
+              --run-id "$RUN_ID" \
+              --session-id "$SESSION_ID" \
+              --started-at-utc "$STARTED_AT_UTC" \
+              --iteration "$ITERATION" \
+              --parent-run-id "$PARENT_RUN_ID" \
+              --github-output "$GITHUB_OUTPUT"
+          fi
       - name: Verify active state-store authority and global safety lock
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -164,7 +227,6 @@ jobs:
         run: python3 general_automation_state_integrity_audit.py
       - name: Observe the latest canonical archive and preserve one active target
         id: queue_capture
-        if: ${{ github.event_name == 'schedule' }}
         run: |
           python3 general_autonomous_research.py queue-capture \
             --archive super_loto_archive.json \
@@ -172,7 +234,7 @@ jobs:
           cat "$GITHUB_OUTPUT"
       - name: Persist the active snapshot and latest archive cursor without changing protected objects
         id: persist_queue
-        if: ${{ github.event_name == 'schedule' && steps.queue_capture.outputs.changed == 'true' }}
+        if: ${{ steps.queue_capture.outputs.changed == 'true' }}
         uses: ./.github/actions/publish-automation-state
         with:
           app_client_id: ${{ vars.GENERAL_AUTOMATION_STATE_WRITER_APP_CLIENT_ID }}
@@ -183,19 +245,19 @@ jobs:
 
       - name: Materialize the pinned active-target snapshot for offline mathematical research
         id: offline_materialize
-        if: ${{ github.event_name == 'schedule' && steps.queue_capture.outputs.has_pending == 'true' }}
+        if: ${{ steps.queue_capture.outputs.has_pending == 'true' }}
         run: |
           python3 general_autonomous_research.py queue-materialize \
             --output super_loto_archive.json
       - name: Detect pending sealed claim before offline discovery
         id: pending_claim_check
-        if: ${{ github.event_name == 'schedule' && steps.queue_capture.outputs.has_pending == 'true' }}
+        if: ${{ steps.queue_capture.outputs.has_pending == 'true' }}
         run: |
           python3 general_sealed_evaluation.py pending-claim --archive super_loto_archive.json --ledger general_evaluation_ledger.json --github-output "$GITHUB_OUTPUT"
           cat "$GITHUB_OUTPUT"
       - name: Run bounded offline hypothesis discovery and evaluation
         id: offline_discovery
-        if: ${{ github.event_name == 'schedule' && steps.queue_capture.outputs.has_pending == 'true' && steps.pending_claim_check.outcome == 'success' && steps.pending_claim_check.outputs.pending_claim != 'true' }}
+        if: ${{ steps.queue_capture.outputs.has_pending == 'true' && steps.pending_claim_check.outcome == 'success' && steps.pending_claim_check.outputs.pending_claim != 'true' }}
         continue-on-error: true
         run: |
           python3 general_offline_hypothesis_discovery.py run \
@@ -245,7 +307,7 @@ jobs:
           cat "$GITHUB_OUTPUT"
       - name: Report scheduled cycle skipped by global NVIDIA lock
         id: skipped_global_lock
-        if: ${{ github.event_name == 'schedule' && steps.queue_capture.outputs.has_pending == 'true' && steps.status.outcome == 'success' && steps.status.outputs.lock_clear == 'false' }}
+        if: ${{ steps.queue_capture.outputs.has_pending == 'true' && steps.status.outcome == 'success' && steps.status.outputs.lock_clear == 'false' }}
         continue-on-error: true
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -275,14 +337,14 @@ jobs:
           python3 general_nvidia_guard.py check
           echo "GENERAL_NVIDIA_GUARD_PASSED=1" >> "$GITHUB_ENV"
       - name: Materialize only the pinned active-target snapshot
-        if: ${{ github.event_name == 'schedule' && steps.status.outputs.authorized == 'true' && steps.status.outputs.lock_clear == 'true' && steps.queue_capture.outputs.has_pending == 'true' }}
+        if: ${{ steps.status.outputs.authorized == 'true' && steps.status.outputs.lock_clear == 'true' && steps.queue_capture.outputs.has_pending == 'true' }}
         run: |
           python3 general_autonomous_research.py queue-materialize \
             --output super_loto_archive.json
 
       - name: Prepare one research pass for the active target and fresh sealed windows
         id: prepare
-        if: ${{ github.event_name == 'schedule' && steps.status.outputs.authorized == 'true' && steps.status.outputs.lock_clear == 'true' && steps.queue_capture.outputs.has_pending == 'true' }}
+        if: ${{ steps.status.outputs.authorized == 'true' && steps.status.outputs.lock_clear == 'true' && steps.queue_capture.outputs.has_pending == 'true' }}
         run: |
           python3 general_autonomous_research.py prepare \
             --archive super_loto_archive.json \
@@ -592,6 +654,7 @@ jobs:
           message: "Persist autonomous cycle outcome and sanitized research memory"
 
       - name: Send separate forward and reverse Telegram reports
+        id: telegram_success
         if: ${{ steps.evaluation.outcome == 'success' && steps.target_evaluation.outcome == 'success' && steps.persist_final_state.outcome == 'success' }}
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -605,6 +668,7 @@ jobs:
             --kind research \
             --report-log open_research_evaluation_report.json
       - name: Notify Telegram when no directional DSL candidate was eligible
+        id: telegram_no_candidate
         if: ${{ steps.attempt_reservation.outputs.attempt_id != '' && steps.research.outcome == 'success' && steps.sealed_claim.outcome == 'success' && steps.sealed_claim.outputs.claim_created != 'true' && steps.sealed_claim.outputs.claim_reused != 'true' && steps.persist_final_state.outcome == 'success' }}
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -616,6 +680,7 @@ jobs:
             --branch general-automation-state \
             --run-url "https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
       - name: Notify Telegram after a failed claimed cycle
+        id: telegram_failure
         if: ${{ always() && steps.attempt_reservation.outputs.attempt_id != '' && (steps.persist_attempt.outcome == 'failure' || steps.persist_claim_snapshot.outcome == 'failure' || steps.frozen_recovery.outcome == 'failure' || (steps.frozen_recovery.outputs.recovery_required == 'true' && steps.frozen_recovery.outputs.recovery_available != 'true') || steps.research.outcome == 'failure' || steps.sealed_claim.outcome == 'failure' || steps.persist_claim.outcome == 'failure' || steps.evaluation.outcome == 'failure' || steps.persist_eval.outcome == 'failure' || steps.target_evaluation.outcome == 'failure' || steps.research_memory.outcome == 'failure' || steps.finish_evaluation.outcome == 'failure' || steps.finish_no_candidate.outcome == 'failure' || steps.finish_failed.outcome == 'failure' || steps.persist_final_state.outcome == 'failure') }}
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -647,3 +712,95 @@ jobs:
             open_research_retry_audit.json
           if-no-files-found: ignore
           retention-days: 14
+
+      - name: Decide whether another research turn is safe
+        id: continuation_plan
+        if: ${{ always() }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          ACTION: ${{ inputs.action }}
+          ACTOR: ${{ github.actor }}
+          REF: ${{ github.ref }}
+          RUN_ID: ${{ github.run_id }}
+          SESSION_ID: ${{ steps.continuous_context.outputs.session_id }}
+          STARTED_AT_UTC: ${{ steps.continuous_context.outputs.started_at_utc }}
+          ITERATION: ${{ steps.continuous_context.outputs.iteration }}
+          PARENT_RUN_ID: ${{ steps.continuous_context.outputs.parent_run_id }}
+          RESEARCH_ATTEMPT_MADE: ${{ steps.attempt_reservation.outputs.attempt_id != '' && 'true' || 'false' }}
+          SUCCESS_REPORT_OUTCOME: ${{ steps.telegram_success.outcome }}
+          NO_CANDIDATE_REPORT_OUTCOME: ${{ steps.telegram_no_candidate.outcome }}
+          FAILURE_REPORT_OUTCOME: ${{ steps.telegram_failure.outcome }}
+        run: |
+          set -euo pipefail
+          report_delivered=false
+          if [ "$SUCCESS_REPORT_OUTCOME" = "success" ] \
+            || [ "$NO_CANDIDATE_REPORT_OUTCOME" = "success" ] \
+            || [ "$FAILURE_REPORT_OUTCOME" = "success" ]; then
+            report_delivered=true
+          fi
+          python3 general_continuous_research.py plan-next \
+            --event "$EVENT_NAME" \
+            --action "$ACTION" \
+            --actor "$ACTOR" \
+            --ref "$REF" \
+            --run-id "$RUN_ID" \
+            --repository "$GITHUB_REPOSITORY" \
+            --session-id "$SESSION_ID" \
+            --started-at-utc "$STARTED_AT_UTC" \
+            --iteration "$ITERATION" \
+            --parent-run-id "$PARENT_RUN_ID" \
+            --report-delivered "$report_delivered" \
+            --research-attempt-made "$RESEARCH_ATTEMPT_MADE" \
+            --github-output "$GITHUB_OUTPUT"
+      - name: Report why the continuous research session stopped
+        if: ${{ always() && steps.continuation_plan.outcome == 'success' && steps.continuation_plan.outputs.continue_enabled != 'true' && steps.continuation_plan.outputs.stop_reason != '' && steps.continuation_plan.outputs.stop_reason != 'NO_EXECUTABLE_HYPOTHESIS' && steps.continuation_plan.outputs.stop_reason != 'TELEGRAM_REPORT_NOT_CONFIRMED' && steps.skipped_global_lock.outcome == 'skipped' }}
+        continue-on-error: true
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          STOP_REASON: ${{ steps.continuation_plan.outputs.stop_reason }}
+        run: |
+          python3 telegram_report.py \
+            --title "GENERAL sürekli araştırma oturumu durdu: $STOP_REASON" \
+            --status skipped \
+            --branch general-automation-state \
+            --run-url "https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --kind status
+
+  continue-research:
+    needs: scheduled-cycle
+    if: ${{ needs.scheduled-cycle.result == 'success' && needs.scheduled-cycle.outputs.continue_enabled == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Check out the default branch
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Dispatch exactly one successor research turn
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          ACTION: ${{ inputs.action }}
+          GITHUB_REF: ${{ github.ref }}
+          SESSION_ID: ${{ needs.scheduled-cycle.outputs.session_id }}
+          STARTED_AT_UTC: ${{ needs.scheduled-cycle.outputs.started_at_utc }}
+          NEXT_ITERATION: ${{ needs.scheduled-cycle.outputs.next_iteration }}
+        run: |
+          python3 general_continuous_research.py dispatch \
+            --repository "$GITHUB_REPOSITORY" \
+            --session-id "$SESSION_ID" \
+            --started-at-utc "$STARTED_AT_UTC" \
+            --next-iteration "$NEXT_ITERATION"
