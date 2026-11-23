@@ -100,12 +100,17 @@ def validate_preflight_payloads(app: dict, repositories: dict, ruleset: dict) ->
         raise ValueError("NVIDIA budget Ruleset branch condition is missing")
     if ref_name.get("include") != [EXPECTED_BRANCH] or ref_name.get("exclude") != []:
         raise ValueError("NVIDIA budget Ruleset does not protect exactly the budget state branch")
-    rule_types = sorted(
-        item.get("type") for item in ruleset.get("rules", [])
-        if isinstance(item, dict) and isinstance(item.get("type"), str)
-    )
+    rules = ruleset.get("rules")
+    if not isinstance(rules, list) or any(
+        not isinstance(item, dict) or not isinstance(item.get("type"), str)
+        for item in rules
+    ):
+        raise ValueError("NVIDIA budget Ruleset protection rules are malformed")
+    rule_types = sorted(item["type"] for item in rules)
     if rule_types != ["deletion", "non_fast_forward", "update"]:
         raise ValueError("NVIDIA budget Ruleset protection rules changed")
+    if ruleset.get("source_type") != "Repository" or ruleset.get("source") != EXPECTED_REPOSITORY:
+        raise ValueError("NVIDIA budget Ruleset source repository changed")
 
     if app.get("id") != app_id or app.get("slug") != EXPECTED_APP_SLUG:
         raise ValueError("Ruleset bypass actor does not match the dedicated NVIDIA Budget Writer App")
