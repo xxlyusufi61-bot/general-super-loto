@@ -337,8 +337,10 @@ def budget_has_next_turn_capacity(
         item for item in checked["requests"]
         if _timestamp_from_ledger(item["reserved_at_utc"]) >= minute_cutoff
     ]
-    if len(active_minute) >= nvidia.NVIDIA_REQUESTS_PER_MINUTE:
-        return False, "HARD_RATE_LIMIT_EXHAUSTED"
+    if len(active_minute) + 2 > nvidia.NVIDIA_REQUESTS_PER_MINUTE:
+        return False, "HARD_RATE_LIMIT_INSUFFICIENT_FOR_DIRECTIONAL_PAIR"
+    if len(active_minute) + 2 > nvidia.NVIDIA_NORMAL_REQUESTS_PER_MINUTE:
+        return False, "NORMAL_RATE_LIMIT_INSUFFICIENT_FOR_DIRECTIONAL_PAIR"
 
     active_day = [
         item for item in checked["daily_requests"]
