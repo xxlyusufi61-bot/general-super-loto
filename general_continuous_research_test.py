@@ -230,6 +230,8 @@ class ContinuousSessionContextTests(unittest.TestCase):
                 repository=continuous.REPOSITORY,
                 token="synthetic-token",
                 actor="human-user",
+                event_name="workflow_dispatch",
+                action="continue",
                 ref="refs/heads/main",
                 session_id=self.context["session_id"],
                 started_at_utc=self.context["started_at_utc"],
@@ -260,6 +262,41 @@ class ContinuousSessionContextTests(unittest.TestCase):
         self.assertIn("steps.telegram_no_candidate.outcome", workflow)
         self.assertIn("steps.telegram_failure.outcome", workflow)
         self.assertNotIn("GENERAL_SCOPED_WRITERS_VALIDATED: true", workflow)
+
+    def test_scheduled_owner_actor_can_dispatch_one_successor(self):
+        class Response:
+            status = 204
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, traceback):
+                return False
+
+        with patch.object(
+            continuous.urllib.request,
+            "urlopen",
+            return_value=Response(),
+        ) as send:
+            continuous._dispatch_workflow(
+                repository=continuous.REPOSITORY,
+                token="synthetic-token",
+                actor="xxlyusufi61-bot",
+                event_name="schedule",
+                action="",
+                ref="refs/heads/main",
+                session_id=self.context["session_id"],
+                started_at_utc=self.context["started_at_utc"],
+                deadline_at_utc=self.context["deadline_at_utc"],
+                next_iteration=2,
+                parent_run_id="45150000001",
+                now=NOW + timedelta(minutes=1),
+            )
+        request = send.call_args.args[0]
+        payload = __import__("json").loads(request.data.decode("utf-8"))
+        self.assertEqual(payload["ref"], "main")
+        self.assertEqual(payload["inputs"]["continuous_parent_run_id"], "45150000001")
+        self.assertEqual(payload["inputs"]["continuous_iteration"], "2")
 
     def test_parent_run_verification_requires_exact_workflow_and_dispatch_job(self):
         parent = {
