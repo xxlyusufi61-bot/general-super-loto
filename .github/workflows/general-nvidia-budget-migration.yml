@@ -19,7 +19,6 @@ on:
 
 permissions:
   contents: read
-  administration: read
 
 concurrency:
   group: general-nvidia-api
@@ -74,7 +73,6 @@ jobs:
         env:
           GENERAL_NVIDIA_BUDGET_WRITER_TOKEN: ${{ steps.nvidia-budget-writer.outputs.token }}
           GENERAL_NVIDIA_BUDGET_WRITER_APP_PRIVATE_KEY: ${{ secrets.GENERAL_NVIDIA_BUDGET_WRITER_APP_PRIVATE_KEY }}
-          GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: python3 general_nvidia_writer_preflight.py
 
