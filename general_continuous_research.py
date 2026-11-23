@@ -28,7 +28,7 @@ import general_nvidia_guard as nvidia
 import general_target_queue as target_queue
 
 REPOSITORY = "xxlyusufi61-bot/general-super-loto"
-WORKFLOW_FILE = ".github/workflows/general-autonomous-research.yml"
+WORKFLOW_FILE = "general-autonomous-research.yml"
 BOT_ACTOR = "github-actions[bot]"
 SESSION_WINDOW = timedelta(hours=5)
 MAX_CONTINUOUS_ITERATIONS = 150
