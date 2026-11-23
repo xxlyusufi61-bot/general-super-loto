@@ -213,9 +213,12 @@ def _timestamp_from_ledger(value: str) -> datetime:
 def budget_has_next_turn_capacity(
     rate_state: dict[str, Any],
     *,
+    retry_mode: bool = False,
     now: datetime | None = None,
 ) -> tuple[bool, str]:
     """Read-only capacity check for one fresh forward/reverse research pair."""
+    if type(retry_mode) is not bool:
+        raise ContinuousResearchError("Retry-mode selector must be a boolean.")
     checked = nvidia.validate_rate_limit_state(copy.deepcopy(rate_state))
     if checked.get("schema_version") != 3:
         return False, "BUDGET_SCHEMA_NOT_READY"
@@ -242,10 +245,19 @@ def budget_has_next_turn_capacity(
         category: sum(item["category"] == category for item in active_day)
         for category in nvidia.NVIDIA_BUDGET_CATEGORY_LIMITS
     }
-    if category_counts["forward_discovery"] >= nvidia.NVIDIA_BUDGET_CATEGORY_LIMITS["forward_discovery"]:
-        return False, "FORWARD_DISCOVERY_BUDGET_EXHAUSTED"
-    if category_counts["reverse_diagnostic"] >= nvidia.NVIDIA_BUDGET_CATEGORY_LIMITS["reverse_diagnostic"]:
-        return False, "REVERSE_DIAGNOSTIC_BUDGET_EXHAUSTED"
+    # A complete directional turn needs two initial reservations. Do not
+    # launch a partial forward-only or reverse-only pair near a daily limit.
+    if len(active_day) + 2 > nvidia.NVIDIA_DAILY_REQUEST_BUDGET:
+        return False, "DAILY_BUDGET_INSUFFICIENT_FOR_DIRECTIONAL_PAIR"
+    required_category = "retry_reserve" if retry_mode else None
+    if required_category:
+        if category_counts[required_category] + 2 > nvidia.NVIDIA_BUDGET_CATEGORY_LIMITS[required_category]:
+            return False, "RETRY_RESERVE_INSUFFICIENT_FOR_DIRECTIONAL_PAIR"
+    else:
+        if category_counts["forward_discovery"] + 1 > nvidia.NVIDIA_BUDGET_CATEGORY_LIMITS["forward_discovery"]:
+            return False, "FORWARD_DISCOVERY_BUDGET_EXHAUSTED"
+        if category_counts["reverse_diagnostic"] + 1 > nvidia.NVIDIA_BUDGET_CATEGORY_LIMITS["reverse_diagnostic"]:
+            return False, "REVERSE_DIAGNOSTIC_BUDGET_EXHAUSTED"
     return True, "BUDGET_AVAILABLE"
 
 
@@ -278,22 +290,17 @@ def _read_only_next_cycle_probe(
         lock_path = root / "general_nvidia_lock.json"
 
         state = autonomous.read_state(state_path)
-        lock = nvidia.read_remote_lock()
+        lock_state, _lock_sha = nvidia.read_remote_lock()
         lock_path.write_text(
-            json.dumps(lock, ensure_ascii=False, sort_keys=True, allow_nan=False) + "\n",
+            json.dumps(lock_state, ensure_ascii=False, sort_keys=True, allow_nan=False) + "\n",
             encoding="utf-8",
         )
 
         authorization = autonomous.authorization_status(state)
         if not authorization["authorized"]:
             return False, "AUTONOMOUS_AUTHORIZATION_INACTIVE"
-        if lock.get("locked") is not False:
+        if lock_state.get("locked") is not False:
             return False, "GLOBAL_NVIDIA_LOCK_ACTIVE"
-
-        rate_state, _rate_head = nvidia.read_remote_rate_limit()
-        capacity, capacity_reason = budget_has_next_turn_capacity(rate_state)
-        if not capacity:
-            return False, capacity_reason
 
         attempts = state["attempts"]
         if not attempts:
@@ -308,9 +315,7 @@ def _read_only_next_cycle_probe(
         )
         if last_event is None:
             return False, "LAST_ATTEMPT_NOT_FINALIZED"
-        if last_event["outcome"] == "NO_ELIGIBLE_CANDIDATE":
-            return False, "NO_EXECUTABLE_HYPOTHESIS"
-        if last_event["outcome"] not in {"SUCCEEDED", "FAILED"}:
+        if last_event["outcome"] not in {"SUCCEEDED", "FAILED", "NO_ELIGIBLE_CANDIDATE"}:
             return False, "LAST_ATTEMPT_NOT_TERMINAL"
 
         # The existing scheduler is the authority for retries, manual-unlock
@@ -334,6 +339,24 @@ def _read_only_next_cycle_probe(
 
         if plan.get("eligible") is not True:
             return False, _safe_status_code(plan.get("status"), "NEXT_CYCLE_NOT_ELIGIBLE")
+
+        # NO_ELIGIBLE_CANDIDATE ends a session only while the same target is
+        # still active. A subsequently captured newer target is independent
+        # work and may proceed through the normal scheduler preflight.
+        if last_event["outcome"] == "NO_ELIGIBLE_CANDIDATE" and active is not None:
+            if (
+                active["target_date"] == last_attempt["target_date"]
+                and active["archive_sha256"] == last_attempt["archive_sha256"]
+            ):
+                return False, "NO_EXECUTABLE_HYPOTHESIS"
+
+        rate_state, _rate_head = nvidia.read_remote_rate_limit()
+        capacity, capacity_reason = budget_has_next_turn_capacity(
+            rate_state,
+            retry_mode=plan.get("retryable") is True,
+        )
+        if not capacity:
+            return False, capacity_reason
         return True, "NEXT_CYCLE_ELIGIBLE"
 
 
@@ -560,6 +583,8 @@ def main(argv: list[str] | None = None) -> int:
             _dispatch_workflow(
                 repository=args.repository,
                 token=token,
+                actor=os.environ.get("GITHUB_ACTOR", ""),
+                ref=os.environ.get("GITHUB_REF", ""),
                 session_id=args.session_id,
                 started_at_utc=args.started_at_utc,
                 deadline_at_utc=args.deadline_at_utc,
