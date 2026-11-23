@@ -1,6 +1,7 @@
 import copy
 import unittest
 from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 
 import general_continuous_research as continuous
 import general_nvidia_guard as nvidia
@@ -88,6 +89,7 @@ class ContinuousSessionContextTests(unittest.TestCase):
             "started_at_utc": self.context["started_at_utc"],
             "deadline_at_utc": self.context["deadline_at_utc"],
             "iteration": "2",
+            "parent_run_id": self.context["session_id"],
             "now": NOW + timedelta(minutes=3),
         }
         successor = continuous.build_session_context(**args)
@@ -196,8 +198,84 @@ class ContinuousSessionContextTests(unittest.TestCase):
                 started_at_utc=self.context["started_at_utc"],
                 deadline_at_utc=self.context["deadline_at_utc"],
                 next_iteration=2,
+                parent_run_id=self.context["session_id"],
                 now=NOW + timedelta(minutes=1),
             )
+
+
+
+
+    def test_parent_run_verification_requires_exact_workflow_and_dispatch_job(self):
+        parent = {
+            "id": 45150000001,
+            "workflow_id": continuous.AUTONOMOUS_WORKFLOW_ID,
+            "path": ".github/workflows/" + continuous.WORKFLOW_FILE,
+            "head_branch": "main",
+            "event": "schedule",
+            "status": "completed",
+            "conclusion": "success",
+            "repository": {"full_name": continuous.REPOSITORY},
+        }
+        jobs = {
+            "jobs": [{
+                "name": "continue-research",
+                "status": "completed",
+                "conclusion": "success",
+                "steps": [{
+                    "name": "Dispatch exactly one successor research turn",
+                    "status": "completed",
+                    "conclusion": "success",
+                }],
+            }]
+        }
+        with patch.object(
+            continuous, "_github_get_json", side_effect=[parent, jobs]
+        ) as get_json:
+            continuous.verify_parent_dispatch(
+                repository=continuous.REPOSITORY,
+                token="synthetic-read-token",
+                parent_run_id="45150000001",
+                current_run_id="45150000002",
+            )
+        self.assertEqual(get_json.call_count, 2)
+
+    def test_parent_run_verification_rejects_other_workflow_or_missing_dispatch_job(self):
+        parent = {
+            "id": 45150000001,
+            "workflow_id": continuous.AUTONOMOUS_WORKFLOW_ID + 1,
+            "path": ".github/workflows/" + continuous.WORKFLOW_FILE,
+            "head_branch": "main",
+            "event": "schedule",
+            "status": "completed",
+            "conclusion": "success",
+            "repository": {"full_name": continuous.REPOSITORY},
+        }
+        with patch.object(continuous, "_github_get_json", return_value=parent):
+            with self.assertRaises(continuous.ContinuousResearchError):
+                continuous.verify_parent_dispatch(
+                    repository=continuous.REPOSITORY,
+                    token="synthetic-read-token",
+                    parent_run_id="45150000001",
+                    current_run_id="45150000002",
+                )
+
+        parent["workflow_id"] = continuous.AUTONOMOUS_WORKFLOW_ID
+        jobs = {"jobs": [{
+            "name": "scheduled-cycle",
+            "status": "completed",
+            "conclusion": "success",
+            "steps": [],
+        }]}
+        with patch.object(
+            continuous, "_github_get_json", side_effect=[parent, jobs]
+        ):
+            with self.assertRaises(continuous.ContinuousResearchError):
+                continuous.verify_parent_dispatch(
+                    repository=continuous.REPOSITORY,
+                    token="synthetic-read-token",
+                    parent_run_id="45150000001",
+                    current_run_id="45150000002",
+                )
 
 
 class ContinuousBudgetPreflightTests(unittest.TestCase):
