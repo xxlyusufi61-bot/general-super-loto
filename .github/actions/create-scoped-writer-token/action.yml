@@ -40,7 +40,6 @@ runs:
           echo "SCOPED WRITER DEPLOYMENT GATE: PASS"
           exit 0
         fi
-
         if [ "$ALLOW_PREVALIDATION_BUDGET_MIGRATION" = "true" ]; then
           if [ -z "$BUDGET_WRITER_CLIENT_ID" ] || [ "$REQUESTED_CLIENT_ID" != "$BUDGET_WRITER_CLIENT_ID" ]; then
             echo "::error::Pre-validation migration exception is restricted to the configured NVIDIA Budget Writer identity."
@@ -53,7 +52,6 @@ runs:
           echo "SCOPED WRITER DEPLOYMENT GATE: narrow NVIDIA Budget Writer migration exception"
           exit 0
         fi
-
         if [ "$ALLOW_PREVALIDATION_SAFETY_LOCK" = "true" ]; then
           if [ -z "$MAIN_WRITER_CLIENT_ID" ] || [ "$REQUESTED_CLIENT_ID" != "$MAIN_WRITER_CLIENT_ID" ]; then
             echo "::error::Pre-validation exception is restricted to the configured Main Writer identity."
@@ -70,7 +68,6 @@ runs:
               ;;
           esac
         fi
-
         echo "::error::Scoped writer operations are disabled until GENERAL_SCOPED_WRITERS_VALIDATED=true."
         echo "::error::Run the post-merge read-only App validation, verify all three branch Rulesets, then set the repository variable."
         exit 1
