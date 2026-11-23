@@ -7,6 +7,7 @@ authoritative state and safety ledgers, and dispatches the next workflow run
 after the current iteration has been fully reported. Sessions have no
 time-based or iteration-count ceiling; existing safety and eligibility gates
 remain authoritative.
+"""
 from __future__ import annotations
 
 import argparse
@@ -79,6 +80,7 @@ def _positive_iteration(value: Any) -> int:
     except ValueError:
         raise ContinuousResearchError("The continuous iteration number is invalid.") from None
 
+
 def build_session_context(
     *,
     event_name: str,
@@ -132,6 +134,7 @@ def build_session_context(
         "parent_run_id": parent_id,
     }
 
+
 def validate_current_session_context(
     *,
     event_name: str,
@@ -180,6 +183,7 @@ def validate_current_session_context(
         "iteration": current_iteration,
         "parent_run_id": parent_id,
     }
+
 
 def _write_github_output(path: str | None, values: dict[str, Any]) -> None:
     if not path:
@@ -506,6 +510,7 @@ def build_continuation_plan(
         "next_iteration": next_iteration,
         "session_values_rendered": False,
     }
+
 
 def _dispatch_workflow(
     *,
