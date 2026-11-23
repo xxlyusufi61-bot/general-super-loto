@@ -100,6 +100,26 @@ class ContinuousSessionContextTests(unittest.TestCase):
         with self.assertRaises(continuous.ContinuousResearchError):
             continuous.build_session_context(**args)
 
+    def test_successor_requires_a_distinct_parent_run_id(self):
+        args = {
+            "event_name": "workflow_dispatch",
+            "action": "continue",
+            "actor": continuous.BOT_ACTOR,
+            "ref": "refs/heads/main",
+            "run_id": "45150000002",
+            "session_id": self.context["session_id"],
+            "started_at_utc": self.context["started_at_utc"],
+            "deadline_at_utc": self.context["deadline_at_utc"],
+            "iteration": "2",
+            "now": NOW + timedelta(minutes=3),
+        }
+        with self.assertRaises(continuous.ContinuousResearchError):
+            continuous.build_session_context(**args)
+
+        args["parent_run_id"] = "45150000002"
+        with self.assertRaises(continuous.ContinuousResearchError):
+            continuous.build_session_context(**args)
+
     def test_successor_rejects_wrong_action_same_run_expiry_and_iteration_overflow(self):
         args = {
             "event_name": "workflow_dispatch",
@@ -111,6 +131,7 @@ class ContinuousSessionContextTests(unittest.TestCase):
             "started_at_utc": self.context["started_at_utc"],
             "deadline_at_utc": self.context["deadline_at_utc"],
             "iteration": "2",
+            "parent_run_id": self.context["session_id"],
             "now": NOW + timedelta(minutes=3),
         }
         for changes in (
