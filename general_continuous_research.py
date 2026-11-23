@@ -477,6 +477,7 @@ def build_continuation_plan(
     context: dict[str, Any],
     current_run_id: str,
     report_delivered: bool,
+    research_attempt_made: bool,
     probe_result: tuple[bool, str],
     now: datetime | None = None,
 ) -> dict[str, Any]:
@@ -491,6 +492,9 @@ def build_continuation_plan(
     if parent_id:
         parent_id = _positive_run_id(parent_id, "parent run ID")
 
+    if type(research_attempt_made) is not bool:
+        raise ContinuousResearchError("Research-attempt flag must be a boolean.")
+
     enabled = False
     reason = "CONTINUATION_NOT_ELIGIBLE"
     next_iteration = None
@@ -502,12 +506,13 @@ def build_continuation_plan(
         reason = "SESSION_TIME_LIMIT_REACHED"
     elif iteration >= MAX_CONTINUOUS_ITERATIONS:
         reason = "ITERATION_SAFETY_LIMIT_REACHED"
+    elif research_attempt_made and report_delivered is not True:
+        # Never chain after an uncertain research-report delivery.
+        reason = "TELEGRAM_REPORT_NOT_CONFIRMED"
     elif not probe_ok:
         # No eligible target/hypothesis is a legitimate stop even when this
-        # iteration had no research attempt and therefore no Telegram report.
+        # iteration had no attempt and therefore no research Telegram report.
         reason = _safe_status_code(probe_reason, "NEXT_CYCLE_NOT_ELIGIBLE")
-    elif report_delivered is not True:
-        reason = "TELEGRAM_REPORT_NOT_CONFIRMED"
     else:
         enabled = True
         reason = "NEXT_RESEARCH_TURN_READY"
@@ -630,6 +635,7 @@ def main(argv: list[str] | None = None) -> int:
     plan_parser.add_argument("--iteration", required=True)
     plan_parser.add_argument("--parent-run-id", default="")
     plan_parser.add_argument("--report-delivered", choices=("true", "false"), required=True)
+    plan_parser.add_argument("--research-attempt-made", choices=("true", "false"), required=True)
     plan_parser.add_argument("--github-output")
 
     dispatch_parser = sub.add_parser("dispatch")
@@ -699,6 +705,7 @@ def main(argv: list[str] | None = None) -> int:
                 context=context,
                 current_run_id=args.run_id,
                 report_delivered=(args.report_delivered == "true"),
+                research_attempt_made=(args.research_attempt_made == "true"),
                 probe_result=probe,
             )
             _write_github_output(args.github_output, plan)
