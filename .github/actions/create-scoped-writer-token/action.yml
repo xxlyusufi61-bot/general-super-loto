@@ -11,6 +11,10 @@ inputs:
     description: Allow only an explicitly allowlisted Main Writer safety-lock operation before deployment validation.
     required: false
     default: 'false'
+  allow_prevalidation_budget_migration:
+    description: Allow only the dedicated NVIDIA Budget Writer in the exact one-shot migration workflow before the global writer gate is enabled.
+    required: false
+    default: 'false'
 outputs:
   token:
     description: Short-lived installation token scoped to this repository and contents write.
@@ -23,13 +27,30 @@ runs:
       env:
         WRITERS_VALIDATED: ${{ vars.GENERAL_SCOPED_WRITERS_VALIDATED }}
         ALLOW_PREVALIDATION_SAFETY_LOCK: ${{ inputs.allow_prevalidation_safety_lock }}
+        ALLOW_PREVALIDATION_BUDGET_MIGRATION: ${{ inputs.allow_prevalidation_budget_migration }}
         REQUESTED_CLIENT_ID: ${{ inputs.client_id }}
         MAIN_WRITER_CLIENT_ID: ${{ vars.GENERAL_MAIN_WRITER_APP_CLIENT_ID }}
+        BUDGET_WRITER_CLIENT_ID: ${{ vars.GENERAL_NVIDIA_BUDGET_WRITER_APP_CLIENT_ID }}
         WORKFLOW_REF: ${{ github.workflow_ref }}
+        EVENT_NAME: ${{ github.event_name }}
+        GITHUB_REF: ${{ github.ref }}
       run: |
         set -euo pipefail
         if [ "$WRITERS_VALIDATED" = "true" ]; then
           echo "SCOPED WRITER DEPLOYMENT GATE: PASS"
+          exit 0
+        fi
+
+        if [ "$ALLOW_PREVALIDATION_BUDGET_MIGRATION" = "true" ]; then
+          if [ -z "$BUDGET_WRITER_CLIENT_ID" ] || [ "$REQUESTED_CLIENT_ID" != "$BUDGET_WRITER_CLIENT_ID" ]; then
+            echo "::error::Pre-validation migration exception is restricted to the configured NVIDIA Budget Writer identity."
+            exit 1
+          fi
+          if [ "$EVENT_NAME" != "workflow_dispatch" ] || [ "$GITHUB_REF" != "refs/heads/main" ] || [ "$WORKFLOW_REF" != "xxlyusufi61-bot/general-super-loto/.github/workflows/general-nvidia-budget-migration.yml@refs/heads/main" ]; then
+            echo "::error::Pre-validation migration exception is restricted to the exact manual main-branch migration workflow."
+            exit 1
+          fi
+          echo "SCOPED WRITER DEPLOYMENT GATE: narrow NVIDIA Budget Writer migration exception"
           exit 0
         fi
 
