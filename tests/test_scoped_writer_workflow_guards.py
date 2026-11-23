@@ -64,12 +64,12 @@ class ScopedWriterWorkflowGuardTests(unittest.TestCase):
         token_index = action.index("uses: actions/create-github-app-token@")
         self.assertLess(gate_index, token_index)
         self.assertIn(
-            "WRITERS_VALIDATED: ${{ vars.GENERAL_SCOPED_WRITERS_VALIDATED }}",
+            "WRITERS_VALIDATED: ${{ inputs.writers_validated }}",
             action,
         )
         self.assertIn("default: 'false'", action)
         self.assertIn("inputs.allow_prevalidation_safety_lock", action)
-        self.assertIn("vars.GENERAL_MAIN_WRITER_APP_CLIENT_ID", action)
+        self.assertIn("inputs.main_writer_client_id", action)
         self.assertIn("github.workflow_ref", action)
         self.assertIn(
             "GENERAL_SCOPED_WRITERS_VALIDATED=true",
