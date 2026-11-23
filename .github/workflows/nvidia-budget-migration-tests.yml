@@ -1,6 +1,17 @@
 name: NVIDIA Budget Migration Regression Tests
 
 on:
+  push:
+    branches:
+      - '**'
+    paths:
+      - "general_nvidia_guard.py"
+      - "general_nvidia_budget_migrate.py"
+      - "general_writer_auth.py"
+      - "tests/test_general_nvidia_budget_migrate.py"
+      - "tests/test_general_writer_auth.py"
+      - ".github/workflows/general-nvidia-budget-migration.yml"
+      - ".github/workflows/nvidia-budget-migration-tests.yml"
   pull_request:
     paths:
       - "general_nvidia_guard.py"
