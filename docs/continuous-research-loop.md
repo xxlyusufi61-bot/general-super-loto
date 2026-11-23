@@ -16,11 +16,13 @@ research attempts.
 
 ## Session limits
 
-- One session lasts at most five hours from the original scheduled run.
+- The session opens a five-hour continuation window from the first
+  scheduled research run. No successor is dispatched at or after that deadline.
 - At most 150 whole research iterations may belong to one session.
 - Each iteration is a separate GitHub Actions workflow run with the existing
-  60-minute scheduled-cycle job timeout. The five-hour limit is the session
-  deadline, not a five-hour runner process.
+  60-minute scheduled-cycle job timeout. An iteration already in progress is
+  allowed to finish and report after the continuation deadline; only a new
+  iteration is blocked. The window is not a five-hour runner process.
 - The next scheduled six-hour trigger starts a new session. A session never
   extends its original deadline.
 - Only the scheduled event can create iteration 1. A successor is accepted only
