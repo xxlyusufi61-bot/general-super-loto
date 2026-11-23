@@ -7,6 +7,18 @@ inputs:
   private_key:
     description: Private key for the dedicated writer GitHub App.
     required: true
+  writers_validated:
+    description: Explicit repository deployment-gate value supplied by the calling workflow.
+    required: false
+    default: 'false'
+  main_writer_client_id:
+    description: Configured Main Writer App client ID supplied by the calling workflow.
+    required: false
+    default: ''
+  budget_writer_client_id:
+    description: Configured NVIDIA Budget Writer App client ID supplied by the calling workflow.
+    required: false
+    default: ''
   allow_prevalidation_safety_lock:
     description: Allow only an explicitly allowlisted Main Writer safety-lock operation before deployment validation.
     required: false
@@ -25,19 +37,22 @@ runs:
     - name: Verify scoped writer deployment gate
       shell: bash
       env:
-        WRITERS_VALIDATED: ${{ vars.GENERAL_SCOPED_WRITERS_VALIDATED }}
+        WRITERS_VALIDATED: ${{ inputs.writers_validated }}
         ALLOW_PREVALIDATION_SAFETY_LOCK: ${{ inputs.allow_prevalidation_safety_lock }}
         ALLOW_PREVALIDATION_BUDGET_MIGRATION: ${{ inputs.allow_prevalidation_budget_migration }}
         REQUESTED_CLIENT_ID: ${{ inputs.client_id }}
-        MAIN_WRITER_CLIENT_ID: ${{ vars.GENERAL_MAIN_WRITER_APP_CLIENT_ID }}
-        BUDGET_WRITER_CLIENT_ID: ${{ vars.GENERAL_NVIDIA_BUDGET_WRITER_APP_CLIENT_ID }}
+        MAIN_WRITER_CLIENT_ID: ${{ inputs.main_writer_client_id }}
+        BUDGET_WRITER_CLIENT_ID: ${{ inputs.budget_writer_client_id }}
         WORKFLOW_REF: ${{ github.workflow_ref }}
         EVENT_NAME: ${{ github.event_name }}
         GITHUB_REF: ${{ github.ref }}
       run: |
         set -euo pipefail
+        WRITERS_VALIDATED="${WRITERS_VALIDATED:-false}"
         ALLOW_PREVALIDATION_BUDGET_MIGRATION="${ALLOW_PREVALIDATION_BUDGET_MIGRATION:-false}"
+        ALLOW_PREVALIDATION_SAFETY_LOCK="${ALLOW_PREVALIDATION_SAFETY_LOCK:-false}"
         BUDGET_WRITER_CLIENT_ID="${BUDGET_WRITER_CLIENT_ID:-}"
+        MAIN_WRITER_CLIENT_ID="${MAIN_WRITER_CLIENT_ID:-}"
         if [ "$WRITERS_VALIDATED" = "true" ]; then
           echo "SCOPED WRITER DEPLOYMENT GATE: PASS"
           exit 0
