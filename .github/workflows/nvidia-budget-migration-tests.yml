@@ -17,6 +17,9 @@ on:
       - ".github/actions/create-scoped-writer-token/action.yml"
   pull_request:
     paths:
+      - "general_nvidia_writer_preflight.py"
+      - "tests/test_general_nvidia_writer_preflight.py"
+      - ".github/actions/create-scoped-writer-token/action.yml"
       - "general_nvidia_guard.py"
       - "general_nvidia_budget_migrate.py"
       - "general_writer_auth.py"
