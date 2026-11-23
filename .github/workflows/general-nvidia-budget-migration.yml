@@ -86,7 +86,7 @@ jobs:
           budget_writer_client_id: ${{ vars.GENERAL_NVIDIA_BUDGET_WRITER_APP_CLIENT_ID }}
           allow_prevalidation_budget_migration: 'true'
 
-      - name: Verify App identity, exact permissions, repository scope, and protected branch Ruleset
+      - name: Verify App identity, exact permissions, repository scope, and visible Ruleset configuration
         env:
           GENERAL_NVIDIA_BUDGET_WRITER_TOKEN: ${{ steps.nvidia-budget-writer.outputs.token }}
           GENERAL_NVIDIA_BUDGET_WRITER_APP_PRIVATE_KEY: ${{ secrets.GENERAL_NVIDIA_BUDGET_WRITER_APP_PRIVATE_KEY }}
@@ -151,7 +151,8 @@ jobs:
         run: |
           {
             echo "## NVIDIA budget migration preflight"
-            echo "- App identity, exact App permissions, installation repository scope, and budget Ruleset structure: PASS\n            echo "- Ruleset bypass actor: operator-confirmed Integration ID 5861647, bypass mode always.""
+            echo "- App identity, exact App permissions, installation repository scope, and budget Ruleset structure: PASS"
+            echo "- Ruleset bypass actor: operator-confirmed Integration ID 5861647, bypass mode always."
             echo "- Pinned V2 ledger validation and V3 conversion preview: PASS"
             echo "- No commit or push was made."
             echo "- No NVIDIA API request, research, runtime-state, authorization, lock, or global writer-gate operation was performed."
