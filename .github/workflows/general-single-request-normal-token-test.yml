@@ -156,6 +156,9 @@ jobs:
         with:
           client_id: ${{ vars.GENERAL_MAIN_WRITER_APP_CLIENT_ID }}
           private_key: ${{ secrets.GENERAL_MAIN_WRITER_APP_PRIVATE_KEY }}
+          writers_validated: ${{ vars.GENERAL_SCOPED_WRITERS_VALIDATED }}
+          main_writer_client_id: ${{ vars.GENERAL_MAIN_WRITER_APP_CLIENT_ID }}
+          budget_writer_client_id: ${{ vars.GENERAL_NVIDIA_BUDGET_WRITER_APP_CLIENT_ID }}
 
       - name: Temporarily unlock only for this verified workflow run
         id: temporary-unlock
@@ -190,6 +193,9 @@ jobs:
         with:
           client_id: ${{ vars.GENERAL_NVIDIA_BUDGET_WRITER_APP_CLIENT_ID }}
           private_key: ${{ secrets.GENERAL_NVIDIA_BUDGET_WRITER_APP_PRIVATE_KEY }}
+          writers_validated: ${{ vars.GENERAL_SCOPED_WRITERS_VALIDATED }}
+          main_writer_client_id: ${{ vars.GENERAL_MAIN_WRITER_APP_CLIENT_ID }}
+          budget_writer_client_id: ${{ vars.GENERAL_NVIDIA_BUDGET_WRITER_APP_CLIENT_ID }}
 
       - name: Run one normal-mode forward request with DEFAULT_MAX_COMPLETION_TOKENS
         id: normal-token-test
