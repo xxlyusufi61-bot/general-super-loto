@@ -47,6 +47,10 @@ class ContinuousSessionContextTests(unittest.TestCase):
             now=NOW,
         )
 
+    def test_controller_has_no_session_or_iteration_ceiling(self):
+        self.assertFalse(hasattr(continuous, "SESSION_WINDOW"))
+        self.assertFalse(hasattr(continuous, "MAX_CONTINUOUS_ITERATIONS"))
+
     def test_schedule_creates_open_ended_session_identity(self):
         self.assertEqual(self.context["session_id"], "45150000001")
         self.assertEqual(self.context["started_at_utc"], "2026-11-23T16:30:00Z")
@@ -170,7 +174,7 @@ class ContinuousSessionContextTests(unittest.TestCase):
         )
         self.assertEqual(checked["started_at_utc"], self.context["started_at_utc"])
 
-    def test_plan_requires_report_probe_and_remaining_session_budget(self):
+    def test_plan_requires_report_probe_and_eligibility(self):
         current = NOW + timedelta(minutes=2)
         no_report = continuous.build_continuation_plan(
             context=self.context,
@@ -266,6 +270,8 @@ class ContinuousSessionContextTests(unittest.TestCase):
         self.assertIn("steps.telegram_no_candidate.outcome", workflow)
         self.assertIn("steps.telegram_failure.outcome", workflow)
         self.assertNotIn("GENERAL_SCOPED_WRITERS_VALIDATED: true", workflow)
+        self.assertNotIn("continuous_deadline_at_utc", workflow)
+        self.assertNotIn("--deadline-at-utc", workflow)
 
     def test_scheduled_owner_actor_can_dispatch_one_successor(self):
         class Response:
