@@ -393,6 +393,9 @@ jobs:
         with:
           client_id: ${{ vars.GENERAL_NVIDIA_BUDGET_WRITER_APP_CLIENT_ID }}
           private_key: ${{ secrets.GENERAL_NVIDIA_BUDGET_WRITER_APP_PRIVATE_KEY }}
+          writers_validated: ${{ vars.GENERAL_SCOPED_WRITERS_VALIDATED }}
+          main_writer_client_id: ${{ vars.GENERAL_MAIN_WRITER_APP_CLIENT_ID }}
+          budget_writer_client_id: ${{ vars.GENERAL_NVIDIA_BUDGET_WRITER_APP_CLIENT_ID }}
 
       - name: Run independent forward and reverse NVIDIA discovery
         id: research
@@ -417,6 +420,9 @@ jobs:
         with:
           client_id: ${{ vars.GENERAL_MAIN_WRITER_APP_CLIENT_ID }}
           private_key: ${{ secrets.GENERAL_MAIN_WRITER_APP_PRIVATE_KEY }}
+          writers_validated: ${{ vars.GENERAL_SCOPED_WRITERS_VALIDATED }}
+          main_writer_client_id: ${{ vars.GENERAL_MAIN_WRITER_APP_CLIENT_ID }}
+          budget_writer_client_id: ${{ vars.GENERAL_NVIDIA_BUDGET_WRITER_APP_CLIENT_ID }}
           allow_prevalidation_safety_lock: 'true'
 
       - name: Activate global lock after an incomplete provider request
@@ -460,6 +466,9 @@ jobs:
         with:
           client_id: ${{ vars.GENERAL_MAIN_WRITER_APP_CLIENT_ID }}
           private_key: ${{ secrets.GENERAL_MAIN_WRITER_APP_PRIVATE_KEY }}
+          writers_validated: ${{ vars.GENERAL_SCOPED_WRITERS_VALIDATED }}
+          main_writer_client_id: ${{ vars.GENERAL_MAIN_WRITER_APP_CLIENT_ID }}
+          budget_writer_client_id: ${{ vars.GENERAL_NVIDIA_BUDGET_WRITER_APP_CLIENT_ID }}
 
       - name: Persist immutable sealed archive snapshot on main
         id: persist_claim_snapshot
