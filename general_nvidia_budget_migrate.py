@@ -56,7 +56,7 @@ def migrate_file(path: Path) -> dict:
     migrated, report = migrate_ledger(original)
     if report["status"] == "MIGRATED_V2_TO_V3":
         temp = path.with_suffix(path.suffix + ".tmp")
-        temp.write_text(json.dumps(migrated, ensure_ascii=False, indent=2) + "\\n", encoding="utf-8")
+        temp.write_text(json.dumps(migrated, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         temp.replace(path)
     return report
 
@@ -67,7 +67,7 @@ def main() -> int:
     try:
         report = migrate_file(args.ledger)
     except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
-        parser.exit(1, "NVIDIA BUDGET MIGRATION BLOCKED: " + str(exc) + "\\n")
+        parser.exit(1, "NVIDIA BUDGET MIGRATION BLOCKED: " + str(exc) + "\n")
     for key, value in report.items():
         print(f"{key}: {json.dumps(value, ensure_ascii=False, sort_keys=True)}")
     return 0
