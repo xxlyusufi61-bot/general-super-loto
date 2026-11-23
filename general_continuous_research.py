@@ -29,6 +29,7 @@ import general_target_queue as target_queue
 
 REPOSITORY = "xxlyusufi61-bot/general-super-loto"
 WORKFLOW_FILE = "general-autonomous-research.yml"
+AUTONOMOUS_WORKFLOW_ID = 403181605
 BOT_ACTOR = "github-actions[bot]"
 SESSION_WINDOW = timedelta(hours=5)
 MAX_CONTINUOUS_ITERATIONS = 150
@@ -91,6 +92,7 @@ def build_session_context(
     started_at_utc: str = "",
     deadline_at_utc: str = "",
     iteration: str = "",
+    parent_run_id: str = "",
     now: datetime | None = None,
 ) -> dict[str, Any]:
     """Create the first session envelope or validate a bot-dispatched successor."""
@@ -101,7 +103,7 @@ def build_session_context(
         raise ContinuousResearchError("Continuous research is restricted to the default branch.")
 
     if event_name == "schedule":
-        if session_id or started_at_utc or deadline_at_utc or iteration:
+        if session_id or started_at_utc or deadline_at_utc or iteration or parent_run_id:
             raise ContinuousResearchError("A scheduled session cannot inherit continuation inputs.")
         start = current.replace(microsecond=0)
         return {
@@ -115,6 +117,9 @@ def build_session_context(
         raise ContinuousResearchError("Only the internal bot continuation may start a successor run.")
 
     sid = _positive_run_id(session_id, "session ID")
+    parent_id = _positive_run_id(parent_run_id, "parent run ID")
+    if current_run_id == parent_id:
+        raise ContinuousResearchError("A successor cannot name itself as its parent run.")
     if current_run_id == sid:
         raise ContinuousResearchError("A continuation must use a new workflow run ID.")
     start = _parse_utc(started_at_utc, "session start")
@@ -136,6 +141,7 @@ def build_session_context(
         "started_at_utc": _format_utc(start),
         "deadline_at_utc": _format_utc(deadline),
         "iteration": current_iteration,
+        "parent_run_id": parent_id,
     }
 
 
@@ -150,6 +156,7 @@ def validate_current_session_context(
     started_at_utc: str,
     deadline_at_utc: str,
     iteration: str,
+    parent_run_id: str = "",
     now: datetime | None = None,
 ) -> dict[str, Any]:
     """Validate the envelope already created by session-context for this run."""
@@ -166,8 +173,9 @@ def validate_current_session_context(
         raise ContinuousResearchError("The continuous session is not currently active.")
 
     if event_name == "schedule":
-        if sid != current_run_id or current_iteration != 1 or action:
+        if sid != current_run_id or current_iteration != 1 or action or parent_run_id:
             raise ContinuousResearchError("The scheduled session identity does not match this run.")
+        parent_id = ""
     elif (
         event_name != "workflow_dispatch"
         or action != "continue"
@@ -176,12 +184,17 @@ def validate_current_session_context(
         or current_iteration < 2
     ):
         raise ContinuousResearchError("The successor session identity is not authorized.")
+    else:
+        parent_id = _positive_run_id(parent_run_id, "parent run ID")
+        if parent_id == current_run_id:
+            raise ContinuousResearchError("A successor cannot name itself as its parent run.")
 
     return {
         "session_id": sid,
         "started_at_utc": _format_utc(start),
         "deadline_at_utc": _format_utc(deadline),
         "iteration": current_iteration,
+        "parent_run_id": parent_id,
     }
 
 
@@ -198,6 +211,99 @@ def _write_github_output(path: str | None, values: dict[str, Any]) -> None:
             if "\n" in rendered or "\r" in rendered:
                 raise ContinuousResearchError("GitHub output values must be single-line.")
             stream.write(key + "=" + rendered + "\n")
+
+
+def _github_get_json(token: str, route: str) -> dict[str, Any]:
+    if not token:
+        raise ContinuousResearchError("A GitHub read token is required for parent-run validation.")
+    request = urllib.request.Request(
+        API_ROOT + route,
+        headers={
+            "Authorization": "Bearer " + token,
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "GENERAL-Continuous-Research-Preflight",
+        },
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            if getattr(response, "status", None) != 200:
+                raise ContinuousResearchError("GitHub did not confirm the parent-run identity.")
+            raw = response.read(1_000_001)
+    except urllib.error.HTTPError as exc:
+        raise ContinuousResearchError(
+            "GitHub parent-run verification failed with HTTP " + str(exc.code)
+        ) from None
+    except (urllib.error.URLError, TimeoutError, OSError):
+        raise ContinuousResearchError("GitHub parent-run verification was unavailable.") from None
+    if len(raw) > 1_000_000:
+        raise ContinuousResearchError("GitHub parent-run response exceeded the safety limit.")
+    try:
+        value = json.loads(raw.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError):
+        raise ContinuousResearchError("GitHub parent-run response was not valid JSON.") from None
+    if not isinstance(value, dict):
+        raise ContinuousResearchError("GitHub parent-run response has an invalid shape.")
+    return value
+
+
+def verify_parent_dispatch(
+    *,
+    repository: str,
+    token: str,
+    parent_run_id: str,
+    current_run_id: str,
+) -> None:
+    """Require the successor to be dispatched by this workflow's dedicated job."""
+    if repository != REPOSITORY:
+        raise ContinuousResearchError("Parent-run verification is restricted to the canonical repository.")
+    parent_id = _positive_run_id(parent_run_id, "parent run ID")
+    current_id = _positive_run_id(current_run_id)
+    if parent_id == current_id:
+        raise ContinuousResearchError("A workflow run cannot be its own parent.")
+
+    base = "/repos/" + urllib.parse.quote(repository, safe="/")
+    run = _github_get_json(token, base + "/actions/runs/" + parent_id)
+    if (
+        run.get("id") != int(parent_id)
+        or run.get("workflow_id") != AUTONOMOUS_WORKFLOW_ID
+        or run.get("path") != ".github/workflows/" + WORKFLOW_FILE
+        or run.get("head_branch") != "main"
+        or run.get("event") not in {"schedule", "workflow_dispatch"}
+        or run.get("status") not in {"in_progress", "completed"}
+        or (run.get("status") == "completed" and run.get("conclusion") != "success")
+        or not isinstance(run.get("repository"), dict)
+        or run["repository"].get("full_name") != REPOSITORY
+    ):
+        raise ContinuousResearchError("Parent run is not a valid GENERAL autonomous workflow run.")
+
+    jobs = _github_get_json(token, base + "/actions/runs/" + parent_id + "/jobs?per_page=100")
+    records = jobs.get("jobs")
+    if not isinstance(records, list):
+        raise ContinuousResearchError("Parent run did not return its job list.")
+    valid_dispatch = False
+    for job in records:
+        if not isinstance(job, dict) or job.get("name") != "continue-research":
+            continue
+        if job.get("status") not in {"in_progress", "completed"}:
+            continue
+        if job.get("status") == "completed" and job.get("conclusion") != "success":
+            continue
+        steps = job.get("steps")
+        if not isinstance(steps, list):
+            continue
+        if any(
+            isinstance(step, dict)
+            and step.get("name") == "Dispatch exactly one successor research turn"
+            and step.get("status") in {"in_progress", "completed"}
+            and step.get("conclusion") in {None, "success"}
+            for step in steps
+        ):
+            valid_dispatch = True
+            break
+    if not valid_dispatch:
+        raise ContinuousResearchError("Parent run did not execute the authorized continuation job.")
 
 
 def _timestamp_from_ledger(value: str) -> datetime:
@@ -381,6 +487,9 @@ def build_continuation_plan(
     started = _parse_utc(context.get("started_at_utc"), "session start")
     deadline = _parse_utc(context.get("deadline_at_utc"), "session deadline")
     iteration = _positive_iteration(context.get("iteration"))
+    parent_id = context.get("parent_run_id", "")
+    if parent_id:
+        parent_id = _positive_run_id(parent_id, "parent run ID")
 
     enabled = False
     reason = "CONTINUATION_NOT_ELIGIBLE"
@@ -410,6 +519,7 @@ def build_continuation_plan(
         "started_at_utc": _format_utc(started),
         "deadline_at_utc": _format_utc(deadline),
         "iteration": iteration,
+        "parent_run_id": parent_id,
         "next_iteration": next_iteration,
         "session_values_rendered": False,
     }
@@ -425,6 +535,7 @@ def _dispatch_workflow(
     started_at_utc: str,
     deadline_at_utc: str,
     next_iteration: int,
+    parent_run_id: str,
     now: datetime | None = None,
 ) -> None:
     """Make one non-retried workflow_dispatch request; uncertain delivery is reported, not replayed."""
@@ -435,6 +546,7 @@ def _dispatch_workflow(
     if not token:
         raise ContinuousResearchError("A GitHub Actions token is required for continuation dispatch.")
     sid = _positive_run_id(session_id, "session ID")
+    parent_id = _positive_run_id(parent_run_id, "parent run ID")
     start = _parse_utc(started_at_utc, "session start")
     deadline = _parse_utc(deadline_at_utc, "session deadline")
     current = _now_utc(now)
@@ -453,6 +565,7 @@ def _dispatch_workflow(
         "inputs": {
             "action": "continue",
             "continuous_session_id": sid,
+            "continuous_parent_run_id": parent_id,
             "continuous_started_at_utc": _format_utc(start),
             "continuous_deadline_at_utc": _format_utc(deadline),
             "continuous_iteration": str(next_iteration),
@@ -500,6 +613,7 @@ def main(argv: list[str] | None = None) -> int:
     context_parser.add_argument("--started-at-utc", default="")
     context_parser.add_argument("--deadline-at-utc", default="")
     context_parser.add_argument("--iteration", default="")
+    context_parser.add_argument("--parent-run-id", default="")
     context_parser.add_argument("--github-output")
 
     plan_parser = sub.add_parser("plan-next")
@@ -513,6 +627,7 @@ def main(argv: list[str] | None = None) -> int:
     plan_parser.add_argument("--started-at-utc", required=True)
     plan_parser.add_argument("--deadline-at-utc", required=True)
     plan_parser.add_argument("--iteration", required=True)
+    plan_parser.add_argument("--parent-run-id", default="")
     plan_parser.add_argument("--report-delivered", choices=("true", "false"), required=True)
     plan_parser.add_argument("--github-output")
 
@@ -536,7 +651,15 @@ def main(argv: list[str] | None = None) -> int:
                 started_at_utc=args.started_at_utc,
                 deadline_at_utc=args.deadline_at_utc,
                 iteration=args.iteration,
+                parent_run_id=args.parent_run_id,
             )
+            if args.event == "workflow_dispatch":
+                verify_parent_dispatch(
+                    repository=os.environ.get("GITHUB_REPOSITORY", ""),
+                    token=os.environ.get("GITHUB_TOKEN", ""),
+                    parent_run_id=args.parent_run_id,
+                    current_run_id=args.run_id,
+                )
             _write_github_output(args.github_output, context)
             print(json.dumps({
                 "status": "CONTINUOUS_SESSION_CONTEXT_VALID",
@@ -556,6 +679,7 @@ def main(argv: list[str] | None = None) -> int:
                 started_at_utc=args.started_at_utc,
                 deadline_at_utc=args.deadline_at_utc,
                 iteration=args.iteration,
+                parent_run_id=args.parent_run_id,
             )
             current = _now_utc()
             if current >= _parse_utc(context["deadline_at_utc"], "session deadline"):
@@ -599,6 +723,7 @@ def main(argv: list[str] | None = None) -> int:
                 started_at_utc=args.started_at_utc,
                 deadline_at_utc=args.deadline_at_utc,
                 next_iteration=args.next_iteration,
+                parent_run_id=os.environ.get("GITHUB_RUN_ID", ""),
             )
             print(json.dumps({
                 "status": "NEXT_RESEARCH_WORKFLOW_DISPATCHED",
