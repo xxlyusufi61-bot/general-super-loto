@@ -1,21 +1,31 @@
-# One-time NVIDIA budget ledger migration
+# Guarded one-time NVIDIA budget ledger migration
 
-The manual workflow `.github/workflows/general-nvidia-budget-migration.yml` is the only supported one-shot persistence path for the known schema-v2 to schema-v3 budget-ledger conversion.
+The manual workflow `.github/workflows/general-nvidia-budget-migration.yml` is the only supported persistence path for the known schema-v2 to schema-v3 budget-ledger conversion.
 
-## Safety contract
+## Two explicit modes
 
-- Dispatch is accepted only from `main` with the exact approval input `I_APPROVE_PERSIST_NVIDIA_BUDGET_V2_TO_V3`.
-- The workflow uses the dedicated NVIDIA Budget Writer token for the sole write to `general-nvidia-rate-limit-state`.
-- The repository's existing scoped-writer deployment gate remains mandatory. This workflow does not bypass or modify it.
-- The workflow is serialized with all other NVIDIA request/reservation work through the existing `general-nvidia-api` concurrency group.
-- Only the known exact v2 ledger shapes (72/day or 200/day, with their historical category allocations and package cap 4) are accepted by the existing canonical validator.
-- The converter preserves the complete rolling request history, daily reservation history, reservation IDs, package IDs, and diagnostic run IDs. It changes only the schema/policy fields to v3: 1,500/day with allocations 750/225/150/225/150, and removes the legacy package cap.
+- `preflight` is the default. It validates the dedicated GitHub App, exact App permissions, installation-token repository scope, the active budget-branch Ruleset, and a pinned ledger conversion preview. It does not commit or push.
+- `migrate` requires the exact approval input `I_APPROVE_PERSIST_NVIDIA_BUDGET_V2_TO_V3`. It repeats every preflight check in the same serialized run before it can write.
+
+## Writer isolation
+
+- The global `GENERAL_SCOPED_WRITERS_VALIDATED` gate is not changed or enabled.
+- Before that global gate is enabled, the token action permits one narrow exception only: the exact manual migration workflow on `main`, with the configured NVIDIA Budget Writer client ID. All other pre-validation writer operations remain blocked.
+- The workflow obtains a short-lived token for only `general-super-loto` and requests only `Contents: write`.
+- A read-only `GITHUB_TOKEN` with `Administration: read` inspects Ruleset `27814116`. The App's own signed JWT is used to inspect the App's declared permissions. The preflight requires the Ruleset's sole Integration bypass actor to equal the App ID, the App slug to be `general-nvidia-budget-writer`, and the exact App permissions to be `contents: write` plus default `metadata: read`.
+- The installation token must expose exactly one repository: `xxlyusufi61-bot/general-super-loto`.
+- The Ruleset must be active and protect only `general-nvidia-rate-limit-state`, with exactly deletion, update, and non-fast-forward protections.
+
+## Ledger and concurrency guarantees
+
+- The workflow shares the existing `general-nvidia-api` concurrency group with NVIDIA reservation work.
+- The budget branch head is fetched and pinned before conversion. The converter and validator are copied from the trusted `main` checkout before switching to the state branch, preventing stale or missing code on the state branch from being executed.
+- Only exact known V2 formats (72/day or 200/day with their historical allocations and package cap 4) are accepted.
+- The complete rolling request history, daily reservation history, reservation IDs, package IDs, and diagnostic run IDs are preserved. V3 policy is 1,500/day with allocations 750/225/150/225/150, and the legacy package cap is removed.
 - Unknown, malformed, duplicate-key, or invalid history fails closed.
-- A valid v3 ledger is an idempotent no-op. A concurrent branch advance causes the normal fast-forward push to fail; the workflow never force-pushes or retries against a changed head.
-- The workflow makes no NVIDIA API request, starts no research, and does not touch runtime state, authorization, global lock, or the scoped-writer gate.
+- The workflow stages only `general_nvidia_rate_limit.json`. A concurrent branch advance causes a normal fast-forward push to fail; it never force-pushes or retries against a changed head.
+- A valid V3 ledger is an idempotent no-op.
 
-## Development and execution boundary
+## Execution boundary
 
-Pull-request CI tests synthetic known-v2, invalid-v2, history-preservation, and already-v3 cases. They do not read or mutate the production ledger.
-
-A successful PR merge only installs the workflow and converter. The real migration occurs only when an operator separately dispatches the workflow with the exact approval input. The workflow's run summary records the migration status and reservation-history digest without exposing reservation payloads.
+Merging the code does not run the migration. A preflight dispatch is read-only with respect to repository state. Persisting V3 requires a separate manual dispatch in `migrate` mode with the exact approval phrase. Neither mode sends NVIDIA API requests or starts research, and neither changes runtime state, authorization, the global lock, or the global writer gate.
