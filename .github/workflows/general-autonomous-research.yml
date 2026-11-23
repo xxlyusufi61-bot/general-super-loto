@@ -765,7 +765,7 @@ jobs:
             --research-attempt-made "$RESEARCH_ATTEMPT_MADE" \
             --github-output "$GITHUB_OUTPUT"
       - name: Report why the continuous research session stopped
-        if: ${{ always() && steps.continuation_plan.outcome == 'success' && steps.continuation_plan.outputs.continue_enabled != 'true' && steps.continuation_plan.outputs.stop_reason != '' && steps.continuation_plan.outputs.stop_reason != 'NO_EXECUTABLE_HYPOTHESIS' && steps.continuation_plan.outputs.stop_reason != 'TELEGRAM_REPORT_NOT_CONFIRMED' }}
+        if: ${{ always() && steps.continuation_plan.outcome == 'success' && steps.continuation_plan.outputs.continue_enabled != 'true' && steps.continuation_plan.outputs.stop_reason != '' && steps.continuation_plan.outputs.stop_reason != 'NO_EXECUTABLE_HYPOTHESIS' && steps.continuation_plan.outputs.stop_reason != 'TELEGRAM_REPORT_NOT_CONFIRMED' && steps.skipped_global_lock.outcome == 'skipped' }}
         continue-on-error: true
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
