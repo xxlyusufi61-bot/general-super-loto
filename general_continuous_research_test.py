@@ -216,6 +216,7 @@ class ContinuousSessionContextTests(unittest.TestCase):
             context=capped,
             current_run_id="45150000001",
             report_delivered=True,
+            research_attempt_made=True,
             probe_result=(True, "NEXT_CYCLE_ELIGIBLE"),
             now=NOW + timedelta(minutes=1),
         )
