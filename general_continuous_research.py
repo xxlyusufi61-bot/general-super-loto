@@ -495,22 +495,23 @@ def build_continuation_plan(
     reason = "CONTINUATION_NOT_ELIGIBLE"
     next_iteration = None
 
+    probe_ok, probe_reason = probe_result
     if deadline - started != SESSION_WINDOW:
         reason = "INVALID_SESSION_WINDOW"
     elif current >= deadline:
         reason = "SESSION_TIME_LIMIT_REACHED"
     elif iteration >= MAX_CONTINUOUS_ITERATIONS:
         reason = "ITERATION_SAFETY_LIMIT_REACHED"
+    elif not probe_ok:
+        # No eligible target/hypothesis is a legitimate stop even when this
+        # iteration had no research attempt and therefore no Telegram report.
+        reason = _safe_status_code(probe_reason, "NEXT_CYCLE_NOT_ELIGIBLE")
     elif report_delivered is not True:
         reason = "TELEGRAM_REPORT_NOT_CONFIRMED"
     else:
-        probe_ok, probe_reason = probe_result
-        if probe_ok:
-            enabled = True
-            reason = "NEXT_RESEARCH_TURN_READY"
-            next_iteration = iteration + 1
-        else:
-            reason = _safe_status_code(probe_reason, "NEXT_CYCLE_NOT_ELIGIBLE")
+        enabled = True
+        reason = "NEXT_RESEARCH_TURN_READY"
+        next_iteration = iteration + 1
 
     return {
         "continue_enabled": enabled,
@@ -684,8 +685,6 @@ def main(argv: list[str] | None = None) -> int:
             current = _now_utc()
             if current >= _parse_utc(context["deadline_at_utc"], "session deadline"):
                 probe = (False, "SESSION_TIME_LIMIT_REACHED")
-            elif args.report_delivered != "true":
-                probe = (False, "TELEGRAM_REPORT_NOT_CONFIRMED")
             else:
                 token = os.environ.get("GITHUB_TOKEN", "").strip()
                 try:
