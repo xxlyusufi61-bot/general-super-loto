@@ -802,6 +802,8 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          ACTION: ${{ inputs.action }}
           GITHUB_REF: ${{ github.ref }}
           SESSION_ID: ${{ needs.scheduled-cycle.outputs.session_id }}
           STARTED_AT_UTC: ${{ needs.scheduled-cycle.outputs.started_at_utc }}
