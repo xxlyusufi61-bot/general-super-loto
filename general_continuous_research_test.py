@@ -1,6 +1,7 @@
 import copy
 import unittest
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from unittest.mock import patch
 
 import general_continuous_research as continuous
@@ -240,6 +241,25 @@ class ContinuousSessionContextTests(unittest.TestCase):
 
 
 
+
+    def test_workflow_continuation_is_bot_only_and_scoped(self):
+        workflow_path = (
+            Path(__file__).resolve().parent
+            / ".github"
+            / "workflows"
+            / "general-autonomous-research.yml"
+        )
+        workflow = workflow_path.read_text(encoding="utf-8")
+        self.assertIn("github.actor == 'github-actions[bot]'", workflow)
+        self.assertIn("vars.GENERAL_SCOPED_WRITERS_VALIDATED == 'true'", workflow)
+        self.assertIn("continuous_parent_run_id", workflow)
+        self.assertIn("actions: write", workflow)
+        self.assertIn("contents: read", workflow)
+        self.assertIn("steps.attempt_reservation.outputs.attempt_id", workflow)
+        self.assertIn("steps.telegram_success.outcome", workflow)
+        self.assertIn("steps.telegram_no_candidate.outcome", workflow)
+        self.assertIn("steps.telegram_failure.outcome", workflow)
+        self.assertNotIn("GENERAL_SCOPED_WRITERS_VALIDATED: true", workflow)
 
     def test_parent_run_verification_requires_exact_workflow_and_dispatch_job(self):
         parent = {
