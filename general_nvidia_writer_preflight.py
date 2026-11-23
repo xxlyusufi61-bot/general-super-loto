@@ -56,19 +56,17 @@ def create_app_jwt(app_id: int, private_key: str, now: int | None = None) -> str
     return (signing_input.decode("ascii") + "." + signature)
 
 
-def request_json(path: str, token: str, *, jwt: bool = False) -> dict:
+def request_json(path: str, token: str = "", *, jwt: bool = False) -> dict:
     if not path.startswith("/"):
         raise ValueError("GitHub API path must be absolute")
-    request = Request(
-        API_ROOT + path,
-        headers={
-            "Accept": "application/vnd.github+json",
-            "Authorization": ("Bearer " if jwt else "token ") + token,
-            "X-GitHub-Api-Version": "2022-11-28",
-            "User-Agent": "GENERAL-NVIDIA-Budget-Preflight",
-        },
-        method="GET",
-    )
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "GENERAL-NVIDIA-Budget-Preflight",
+    }
+    if token:
+        headers["Authorization"] = ("Bearer " if jwt else "token ") + token
+    request = Request(API_ROOT + path, headers=headers, method="GET")
     try:
         with urlopen(request, timeout=20) as response:
             value = json.loads(response.read().decode("utf-8"))
@@ -138,16 +136,14 @@ def validate_preflight_payloads(app: dict, repositories: dict, ruleset: dict) ->
 def run_preflight() -> dict:
     writer_token = os.environ.get("GENERAL_NVIDIA_BUDGET_WRITER_TOKEN", "")
     private_key = os.environ.get("GENERAL_NVIDIA_BUDGET_WRITER_APP_PRIVATE_KEY", "")
-    github_token = os.environ.get("GITHUB_TOKEN", "")
     repository = os.environ.get("GITHUB_REPOSITORY", "")
-    if not writer_token or not private_key or not github_token:
-        raise ValueError("Required short-lived writer token or read-only preflight credentials are missing")
+    if not writer_token or not private_key:
+        raise ValueError("Required short-lived writer token or App private key is missing")
     if repository != EXPECTED_REPOSITORY:
         raise ValueError("Preflight was invoked from an unexpected repository")
 
     ruleset = request_json(
         f"/repos/{EXPECTED_REPOSITORY}/rulesets/{EXPECTED_RULESET_ID}",
-        github_token,
     )
     bypass = ruleset.get("bypass_actors")
     if not isinstance(bypass, list) or len(bypass) != 1 or not isinstance(bypass[0], dict):
