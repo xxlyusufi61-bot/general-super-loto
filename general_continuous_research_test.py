@@ -409,10 +409,20 @@ class ContinuousBudgetPreflightTests(unittest.TestCase):
         self.assertFalse(ready)
         self.assertEqual(reason, "DAILY_BUDGET_INSUFFICIENT_FOR_DIRECTIONAL_PAIR")
 
-        state = rate_state_with(minute=40)
+        state = rate_state_with(minute=39)
         ready, reason = continuous.budget_has_next_turn_capacity(state, now=NOW)
         self.assertFalse(ready)
-        self.assertEqual(reason, "HARD_RATE_LIMIT_EXHAUSTED")
+        self.assertEqual(reason, "HARD_RATE_LIMIT_INSUFFICIENT_FOR_DIRECTIONAL_PAIR")
+
+        state = rate_state_with(minute=29)
+        ready, reason = continuous.budget_has_next_turn_capacity(state, now=NOW)
+        self.assertFalse(ready)
+        self.assertEqual(reason, "NORMAL_RATE_LIMIT_INSUFFICIENT_FOR_DIRECTIONAL_PAIR")
+
+        state = rate_state_with(minute=28)
+        ready, reason = continuous.budget_has_next_turn_capacity(state, now=NOW)
+        self.assertTrue(ready)
+        self.assertEqual(reason, "BUDGET_AVAILABLE")
 
     def test_known_schema_v2_is_only_migrated_in_memory(self):
         state = rate_state_with()
