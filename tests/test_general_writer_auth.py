@@ -118,3 +118,43 @@ class WriterAuthTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CompositeWriterActionContractTests(unittest.TestCase):
+    def test_composite_action_does_not_reference_unavailable_vars_context(self):
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[1]
+        action = (root / ".github/actions/create-scoped-writer-token/action.yml").read_text(encoding="utf-8")
+        self.assertNotIn("${{ vars.", action)
+        for required_input in (
+            "writers_validated:",
+            "main_writer_client_id:",
+            "budget_writer_client_id:",
+        ):
+            self.assertIn(required_input, action)
+
+    def test_every_composite_action_caller_passes_explicit_gate_inputs(self):
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[1]
+        workflow_dir = root / ".github/workflows"
+        required = (
+            "writers_validated:",
+            "main_writer_client_id:",
+            "budget_writer_client_id:",
+        )
+        callers = []
+        for path in list(workflow_dir.glob("*.yml")) + list(workflow_dir.glob("*.yaml")):
+            lines = path.read_text(encoding="utf-8").splitlines()
+            for index, line in enumerate(lines):
+                if "uses: ./.github/actions/create-scoped-writer-token" not in line:
+                    continue
+                block = lines[index + 1 : index + 16]
+                for key in required:
+                    self.assertTrue(
+                        any(item.lstrip().startswith(key) for item in block),
+                        f"{path.name} does not pass {key}",
+                    )
+                callers.append(path.name)
+        self.assertGreater(len(callers), 0, "No composite writer action callers were found.")

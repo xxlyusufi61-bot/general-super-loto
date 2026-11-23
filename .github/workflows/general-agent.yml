@@ -248,6 +248,9 @@ jobs:
         with:
           client_id: ${{ vars.GENERAL_NVIDIA_BUDGET_WRITER_APP_CLIENT_ID }}
           private_key: ${{ secrets.GENERAL_NVIDIA_BUDGET_WRITER_APP_PRIVATE_KEY }}
+          writers_validated: ${{ vars.GENERAL_SCOPED_WRITERS_VALIDATED }}
+          main_writer_client_id: ${{ vars.GENERAL_MAIN_WRITER_APP_CLIENT_ID }}
+          budget_writer_client_id: ${{ vars.GENERAL_NVIDIA_BUDGET_WRITER_APP_CLIENT_ID }}
 
       - name: Run selected GENERAL agent
         id: run-agent
@@ -290,6 +293,9 @@ jobs:
         with:
           client_id: ${{ vars.GENERAL_MAIN_WRITER_APP_CLIENT_ID }}
           private_key: ${{ secrets.GENERAL_MAIN_WRITER_APP_PRIVATE_KEY }}
+          writers_validated: ${{ vars.GENERAL_SCOPED_WRITERS_VALIDATED }}
+          main_writer_client_id: ${{ vars.GENERAL_MAIN_WRITER_APP_CLIENT_ID }}
+          budget_writer_client_id: ${{ vars.GENERAL_NVIDIA_BUDGET_WRITER_APP_CLIENT_ID }}
           allow_prevalidation_safety_lock: 'true'
 
       - name: Activate global lock if an NVIDIA request failed
@@ -373,6 +379,9 @@ jobs:
         with:
           client_id: ${{ vars.GENERAL_MAIN_WRITER_APP_CLIENT_ID }}
           private_key: ${{ secrets.GENERAL_MAIN_WRITER_APP_PRIVATE_KEY }}
+          writers_validated: ${{ vars.GENERAL_SCOPED_WRITERS_VALIDATED }}
+          main_writer_client_id: ${{ vars.GENERAL_MAIN_WRITER_APP_CLIENT_ID }}
+          budget_writer_client_id: ${{ vars.GENERAL_NVIDIA_BUDGET_WRITER_APP_CLIENT_ID }}
 
       - name: Publish single-agent memory for human review only
         if: ${{ always() && steps.memory-proposal.outputs.has_new_entries == 'true' && inputs.publish_memory_pr == 'YES' }}

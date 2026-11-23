@@ -126,6 +126,9 @@ jobs:
         with:
           client_id: ${{ vars.GENERAL_NVIDIA_BUDGET_WRITER_APP_CLIENT_ID }}
           private_key: ${{ secrets.GENERAL_NVIDIA_BUDGET_WRITER_APP_PRIVATE_KEY }}
+          writers_validated: ${{ vars.GENERAL_SCOPED_WRITERS_VALIDATED }}
+          main_writer_client_id: ${{ vars.GENERAL_MAIN_WRITER_APP_CLIENT_ID }}
+          budget_writer_client_id: ${{ vars.GENERAL_NVIDIA_BUDGET_WRITER_APP_CLIENT_ID }}
 
       - name: Run exactly one forward diagnostic request
         id: nvidia-diagnostic
@@ -152,6 +155,9 @@ jobs:
         with:
           client_id: ${{ vars.GENERAL_MAIN_WRITER_APP_CLIENT_ID }}
           private_key: ${{ secrets.GENERAL_MAIN_WRITER_APP_PRIVATE_KEY }}
+          writers_validated: ${{ vars.GENERAL_SCOPED_WRITERS_VALIDATED }}
+          main_writer_client_id: ${{ vars.GENERAL_MAIN_WRITER_APP_CLIENT_ID }}
+          budget_writer_client_id: ${{ vars.GENERAL_NVIDIA_BUDGET_WRITER_APP_CLIENT_ID }}
           allow_prevalidation_safety_lock: 'true'
 
       - name: Activate global lock after an incomplete provider request
