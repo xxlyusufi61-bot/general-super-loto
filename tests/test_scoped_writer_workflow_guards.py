@@ -283,6 +283,19 @@ puts JSON.generate({"jobs" => jobs.transform_values { |job| job.is_a?(Hash) ? jo
         self.assertIn("GET /installation/repositories", workflow)
         self.assertNotIn("GENERAL_SCOPED_WRITERS_VALIDATED", workflow)
 
+    def test_budget_migration_requires_explicit_ruleset_bypass_confirmation(self):
+        workflow = (
+            ROOT / ".github/workflows/general-nvidia-budget-migration.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("ruleset_bypass_confirmed:", workflow)
+        self.assertIn("default: \"NO\"", workflow)
+        self.assertIn("RULESET_BYPASS_CONFIRMED: ${{ inputs.ruleset_bypass_confirmed }}", workflow)
+        self.assertIn('if [ "$RULESET_BYPASS_CONFIRMED" != "YES" ]', workflow)
+        self.assertIn("Integration ID 5861647, bypass mode always", workflow)
+        preflight = (ROOT / "general_nvidia_writer_preflight.py").read_text(encoding="utf-8")
+        self.assertIn("EXPECTED_APP_ID = 5861647", preflight)
+        self.assertNotIn('ruleset.get("bypass_actors")', preflight)
+
     def test_single_request_checkout_uses_one_with_mapping(self):
         path = ROOT / ".github/workflows/general-single-request-normal-token-test.yml"
         lines = path.read_text(encoding="utf-8").splitlines()
