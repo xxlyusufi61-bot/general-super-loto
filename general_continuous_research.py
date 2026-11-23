@@ -409,20 +409,20 @@ def _read_only_next_cycle_probe(
             return False, "GLOBAL_NVIDIA_LOCK_ACTIVE"
 
         attempts = state["attempts"]
-        if not attempts:
-            return False, "NO_RESEARCH_ATTEMPT_RECORDED"
-        last_attempt = attempts[-1]
-        last_event = next(
-            (
-                item for item in reversed(state["events"])
-                if item["attempt_id"] == last_attempt["attempt_id"]
-            ),
-            None,
-        )
-        if last_event is None:
-            return False, "LAST_ATTEMPT_NOT_FINALIZED"
-        if last_event["outcome"] not in {"SUCCEEDED", "FAILED", "NO_ELIGIBLE_CANDIDATE"}:
-            return False, "LAST_ATTEMPT_NOT_TERMINAL"
+        last_attempt = attempts[-1] if attempts else None
+        last_event = None
+        if last_attempt is not None:
+            last_event = next(
+                (
+                    item for item in reversed(state["events"])
+                    if item["attempt_id"] == last_attempt["attempt_id"]
+                ),
+                None,
+            )
+            if last_event is None:
+                return False, "LAST_ATTEMPT_NOT_FINALIZED"
+            if last_event["outcome"] not in {"SUCCEEDED", "FAILED", "NO_ELIGIBLE_CANDIDATE"}:
+                return False, "LAST_ATTEMPT_NOT_TERMINAL"
 
         # The existing scheduler is the authority for retries, manual-unlock
         # rules, the per-target failed-attempt ceiling, frozen-claim recovery,
@@ -455,7 +455,7 @@ def _read_only_next_cycle_probe(
         # NO_ELIGIBLE_CANDIDATE ends a session only while the same target is
         # still active. A subsequently captured newer target is independent
         # work and may proceed through the normal scheduler preflight.
-        if last_event["outcome"] == "NO_ELIGIBLE_CANDIDATE" and active is not None:
+        if last_event is not None and last_event["outcome"] == "NO_ELIGIBLE_CANDIDATE" and active is not None:
             if (
                 active["target_date"] == last_attempt["target_date"]
                 and active["archive_sha256"] == last_attempt["archive_sha256"]
