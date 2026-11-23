@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The autonomous research workflow now supports a bounded serial chain of complete
+The autonomous research workflow now supports a serial chain of complete
 research runs. A six-hour scheduled trigger starts a session. After one complete
 research/evaluation attempt and its matching Telegram outcome report, a small
 read-only controller determines whether another full run is eligible. If so,
@@ -14,22 +14,20 @@ research, sealed evaluation, state publication, and Telegram reporting. The
 system does not loop only the model-prompt step and does not create parallel
 research attempts.
 
-## Session limits
+## Session behavior
 
-- The session opens a five-hour continuation window from the first
-  scheduled research run. No successor is dispatched at or after that deadline.
-- At most 150 whole research iterations may belong to one session.
-- Each iteration is a separate GitHub Actions workflow run with the existing
-  60-minute scheduled-cycle job timeout. An iteration already in progress is
-  allowed to finish and report after the continuation deadline; only a new
-  iteration is blocked. The window is not a five-hour runner process.
-- The next scheduled six-hour trigger starts a new session. A session never
-  extends its original deadline.
-- Only the scheduled event can create iteration 1. A successor is accepted only
-  on main, through workflow_dispatch, with action continue, and actor
-  github-actions[bot]. The child verifies its parent run is this workflow and
-  that the parent's dedicated continue-research job actually dispatched it.
-  Manually selecting continue does not authorize a run.
+- A scheduled trigger opens a continuous research chain. The chain has no
+  fixed session-duration limit and no maximum research-iteration count.
+- Each iteration is a separate GitHub Actions workflow run. The original
+  session ID and start timestamp are propagated for lineage and audit; neither
+  is used to expire the session or cap the number of turns.
+- The existing 60-minute timeout on an individual scheduled-cycle job remains
+  unchanged. It is a per-run infrastructure timeout, not a session-duration
+  or research-turn ceiling. A successor is a separate workflow run.
+- Each successor is accepted only on main, through workflow_dispatch, with
+  action continue, and actor github-actions[bot]. The child verifies its parent
+  run is this workflow and that the parent's dedicated continue-research job
+  actually dispatched it. Manually selecting continue does not authorize a run.
 - The dispatch job gets only contents: read and actions: write. Existing
   scoped writer Apps and their permissions are unchanged.
 
@@ -47,7 +45,6 @@ The controller proceeds only when all conditions pass:
 5. The ordinary prepare_cycle preflight confirms that the exact active target,
    archive snapshot, retry provenance, pending sealed claim, consumed holdout
    dates, and fresh directional validation windows make another attempt eligible.
-6. The five-hour deadline and 150-iteration safety ceiling have not been reached.
 
 The controller reads state through the existing verified state-store hydration
 path and checks the NVIDIA lock and rate-limit ledger read-only. It runs
@@ -106,7 +103,7 @@ stops to avoid duplicate reporting. The controller sends one workflow-dispatch
 request and never retries an ambiguous dispatch; an uncertain dispatch is
 reported as blocked rather than risking two children.
 
-A separate stop-status message reports session expiry, budget exhaustion,
+A separate stop-status message reports budget exhaustion,
 authorization or lock failure, missing eligible work, and other safe stop
 reasons when the research report itself was successfully delivered. It is not
 used to replay or compensate for an uncertain Telegram research report.
