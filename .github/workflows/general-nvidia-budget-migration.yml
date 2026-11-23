@@ -3,14 +3,23 @@ name: GENERAL One-Time NVIDIA Budget V2 to V3 Migration
 on:
   workflow_dispatch:
     inputs:
+      mode:
+        description: "Preflight reports readiness without writing; migrate requires the exact approval phrase."
+        required: true
+        type: choice
+        options:
+          - preflight
+          - migrate
+        default: preflight
       approval:
-        description: "Explicitly approve writing the validated V3 ledger to general-nvidia-rate-limit-state."
+        description: "Required only for mode=migrate."
         required: true
         type: string
         default: "NO"
 
 permissions:
   contents: read
+  administration: read
 
 concurrency:
   group: general-nvidia-api
@@ -18,11 +27,31 @@ concurrency:
 
 jobs:
   migrate-budget-ledger:
-    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.approval == 'I_APPROVE_PERSIST_NVIDIA_BUDGET_V2_TO_V3' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Checkout main source without write credentials
+      - name: Enforce dispatch and migration approval boundary
+        env:
+          MODE: ${{ inputs.mode }}
+          APPROVAL: ${{ inputs.approval }}
+        run: |
+          set -euo pipefail
+          case "$MODE" in
+            preflight) ;;
+            migrate)
+              if [ "$APPROVAL" != "I_APPROVE_PERSIST_NVIDIA_BUDGET_V2_TO_V3" ]; then
+                echo "::error::Migration mode requires the exact explicit approval phrase."
+                exit 1
+              fi
+              ;;
+            *)
+              echo "::error::Unknown migration mode."
+              exit 1
+              ;;
+          esac
+
+      - name: Checkout main source without persisting write credentials
         uses: actions/checkout@v7
         with:
           ref: main
@@ -39,6 +68,23 @@ jobs:
         with:
           client_id: ${{ vars.GENERAL_NVIDIA_BUDGET_WRITER_APP_CLIENT_ID }}
           private_key: ${{ secrets.GENERAL_NVIDIA_BUDGET_WRITER_APP_PRIVATE_KEY }}
+          allow_prevalidation_budget_migration: 'true'
+
+      - name: Verify App identity, exact permissions, repository scope, and protected branch Ruleset
+        env:
+          GENERAL_NVIDIA_BUDGET_WRITER_TOKEN: ${{ steps.nvidia-budget-writer.outputs.token }}
+          GENERAL_NVIDIA_BUDGET_WRITER_APP_PRIVATE_KEY: ${{ secrets.GENERAL_NVIDIA_BUDGET_WRITER_APP_PRIVATE_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python3 general_nvidia_writer_preflight.py
+
+      - name: Preserve trusted main-branch migration code before switching to the state branch
+        run: |
+          set -euo pipefail
+          SOURCE="$RUNNER_TEMP/general-nvidia-migration-source"
+          mkdir -p "$SOURCE"
+          cp general_nvidia_guard.py general_nvidia_budget_migrate.py general_writer_auth.py "$SOURCE/"
+          echo "MIGRATION_SOURCE=$SOURCE" >> "$GITHUB_ENV"
 
       - name: Fetch and pin the current protected budget branch
         env:
@@ -50,13 +96,16 @@ jobs:
           BASE_SHA="$(git rev-parse refs/remotes/origin/general-nvidia-rate-limit-state)"
           echo "BASE_SHA=$BASE_SHA" >> "$GITHUB_ENV"
           git switch --create budget-v3-migration "$BASE_SHA"
+          test "$(git rev-parse HEAD)" = "$BASE_SHA"
+          test -f general_nvidia_rate_limit.json
 
-      - name: Validate and convert only the budget ledger in the isolated checkout
+      - name: Validate and convert the pinned ledger using trusted main-branch code
         id: migrate
+        env:
+          MODE: ${{ inputs.mode }}
         run: |
           set -euo pipefail
-          test -f general_nvidia_rate_limit.json
-          python3 general_nvidia_budget_migrate.py --ledger general_nvidia_rate_limit.json | tee "$RUNNER_TEMP/budget-migration-report.txt"
+          PYTHONPATH="$MIGRATION_SOURCE" python3 "$MIGRATION_SOURCE/general_nvidia_budget_migrate.py" --ledger general_nvidia_rate_limit.json | tee "$RUNNER_TEMP/budget-migration-report.txt"
           python3 - <<'PY'
           import json
           from pathlib import Path
@@ -79,13 +128,25 @@ jobs:
           git diff --check
           CHANGED="$(git diff --name-only)"
           if [ -n "$CHANGED" ] && [ "$CHANGED" != "general_nvidia_rate_limit.json" ]; then
-            echo "Unexpected file changes; refusing to push."
+            echo "::error::Unexpected file changes; refusing to continue."
             exit 1
           fi
           echo "CHANGED=$([ -n "$CHANGED" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
 
+      - name: Report read-only preflight result
+        if: ${{ inputs.mode == 'preflight' }}
+        run: |
+          {
+            echo "## NVIDIA budget migration preflight"
+            echo "- App identity, exact App permissions, installation repository scope, and budget Ruleset: PASS"
+            echo "- Pinned V2 ledger validation and V3 conversion preview: PASS"
+            echo "- No commit or push was made."
+            echo "- No NVIDIA API request, research, runtime-state, authorization, lock, or global writer-gate operation was performed."
+            cat "$RUNNER_TEMP/budget-migration-report.txt"
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Persist V3 ledger with the NVIDIA Budget Writer only
-        if: ${{ steps.migrate.outputs.CHANGED == 'true' }}
+        if: ${{ inputs.mode == 'migrate' && steps.migrate.outputs.CHANGED == 'true' }}
         env:
           GENERAL_NVIDIA_BUDGET_WRITER_TOKEN: ${{ steps.nvidia-budget-writer.outputs.token }}
         run: |
@@ -96,24 +157,24 @@ jobs:
           git add -- general_nvidia_rate_limit.json
           STAGED="$(git diff --cached --name-only)"
           if [ "$STAGED" != "general_nvidia_rate_limit.json" ]; then
-            echo "Staged path set is not exactly the budget ledger."
+            echo "::error::Staged path set is not exactly the budget ledger."
             exit 1
           fi
           git commit -m "Migrate NVIDIA budget ledger from schema v2 to v3"
-          python3 general_writer_auth.py git-push --role nvidia_budget --remote origin --ref HEAD:general-nvidia-rate-limit-state
+          python3 "$MIGRATION_SOURCE/general_writer_auth.py" git-push --role nvidia_budget --remote origin --ref HEAD:general-nvidia-rate-limit-state
           echo "V2_TO_V3_PERSISTENCE: SUCCESS" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Report already migrated ledger
-        if: ${{ steps.migrate.outputs.CHANGED == 'false' }}
+        if: ${{ inputs.mode == 'migrate' && steps.migrate.outputs.CHANGED == 'false' }}
         run: |
           echo "Ledger already validates as schema v3. No commit or push was made." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Migration audit summary
         if: always()
         run: |
-          echo "## NVIDIA budget migration" >> "$GITHUB_STEP_SUMMARY"
+          echo "## NVIDIA budget migration audit" >> "$GITHUB_STEP_SUMMARY"
           echo "- Workflow is migration-only; no NVIDIA API request is made." >> "$GITHUB_STEP_SUMMARY"
-          echo "- No research, runtime-state, authorization, or writer-gate operation is performed." >> "$GITHUB_STEP_SUMMARY"
+          echo "- No research, runtime-state, authorization, global lock, or global writer-gate operation is performed." >> "$GITHUB_STEP_SUMMARY"
           if [ -f "$RUNNER_TEMP/budget-migration-report.txt" ]; then
             cat "$RUNNER_TEMP/budget-migration-report.txt" >> "$GITHUB_STEP_SUMMARY"
           fi
