@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Bounded continuation control for one continuous GENERAL research session.
+"""Continuous continuation control for one GENERAL research session.
 
 This module never calls NVIDIA, never writes project state, and never changes
-authorization or budget records. It only validates a five-hour session envelope,
-reads the authoritative state and safety ledgers, and dispatches the next
-workflow_dispatch run after the current iteration has been fully reported.
-"""
+authorization or budget records. It validates session lineage, reads the
+authoritative state and safety ledgers, and dispatches the next workflow run
+after the current iteration has been fully reported. Sessions have no
+time-based or iteration-count ceiling; existing safety and eligibility gates
+remain authoritative.
 from __future__ import annotations
 
 import argparse
@@ -31,11 +32,9 @@ REPOSITORY = "xxlyusufi61-bot/general-super-loto"
 WORKFLOW_FILE = "general-autonomous-research.yml"
 AUTONOMOUS_WORKFLOW_ID = 403181605
 BOT_ACTOR = "github-actions[bot]"
-SESSION_WINDOW = timedelta(hours=5)
-MAX_CONTINUOUS_ITERATIONS = 150
 API_ROOT = os.environ.get("GITHUB_API_URL", "https://api.github.com").rstrip("/")
 RUN_ID_RE = re.compile(r"^[1-9][0-9]{0,19}$")
-ITERATION_RE = re.compile(r"^[1-9][0-9]{0,3}$")
+ITERATION_RE = re.compile(r"^[1-9][0-9]*$")
 
 
 class ContinuousResearchError(RuntimeError):
@@ -73,13 +72,12 @@ def _positive_run_id(value: Any, field: str = "run ID") -> str:
 
 def _positive_iteration(value: Any) -> int:
     rendered = str(value)
-    if not ITERATION_RE.fullmatch(rendered) or str(int(rendered)) != rendered:
+    if not ITERATION_RE.fullmatch(rendered):
         raise ContinuousResearchError("The continuous iteration number is invalid.")
-    parsed = int(rendered)
-    if parsed > MAX_CONTINUOUS_ITERATIONS:
-        raise ContinuousResearchError("The continuous iteration limit was exceeded.")
-    return parsed
-
+    try:
+        return int(rendered)
+    except ValueError:
+        raise ContinuousResearchError("The continuous iteration number is invalid.") from None
 
 def build_session_context(
     *,
@@ -90,7 +88,6 @@ def build_session_context(
     run_id: str,
     session_id: str = "",
     started_at_utc: str = "",
-    deadline_at_utc: str = "",
     iteration: str = "",
     parent_run_id: str = "",
     now: datetime | None = None,
@@ -103,13 +100,12 @@ def build_session_context(
         raise ContinuousResearchError("Continuous research is restricted to the default branch.")
 
     if event_name == "schedule":
-        if session_id or started_at_utc or deadline_at_utc or iteration or parent_run_id:
+        if session_id or started_at_utc or iteration or parent_run_id:
             raise ContinuousResearchError("A scheduled session cannot inherit continuation inputs.")
         start = current.replace(microsecond=0)
         return {
             "session_id": current_run_id,
             "started_at_utc": _format_utc(start),
-            "deadline_at_utc": _format_utc(start + SESSION_WINDOW),
             "iteration": 1,
         }
 
@@ -123,27 +119,18 @@ def build_session_context(
     if current_run_id == sid:
         raise ContinuousResearchError("A continuation must use a new workflow run ID.")
     start = _parse_utc(started_at_utc, "session start")
-    deadline = _parse_utc(deadline_at_utc, "session deadline")
     current_iteration = _positive_iteration(iteration)
     if current_iteration < 2:
         raise ContinuousResearchError("A successor run must start at iteration 2 or later.")
-    if deadline - start != SESSION_WINDOW:
-        raise ContinuousResearchError("The session deadline does not match the fixed five-hour window.")
     if start > current + timedelta(minutes=1):
         raise ContinuousResearchError("The session start cannot be in the future.")
-    if current >= deadline:
-        raise ContinuousResearchError("The continuous session has expired.")
-    if current - start >= SESSION_WINDOW:
-        raise ContinuousResearchError("The continuous session exceeded its fixed duration.")
 
     return {
         "session_id": sid,
         "started_at_utc": _format_utc(start),
-        "deadline_at_utc": _format_utc(deadline),
         "iteration": current_iteration,
         "parent_run_id": parent_id,
     }
-
 
 def validate_current_session_context(
     *,
@@ -154,23 +141,21 @@ def validate_current_session_context(
     run_id: str,
     session_id: str,
     started_at_utc: str,
-    deadline_at_utc: str,
     iteration: str,
     parent_run_id: str = "",
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    """Validate the envelope already created by session-context for this run."""
+    """Validate the session identity already created for this workflow run."""
     current = _now_utc(now)
     current_run_id = _positive_run_id(run_id)
     sid = _positive_run_id(session_id, "session ID")
     start = _parse_utc(started_at_utc, "session start")
-    deadline = _parse_utc(deadline_at_utc, "session deadline")
     current_iteration = _positive_iteration(iteration)
 
-    if ref != "refs/heads/main" or deadline - start != SESSION_WINDOW:
-        raise ContinuousResearchError("The continuous session envelope is invalid.")
-    if start > current + timedelta(minutes=1) or current >= deadline:
-        raise ContinuousResearchError("The continuous session is not currently active.")
+    if ref != "refs/heads/main":
+        raise ContinuousResearchError("The continuous session must use the default branch.")
+    if start > current + timedelta(minutes=1):
+        raise ContinuousResearchError("The session start cannot be in the future.")
 
     if event_name == "schedule":
         if sid != current_run_id or current_iteration != 1 or action or parent_run_id:
@@ -192,11 +177,9 @@ def validate_current_session_context(
     return {
         "session_id": sid,
         "started_at_utc": _format_utc(start),
-        "deadline_at_utc": _format_utc(deadline),
         "iteration": current_iteration,
         "parent_run_id": parent_id,
     }
-
 
 def _write_github_output(path: str | None, values: dict[str, Any]) -> None:
     if not path:
@@ -483,12 +466,11 @@ def build_continuation_plan(
     probe_result: tuple[bool, str],
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    """Decide whether to dispatch exactly one next run, without changing state."""
-    current = _now_utc(now)
+    """Decide whether to dispatch one next run, without a time or turn ceiling."""
+    _now_utc(now)
     _positive_run_id(current_run_id)
     session_id = _positive_run_id(context.get("session_id"), "session ID")
     started = _parse_utc(context.get("started_at_utc"), "session start")
-    deadline = _parse_utc(context.get("deadline_at_utc"), "session deadline")
     iteration = _positive_iteration(context.get("iteration"))
     parent_id = context.get("parent_run_id", "")
     if parent_id:
@@ -502,13 +484,7 @@ def build_continuation_plan(
     next_iteration = None
 
     probe_ok, probe_reason = probe_result
-    if deadline - started != SESSION_WINDOW:
-        reason = "INVALID_SESSION_WINDOW"
-    elif current >= deadline:
-        reason = "SESSION_TIME_LIMIT_REACHED"
-    elif iteration >= MAX_CONTINUOUS_ITERATIONS:
-        reason = "ITERATION_SAFETY_LIMIT_REACHED"
-    elif research_attempt_made and report_delivered is not True:
+    if research_attempt_made and report_delivered is not True:
         # Never chain after an uncertain research-report delivery.
         reason = "TELEGRAM_REPORT_NOT_CONFIRMED"
     elif not probe_ok:
@@ -525,13 +501,11 @@ def build_continuation_plan(
         "stop_reason": reason,
         "session_id": session_id,
         "started_at_utc": _format_utc(started),
-        "deadline_at_utc": _format_utc(deadline),
         "iteration": iteration,
         "parent_run_id": parent_id,
         "next_iteration": next_iteration,
         "session_values_rendered": False,
     }
-
 
 def _dispatch_workflow(
     *,
@@ -543,12 +517,10 @@ def _dispatch_workflow(
     ref: str,
     session_id: str,
     started_at_utc: str,
-    deadline_at_utc: str,
     next_iteration: int,
     parent_run_id: str,
-    now: datetime | None = None,
 ) -> None:
-    """Make one non-retried workflow_dispatch request; uncertain delivery is reported, not replayed."""
+    """Make one non-retried workflow_dispatch request; uncertain delivery is not replayed."""
     if ref != "refs/heads/main":
         raise ContinuousResearchError("Continuation dispatch is restricted to the default branch.")
     if event_name == "schedule":
@@ -568,12 +540,8 @@ def _dispatch_workflow(
     sid = _positive_run_id(session_id, "session ID")
     parent_id = _positive_run_id(parent_run_id, "parent run ID")
     start = _parse_utc(started_at_utc, "session start")
-    deadline = _parse_utc(deadline_at_utc, "session deadline")
-    current = _now_utc(now)
-    if deadline - start != SESSION_WINDOW or current >= deadline:
-        raise ContinuousResearchError("The continuous session is expired or malformed.")
-    if type(next_iteration) is not int or next_iteration < 2 or next_iteration > MAX_CONTINUOUS_ITERATIONS:
-        raise ContinuousResearchError("The next iteration is outside the safety limit.")
+    if type(next_iteration) is not int or next_iteration < 2:
+        raise ContinuousResearchError("The next iteration must be a positive successor iteration.")
 
     url = (
         API_ROOT + "/repos/" + urllib.parse.quote(repository, safe="/")
@@ -587,7 +555,6 @@ def _dispatch_workflow(
             "continuous_session_id": sid,
             "continuous_parent_run_id": parent_id,
             "continuous_started_at_utc": _format_utc(start),
-            "continuous_deadline_at_utc": _format_utc(deadline),
             "continuous_iteration": str(next_iteration),
         },
     }
@@ -618,7 +585,6 @@ def _dispatch_workflow(
             "Workflow continuation dispatch delivery is uncertain; no automatic replay was attempted."
         ) from None
 
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -631,7 +597,6 @@ def main(argv: list[str] | None = None) -> int:
     context_parser.add_argument("--run-id", required=True)
     context_parser.add_argument("--session-id", default="")
     context_parser.add_argument("--started-at-utc", default="")
-    context_parser.add_argument("--deadline-at-utc", default="")
     context_parser.add_argument("--iteration", default="")
     context_parser.add_argument("--parent-run-id", default="")
     context_parser.add_argument("--github-output")
@@ -645,7 +610,6 @@ def main(argv: list[str] | None = None) -> int:
     plan_parser.add_argument("--repository", default=os.environ.get("GITHUB_REPOSITORY", ""))
     plan_parser.add_argument("--session-id", required=True)
     plan_parser.add_argument("--started-at-utc", required=True)
-    plan_parser.add_argument("--deadline-at-utc", required=True)
     plan_parser.add_argument("--iteration", required=True)
     plan_parser.add_argument("--parent-run-id", default="")
     plan_parser.add_argument("--report-delivered", choices=("true", "false"), required=True)
@@ -656,7 +620,6 @@ def main(argv: list[str] | None = None) -> int:
     dispatch_parser.add_argument("--repository", default=os.environ.get("GITHUB_REPOSITORY", ""))
     dispatch_parser.add_argument("--session-id", required=True)
     dispatch_parser.add_argument("--started-at-utc", required=True)
-    dispatch_parser.add_argument("--deadline-at-utc", required=True)
     dispatch_parser.add_argument("--next-iteration", type=int, required=True)
 
     args = parser.parse_args(argv)
@@ -670,7 +633,6 @@ def main(argv: list[str] | None = None) -> int:
                 run_id=args.run_id,
                 session_id=args.session_id,
                 started_at_utc=args.started_at_utc,
-                deadline_at_utc=args.deadline_at_utc,
                 iteration=args.iteration,
                 parent_run_id=args.parent_run_id,
             )
@@ -698,23 +660,18 @@ def main(argv: list[str] | None = None) -> int:
                 run_id=args.run_id,
                 session_id=args.session_id,
                 started_at_utc=args.started_at_utc,
-                deadline_at_utc=args.deadline_at_utc,
                 iteration=args.iteration,
                 parent_run_id=args.parent_run_id,
             )
-            current = _now_utc()
-            if current >= _parse_utc(context["deadline_at_utc"], "session deadline"):
-                probe = (False, "SESSION_TIME_LIMIT_REACHED")
-            else:
-                token = os.environ.get("GITHUB_TOKEN", "").strip()
-                try:
-                    probe = _read_only_next_cycle_probe(repository=args.repository, token=token)
-                except Exception as exc:
-                    print(
-                        "CONTINUATION PREFLIGHT BLOCKED: " + type(exc).__name__,
-                        file=sys.stderr,
-                    )
-                    probe = (False, "READ_ONLY_PREFLIGHT_FAILED")
+            token = os.environ.get("GITHUB_TOKEN", "").strip()
+            try:
+                probe = _read_only_next_cycle_probe(repository=args.repository, token=token)
+            except Exception as exc:
+                print(
+                    "CONTINUATION PREFLIGHT BLOCKED: " + type(exc).__name__,
+                    file=sys.stderr,
+                )
+                probe = (False, "READ_ONLY_PREFLIGHT_FAILED")
             plan = build_continuation_plan(
                 context=context,
                 current_run_id=args.run_id,
@@ -743,7 +700,6 @@ def main(argv: list[str] | None = None) -> int:
                 ref=os.environ.get("GITHUB_REF", ""),
                 session_id=args.session_id,
                 started_at_utc=args.started_at_utc,
-                deadline_at_utc=args.deadline_at_utc,
                 next_iteration=args.next_iteration,
                 parent_run_id=os.environ.get("GITHUB_RUN_ID", ""),
             )
