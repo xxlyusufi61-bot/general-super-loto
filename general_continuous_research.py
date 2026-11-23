@@ -536,6 +536,8 @@ def _dispatch_workflow(
     repository: str,
     token: str,
     actor: str,
+    event_name: str,
+    action: str,
     ref: str,
     session_id: str,
     started_at_utc: str,
@@ -545,8 +547,18 @@ def _dispatch_workflow(
     now: datetime | None = None,
 ) -> None:
     """Make one non-retried workflow_dispatch request; uncertain delivery is reported, not replayed."""
-    if actor != BOT_ACTOR or ref != "refs/heads/main":
-        raise ContinuousResearchError("Only the main-branch workflow bot may dispatch a successor.")
+    if ref != "refs/heads/main":
+        raise ContinuousResearchError("Continuation dispatch is restricted to the default branch.")
+    if event_name == "schedule":
+        if action:
+            raise ContinuousResearchError("Scheduled continuation cannot carry a manual action.")
+        if not actor:
+            raise ContinuousResearchError("The scheduled workflow actor is missing.")
+    elif event_name == "workflow_dispatch" and action == "continue":
+        if actor != BOT_ACTOR:
+            raise ContinuousResearchError("Only an internal bot-dispatched run may continue research.")
+    else:
+        raise ContinuousResearchError("This workflow event cannot dispatch a research successor.")
     if repository != REPOSITORY:
         raise ContinuousResearchError("Continuation dispatch is restricted to the canonical repository.")
     if not token:
@@ -724,6 +736,8 @@ def main(argv: list[str] | None = None) -> int:
                 repository=args.repository,
                 token=token,
                 actor=os.environ.get("GITHUB_ACTOR", ""),
+                event_name=os.environ.get("GITHUB_EVENT_NAME", ""),
+                action=os.environ.get("ACTION", ""),
                 ref=os.environ.get("GITHUB_REF", ""),
                 session_id=args.session_id,
                 started_at_utc=args.started_at_utc,
