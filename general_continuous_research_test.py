@@ -241,9 +241,8 @@ class ContinuousSessionContextTests(unittest.TestCase):
                 ref="refs/heads/main",
                 session_id=self.context["session_id"],
                 started_at_utc=self.context["started_at_utc"],
-                    next_iteration=2,
+                next_iteration=2,
                 parent_run_id=self.context["session_id"],
-                now=NOW + timedelta(minutes=1),
             )
 
 
@@ -292,7 +291,7 @@ class ContinuousSessionContextTests(unittest.TestCase):
                 ref="refs/heads/main",
                 session_id=self.context["session_id"],
                 started_at_utc=self.context["started_at_utc"],
-                    next_iteration=151,
+                next_iteration=151,
                 parent_run_id="45150000001",
             )
         request = send.call_args.args[0]
