@@ -250,7 +250,7 @@ jobs:
             --output super_loto_archive.json
       - name: Detect pending sealed claim before offline discovery
         id: pending_claim_check
-        if: ${{ github.event_name == 'schedule' && steps.queue_capture.outputs.has_pending == 'true' }}
+        if: ${{ steps.queue_capture.outputs.has_pending == 'true' }}
         run: |
           python3 general_sealed_evaluation.py pending-claim --archive super_loto_archive.json --ledger general_evaluation_ledger.json --github-output "$GITHUB_OUTPUT"
           cat "$GITHUB_OUTPUT"
@@ -343,7 +343,7 @@ jobs:
 
       - name: Prepare one research pass for the active target and fresh sealed windows
         id: prepare
-        if: ${{ github.event_name == 'schedule' && steps.status.outputs.authorized == 'true' && steps.status.outputs.lock_clear == 'true' && steps.queue_capture.outputs.has_pending == 'true' }}
+        if: ${{ steps.status.outputs.authorized == 'true' && steps.status.outputs.lock_clear == 'true' && steps.queue_capture.outputs.has_pending == 'true' }}
         run: |
           python3 general_autonomous_research.py prepare \
             --archive super_loto_archive.json \
@@ -714,61 +714,61 @@ jobs:
 
       - name: Decide whether another research turn is safe
         id: continuation_plan
-        if: \${{ always() }}
+        if: ${{ always() }}
         env:
-          GITHUB_TOKEN: \${{ github.token }}
-          GITHUB_REPOSITORY: \${{ github.repository }}
-          EVENT_NAME: \${{ github.event_name }}
-          ACTION: \${{ inputs.action }}
-          ACTOR: \${{ github.actor }}
-          REF: \${{ github.ref }}
-          RUN_ID: \${{ github.run_id }}
-          SESSION_ID: \${{ steps.continuous_context.outputs.session_id }}
-          STARTED_AT_UTC: \${{ steps.continuous_context.outputs.started_at_utc }}
-          DEADLINE_AT_UTC: \${{ steps.continuous_context.outputs.deadline_at_utc }}
-          ITERATION: \${{ steps.continuous_context.outputs.iteration }}
-          SUCCESS_REPORT_OUTCOME: \${{ steps.telegram_success.outcome }}
-          NO_CANDIDATE_REPORT_OUTCOME: \${{ steps.telegram_no_candidate.outcome }}
-          FAILURE_REPORT_OUTCOME: \${{ steps.telegram_failure.outcome }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          ACTION: ${{ inputs.action }}
+          ACTOR: ${{ github.actor }}
+          REF: ${{ github.ref }}
+          RUN_ID: ${{ github.run_id }}
+          SESSION_ID: ${{ steps.continuous_context.outputs.session_id }}
+          STARTED_AT_UTC: ${{ steps.continuous_context.outputs.started_at_utc }}
+          DEADLINE_AT_UTC: ${{ steps.continuous_context.outputs.deadline_at_utc }}
+          ITERATION: ${{ steps.continuous_context.outputs.iteration }}
+          SUCCESS_REPORT_OUTCOME: ${{ steps.telegram_success.outcome }}
+          NO_CANDIDATE_REPORT_OUTCOME: ${{ steps.telegram_no_candidate.outcome }}
+          FAILURE_REPORT_OUTCOME: ${{ steps.telegram_failure.outcome }}
         run: |
           set -euo pipefail
           report_delivered=false
-          if [ "$SUCCESS_REPORT_OUTCOME" = "success" ] \\
-            || [ "$NO_CANDIDATE_REPORT_OUTCOME" = "success" ] \\
+          if [ "$SUCCESS_REPORT_OUTCOME" = "success" ] \
+            || [ "$NO_CANDIDATE_REPORT_OUTCOME" = "success" ] \
             || [ "$FAILURE_REPORT_OUTCOME" = "success" ]; then
             report_delivered=true
           fi
-          python3 general_continuous_research.py plan-next \\
-            --event "$EVENT_NAME" \\
-            --action "$ACTION" \\
-            --actor "$ACTOR" \\
-            --ref "$REF" \\
-            --run-id "$RUN_ID" \\
-            --repository "$GITHUB_REPOSITORY" \\
-            --session-id "$SESSION_ID" \\
-            --started-at-utc "$STARTED_AT_UTC" \\
-            --deadline-at-utc "$DEADLINE_AT_UTC" \\
-            --iteration "$ITERATION" \\
-            --report-delivered "$report_delivered" \\
+          python3 general_continuous_research.py plan-next \
+            --event "$EVENT_NAME" \
+            --action "$ACTION" \
+            --actor "$ACTOR" \
+            --ref "$REF" \
+            --run-id "$RUN_ID" \
+            --repository "$GITHUB_REPOSITORY" \
+            --session-id "$SESSION_ID" \
+            --started-at-utc "$STARTED_AT_UTC" \
+            --deadline-at-utc "$DEADLINE_AT_UTC" \
+            --iteration "$ITERATION" \
+            --report-delivered "$report_delivered" \
             --github-output "$GITHUB_OUTPUT"
       - name: Report why the continuous research session stopped
-        if: \${{ always() && steps.continuation_plan.outcome == 'success' && steps.continuation_plan.outputs.continue_enabled != 'true' && steps.continuation_plan.outputs.stop_reason != '' && steps.continuation_plan.outputs.stop_reason != 'NO_EXECUTABLE_HYPOTHESIS' && steps.continuation_plan.outputs.stop_reason != 'TELEGRAM_REPORT_NOT_CONFIRMED' }}
+        if: ${{ always() && steps.continuation_plan.outcome == 'success' && steps.continuation_plan.outputs.continue_enabled != 'true' && steps.continuation_plan.outputs.stop_reason != '' && steps.continuation_plan.outputs.stop_reason != 'NO_EXECUTABLE_HYPOTHESIS' && steps.continuation_plan.outputs.stop_reason != 'TELEGRAM_REPORT_NOT_CONFIRMED' }}
         continue-on-error: true
         env:
-          TELEGRAM_BOT_TOKEN: \${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: \${{ secrets.TELEGRAM_CHAT_ID }}
-          STOP_REASON: \${{ steps.continuation_plan.outputs.stop_reason }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          STOP_REASON: ${{ steps.continuation_plan.outputs.stop_reason }}
         run: |
-          python3 telegram_report.py \\
-            --title "GENERAL sürekli araştırma oturumu durdu: $STOP_REASON" \\
-            --status skipped \\
-            --branch general-automation-state \\
-            --run-url "https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \\
+          python3 telegram_report.py \
+            --title "GENERAL sürekli araştırma oturumu durdu: $STOP_REASON" \
+            --status skipped \
+            --branch general-automation-state \
+            --run-url "https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
             --kind status
 
   continue-research:
     needs: scheduled-cycle
-    if: \${{ always() && needs.scheduled-cycle.outputs.continue_enabled == 'true' }}
+    if: ${{ always() && needs.scheduled-cycle.outputs.continue_enabled == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -786,18 +786,18 @@ jobs:
           python-version: "3.12"
       - name: Dispatch exactly one successor research turn
         env:
-          GITHUB_TOKEN: \${{ github.token }}
-          GITHUB_REPOSITORY: \${{ github.repository }}
-          GITHUB_ACTOR: \${{ github.actor }}
-          GITHUB_REF: \${{ github.ref }}
-          SESSION_ID: \${{ needs.scheduled-cycle.outputs.session_id }}
-          STARTED_AT_UTC: \${{ needs.scheduled-cycle.outputs.started_at_utc }}
-          DEADLINE_AT_UTC: \${{ needs.scheduled-cycle.outputs.deadline_at_utc }}
-          NEXT_ITERATION: \${{ needs.scheduled-cycle.outputs.next_iteration }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_REF: ${{ github.ref }}
+          SESSION_ID: ${{ needs.scheduled-cycle.outputs.session_id }}
+          STARTED_AT_UTC: ${{ needs.scheduled-cycle.outputs.started_at_utc }}
+          DEADLINE_AT_UTC: ${{ needs.scheduled-cycle.outputs.deadline_at_utc }}
+          NEXT_ITERATION: ${{ needs.scheduled-cycle.outputs.next_iteration }}
         run: |
-          python3 general_continuous_research.py dispatch \\
-            --repository "$GITHUB_REPOSITORY" \\
-            --session-id "$SESSION_ID" \\
-            --started-at-utc "$STARTED_AT_UTC" \\
-            --deadline-at-utc "$DEADLINE_AT_UTC" \\
+          python3 general_continuous_research.py dispatch \
+            --repository "$GITHUB_REPOSITORY" \
+            --session-id "$SESSION_ID" \
+            --started-at-utc "$STARTED_AT_UTC" \
+            --deadline-at-utc "$DEADLINE_AT_UTC" \
             --next-iteration "$NEXT_ITERATION"
