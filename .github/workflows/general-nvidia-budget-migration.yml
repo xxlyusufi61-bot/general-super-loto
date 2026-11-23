@@ -101,8 +101,6 @@ jobs:
 
       - name: Validate and convert the pinned ledger using trusted main-branch code
         id: migrate
-        env:
-          MODE: ${{ inputs.mode }}
         run: |
           set -euo pipefail
           PYTHONPATH="$MIGRATION_SOURCE" python3 "$MIGRATION_SOURCE/general_nvidia_budget_migrate.py" --ledger general_nvidia_rate_limit.json | tee "$RUNNER_TEMP/budget-migration-report.txt"
