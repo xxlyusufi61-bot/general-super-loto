@@ -118,8 +118,8 @@ class NVIDIAWriterPreflightTests(unittest.TestCase):
         app, repositories, ruleset = payloads()
         calls = []
 
-        def fake_request_json(path, token=""):
-            calls.append((path, token))
+        def fake_request_json(path, token="", *, jwt=False):
+            calls.append((path, token, jwt))
             if path.startswith("/repos/"):
                 return ruleset
             if path == "/app":
@@ -137,10 +137,11 @@ class NVIDIAWriterPreflightTests(unittest.TestCase):
         ):
             run_preflight()
 
-        self.assertEqual(calls[0], (
-            f"/repos/{EXPECTED_REPOSITORY}/rulesets/{EXPECTED_RULESET_ID}",
-            "scoped-token",
-        ))
+        self.assertEqual(calls, [
+            (f"/repos/{EXPECTED_REPOSITORY}/rulesets/{EXPECTED_RULESET_ID}", "scoped-token", False),
+            ("/app", "app-jwt", True),
+            ("/installation/repositories", "scoped-token", False),
+        ])
 
 
 if __name__ == "__main__":
