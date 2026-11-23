@@ -29,7 +29,7 @@ def _b64url(value: bytes) -> str:
 
 def create_app_jwt(app_id: int, private_key: str, now: int | None = None) -> str:
     if type(app_id) is not int or app_id < 1:
-        raise ValueError("Ruleset bypass actor is not a valid GitHub App ID")
+        raise ValueError("Expected GitHub App ID is not valid")
     now = int(time.time()) if now is None else int(now)
     header = _b64url(json.dumps({"alg": "RS256", "typ": "JWT"}, separators=(",", ":")).encode())
     payload = _b64url(json.dumps({
