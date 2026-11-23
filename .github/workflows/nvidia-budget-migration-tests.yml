@@ -41,5 +41,6 @@ jobs:
       - name: Compile migration and writer modules
         run: python3 -m py_compile general_nvidia_guard.py general_nvidia_budget_migrate.py general_writer_auth.py
       - name: Run migration and scoped-writer regression tests
-        run: python3 -m unittest discover -s tests -p 'test_general_nvidia_budget_migrate.py' -v
+        run: |
+          python3 -m unittest discover -s tests -p 'test_general_nvidia_budget_migrate.py' -v
           python3 -m unittest discover -s tests -p 'test_general_writer_auth.py' -v
