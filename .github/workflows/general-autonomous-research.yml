@@ -771,7 +771,7 @@ jobs:
 
   continue-research:
     needs: scheduled-cycle
-    if: ${{ always() && needs.scheduled-cycle.outputs.continue_enabled == 'true' }}
+    if: ${{ needs.scheduled-cycle.result == 'success' && needs.scheduled-cycle.outputs.continue_enabled == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
