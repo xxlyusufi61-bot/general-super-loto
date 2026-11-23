@@ -1,0 +1,113 @@
+import unittest
+
+from general_nvidia_writer_preflight import (
+    EXPECTED_APP_PERMISSIONS,
+    EXPECTED_BRANCH,
+    EXPECTED_REPOSITORY,
+    EXPECTED_RULESET_ID,
+    EXPECTED_RULESET_NAME,
+    validate_preflight_payloads,
+)
+
+
+def payloads():
+    app = {
+        "id": 5861647,
+        "slug": "general-nvidia-budget-writer",
+        "permissions": dict(EXPECTED_APP_PERMISSIONS),
+    }
+    repositories = {
+        "total_count": 1,
+        "repositories": [{"full_name": EXPECTED_REPOSITORY}],
+    }
+    ruleset = {
+        "id": EXPECTED_RULESET_ID,
+        "name": EXPECTED_RULESET_NAME,
+        "target": "branch",
+        "enforcement": "active",
+        "conditions": {"ref_name": {"include": [EXPECTED_BRANCH], "exclude": []}},
+        "rules": [
+            {"type": "deletion"},
+            {"type": "non_fast_forward"},
+            {"type": "update"},
+        ],
+        "bypass_actors": [{
+            "actor_id": 5861647,
+            "actor_type": "Integration",
+            "bypass_mode": "always",
+        }],
+    }
+    return app, repositories, ruleset
+
+
+class NVIDIAWriterPreflightTests(unittest.TestCase):
+    def test_exact_budget_writer_identity_scope_and_ruleset_pass(self):
+        app, repositories, ruleset = payloads()
+        result = validate_preflight_payloads(app, repositories, ruleset)
+        self.assertEqual(result["app_id"], 5861647)
+        self.assertEqual(result["token_repository_scope"], EXPECTED_REPOSITORY)
+
+    def test_wrong_app_id_fails_closed(self):
+        app, repositories, ruleset = payloads()
+        app["id"] = 123
+        with self.assertRaises(ValueError):
+            validate_preflight_payloads(app, repositories, ruleset)
+
+    def test_extra_app_permission_fails_closed(self):
+        app, repositories, ruleset = payloads()
+        app["permissions"]["issues"] = "write"
+        with self.assertRaises(ValueError):
+            validate_preflight_payloads(app, repositories, ruleset)
+
+    def test_missing_contents_write_fails_closed(self):
+        app, repositories, ruleset = payloads()
+        app["permissions"] = {"metadata": "read"}
+        with self.assertRaises(ValueError):
+            validate_preflight_payloads(app, repositories, ruleset)
+
+    def test_wrong_repository_scope_fails_closed(self):
+        app, repositories, ruleset = payloads()
+        repositories["repositories"][0]["full_name"] = "someone/else"
+        with self.assertRaises(ValueError):
+            validate_preflight_payloads(app, repositories, ruleset)
+
+    def test_multiple_repository_scope_fails_closed(self):
+        app, repositories, ruleset = payloads()
+        repositories["total_count"] = 2
+        repositories["repositories"].append({"full_name": "someone/else"})
+        with self.assertRaises(ValueError):
+            validate_preflight_payloads(app, repositories, ruleset)
+
+    def test_wrong_ruleset_actor_fails_closed(self):
+        app, repositories, ruleset = payloads()
+        ruleset["bypass_actors"][0]["actor_id"] = 999
+        with self.assertRaises(ValueError):
+            validate_preflight_payloads(app, repositories, ruleset)
+
+    def test_extra_bypass_actor_fails_closed(self):
+        app, repositories, ruleset = payloads()
+        ruleset["bypass_actors"].append({
+            "actor_id": 999, "actor_type": "Integration", "bypass_mode": "always"
+        })
+        with self.assertRaises(ValueError):
+            validate_preflight_payloads(app, repositories, ruleset)
+
+    def test_wrong_branch_or_inactive_ruleset_fails_closed(self):
+        app, repositories, ruleset = payloads()
+        ruleset["conditions"]["ref_name"]["include"] = ["refs/heads/main"]
+        with self.assertRaises(ValueError):
+            validate_preflight_payloads(app, repositories, ruleset)
+        app, repositories, ruleset = payloads()
+        ruleset["enforcement"] = "disabled"
+        with self.assertRaises(ValueError):
+            validate_preflight_payloads(app, repositories, ruleset)
+
+    def test_changed_protection_rules_fail_closed(self):
+        app, repositories, ruleset = payloads()
+        ruleset["rules"].append({"type": "pull_request"})
+        with self.assertRaises(ValueError):
+            validate_preflight_payloads(app, repositories, ruleset)
+
+
+if __name__ == "__main__":
+    unittest.main()
