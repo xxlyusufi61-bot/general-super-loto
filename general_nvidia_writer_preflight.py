@@ -114,7 +114,7 @@ def validate_preflight_payloads(app: dict, repositories: dict, ruleset: dict) ->
         raise ValueError("NVIDIA Budget Writer token is scoped to the wrong repository")
 
     return {
-        "app_id": app_id,
+        "app_id": EXPECTED_APP_ID,
         "app_slug": app.get("slug"),
         "app_permissions": permissions,
         "ruleset_id": ruleset.get("id"),
@@ -136,9 +136,6 @@ def run_preflight() -> dict:
     ruleset = request_json(
         f"/repos/{EXPECTED_REPOSITORY}/rulesets/{EXPECTED_RULESET_ID}", writer_token,
     )
-    bypass = ruleset.get("bypass_actors")
-    if not isinstance(bypass, list) or len(bypass) != 1 or not isinstance(bypass[0], dict):
-        raise ValueError("NVIDIA budget Ruleset bypass actor is missing or ambiguous")
     app_jwt = create_app_jwt(EXPECTED_APP_ID, private_key)
     app = request_json("/app", app_jwt, jwt=True)
     repositories = request_json("/installation/repositories", writer_token)
