@@ -164,6 +164,16 @@ class ContinuousSessionContextTests(unittest.TestCase):
         self.assertFalse(no_work["continue_enabled"])
         self.assertEqual(no_work["stop_reason"], "NO_EXECUTABLE_HYPOTHESIS")
 
+        no_new_target = continuous.build_continuation_plan(
+            context=self.context,
+            current_run_id="45150000001",
+            report_delivered=False,
+            probe_result=(False, "WAITING_FOR_NEW_LATEST_DRAW"),
+            now=current,
+        )
+        self.assertFalse(no_new_target["continue_enabled"])
+        self.assertEqual(no_new_target["stop_reason"], "WAITING_FOR_NEW_LATEST_DRAW")
+
         ready = continuous.build_continuation_plan(
             context=self.context,
             current_run_id="45150000001",
