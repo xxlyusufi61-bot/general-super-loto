@@ -25,6 +25,8 @@ def payloads():
         "name": EXPECTED_RULESET_NAME,
         "target": "branch",
         "enforcement": "active",
+        "source_type": "Repository",
+        "source": EXPECTED_REPOSITORY,
         "conditions": {"ref_name": {"include": [EXPECTED_BRANCH], "exclude": []}},
         "rules": [
             {"type": "deletion"},
