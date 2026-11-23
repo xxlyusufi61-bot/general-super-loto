@@ -81,6 +81,35 @@ class WriterAuthTests(unittest.TestCase):
                 with self.assertRaises(auth.WriterAuthorizationError):
                     auth.run_git_push("main", remote, ref)
 
+
+    def test_nvidia_budget_writer_can_push_only_its_exact_state_branch(self):
+        with patch.dict(
+            "os.environ",
+            {"GENERAL_NVIDIA_BUDGET_WRITER_TOKEN": "budget-only-writer-token"},
+            clear=True,
+        ), patch.object(auth.subprocess, "run") as run:
+            auth.run_git_push(
+                "nvidia_budget",
+                "origin",
+                "HEAD:general-nvidia-rate-limit-state",
+            )
+            args, kwargs = run.call_args
+            self.assertEqual(
+                args[0],
+                ["git", "push", "origin", "HEAD:general-nvidia-rate-limit-state"],
+            )
+            self.assertIn("GENERAL_NVIDIA_BUDGET_WRITER_TOKEN", kwargs["env"])
+        for role, remote, ref in (
+            ("main", "origin", "HEAD:general-nvidia-rate-limit-state"),
+            ("nvidia_budget", "origin", "HEAD:main"),
+            ("nvidia_budget", "origin", "HEAD:general-automation-state"),
+            ("nvidia_budget", "other", "HEAD:general-nvidia-rate-limit-state"),
+            ("nvidia_budget", "origin", "--force"),
+        ):
+            with self.subTest(role=role, remote=remote, ref=ref):
+                with self.assertRaises(auth.WriterAuthorizationError):
+                    auth.run_git_push(role, remote, ref)
+
     def test_git_push_fails_when_the_main_identity_is_missing(self):
         with patch.dict("os.environ", {}, clear=True):
             with self.assertRaises(auth.WriterAuthorizationError):

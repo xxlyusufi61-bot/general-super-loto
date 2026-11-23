@@ -1,0 +1,46 @@
+name: NVIDIA Budget Migration Regression Tests
+
+on:
+  push:
+    branches:
+      - '**'
+    paths:
+      - "general_nvidia_guard.py"
+      - "general_nvidia_budget_migrate.py"
+      - "general_writer_auth.py"
+      - "tests/test_general_nvidia_budget_migrate.py"
+      - "tests/test_general_writer_auth.py"
+      - ".github/workflows/general-nvidia-budget-migration.yml"
+      - ".github/workflows/nvidia-budget-migration-tests.yml"
+  pull_request:
+    paths:
+      - "general_nvidia_guard.py"
+      - "general_nvidia_budget_migrate.py"
+      - "general_writer_auth.py"
+      - "tests/test_general_nvidia_budget_migrate.py"
+      - "tests/test_general_writer_auth.py"
+      - ".github/workflows/general-nvidia-budget-migration.yml"
+      - ".github/workflows/nvidia-budget-migration-tests.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  migration-regressions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout pull request source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Compile migration and writer modules
+        run: python3 -m py_compile general_nvidia_guard.py general_nvidia_budget_migrate.py general_writer_auth.py
+      - name: Run migration and scoped-writer regression tests
+        run: |
+          python3 -m unittest discover -s tests -p 'test_general_nvidia_budget_migrate.py' -v
+          python3 -m unittest discover -s tests -p 'test_general_writer_auth.py' -v
