@@ -15,6 +15,7 @@ from urllib.request import Request, urlopen
 
 EXPECTED_REPOSITORY = "xxlyusufi61-bot/general-super-loto"
 EXPECTED_APP_SLUG = "general-nvidia-budget-writer"
+EXPECTED_APP_ID = 5861647
 EXPECTED_RULESET_ID = 27814116
 EXPECTED_RULESET_NAME = "nvidia-budget-state-protection"
 EXPECTED_BRANCH = "refs/heads/general-nvidia-rate-limit-state"
@@ -78,16 +79,6 @@ def request_json(path: str, token: str = "", *, jwt: bool = False) -> dict:
 
 
 def validate_preflight_payloads(app: dict, repositories: dict, ruleset: dict) -> dict:
-    bypass = ruleset.get("bypass_actors")
-    if not isinstance(bypass, list) or len(bypass) != 1:
-        raise ValueError("NVIDIA budget Ruleset must have exactly one bypass actor")
-    actor = bypass[0]
-    if not isinstance(actor, dict) or actor.get("actor_type") != "Integration":
-        raise ValueError("NVIDIA budget Ruleset bypass actor must be a GitHub App Integration")
-    app_id = actor.get("actor_id")
-    if type(app_id) is not int or app_id < 1 or actor.get("bypass_mode") != "always":
-        raise ValueError("NVIDIA budget Ruleset bypass actor identity or mode is invalid")
-
     if ruleset.get("id") != EXPECTED_RULESET_ID or ruleset.get("name") != EXPECTED_RULESET_NAME:
         raise ValueError("NVIDIA budget Ruleset identity changed")
     if ruleset.get("enforcement") != "active" or ruleset.get("target") != "branch":
@@ -110,8 +101,8 @@ def validate_preflight_payloads(app: dict, repositories: dict, ruleset: dict) ->
     if ruleset.get("source_type") != "Repository" or ruleset.get("source") != EXPECTED_REPOSITORY:
         raise ValueError("NVIDIA budget Ruleset source repository changed")
 
-    if app.get("id") != app_id or app.get("slug") != EXPECTED_APP_SLUG:
-        raise ValueError("Ruleset bypass actor does not match the dedicated NVIDIA Budget Writer App")
+    if app.get("id") != EXPECTED_APP_ID or app.get("slug") != EXPECTED_APP_SLUG:
+        raise ValueError("GitHub App identity does not match the dedicated NVIDIA Budget Writer App")
     permissions = app.get("permissions")
     if permissions != EXPECTED_APP_PERMISSIONS:
         raise ValueError("NVIDIA Budget Writer App permissions are not exactly Contents write plus Metadata read")
@@ -148,8 +139,7 @@ def run_preflight() -> dict:
     bypass = ruleset.get("bypass_actors")
     if not isinstance(bypass, list) or len(bypass) != 1 or not isinstance(bypass[0], dict):
         raise ValueError("NVIDIA budget Ruleset bypass actor is missing or ambiguous")
-    app_id = bypass[0].get("actor_id")
-    app_jwt = create_app_jwt(app_id, private_key)
+    app_jwt = create_app_jwt(EXPECTED_APP_ID, private_key)
     app = request_json("/app", app_jwt, jwt=True)
     repositories = request_json("/installation/repositories", writer_token)
     return validate_preflight_payloads(app, repositories, ruleset)
