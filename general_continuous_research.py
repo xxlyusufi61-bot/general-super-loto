@@ -340,6 +340,12 @@ def _read_only_next_cycle_probe(
         if plan.get("eligible") is not True:
             return False, _safe_status_code(plan.get("status"), "NEXT_CYCLE_NOT_ELIGIBLE")
 
+        # A persisted CLAIMED sealed interval already has its exact candidates,
+        # archive snapshot, and holdout dates. The next run can finish this
+        # frozen local evaluation without reserving any new NVIDIA request.
+        if plan.get("pending_claim_resume_available") is True:
+            return True, "PENDING_SEALED_CLAIM_RECOVERY_READY"
+
         # NO_ELIGIBLE_CANDIDATE ends a session only while the same target is
         # still active. A subsequently captured newer target is independent
         # work and may proceed through the normal scheduler preflight.
