@@ -48,7 +48,7 @@ jobs:
               echo
               echo "**Result: GATE OPEN**"
               echo
-              echo "- `GENERAL_SCOPED_WRITERS_VALIDATED` matches `true` using GitHub Actions case-insensitive string comparison."
+              echo "- The scoped writer validation variable matches true using GitHub Actions case-insensitive string comparison."
               echo "- This workflow only reads the repository Actions variable."
               echo "- No GitHub App token was created."
               echo "- No repository or runtime-state write was performed."
