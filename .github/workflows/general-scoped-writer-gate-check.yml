@@ -1,6 +1,11 @@
 name: GENERAL Scoped Writer Gate Check
 
 'on':
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/general-scoped-writer-gate-check.yml"
   workflow_dispatch:
 
 permissions:
