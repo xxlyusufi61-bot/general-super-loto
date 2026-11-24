@@ -53,6 +53,8 @@ def ready_preflight(archive_path, ledger_path, *, offline_memory_path):
     history = archive["rows"][:-1]
     return {
         "status": "READY",
+        "partition_version": sealed.PARTITION_VERSION,
+        "directional_validation_windows_disjoint": True,
         "target_date": archive["last_date"],
         "archive_sha256": archive["archive_sha256"],
         "archive_record_count": archive["record_count"],
