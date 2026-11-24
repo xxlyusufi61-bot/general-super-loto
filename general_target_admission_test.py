@@ -186,7 +186,7 @@ class TargetAdmissionMaintenanceTests(unittest.TestCase):
             "archive_sha256": active["archive_sha256"],
             "archive_record_count": active["archive_record_count"],
             "claimed_at_utc": NOW.isoformat(),
-            "github_run_id": "offline-test",
+            "github_run_id": "445600",
         })
         auto.validate_state(state)
 
