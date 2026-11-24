@@ -115,6 +115,7 @@ jobs:
           EXPECTED_STATE_UPDATED: ${{ steps.target_admission.outputs.state_updated }}
           EXPECTED_RETIRED_TARGET_DATE: ${{ steps.target_admission.outputs.retired_target_date }}
           EXPECTED_ADMITTED_TARGET_DATE: ${{ steps.target_admission.outputs.admitted_target_date }}
+          EXPECTED_ACTIVE_TARGET_DATE: ${{ steps.target_admission.outputs.active_target_date }}
         run: |
           python3 general_automation_state_writer.py hydrate \
             --workspace "$RUNNER_TEMP/verified-target-admission" \
@@ -157,12 +158,18 @@ jobs:
                   raise SystemExit("The exact ineligible target terminal record is missing or duplicated.")
           active_available = os.environ["EXPECTED_ACTIVE_AVAILABLE"].lower() == "true"
           active = queue.get("active")
-          if active_available != isinstance(active, dict):
-              raise SystemExit("Persisted active-target presence differs from the preflight result.")
+          expected_active_date = os.environ.get("EXPECTED_ACTIVE_TARGET_DATE", "")
+          status = os.environ["EXPECTED_STATUS"]
+          if active_available:
+              if not isinstance(active, dict) or active["target_date"] != expected_active_date:
+                  raise SystemExit("The eligible active target differs from the preflight result.")
+          elif status == "ACTIVE_TARGET_REQUIRES_RECOVERY_OR_REVIEW":
+              if not isinstance(active, dict) or active["target_date"] != expected_active_date:
+                  raise SystemExit("Existing target recovery state was not preserved.")
+          elif active is not None:
+              raise SystemExit("An ineligible target was activated without a successful sealed preflight.")
           if admitted and (not isinstance(active, dict) or active["target_date"] != admitted):
               raise SystemExit("The admitted target does not match the verified active snapshot.")
-          if not active_available and active is not None:
-              raise SystemExit("An ineligible target was activated without a successful sealed preflight.")
           print(json.dumps({
               "status": "VERIFIED",
               "maintenance_status": os.environ["EXPECTED_STATUS"],
