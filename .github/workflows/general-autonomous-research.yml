@@ -225,39 +225,47 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: python3 general_automation_state_integrity_audit.py
-      - name: Observe the latest canonical archive and preserve one active target
-        id: queue_capture
+      - name: Stage latest snapshot and preflight target admission without provider calls
+        id: target_admission
         run: |
-          python3 general_autonomous_research.py queue-capture \
+          python3 general_target_admission.py \
+            --state general_autonomous_research_state.json \
             --archive super_loto_archive.json \
+            --ledger general_evaluation_ledger.json \
+            --memory general_research_memory.json \
+            --workspace "$RUNNER_TEMP" \
             --github-output "$GITHUB_OUTPUT"
           cat "$GITHUB_OUTPUT"
-      - name: Persist the active snapshot and latest archive cursor without changing protected objects
-        id: persist_queue
-        if: ${{ steps.queue_capture.outputs.changed == 'true' }}
+      - name: Persist eligibility-checked target queue state
+        id: persist_target_admission
+        if: ${{ steps.target_admission.outputs.state_updated == 'true' }}
         uses: ./.github/actions/publish-automation-state
         with:
           app_client_id: ${{ vars.GENERAL_AUTOMATION_STATE_WRITER_APP_CLIENT_ID }}
           private_key: ${{ secrets.GENERAL_AUTOMATION_STATE_WRITER_APP_PRIVATE_KEY }}
           expected_generation: ${{ steps.state_bootstrap.outputs.generation }}
           objects: autonomous_research_state
-          message: "Persist active-target snapshot and latest archive cursor"
+          message: "Persist sealed-preflight target admission and FIFO terminal outcome"
+      - name: Confirm admitted target state is durable
+        id: active_ready
+        if: ${{ steps.target_admission.outputs.active_available == 'true' && (steps.target_admission.outputs.state_updated != 'true' || steps.persist_target_admission.outcome == 'success') }}
+        run: echo "active_available=true" >> "$GITHUB_OUTPUT"
 
       - name: Materialize the pinned active-target snapshot for offline mathematical research
         id: offline_materialize
-        if: ${{ steps.queue_capture.outputs.has_pending == 'true' }}
+        if: ${{ steps.active_ready.outputs.active_available == 'true' }}
         run: |
           python3 general_autonomous_research.py queue-materialize \
             --output super_loto_archive.json
       - name: Detect pending sealed claim before offline discovery
         id: pending_claim_check
-        if: ${{ steps.queue_capture.outputs.has_pending == 'true' }}
+        if: ${{ steps.active_ready.outputs.active_available == 'true' }}
         run: |
           python3 general_sealed_evaluation.py pending-claim --archive super_loto_archive.json --ledger general_evaluation_ledger.json --github-output "$GITHUB_OUTPUT"
           cat "$GITHUB_OUTPUT"
       - name: Run bounded offline hypothesis discovery and evaluation
         id: offline_discovery
-        if: ${{ steps.queue_capture.outputs.has_pending == 'true' && steps.pending_claim_check.outcome == 'success' && steps.pending_claim_check.outputs.pending_claim != 'true' }}
+        if: ${{ steps.active_ready.outputs.active_available == 'true' && steps.pending_claim_check.outcome == 'success' && steps.pending_claim_check.outputs.pending_claim != 'true' }}
         continue-on-error: true
         run: |
           python3 general_offline_hypothesis_discovery.py run \
@@ -274,7 +282,7 @@ jobs:
         with:
           app_client_id: ${{ vars.GENERAL_AUTOMATION_STATE_WRITER_APP_CLIENT_ID }}
           private_key: ${{ secrets.GENERAL_AUTOMATION_STATE_WRITER_APP_PRIVATE_KEY }}
-          expected_generation: ${{ steps.persist_queue.outputs.generation || steps.state_bootstrap.outputs.generation }}
+          expected_generation: ${{ steps.persist_target_admission.outputs.generation || steps.state_bootstrap.outputs.generation }}
           objects: research_memory
           message: "Append validated offline GENERAL learning to research_memory state object"
       - name: Send offline hypothesis and evaluation summary to Telegram
@@ -307,7 +315,7 @@ jobs:
           cat "$GITHUB_OUTPUT"
       - name: Report scheduled cycle skipped by global NVIDIA lock
         id: skipped_global_lock
-        if: ${{ steps.queue_capture.outputs.has_pending == 'true' && steps.status.outcome == 'success' && steps.status.outputs.lock_clear == 'false' }}
+        if: ${{ steps.active_ready.outputs.active_available == 'true' && steps.status.outcome == 'success' && steps.status.outputs.lock_clear == 'false' }}
         continue-on-error: true
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -337,14 +345,14 @@ jobs:
           python3 general_nvidia_guard.py check
           echo "GENERAL_NVIDIA_GUARD_PASSED=1" >> "$GITHUB_ENV"
       - name: Materialize only the pinned active-target snapshot
-        if: ${{ steps.status.outputs.authorized == 'true' && steps.status.outputs.lock_clear == 'true' && steps.queue_capture.outputs.has_pending == 'true' }}
+        if: ${{ steps.status.outputs.authorized == 'true' && steps.status.outputs.lock_clear == 'true' && steps.active_ready.outputs.active_available == 'true' }}
         run: |
           python3 general_autonomous_research.py queue-materialize \
             --output super_loto_archive.json
 
       - name: Prepare one research pass for the active target and fresh sealed windows
         id: prepare
-        if: ${{ steps.status.outputs.authorized == 'true' && steps.status.outputs.lock_clear == 'true' && steps.queue_capture.outputs.has_pending == 'true' }}
+        if: ${{ steps.status.outputs.authorized == 'true' && steps.status.outputs.lock_clear == 'true' && steps.active_ready.outputs.active_available == 'true' }}
         run: |
           python3 general_autonomous_research.py prepare \
             --archive super_loto_archive.json \
@@ -368,7 +376,7 @@ jobs:
         with:
           app_client_id: ${{ vars.GENERAL_AUTOMATION_STATE_WRITER_APP_CLIENT_ID }}
           private_key: ${{ secrets.GENERAL_AUTOMATION_STATE_WRITER_APP_PRIVATE_KEY }}
-          expected_generation: ${{ steps.persist_offline_memory.outputs.generation || steps.persist_queue.outputs.generation || steps.state_bootstrap.outputs.generation }}
+          expected_generation: ${{ steps.persist_offline_memory.outputs.generation || steps.persist_target_admission.outputs.generation || steps.state_bootstrap.outputs.generation }}
           objects: autonomous_research_state
           message: "Reserve autonomous research target"
       - name: Recover exact evaluated candidate pair for an interrupted local score without NVIDIA
