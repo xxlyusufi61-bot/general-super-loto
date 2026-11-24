@@ -93,7 +93,7 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: python3 general_nvidia_writer_preflight.py
 
-      - name: Preserve trusted main-branch migration code before switching to the state branch
+      - name: Preserve trusted main-branch migration code for the isolated budget worktree
         run: |
           set -euo pipefail
           SOURCE="$RUNNER_TEMP/general-nvidia-migration-source"
@@ -101,7 +101,7 @@ jobs:
           cp general_nvidia_guard.py general_nvidia_budget_migrate.py general_writer_auth.py "$SOURCE/"
           echo "MIGRATION_SOURCE=$SOURCE" >> "$GITHUB_ENV"
 
-      - name: Fetch and pin the current protected budget branch
+      - name: Fetch and pin the protected budget branch in an isolated worktree
         env:
           READ_TOKEN: ${{ github.token }}
         run: |
@@ -109,15 +109,20 @@ jobs:
           AUTH="$(python3 -c 'import base64,os; print(base64.b64encode(("x-access-token:"+os.environ["READ_TOKEN"]).encode()).decode())')"
           git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $AUTH" fetch --no-tags origin refs/heads/general-nvidia-rate-limit-state:refs/remotes/origin/general-nvidia-rate-limit-state
           BASE_SHA="$(git rev-parse refs/remotes/origin/general-nvidia-rate-limit-state)"
+          BUDGET_WORKTREE="$RUNNER_TEMP/general-nvidia-budget-worktree"
           echo "BASE_SHA=$BASE_SHA" >> "$GITHUB_ENV"
-          git switch --create budget-v3-migration "$BASE_SHA"
-          test "$(git rev-parse HEAD)" = "$BASE_SHA"
-          test -f general_nvidia_rate_limit.json
+          echo "BUDGET_WORKTREE=$BUDGET_WORKTREE" >> "$GITHUB_ENV"
+          git worktree add --detach "$BUDGET_WORKTREE" "$BASE_SHA"
+          test "$(git -C "$BUDGET_WORKTREE" rev-parse HEAD)" = "$BASE_SHA"
+          test -f "$BUDGET_WORKTREE/general_nvidia_rate_limit.json"
+          test "$(git -C "$GITHUB_WORKSPACE" branch --show-current)" = "main"
+          test -f "$GITHUB_WORKSPACE/.github/actions/create-scoped-writer-token/action.yml"
 
       - name: Validate and convert the pinned ledger using trusted main-branch code
         id: migrate
         run: |
           set -euo pipefail
+          cd "$BUDGET_WORKTREE"
           PYTHONPATH="$MIGRATION_SOURCE" python3 "$MIGRATION_SOURCE/general_nvidia_budget_migrate.py" --ledger general_nvidia_rate_limit.json | tee "$RUNNER_TEMP/budget-migration-report.txt"
           python3 - <<'PY'
           import json
@@ -165,6 +170,7 @@ jobs:
           GENERAL_NVIDIA_BUDGET_WRITER_TOKEN: ${{ steps.nvidia-budget-writer.outputs.token }}
         run: |
           set -euo pipefail
+          cd "$BUDGET_WORKTREE"
           test "$(git rev-parse HEAD)" = "$BASE_SHA"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
