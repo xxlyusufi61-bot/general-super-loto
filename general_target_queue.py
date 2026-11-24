@@ -31,6 +31,7 @@ TERMINAL_TARGET_OUTCOMES = {
     "SUCCEEDED",
     "NO_ELIGIBLE_CANDIDATE",
     "EXHAUSTED_RETRY_BUDGET",
+    "NOT_EVALUABLE_INSUFFICIENT_FRESH_WINDOW",
 }
 
 
@@ -425,8 +426,16 @@ def capture_new_targets(
     attempts: list[dict[str, Any]],
     events: list[dict[str, Any]],
     now: datetime | None = None,
+    admit_latest: bool = True,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Keep one active target and stage only the newest canonical archive snapshot."""
+    """Keep one active target and stage only the newest canonical archive snapshot.
+
+    admit_latest=False stages the latest immutable snapshot without making it
+    active. Callers must prove fresh sealed-window eligibility before admission.
+    The default remains true for legacy callers and migrations.
+    """
+    if type(admit_latest) is not bool:
+        raise TargetQueueError("Latest-target admission flag must be a boolean.")
     archive = sealed.load_archive(archive_path)
     rows = _copy_rows(archive["rows"])
     source_sha = archive["archive_sha256"]
@@ -541,7 +550,8 @@ def capture_new_targets(
     else:
         latest_item = _make_item(rows, source_archive_sha256=source_sha, enqueued_at_utc=stamp)
     latest_completed = completed[-1]["target_date"] if completed else None
-    if active is None and (latest_completed is None or latest_date > latest_completed):
+    latest_is_new = latest_completed is None or latest_date > latest_completed
+    if active is None and admit_latest and latest_is_new:
         active = copy.deepcopy(latest_item)
     if active is not None:
         _verify_item_against_archive(active, rows)
@@ -562,14 +572,74 @@ def capture_new_targets(
         "pending_target_count": 1 if active is not None else 0,
         "completed_target_count": len(next_queue["completed"]),
         "has_pending": active is not None,
+        "has_latest_candidate": latest_is_new,
         "front_target_date": active["target_date"] if active is not None else None,
         "active_target_date": active["target_date"] if active is not None else None,
+        "latest_candidate_date": latest_item["target_date"] if latest_is_new else None,
         "latest_observed_date": latest_date,
         "observed_through_date": latest_date,
         "source_archive_sha256": source_sha,
         "target_values_rendered": False,
         "intermediate_draws_promoted_as_targets": False,
     }
+
+
+def admit_latest_snapshot(queue_value: Any) -> dict[str, Any]:
+    """Promote the staged latest snapshot only after an external sealed preflight passes."""
+    queue = copy.deepcopy(validate_queue(queue_value))
+    if queue["schema_version"] != QUEUE_SCHEMA_VERSION:
+        raise TargetQueueError("Latest-snapshot admission requires queue schema version 2.")
+    if queue["active"] is not None:
+        raise TargetQueueError("An active target is already pinned; it cannot be replaced.")
+    item = queue["latest_snapshot"]
+    if item is None:
+        raise TargetQueueError("There is no staged latest archive snapshot to admit.")
+    last_completed = queue["completed"][-1]["target_date"] if queue["completed"] else None
+    if last_completed is not None and item["target_date"] <= last_completed:
+        raise TargetQueueError("The staged latest snapshot is not newer than completed target history.")
+    queue["active"] = copy.deepcopy(item)
+    return validate_queue(queue)
+
+
+def retire_ineligible_front(
+    queue_value: Any,
+    *,
+    target_date: str,
+    archive_sha256: str,
+    archive_record_count: int,
+    reason_code: str,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Close a preflight-proven target without pretending a research attempt occurred."""
+    if reason_code != "INSUFFICIENT_FRESH_SEALED_WINDOWS":
+        raise TargetQueueError("Ineligible-target closure requires the exact insufficient-window reason code.")
+    return _record_terminal_front(
+        queue_value,
+        target_date=target_date,
+        archive_sha256=archive_sha256,
+        archive_record_count=archive_record_count,
+        outcome="NOT_EVALUABLE_INSUFFICIENT_FRESH_WINDOW",
+        now=now,
+    )
+
+
+def materialize_latest_candidate(queue_value: Any, output_path: str | Path) -> dict[str, Any]:
+    """Materialize the staged latest snapshot without promoting it to active."""
+    queue = validate_queue(queue_value)
+    if queue["schema_version"] != QUEUE_SCHEMA_VERSION:
+        raise TargetQueueError("Latest-candidate materialization requires queue schema version 2.")
+    item = queue["latest_snapshot"]
+    if item is None:
+        raise TargetQueueError("There is no staged latest archive snapshot.")
+    last_completed = queue["completed"][-1]["target_date"] if queue["completed"] else None
+    if last_completed is not None and item["target_date"] <= last_completed:
+        raise TargetQueueError("The staged latest snapshot is not newer than completed target history.")
+    if queue["active"] is not None:
+        raise TargetQueueError("Cannot materialize a latest candidate while another target is active.")
+    candidate_queue = copy.deepcopy(queue)
+    candidate_queue["active"] = copy.deepcopy(item)
+    candidate_queue = validate_queue(candidate_queue)
+    return materialize_front(candidate_queue, output_path)
 
 
 def materialize_front(queue_value: Any, output_path: str | Path) -> dict[str, Any]:
