@@ -609,6 +609,7 @@ def public_plan(split: dict[str, Any]) -> dict[str, Any]:
             "previously_consumed_offline_development_draw_count",
             "offline_development_memory_sha256",
             "target_numbers_exposed", "target_in_discovery", "target_in_validation",
+            "target_in_reverse_validation", "directional_validation_windows_disjoint",
             "discovery_count",
         )
     } | {"regimes": regimes}

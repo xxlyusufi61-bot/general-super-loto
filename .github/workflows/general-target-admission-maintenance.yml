@@ -1,0 +1,207 @@
+name: GENERAL Sealed Target Admission Maintenance
+
+'on':
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: "Exact confirmation for offline-only FIFO target admission maintenance. No NVIDIA call is made."
+        required: true
+        type: string
+        default: "NO"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: general-automation-state-maintenance
+  cancel-in-progress: false
+
+jobs:
+  reject-unapproved-dispatch:
+    if: ${{ github.ref != 'refs/heads/main' || inputs.confirmation != 'I_APPROVE_SEALED_TARGET_ADMISSION_MAINTENANCE_NO_NVIDIA' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Refuse unapproved or non-main dispatch
+        run: |
+          echo "Dispatch must run from main and include the exact offline-maintenance confirmation."
+          exit 1
+
+  maintain-target-admission:
+    if: ${{ github.ref == 'refs/heads/main' && inputs.confirmation == 'I_APPROVE_SEALED_TARGET_ADMISSION_MAINTENANCE_NO_NVIDIA' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Hydrate authoritative automation state
+        id: state_bootstrap
+        uses: ./.github/actions/hydrate-automation-state
+        with:
+          token: ${{ github.token }}
+
+      - name: Verify the active state-store authority and safety lock
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python3 general_automation_state_integrity_audit.py
+
+      - name: Capture protected state digests before maintenance
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+
+          def canonical(value):
+              return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+
+          state = json.loads(Path("general_autonomous_research_state.json").read_text(encoding="utf-8"))
+          protected = {
+              "authorization_sha256": hashlib.sha256(canonical(state["authorization"])).hexdigest(),
+              "attempts_sha256": hashlib.sha256(canonical(state["attempts"])).hexdigest(),
+              "events_sha256": hashlib.sha256(canonical(state["events"])).hexdigest(),
+              "evaluation_ledger_sha256": hashlib.sha256(Path("general_evaluation_ledger.json").read_bytes()).hexdigest(),
+              "research_memory_sha256": hashlib.sha256(Path("general_research_memory.json").read_bytes()).hexdigest(),
+          }
+          Path("${{ runner.temp }}/target-admission-protected.json").write_text(
+              json.dumps(protected, sort_keys=True), encoding="utf-8"
+          )
+          print("Authorization, attempt/event history, sealed ledger, and research memory digests captured.")
+          PY
+
+      - name: Run offline sealed-window admission and safe FIFO closure
+        id: target_admission
+        run: |
+          python3 general_target_admission.py \
+            --state general_autonomous_research_state.json \
+            --archive super_loto_archive.json \
+            --ledger general_evaluation_ledger.json \
+            --memory general_research_memory.json \
+            --workspace "$RUNNER_TEMP" \
+            --github-output "$GITHUB_OUTPUT"
+          cat "$GITHUB_OUTPUT"
+
+      - name: Persist only the autonomous research state object
+        id: persist_target_admission
+        if: ${{ steps.target_admission.outputs.state_updated == 'true' }}
+        uses: ./.github/actions/publish-automation-state
+        with:
+          app_client_id: ${{ vars.GENERAL_AUTOMATION_STATE_WRITER_APP_CLIENT_ID }}
+          private_key: ${{ secrets.GENERAL_AUTOMATION_STATE_WRITER_APP_PRIVATE_KEY }}
+          expected_generation: ${{ steps.state_bootstrap.outputs.generation }}
+          objects: autonomous_research_state
+          message: "Persist offline sealed-target admission maintenance"
+
+      - name: Rehydrate and verify the authoritative state transition
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          RUNNER_TEMP: ${{ runner.temp }}
+          EXPECTED_STATUS: ${{ steps.target_admission.outputs.status }}
+          EXPECTED_ACTIVE_AVAILABLE: ${{ steps.target_admission.outputs.active_available }}
+          EXPECTED_STATE_UPDATED: ${{ steps.target_admission.outputs.state_updated }}
+          EXPECTED_RETIRED_TARGET_DATE: ${{ steps.target_admission.outputs.retired_target_date }}
+          EXPECTED_ADMITTED_TARGET_DATE: ${{ steps.target_admission.outputs.admitted_target_date }}
+          EXPECTED_ACTIVE_TARGET_DATE: ${{ steps.target_admission.outputs.active_target_date }}
+        run: |
+          python3 general_automation_state_writer.py hydrate \
+            --workspace "$RUNNER_TEMP/verified-target-admission" \
+            --github-output "$GITHUB_OUTPUT"
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ["RUNNER_TEMP"])
+          state = json.loads((root / "verified-target-admission/general_autonomous_research_state.json").read_text(encoding="utf-8"))
+          before = json.loads((root / "target-admission-protected.json").read_text(encoding="utf-8"))
+          queue = state["target_queue"]
+
+          def canonical(value):
+              return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+
+          after = {
+              "authorization_sha256": hashlib.sha256(canonical(state["authorization"])).hexdigest(),
+              "attempts_sha256": hashlib.sha256(canonical(state["attempts"])).hexdigest(),
+              "events_sha256": hashlib.sha256(canonical(state["events"])).hexdigest(),
+              "evaluation_ledger_sha256": hashlib.sha256(Path("general_evaluation_ledger.json").read_bytes()).hexdigest(),
+              "research_memory_sha256": hashlib.sha256(Path("general_research_memory.json").read_bytes()).hexdigest(),
+          }
+          if before != after:
+              raise SystemExit("Protected authorization, attempts/events, sealed ledger, or research memory changed.")
+          expected_updated = os.environ["EXPECTED_STATE_UPDATED"].lower() == "true"
+          if expected_updated and queue.get("schema_version") != 2:
+              raise SystemExit("Target queue schema changed unexpectedly.")
+          retired = os.environ.get("EXPECTED_RETIRED_TARGET_DATE", "")
+          admitted = os.environ.get("EXPECTED_ADMITTED_TARGET_DATE", "")
+          if retired:
+              matching = [
+                  item for item in queue["completed"]
+                  if item["target_date"] == retired
+                  and item["outcome"] == "NOT_EVALUABLE_INSUFFICIENT_FRESH_WINDOW"
+              ]
+              if len(matching) != 1:
+                  raise SystemExit("The exact ineligible target terminal record is missing or duplicated.")
+          active_available = os.environ["EXPECTED_ACTIVE_AVAILABLE"].lower() == "true"
+          active = queue.get("active")
+          expected_active_date = os.environ.get("EXPECTED_ACTIVE_TARGET_DATE", "")
+          status = os.environ["EXPECTED_STATUS"]
+          if active_available:
+              if not isinstance(active, dict) or active["target_date"] != expected_active_date:
+                  raise SystemExit("The eligible active target differs from the preflight result.")
+          elif status == "ACTIVE_TARGET_REQUIRES_RECOVERY_OR_REVIEW":
+              if not isinstance(active, dict) or active["target_date"] != expected_active_date:
+                  raise SystemExit("Existing target recovery state was not preserved.")
+          elif active is not None:
+              raise SystemExit("An ineligible target was activated without a successful sealed preflight.")
+          if admitted and (not isinstance(active, dict) or active["target_date"] != admitted):
+              raise SystemExit("The admitted target does not match the verified active snapshot.")
+          print(json.dumps({
+              "status": "VERIFIED",
+              "maintenance_status": os.environ["EXPECTED_STATUS"],
+              "retired_target_date": retired or None,
+              "admitted_target_date": admitted or None,
+              "active_target_present": isinstance(active, dict),
+              "nvidia_requests": 0,
+              "authorization_changed": False,
+              "attempts_or_events_changed": False,
+              "sealed_ledger_changed": False,
+              "research_memory_changed": False,
+              "target_values_rendered": False,
+          }, sort_keys=True))
+          PY
+
+      - name: Write number-safe workflow summary
+        if: always()
+        env:
+          STATUS: ${{ steps.target_admission.outputs.status }}
+          ACTIVE_AVAILABLE: ${{ steps.target_admission.outputs.active_available }}
+          RETIRED_TARGET_DATE: ${{ steps.target_admission.outputs.retired_target_date }}
+          ADMITTED_TARGET_DATE: ${{ steps.target_admission.outputs.admitted_target_date }}
+          STATE_PERSIST_OUTCOME: ${{ steps.persist_target_admission.outcome }}
+        run: |
+          {
+            echo "## GENERAL sealed target admission maintenance"
+            echo ""
+            echo "- Status: ${STATUS:-NOT_RUN}"
+            echo "- Active target available: ${ACTIVE_AVAILABLE:-false}"
+            echo "- Retired ineligible target: ${RETIRED_TARGET_DATE:-none}"
+            echo "- Admitted ready target: ${ADMITTED_TARGET_DATE:-none}"
+            echo "- State persistence: ${STATE_PERSIST_OUTCOME:-not_required}"
+            echo "- NVIDIA requests: 0"
+            echo "- Target draw values rendered: false"
+          } >> "$GITHUB_STEP_SUMMARY"

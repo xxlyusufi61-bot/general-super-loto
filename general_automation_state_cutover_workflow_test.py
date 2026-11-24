@@ -140,7 +140,7 @@ class AutomationStateCutoverWorkflowTests(unittest.TestCase):
         self.assertNotIn("git push", persist_step)
         self.assertNotIn("general_offline_research_memory.json", workflow)
         self.assertIn(
-            "steps.persist_offline_memory.outputs.generation || steps.persist_queue.outputs.generation",
+            "steps.persist_offline_memory.outputs.generation || steps.persist_target_admission.outputs.generation",
             workflow,
         )
 
