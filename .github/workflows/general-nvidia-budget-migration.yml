@@ -16,6 +16,14 @@ on:
         required: true
         type: string
         default: "NO"
+      ruleset_bypass_confirmed:
+        description: "Confirm in repository Settings > Rules > Rulesets that the budget Ruleset has exactly one Integration bypass actor: NVIDIA Budget Writer App ID 5861647, bypass mode always."
+        required: true
+        type: choice
+        options:
+          - "NO"
+          - "YES"
+        default: "NO"
 
 permissions:
   contents: read
@@ -30,12 +38,18 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Enforce dispatch and migration approval boundary
+      - name: Enforce dispatch, Ruleset confirmation, and migration approval boundary
         env:
           MODE: ${{ inputs.mode }}
           APPROVAL: ${{ inputs.approval }}
+          RULESET_BYPASS_CONFIRMED: ${{ inputs.ruleset_bypass_confirmed }}
         run: |
           set -euo pipefail
+          if [ "$RULESET_BYPASS_CONFIRMED" != "YES" ]; then
+            echo "::error::Confirm the exact NVIDIA Budget Writer Ruleset bypass actor in repository Settings before running preflight or migration."
+            exit 1
+          fi
+          echo "Operator confirmed Ruleset bypass actor: Integration ID 5861647, bypass mode always."
           case "$MODE" in
             preflight) ;;
             migrate)
@@ -72,7 +86,7 @@ jobs:
           budget_writer_client_id: ${{ vars.GENERAL_NVIDIA_BUDGET_WRITER_APP_CLIENT_ID }}
           allow_prevalidation_budget_migration: 'true'
 
-      - name: Verify App identity, exact permissions, repository scope, and protected branch Ruleset
+      - name: Verify App identity, exact permissions, repository scope, and visible Ruleset configuration
         env:
           GENERAL_NVIDIA_BUDGET_WRITER_TOKEN: ${{ steps.nvidia-budget-writer.outputs.token }}
           GENERAL_NVIDIA_BUDGET_WRITER_APP_PRIVATE_KEY: ${{ secrets.GENERAL_NVIDIA_BUDGET_WRITER_APP_PRIVATE_KEY }}
@@ -137,7 +151,8 @@ jobs:
         run: |
           {
             echo "## NVIDIA budget migration preflight"
-            echo "- App identity, exact App permissions, installation repository scope, and budget Ruleset: PASS"
+            echo "- App identity, exact App permissions, installation repository scope, and budget Ruleset structure: PASS"
+            echo "- Ruleset bypass actor: operator-confirmed Integration ID 5861647, bypass mode always."
             echo "- Pinned V2 ledger validation and V3 conversion preview: PASS"
             echo "- No commit or push was made."
             echo "- No NVIDIA API request, research, runtime-state, authorization, lock, or global writer-gate operation was performed."

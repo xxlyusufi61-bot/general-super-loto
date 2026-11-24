@@ -3,6 +3,7 @@ import unittest
 from unittest.mock import patch
 
 from general_nvidia_writer_preflight import (
+    EXPECTED_APP_ID,
     EXPECTED_APP_PERMISSIONS,
     EXPECTED_BRANCH,
     EXPECTED_REPOSITORY,
@@ -15,7 +16,7 @@ from general_nvidia_writer_preflight import (
 
 def payloads():
     app = {
-        "id": 5861647,
+        "id": EXPECTED_APP_ID,
         "slug": "general-nvidia-budget-writer",
         "permissions": dict(EXPECTED_APP_PERMISSIONS),
     }
@@ -36,11 +37,6 @@ def payloads():
             {"type": "non_fast_forward"},
             {"type": "update"},
         ],
-        "bypass_actors": [{
-            "actor_id": 5861647,
-            "actor_type": "Integration",
-            "bypass_mode": "always",
-        }],
     }
     return app, repositories, ruleset
 
@@ -49,7 +45,7 @@ class NVIDIAWriterPreflightTests(unittest.TestCase):
     def test_exact_budget_writer_identity_scope_and_ruleset_pass(self):
         app, repositories, ruleset = payloads()
         result = validate_preflight_payloads(app, repositories, ruleset)
-        self.assertEqual(result["app_id"], 5861647)
+        self.assertEqual(result["app_id"], EXPECTED_APP_ID)
         self.assertEqual(result["token_repository_scope"], EXPECTED_REPOSITORY)
 
     def test_wrong_app_id_fails_closed(self):
@@ -83,19 +79,11 @@ class NVIDIAWriterPreflightTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_preflight_payloads(app, repositories, ruleset)
 
-    def test_wrong_ruleset_actor_fails_closed(self):
+    def test_ruleset_response_does_not_need_hidden_bypass_actors(self):
         app, repositories, ruleset = payloads()
-        ruleset["bypass_actors"][0]["actor_id"] = 999
-        with self.assertRaises(ValueError):
-            validate_preflight_payloads(app, repositories, ruleset)
-
-    def test_extra_bypass_actor_fails_closed(self):
-        app, repositories, ruleset = payloads()
-        ruleset["bypass_actors"].append({
-            "actor_id": 999, "actor_type": "Integration", "bypass_mode": "always"
-        })
-        with self.assertRaises(ValueError):
-            validate_preflight_payloads(app, repositories, ruleset)
+        self.assertNotIn("bypass_actors", ruleset)
+        result = validate_preflight_payloads(app, repositories, ruleset)
+        self.assertEqual(result["app_id"], EXPECTED_APP_ID)
 
     def test_wrong_branch_or_inactive_ruleset_fails_closed(self):
         app, repositories, ruleset = payloads()
