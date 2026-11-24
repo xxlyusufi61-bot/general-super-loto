@@ -1,18 +1,16 @@
 {
-  "schema_version": 2,
+  "category_limits": {
+    "forward_discovery": 750,
+    "forward_critique": 225,
+    "reverse_diagnostic": 150,
+    "between_draws": 225,
+    "retry_reserve": 150
+  },
+  "updated_at_utc": "2026-11-17T19:30:35.302563+00:00",
   "window_seconds": 60,
+  "daily_max_requests": 1500,
   "max_requests": 40,
   "normal_max_requests": 30,
-  "daily_window_seconds": 86400,
-  "daily_max_requests": 200,
-  "category_limits": {
-    "forward_discovery": 100,
-    "forward_critique": 30,
-    "reverse_diagnostic": 20,
-    "between_draws": 30,
-    "retry_reserve": 20
-  },
-  "package_max_requests": 4,
   "requests": [
     {
       "reserved_at_utc": "2026-11-17T19:31:05.302563+00:00",
@@ -63,6 +61,8 @@
       "reservation_id": "760b2042156648ad939423a42eb04232"
     }
   ],
+  "schema_version": 3,
+  "daily_window_seconds": 86400,
   "diagnostic_run_ids": [
     "41452458103",
     "41540083645",
@@ -71,6 +71,5 @@
     "43246058904",
     "43537220871",
     "43771155471"
-  ],
-  "updated_at_utc": "2026-11-17T19:30:35.302563+00:00"
+  ]
 }
