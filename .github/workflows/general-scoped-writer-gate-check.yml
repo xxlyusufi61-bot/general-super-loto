@@ -1,0 +1,79 @@
+name: GENERAL Scoped Writer Gate Check
+
+'on':
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/general-scoped-writer-gate-check.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scoped-writer-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Verify main-branch dispatch
+        env:
+          DISPATCH_REF: ${{ github.ref }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$DISPATCH_REF" != "refs/heads/main" ]]; then
+            {
+              echo "## Scoped Writer Gate Check"
+              echo
+              echo "**Result: NOT CHECKED**"
+              echo
+              echo "This workflow must be manually dispatched from the main branch."
+              echo "No repository variable was evaluated."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "GATE CHECK REQUIRES MAIN BRANCH"
+            exit 1
+          fi
+          echo "Dispatch ref: main"
+
+      - name: Read and report the scoped writer validation gate
+        env:
+          SCOPED_WRITERS_VALIDATED: ${{ vars.GENERAL_SCOPED_WRITERS_VALIDATED }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$SCOPED_WRITERS_VALIDATED" == "true" ]]; then
+            {
+              echo "## Scoped Writer Gate Check"
+              echo
+              echo "**Result: GATE OPEN**"
+              echo
+              echo "- `GENERAL_SCOPED_WRITERS_VALIDATED` is exactly `true`."
+              echo "- This workflow only reads the repository Actions variable."
+              echo "- No GitHub App token was created."
+              echo "- No repository or runtime-state write was performed."
+              echo "- No archive refresh, research, or NVIDIA API request was made."
+              echo
+              echo "A successful workflow run means the check executed; the gate result above determines whether this variable gate is open."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "GATE RESULT: OPEN"
+          else
+            if [[ -z "$SCOPED_WRITERS_VALIDATED" ]]; then
+              gate_detail="variable is missing or empty"
+            else
+              gate_detail="variable is present but is not exactly lowercase true"
+            fi
+            {
+              echo "## Scoped Writer Gate Check"
+              echo
+              echo "**Result: GATE CLOSED**"
+              echo
+              echo "- Reason: $gate_detail."
+              echo "- No GitHub App token was created."
+              echo "- No repository or runtime-state write was performed."
+              echo "- No archive refresh, research, or NVIDIA API request was made."
+              echo
+              echo "A successful workflow run means the check executed; the gate result above determines whether this variable gate is open."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "GATE RESULT: CLOSED ($gate_detail)"
+          fi
