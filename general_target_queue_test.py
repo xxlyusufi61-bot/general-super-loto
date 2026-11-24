@@ -400,5 +400,73 @@ class SingleActiveTargetQueueTests(unittest.TestCase):
         self.assertEqual(migrated["completed"], [])
 
 
+    def test_deferred_latest_snapshot_requires_explicit_admission(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root / "archive.json"
+            rows = synthetic_rows(90)
+            write_archive(archive, rows)
+            staged, summary = queue.capture_new_targets(
+                queue.initial_queue(),
+                archive_path=archive,
+                attempts=[],
+                events=[],
+                now=NOW,
+                admit_latest=False,
+            )
+            self.assertIsNone(staged["active"])
+            self.assertEqual(staged["latest_snapshot"]["target_date"], rows[-1]["date"])
+            self.assertTrue(summary["has_latest_candidate"])
+            self.assertFalse(summary["has_pending"])
+
+            candidate_path = root / "candidate.json"
+            candidate = queue.materialize_latest_candidate(staged, candidate_path)
+            self.assertEqual(candidate["target_date"], rows[-1]["date"])
+            loaded = queue.sealed.load_archive(candidate_path)
+            self.assertEqual(loaded["last_date"], rows[-1]["date"])
+            self.assertEqual(loaded["record_count"], len(rows))
+
+            admitted = queue.admit_latest_snapshot(staged)
+            self.assertEqual(admitted["active"]["target_date"], rows[-1]["date"])
+            self.assertEqual(admitted["active"]["archive_sha256"], staged["latest_snapshot"]["archive_sha256"])
+
+    def test_ineligible_terminal_outcome_is_distinct_and_requires_exact_reason(self):
+        rows = synthetic_rows(90)
+        item = queue._make_item(
+            rows, source_archive_sha256="f" * 64,
+            enqueued_at_utc=NOW.isoformat(),
+        )
+        staged = {
+            "schema_version": 2,
+            "observed_through_date": rows[-1]["date"],
+            "active": item,
+            "latest_snapshot": copy.deepcopy(item),
+            "completed": [],
+        }
+        with self.assertRaisesRegex(queue.TargetQueueError, "exact insufficient-window"):
+            queue.retire_ineligible_front(
+                staged,
+                target_date=item["target_date"],
+                archive_sha256=item["archive_sha256"],
+                archive_record_count=item["archive_record_count"],
+                reason_code="NO_CANDIDATE",
+                now=NOW,
+            )
+        retired = queue.retire_ineligible_front(
+            staged,
+            target_date=item["target_date"],
+            archive_sha256=item["archive_sha256"],
+            archive_record_count=item["archive_record_count"],
+            reason_code="INSUFFICIENT_FRESH_SEALED_WINDOWS",
+            now=NOW,
+        )
+        self.assertIsNone(retired["active"])
+        self.assertEqual(
+            retired["completed"][0]["outcome"],
+            "NOT_EVALUABLE_INSUFFICIENT_FRESH_WINDOW",
+        )
+        self.assertEqual(staged["completed"], [], "input state must remain immutable")
+
+
 if __name__ == "__main__":
     unittest.main()
