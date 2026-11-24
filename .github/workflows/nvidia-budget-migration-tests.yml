@@ -11,6 +11,7 @@ on:
       - "tests/test_general_nvidia_budget_migrate.py"
       - "tests/test_general_writer_auth.py"
       - ".github/workflows/general-nvidia-budget-migration.yml"
+      - "tests/test_nvidia_budget_migration_worktree.py"
       - ".github/workflows/nvidia-budget-migration-tests.yml"
       - "general_nvidia_writer_preflight.py"
       - "tests/test_general_nvidia_writer_preflight.py"
@@ -49,5 +50,6 @@ jobs:
       - name: Run migration and scoped-writer regression tests
         run: |
           python3 -m unittest discover -s tests -p 'test_general_nvidia_budget_migrate.py' -v
+          python3 -m unittest discover -s tests -p 'test_nvidia_budget_migration_worktree.py' -v
           python3 -m unittest discover -s tests -p 'test_general_writer_auth.py' -v
           python3 -m unittest discover -s tests -p 'test_general_nvidia_writer_preflight.py' -v
