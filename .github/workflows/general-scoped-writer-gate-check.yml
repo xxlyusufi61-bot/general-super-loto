@@ -42,13 +42,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$SCOPED_WRITERS_VALIDATED" == "true" ]]; then
+          if [[ "${SCOPED_WRITERS_VALIDATED,,}" == "true" ]]; then
             {
               echo "## Scoped Writer Gate Check"
               echo
               echo "**Result: GATE OPEN**"
               echo
-              echo "- `GENERAL_SCOPED_WRITERS_VALIDATED` is exactly `true`."
+              echo "- `GENERAL_SCOPED_WRITERS_VALIDATED` matches `true` using GitHub Actions case-insensitive string comparison."
               echo "- This workflow only reads the repository Actions variable."
               echo "- No GitHub App token was created."
               echo "- No repository or runtime-state write was performed."
@@ -61,7 +61,7 @@ jobs:
             if [[ -z "$SCOPED_WRITERS_VALIDATED" ]]; then
               gate_detail="variable is missing or empty"
             else
-              gate_detail="variable is present but is not exactly lowercase true"
+              gate_detail="variable is present but does not match true (case-insensitive)"
             fi
             {
               echo "## Scoped Writer Gate Check"
