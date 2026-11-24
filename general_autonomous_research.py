@@ -895,14 +895,13 @@ def prepare_cycle(
             attempts=state["attempts"],
             events=state["events"],
             now=now,
-            admit_latest=False,
         )
         state["target_queue"] = updated_queue
         queue = target_queue.validate_queue(updated_queue)
         active_item = target_queue.active_item(queue)
     if active_item is None:
         return {
-            "status": "WAITING_FOR_ELIGIBLE_TARGET_ADMISSION",
+            "status": "WAITING_FOR_NEW_LATEST_DRAW",
             "eligible": False,
             "latest_observed_date": queue.get("observed_through_date"),
             **status,
