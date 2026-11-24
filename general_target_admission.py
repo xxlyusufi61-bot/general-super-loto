@@ -75,10 +75,15 @@ def _preflight_snapshot(
             "target_numbers_exposed": False,
         }
 
-    if not isinstance(plan, dict) or plan.get("status") != "READY":
-        raise TargetAdmissionError("Sealed preflight returned an unknown or non-ready result.")
     if (
-        plan.get("target_date") != expected_item["target_date"]
+        not isinstance(plan, dict)
+        or plan.get("status") != "READY"
+        or plan.get("partition_version") != sealed.PARTITION_VERSION
+    ):
+        raise TargetAdmissionError("Sealed preflight returned an unknown, outdated, or non-ready result.")
+    if (
+        plan.get("directional_validation_windows_disjoint") is not True
+        or plan.get("target_date") != expected_item["target_date"]
         or plan.get("archive_sha256") != expected_item["archive_sha256"]
         or plan.get("archive_record_count") != expected_item["archive_record_count"]
     ):
