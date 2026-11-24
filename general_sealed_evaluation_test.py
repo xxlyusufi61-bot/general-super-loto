@@ -131,6 +131,8 @@ class SealedEvaluationTests(unittest.TestCase):
         self.assertFalse(plan["target_numbers_exposed"])
         self.assertFalse(plan["target_in_discovery"])
         self.assertFalse(plan["target_in_validation"])
+        self.assertFalse(plan["target_in_reverse_validation"])
+        self.assertTrue(plan["directional_validation_windows_disjoint"])
         self.assertEqual(plan["regimes"]["R60"]["validation_count"], 20)
         self.assertEqual(plan["regimes"]["R60"]["reverse_validation_count"], 20)
 
