@@ -13,11 +13,11 @@ jobs:
     steps:
       - name: Verify main-branch dispatch
         env:
-          GITHUB_REF: ${{ github.ref }}
+          DISPATCH_REF: ${{ github.ref }}
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+          if [[ "$DISPATCH_REF" != "refs/heads/main" ]]; then
             {
               echo "## Scoped Writer Gate Check"
               echo
