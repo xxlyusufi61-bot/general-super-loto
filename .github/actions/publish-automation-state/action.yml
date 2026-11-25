@@ -7,6 +7,10 @@ inputs:
   private_key:
     description: Private key for the dedicated automation-state writer GitHub App.
     required: true
+  writers_validated:
+    description: Explicit repository deployment-gate value supplied by the calling workflow.
+    required: false
+    default: 'false'
   expected_generation:
     description: Manifest generation read at the beginning of the operation.
     required: true
@@ -32,6 +36,7 @@ runs:
       with:
         client_id: ${{ inputs.app_client_id }}
         private_key: ${{ inputs.private_key }}
+        writers_validated: ${{ inputs.writers_validated }}
     - id: publish
       shell: bash
       env:

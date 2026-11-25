@@ -105,6 +105,7 @@ jobs:
         with:
           app_client_id: ${{ vars.GENERAL_AUTOMATION_STATE_WRITER_APP_CLIENT_ID }}
           private_key: ${{ secrets.GENERAL_AUTOMATION_STATE_WRITER_APP_PRIVATE_KEY }}
+          writers_validated: ${{ vars.GENERAL_SCOPED_WRITERS_VALIDATED }}
           expected_generation: ${{ steps.state_bootstrap.outputs.generation }}
           objects: autonomous_research_state
           message: "Update autonomous research authorization"
@@ -149,6 +150,7 @@ jobs:
         with:
           app_client_id: ${{ vars.GENERAL_AUTOMATION_STATE_WRITER_APP_CLIENT_ID }}
           private_key: ${{ secrets.GENERAL_AUTOMATION_STATE_WRITER_APP_PRIVATE_KEY }}
+          writers_validated: ${{ vars.GENERAL_SCOPED_WRITERS_VALIDATED }}
           expected_generation: ${{ steps.state_bootstrap.outputs.generation }}
           objects: archive
           message: "Refresh validated Super Loto archive"
@@ -243,6 +245,7 @@ jobs:
         with:
           app_client_id: ${{ vars.GENERAL_AUTOMATION_STATE_WRITER_APP_CLIENT_ID }}
           private_key: ${{ secrets.GENERAL_AUTOMATION_STATE_WRITER_APP_PRIVATE_KEY }}
+          writers_validated: ${{ vars.GENERAL_SCOPED_WRITERS_VALIDATED }}
           expected_generation: ${{ steps.state_bootstrap.outputs.generation }}
           objects: autonomous_research_state
           message: "Persist sealed-preflight target admission and FIFO terminal outcome"
@@ -282,6 +285,7 @@ jobs:
         with:
           app_client_id: ${{ vars.GENERAL_AUTOMATION_STATE_WRITER_APP_CLIENT_ID }}
           private_key: ${{ secrets.GENERAL_AUTOMATION_STATE_WRITER_APP_PRIVATE_KEY }}
+          writers_validated: ${{ vars.GENERAL_SCOPED_WRITERS_VALIDATED }}
           expected_generation: ${{ steps.persist_target_admission.outputs.generation || steps.state_bootstrap.outputs.generation }}
           objects: research_memory
           message: "Append validated offline GENERAL learning to research_memory state object"
@@ -376,6 +380,7 @@ jobs:
         with:
           app_client_id: ${{ vars.GENERAL_AUTOMATION_STATE_WRITER_APP_CLIENT_ID }}
           private_key: ${{ secrets.GENERAL_AUTOMATION_STATE_WRITER_APP_PRIVATE_KEY }}
+          writers_validated: ${{ vars.GENERAL_SCOPED_WRITERS_VALIDATED }}
           expected_generation: ${{ steps.persist_offline_memory.outputs.generation || steps.persist_target_admission.outputs.generation || steps.state_bootstrap.outputs.generation }}
           objects: autonomous_research_state
           message: "Reserve autonomous research target"
@@ -498,6 +503,7 @@ jobs:
         with:
           app_client_id: ${{ vars.GENERAL_AUTOMATION_STATE_WRITER_APP_CLIENT_ID }}
           private_key: ${{ secrets.GENERAL_AUTOMATION_STATE_WRITER_APP_PRIVATE_KEY }}
+          writers_validated: ${{ vars.GENERAL_SCOPED_WRITERS_VALIDATED }}
           expected_generation: ${{ steps.persist_attempt.outputs.generation }}
           objects: evaluation_ledger
           message: "Reserve autonomous sealed evaluation holdouts"
@@ -520,6 +526,7 @@ jobs:
         with:
           app_client_id: ${{ vars.GENERAL_AUTOMATION_STATE_WRITER_APP_CLIENT_ID }}
           private_key: ${{ secrets.GENERAL_AUTOMATION_STATE_WRITER_APP_PRIVATE_KEY }}
+          writers_validated: ${{ vars.GENERAL_SCOPED_WRITERS_VALIDATED }}
           expected_generation: ${{ steps.persist_claim.outputs.generation }}
           objects: evaluation_ledger
           message: "Record autonomous sealed evaluation completion"
@@ -666,6 +673,7 @@ jobs:
         with:
           app_client_id: ${{ vars.GENERAL_AUTOMATION_STATE_WRITER_APP_CLIENT_ID }}
           private_key: ${{ secrets.GENERAL_AUTOMATION_STATE_WRITER_APP_PRIVATE_KEY }}
+          writers_validated: ${{ vars.GENERAL_SCOPED_WRITERS_VALIDATED }}
           expected_generation: ${{ steps.persist_eval.outputs.generation || steps.persist_claim.outputs.generation || steps.persist_attempt.outputs.generation || steps.state_bootstrap.outputs.generation }}
           objects: autonomous_research_state research_memory
           message: "Persist autonomous cycle outcome and sanitized research memory"
