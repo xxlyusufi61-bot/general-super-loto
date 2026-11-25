@@ -142,6 +142,7 @@ jobs:
         with:
           app_client_id: ${{ vars.GENERAL_AUTOMATION_STATE_WRITER_APP_CLIENT_ID }}
           private_key: ${{ secrets.GENERAL_AUTOMATION_STATE_WRITER_APP_PRIVATE_KEY }}
+          writers_validated: ${{ vars.GENERAL_SCOPED_WRITERS_VALIDATED }}
           expected_generation: ${{ steps.state_bootstrap.outputs.generation }}
           objects: archive
           message: "Publish validated archive agent refresh"
