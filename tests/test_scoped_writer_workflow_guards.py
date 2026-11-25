@@ -186,8 +186,9 @@ class ScopedWriterWorkflowGuardTests(unittest.TestCase):
         action = (
             ROOT / ".github/actions/publish-automation-state/action.yml"
         ).read_text(encoding="utf-8")
-        self.assertIn("  writers_validated:\\n", action)
-        self.assertIn("    required: false\\n    default: 'false'", action)
+        self.assertIn("  writers_validated:", action)
+        self.assertIn("    required: false", action)
+        self.assertIn("    default: 'false'", action)
         self.assertIn(
             "writers_validated: ${{ inputs.writers_validated }}",
             action,
