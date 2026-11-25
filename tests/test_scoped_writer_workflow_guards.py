@@ -182,6 +182,54 @@ class ScopedWriterWorkflowGuardTests(unittest.TestCase):
                 found.setdefault(relative, set()).add(step_name)
         self.assertEqual(found, expected)
 
+    def test_publish_automation_state_forwards_scoped_writer_gate_to_all_live_callers(self):
+        action = (
+            ROOT / ".github/actions/publish-automation-state/action.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("  writers_validated:\\n", action)
+        self.assertIn("    required: false\\n    default: 'false'", action)
+        self.assertIn(
+            "writers_validated: ${{ inputs.writers_validated }}",
+            action,
+        )
+
+        expected_callers = {
+            ".github/workflows/general-agent.yml",
+            ".github/workflows/general-autonomous-research.yml",
+            ".github/workflows/general-coordinator-execute.yml",
+            ".github/workflows/general-target-admission-maintenance.yml",
+            ".github/workflows/open-research.yml",
+        }
+        disabled_legacy_callers = {
+            ".github/workflows/general-recovery-20261105.yml",
+            ".github/workflows/retire-exhausted-fifo-target.yml",
+        }
+        found_callers = set()
+        for workflow in sorted((ROOT / ".github/workflows").glob("*.yml")):
+            relative = workflow.relative_to(ROOT).as_posix()
+            lines = workflow.read_text(encoding="utf-8").splitlines()
+            for index, line in enumerate(lines):
+                if line.strip() != "uses: ./.github/actions/publish-automation-state":
+                    continue
+                start = index
+                while start >= 0 and not lines[start].startswith("      - "):
+                    start -= 1
+                self.assertGreaterEqual(start, 0, f"{relative}: publish step has no step header")
+                end = index + 1
+                while end < len(lines) and not lines[end].startswith("      - "):
+                    end += 1
+                step = "\\n".join(lines[start:end])
+                if relative in disabled_legacy_callers:
+                    continue
+                self.assertIn(
+                    "writers_validated: ${{ vars.GENERAL_SCOPED_WRITERS_VALIDATED }}",
+                    step,
+                    f"{relative}: live publish step must pass the repository writer gate",
+                )
+                found_callers.add(relative)
+
+        self.assertEqual(found_callers, expected_callers)
+
     def test_direct_app_token_minting_is_reserved_for_read_only_validation(self):
         validation_workflow = (
             ROOT / ".github/workflows/general-github-app-read-only-validation.yml"
