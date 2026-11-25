@@ -71,6 +71,7 @@ on:
       - "general_walkforward.py"
       - "general_walkforward_test.py"
       - ".github/actions/create-scoped-writer-token/action.yml"
+      - ".github/actions/publish-automation-state/action.yml"
       - ".github/workflows/general-autonomous-research.yml"
       - ".github/workflows/general-scoped-writer-gate-check.yml"
       - ".github/workflows/general-target-admission-maintenance.yml"
