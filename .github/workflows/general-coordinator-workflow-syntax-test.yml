@@ -25,6 +25,7 @@ on:
       - "general_walkforward.py"
       - "general_walkforward_test.py"
       - ".github/actions/create-scoped-writer-token/action.yml"
+      - ".github/actions/publish-automation-state/action.yml"
       - ".github/workflows/general-autonomous-research.yml"
       - ".github/workflows/general-scoped-writer-gate-check.yml"
       - ".github/workflows/general-target-admission-maintenance.yml"
@@ -107,7 +108,7 @@ jobs:
 
       - name: Parse coordinator workflow YAML
         run: |
-          ruby -e 'require "yaml"; %w[.github/actions/create-scoped-writer-token/action.yml .github/workflows/general-agent.yml .github/workflows/general-autonomous-research.yml .github/workflows/general-scoped-writer-gate-check.yml .github/workflows/general-target-admission-maintenance.yml .github/workflows/general-nvidia-manual-lock.yml .github/workflows/general-nvidia-unlock.yml .github/workflows/nvidia-diagnostic.yml .github/workflows/general-recovery-20261105.yml .github/workflows/retire-exhausted-fifo-target.yml .github/workflows/nvidia-test.yml .github/workflows/nvidia-chat-test.yml .github/workflows/open-research.yml .github/workflows/general-coordinator-execute.yml .github/workflows/rule-change-approval.yml].each { |path| YAML.parse_file(path) }'
+          ruby -e 'require "yaml"; %w[.github/actions/create-scoped-writer-token/action.yml .github/actions/publish-automation-state/action.yml .github/workflows/general-agent.yml .github/workflows/general-autonomous-research.yml .github/workflows/general-scoped-writer-gate-check.yml .github/workflows/general-target-admission-maintenance.yml .github/workflows/general-nvidia-manual-lock.yml .github/workflows/general-nvidia-unlock.yml .github/workflows/nvidia-diagnostic.yml .github/workflows/general-recovery-20261105.yml .github/workflows/retire-exhausted-fifo-target.yml .github/workflows/nvidia-test.yml .github/workflows/nvidia-chat-test.yml .github/workflows/open-research.yml .github/workflows/general-coordinator-execute.yml .github/workflows/rule-change-approval.yml].each { |path| YAML.parse_file(path) }'
           echo "GENERAL live-request workflow YAML syntax: PASS"
 
       - name: Compile coordinator modules
