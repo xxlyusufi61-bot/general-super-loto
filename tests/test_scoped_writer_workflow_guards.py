@@ -219,7 +219,7 @@ class ScopedWriterWorkflowGuardTests(unittest.TestCase):
                 end = index + 1
                 while end < len(lines) and not lines[end].startswith("      - "):
                     end += 1
-                step = "\\n".join(lines[start:end])
+                step = " ".join(lines[start:end])
                 if relative in disabled_legacy_callers:
                     continue
                 self.assertIn(
