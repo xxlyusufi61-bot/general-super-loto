@@ -850,6 +850,319 @@
         "archive_rows_copied": false
       },
       "content_sha256": "247dd8c3c3c3498a3e946b98c9cf5570e1449c0ad926f946d757de7191ae0b85"
+    },
+    {
+      "entry_id": 15,
+      "cycle_id": "9434e36e1c325488be18169313654d1fa59509ba8a889c86ee87438463437a72",
+      "source": "GENERAL/open-research",
+      "research_epoch": "general-open-research-memory-v2",
+      "direction": "forward",
+      "created_at_utc": "2026-11-26T21:43:36.876058+00:00",
+      "target_date": "2026-11-26",
+      "archive_sha256": "af83a8a7961716a6f84b9a07eb07865d73f321d6d7d57505324fc3e1f906d96d",
+      "runner_version": "0.9.0",
+      "status": "EVALUATED",
+      "research_report_sha256": "f5a1989048bf00a0bdc18ea94d29be462d96a20ba43a3e76e8b20bf3131499f1",
+      "research_report_content": null,
+      "research_report_content_sha256": null,
+      "research_report_content_status": "OMITTED_NUMERIC_CONTENT",
+      "proposal_status": "VALID_PROPOSALS",
+      "proposals": [
+        {
+          "hypothesis": "The score defined by the attached formal DSL expression is hypothesized to rank candidates with greater chronological test-draw overlap than the uniform random 6-of-60 baseline.",
+          "formal_execution_spec": {
+            "schema_version": 2,
+            "direction": "forward",
+            "score_expression": {
+              "op": "bool_to_number",
+              "arg": {
+                "op": "contains_candidate",
+                "state": {
+                  "op": "set_intersection",
+                  "left": {
+                    "op": "state_ref",
+                    "slot": "A"
+                  },
+                  "right": {
+                    "op": "state_ref",
+                    "slot": "B"
+                  }
+                }
+              }
+            }
+          },
+          "exact_definition": "Formal DSL definition: score(candidate) = BOOL_TO_NUMBER(CONTAINS_CANDIDATE((STATE_REF[A] INTERSECTION STATE_REF[B]))).",
+          "known_risks": [
+            "Binary score yields large tie groups; ranking power is minimal.",
+            "Descriptive historical association may not persist; prior same-direction membership indicators showed no forward advantage.",
+            "Small evaluation windows cannot separate this from noise."
+          ],
+          "research_rationale": "Indicator hypothesis: candidates present in both of the two most recent pre-cutoff draw states (A∩B repeats) may show different test-draw overlap than the uniform-random 6-of-60 baseline. Distinct from the already-consumed B∖A newcomer spec in prior same-direction memory; deliberately retested as the complementary two-state membership pattern.",
+          "falsification_criterion": "Reject the hypothesis if chronological forward evaluation and time-ordered cross-validation do not outperform the uniform-random 6-of-60 baseline within reported uncertainty. Reverse results remain retrospective stress tests only.",
+          "evaluation_protocols": [
+            "forward_walk_forward",
+            "reverse_retrospective_stress_test",
+            "time_ordered_cross_validation",
+            "uniform_random_6_of_N"
+          ],
+          "inputs": "Only direction-isolated 6-of-60 records strictly earlier than each chronological scoring cutoff; the cutoff draw and every later record are excluded.",
+          "discovery_direction": "forward",
+          "output_rule": "Score every member of the complete supported number pool with the formal DSL expression; rank by descending score and break equal-score ties by ascending value.",
+          "proposed_family": "A→T",
+          "selection_policy": "The formal DSL definition is fixed before sealed evaluation. Discovery and time-ordered development data may be used for selection; sealed outcomes and post-target records may not be used.",
+          "hypothesis_id": "HYP-001",
+          "parameter_policy": "All constants in the validated DSL expression are frozen before sealed evaluation; sealed outcomes cannot tune them."
+        }
+      ],
+      "execution_spec_status": "VALIDATED_SPECS",
+      "execution_spec": {
+        "schema_version": 2,
+        "direction": "forward",
+        "score_expression": {
+          "op": "bool_to_number",
+          "arg": {
+            "op": "contains_candidate",
+            "state": {
+              "op": "set_intersection",
+              "left": {
+                "op": "state_ref",
+                "slot": "A"
+              },
+              "right": {
+                "op": "state_ref",
+                "slot": "B"
+              }
+            }
+          }
+        }
+      },
+      "execution_spec_sha256": "79d2c9406587b22dbc5dbcdea2d253e6a295bf2aa9d2dba6cbb43127f857039d",
+      "learning_notes": {
+        "observations": [
+          "886 pre-target R60 draws passed structural inspection; two draw-gap intervals exist near the end of the archive but chronology is otherwise monotone.",
+          "All prior same-direction GENERAL records, including one sealed B∖A newcomer spec (0.62 ± 0.15 on 29 draws), showed no forward advantage over the 0.6/6 random baseline.",
+          "Current DSL for this call has no aggregate-history or modulo nodes, so MOD5-family hypotheses remain text-only and unproposed."
+        ],
+        "next_tests": [
+          "Evaluate the A∩B persistent-membership indicator with forward walk-forward on a pre-registered window of at least 50 draws versus the uniform-random 6-of-60 baseline.",
+          "Run chi-square and KS uniformity tests on per-number frequencies over the discovery prefix.",
+          "Test membership-indicator autocorrelation at lags 1-5 to check whether any short-memory repeat structure exists at all."
+        ],
+        "failed_approaches": [
+          "Full-history A/B/C triple membership counting: forward means 0.1-0.6, no advantage (prior memory).",
+          "Recent exact-frequency windows and neighbourhood radii: forward means 0.4-0.7, no advantage (prior memory).",
+          "Modulo-residue frequency scoring (MOD2/5/10): forward means 0.4-0.8 with wide SEs, no reliable advantage and not DSL-representable."
+        ]
+      },
+      "evaluation_feedback": {
+        "status": "EVALUATED_EXPLORATORY_FIXED_SPEC",
+        "claim_id": "8390d2a5b58da9d1c259a3535b3b52ca0cf44185a5efbd45a3b6da2592027329",
+        "candidate_id": "HYP-001",
+        "spec_sha256": "79d2c9406587b22dbc5dbcdea2d253e6a295bf2aa9d2dba6cbb43127f857039d",
+        "holdout": {
+          "uniform_random_expected_hits_out_of_6": 0.6,
+          "validation_draw_count": 4,
+          "mean_hits_out_of_6": 0.5,
+          "standard_error_of_mean_hits": 0.288675,
+          "hit_distribution": {
+            "0_hits": 2,
+            "1_hit": 2,
+            "2_hits": 0
+          }
+        },
+        "cross_validation": {
+          "folds": 4,
+          "uniform_random_expected_hits_out_of_6": 0.6,
+          "validation_draw_count": 4,
+          "mean_hits_out_of_6": 0.5
+        },
+        "holdout_consumed": true,
+        "retrospective_only": false,
+        "raw_holdout_dates_stored": false,
+        "per_draw_results_stored": false,
+        "draw_number_values_stored": false,
+        "interpretation": "Forward chronological evaluation feedback; its sealed interval is permanently consumed."
+      },
+      "failure": null,
+      "discovery_window": {
+        "start_date": "2020-12-20",
+        "end_date": "2026-11-15",
+        "draw_count": 886,
+        "holdout_dates_copied": false,
+        "archive_rows_copied": false
+      },
+      "content_sha256": "858d4938defa5463b8c3ffe5939ab0658de0eae34e281b56c2aeb4a4e3e8fcfa"
+    },
+    {
+      "entry_id": 16,
+      "cycle_id": "4895cb54f6d593591bcc5dccb1f2f05ab5682ed66bd8c92f2ee973cad98e4ff9",
+      "source": "GENERAL/open-research",
+      "research_epoch": "general-open-research-memory-v2",
+      "direction": "reverse",
+      "created_at_utc": "2026-11-26T21:43:36.894727+00:00",
+      "target_date": "2026-11-26",
+      "archive_sha256": "af83a8a7961716a6f84b9a07eb07865d73f321d6d7d57505324fc3e1f906d96d",
+      "runner_version": "0.9.0",
+      "status": "EVALUATED",
+      "research_report_sha256": "a87d75692dc1ebb2b936917a199cfc4fedcd6ff6191160781c1adde69cb97cf2",
+      "research_report_content": null,
+      "research_report_content_sha256": null,
+      "research_report_content_status": "OMITTED_SENSITIVE_CONTENT",
+      "proposal_status": "VALID_PROPOSALS",
+      "proposals": [
+        {
+          "hypothesis": "The score defined by the attached formal DSL expression is hypothesized to rank candidates with greater chronological test-draw overlap than the uniform random 6-of-60 baseline.",
+          "formal_execution_spec": {
+            "schema_version": 2,
+            "direction": "reverse",
+            "score_expression": {
+              "op": "add",
+              "left": {
+                "op": "bool_to_number",
+                "arg": {
+                  "op": "contains_candidate",
+                  "state": {
+                    "op": "state_ref",
+                    "slot": "C"
+                  }
+                }
+              },
+              "right": {
+                "op": "mul",
+                "left": {
+                  "op": "const",
+                  "value": 0.5
+                },
+                "right": {
+                  "op": "bool_to_number",
+                  "arg": {
+                    "op": "contains_candidate",
+                    "state": {
+                      "op": "state_ref",
+                      "slot": "B"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "exact_definition": "Formal DSL definition: score(candidate) = (BOOL_TO_NUMBER(CONTAINS_CANDIDATE(STATE_REF[C])) + (0.5 * BOOL_TO_NUMBER(CONTAINS_CANDIDATE(STATE_REF[B])))).",
+          "known_risks": [
+            "multiple-testing risk across future single-statistic candidates",
+            "fixed 0.5 weight must stay frozen; tuning on sealed outcomes is forbidden",
+            "reverse results are retrospective stress tests only and never forward predictive evidence"
+          ],
+          "research_rationale": "Distinct from the prior consumed overlap statistic |B∩C|: this scores each candidate individually by presence in the two most recent reverse-visible states, weighting the more recent state C fully and the prior state B at half. It is falsifiable against the uniform-random 6-of-60 baseline and avoids reusing the consumed HYP-501 holdout.",
+          "falsification_criterion": "Reject the hypothesis if chronological forward evaluation and time-ordered cross-validation do not outperform the uniform-random 6-of-60 baseline within reported uncertainty. Reverse results remain retrospective stress tests only.",
+          "evaluation_protocols": [
+            "forward_walk_forward",
+            "reverse_retrospective_stress_test",
+            "time_ordered_cross_validation",
+            "uniform_random_6_of_N"
+          ],
+          "inputs": "Only direction-isolated 6-of-60 records strictly later than each retrospective cutoff; reverse results are stress tests only and never forward predictive evidence.",
+          "discovery_direction": "reverse",
+          "output_rule": "Score every member of the complete supported number pool with the formal DSL expression; rank by descending score and break equal-score ties by ascending value.",
+          "proposed_family": "two-state recency-presence statistic (retrospective stress test only)",
+          "selection_policy": "The formal DSL definition is fixed before sealed evaluation. Discovery and time-ordered development data may be used for selection; sealed outcomes and post-target records may not be used.",
+          "hypothesis_id": "HYP-501",
+          "parameter_policy": "All constants in the validated DSL expression are frozen before sealed evaluation; sealed outcomes cannot tune them."
+        }
+      ],
+      "execution_spec_status": "VALIDATED_SPECS",
+      "execution_spec": {
+        "schema_version": 2,
+        "direction": "reverse",
+        "score_expression": {
+          "op": "add",
+          "left": {
+            "op": "bool_to_number",
+            "arg": {
+              "op": "contains_candidate",
+              "state": {
+                "op": "state_ref",
+                "slot": "C"
+              }
+            }
+          },
+          "right": {
+            "op": "mul",
+            "left": {
+              "op": "const",
+              "value": 0.5
+            },
+            "right": {
+              "op": "bool_to_number",
+              "arg": {
+                "op": "contains_candidate",
+                "state": {
+                  "op": "state_ref",
+                  "slot": "B"
+                }
+              }
+            }
+          }
+        }
+      },
+      "execution_spec_sha256": "60dd2a3b84e5bde03cdbe93355a0920dc7074a0c576d0eb5089c4356cc3d1635",
+      "learning_notes": {
+        "observations": [
+          "886 R60 rows supplied newest-to-oldest, all on or after the [reserved validation date omitted] regime boundary; target values absent as required.",
+          "Prior same-direction memory held one consumed overlap candidate (HYP-501) and two failed runs; its 30-draw holdout is permanently consumed and was not reused.",
+          "A two-state presence score (full weight for state C membership, half for B-only) is faithfully expressible in the reverse DSL using only slots B and C."
+        ],
+        "next_tests": [
+          "Score all candidates with the two-state presence statistic over a frozen reverse interval separated from discovery data and compare with the uniform-random 6-of-60 baseline with reported uncertainty.",
+          "Compute |B∩C| over all consecutive reverse pairs against the hypergeometric null as an independent descriptive check.",
+          "Define an explicit MOD5 residue and ordering convention in text before any residue-count test; it has no faithful DSL representation yet."
+        ],
+        "failed_approaches": [
+          "No computational tests were run in this pass; no approach failed or succeeded empirically.",
+          "Plain |B∩C| overlap was not re-proposed because its reverse holdout is already consumed development feedback."
+        ]
+      },
+      "evaluation_feedback": {
+        "status": "EVALUATED_EXPLORATORY_FIXED_SPEC",
+        "claim_id": "8390d2a5b58da9d1c259a3535b3b52ca0cf44185a5efbd45a3b6da2592027329",
+        "candidate_id": "HYP-501",
+        "spec_sha256": "60dd2a3b84e5bde03cdbe93355a0920dc7074a0c576d0eb5089c4356cc3d1635",
+        "holdout": {
+          "uniform_random_expected_hits_out_of_6": 0.6,
+          "mean_hits_out_of_6": 0.466667,
+          "test_draw_count": 30,
+          "skipped_draw_count": 0,
+          "hit_distribution": {
+            "0": 16,
+            "1": 14,
+            "2": 0,
+            "3": 0,
+            "4": 0,
+            "5": 0,
+            "6": 0
+          }
+        },
+        "cross_validation": {
+          "folds": 5,
+          "uniform_random_expected_hits_out_of_6": 0.6,
+          "validation_draw_count": 30,
+          "mean_hits_out_of_6": 0.466667
+        },
+        "holdout_consumed": true,
+        "retrospective_only": true,
+        "raw_holdout_dates_stored": false,
+        "per_draw_results_stored": false,
+        "draw_number_values_stored": false,
+        "interpretation": "Reverse result is retrospective-only feedback; its sealed interval is permanently consumed."
+      },
+      "failure": null,
+      "discovery_window": {
+        "start_date": "2020-12-20",
+        "end_date": "2026-11-15",
+        "draw_count": 886,
+        "holdout_dates_copied": false,
+        "archive_rows_copied": false
+      },
+      "content_sha256": "bc1438508bd835bd30962e349f38036fc71fae1fc1af5a91b65c4bc0a959e0e7"
     }
   ],
   "offline_research": {

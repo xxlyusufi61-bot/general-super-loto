@@ -216,6 +216,12 @@
       "outcome": "SUCCEEDED",
       "recorded_at_utc": "2026-11-17T19:36:09.033552+00:00",
       "reason_code": "EVALUATION_COMPLETED"
+    },
+    {
+      "attempt_id": "480260e48f1bcba0b0ebe2ae2ac55d94f8770a73fda137f2438169c6083d8c10",
+      "outcome": "SUCCEEDED",
+      "recorded_at_utc": "2026-11-26T21:43:37.095526+00:00",
+      "reason_code": "EVALUATION_COMPLETED"
     }
   ],
   "target_queue": {
@@ -348,5 +354,20 @@
       "retry_id": "dca123480ed1e44cdc21922ccef0986afb58f808086310b27eb76c8c7a80e3c7"
     }
   ],
-  "target_evaluations": []
+  "target_evaluations": [
+    {
+      "attempt_id": "480260e48f1bcba0b0ebe2ae2ac55d94f8770a73fda137f2438169c6083d8c10",
+      "target_date": "2026-11-26",
+      "archive_sha256": "af83a8a7961716a6f84b9a07eb07865d73f321d6d7d57505324fc3e1f906d96d",
+      "uniform_random_expected_hits_out_of_6": 0.6,
+      "forward_spec_sha256": "79d2c9406587b22dbc5dbcdea2d253e6a295bf2aa9d2dba6cbb43127f857039d",
+      "execution_spec_dsl_version": 2,
+      "evaluation_scope": "ONE_CURRENT_HIDDEN_TARGET",
+      "forward_hypothesis_id": "HYP-001",
+      "claim_id": "8390d2a5b58da9d1c259a3535b3b52ca0cf44185a5efbd45a3b6da2592027329",
+      "archive_record_count": 990,
+      "candidate_count": 6,
+      "completed_at_utc": "2026-11-26T21:43:36.538817+00:00"
+    }
+  ]
 }
