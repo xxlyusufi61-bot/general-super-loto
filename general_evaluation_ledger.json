@@ -127,7 +127,7 @@
     {
       "claim_id": "8390d2a5b58da9d1c259a3535b3b52ca0cf44185a5efbd45a3b6da2592027329",
       "partition_version": 2,
-      "state": "CLAIMED",
+      "state": "EVALUATED",
       "claimed_at_utc": "2026-11-26T21:43:06.215168+00:00",
       "orchestrator_version": "0.5.0",
       "engine_version": "0.2.1",
@@ -257,7 +257,29 @@
       "minimum_training_draws": 40,
       "maximum_validation_draws": 30,
       "candidate_selection_rule": "Freeze exactly the first eligible proposal independently in each direction; require one matching safe DSL specification per direction. Do not select alternatives after validation.",
-      "numbers_stored_in_ledger": false
+      "numbers_stored_in_ledger": false,
+      "completed_at_utc": "2026-11-26T21:43:29.001976+00:00",
+      "evaluation_report_sha256": "b435c27ca11c5307a868f4b65657d5a908c3242fd3a8346801de96bd971f1325",
+      "aggregate_result": {
+        "forward_mean_hits_out_of_6": 0.5,
+        "forward_standard_error": 0.288675,
+        "forward_random_expected_hits_out_of_6": 0.6,
+        "cv_mean_hits_out_of_6": 0.5,
+        "reverse_mean_hits_out_of_6": 0.570455,
+        "reverse_predictive_evidence": false,
+        "reverse_candidate_holdout_mean_hits_out_of_6": 0.466667,
+        "reverse_candidate_holdout_draw_count": 30,
+        "reverse_time_ordered_cv_mean_hits_out_of_6": 0.466667,
+        "reverse_time_ordered_cv_fold_count": 5,
+        "reverse_candidate_holdout_predictive_evidence": false,
+        "reverse_candidate_holdout_spec_sha256": "60dd2a3b84e5bde03cdbe93355a0920dc7074a0c576d0eb5089c4356cc3d1635",
+        "bidirectional_catalog_forward_mean_hits_out_of_6": 0.61959,
+        "bidirectional_catalog_forward_draw_count": 878,
+        "bidirectional_catalog_reverse_mean_hits_out_of_6": 0.56492,
+        "bidirectional_catalog_reverse_draw_count": 878,
+        "bidirectional_catalog_reverse_predictive_evidence": false
+      },
+      "per_draw_values_stored": false
     }
   ]
 }
