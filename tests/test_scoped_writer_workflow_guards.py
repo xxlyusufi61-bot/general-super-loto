@@ -107,11 +107,17 @@ class ScopedWriterWorkflowGuardTests(unittest.TestCase):
             check=False,
         )
 
-    def test_deployment_gate_runtime_defaults_closed_and_accepts_only_validated(self):
+    def test_deployment_gate_runtime_defaults_closed_and_accepts_case_insensitive_true(self):
         self.assertNotEqual(self.run_deployment_gate().returncode, 0)
-        self.assertNotEqual(self.run_deployment_gate(validated="false").returncode, 0)
-        self.assertNotEqual(self.run_deployment_gate(validated="TRUE").returncode, 0)
-        self.assertEqual(self.run_deployment_gate(validated="true").returncode, 0)
+        for value in ("", "false", "False", "FALSE", "not-true"):
+            with self.subTest(validated=value):
+                result = self.run_deployment_gate(validated=value)
+                self.assertNotEqual(result.returncode, 0)
+
+        for value in ("true", "True", "TRUE", "tRuE"):
+            with self.subTest(validated=value):
+                result = self.run_deployment_gate(validated=value)
+                self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_deployment_gate_runtime_limits_emergency_exception(self):
         allowed = self.run_deployment_gate(allow_lock="true")
