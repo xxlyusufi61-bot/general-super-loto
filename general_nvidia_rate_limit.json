@@ -16,6 +16,10 @@
     {
       "reserved_at_utc": "2026-11-26T21:42:14.462164+00:00",
       "source": "open-research-forward"
+    },
+    {
+      "reserved_at_utc": "2026-11-26T21:42:51.496250+00:00",
+      "source": "open-research-reverse"
     }
   ],
   "daily_requests": [
@@ -25,6 +29,13 @@
       "category": "forward_discovery",
       "package_id": "45899745667:1",
       "reservation_id": "0e2a9e4d00b34c24aeb18833f6214784"
+    },
+    {
+      "reserved_at_utc": "2026-11-26T21:42:51.496250+00:00",
+      "source": "open-research-reverse",
+      "category": "reverse_diagnostic",
+      "package_id": "45899745667:1",
+      "reservation_id": "5a49f6af626e4110af7a2a8b9a82ac30"
     }
   ],
   "diagnostic_run_ids": [
@@ -36,5 +47,5 @@
     "43537220871",
     "43771155471"
   ],
-  "updated_at_utc": "2026-11-26T21:41:44.462164+00:00"
+  "updated_at_utc": "2026-11-26T21:42:21.496250+00:00"
 }
