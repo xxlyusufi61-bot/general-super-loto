@@ -1,4 +1,10 @@
 {
+  "schema_version": 3,
+  "window_seconds": 60,
+  "max_requests": 40,
+  "normal_max_requests": 30,
+  "daily_window_seconds": 86400,
+  "daily_max_requests": 1500,
   "category_limits": {
     "forward_discovery": 750,
     "forward_critique": 225,
@@ -6,63 +12,21 @@
     "between_draws": 225,
     "retry_reserve": 150
   },
-  "updated_at_utc": "2026-11-17T19:30:35.302563+00:00",
-  "window_seconds": 60,
-  "daily_max_requests": 1500,
-  "max_requests": 40,
-  "normal_max_requests": 30,
   "requests": [
     {
-      "reserved_at_utc": "2026-11-17T19:31:05.302563+00:00",
-      "source": "open-research-reverse"
+      "reserved_at_utc": "2026-11-26T21:42:14.462164+00:00",
+      "source": "open-research-forward"
     }
   ],
   "daily_requests": [
     {
-      "reserved_at_utc": "2026-11-17T01:34:28.551935+00:00",
+      "reserved_at_utc": "2026-11-26T21:42:14.462164+00:00",
       "source": "open-research-forward",
-      "category": "retry_reserve",
-      "package_id": "43996412179:1",
-      "reservation_id": "ecb11aa9f5d0441cb989209d1de4425b"
-    },
-    {
-      "reserved_at_utc": "2026-11-17T01:39:09.614197+00:00",
-      "source": "open-research-reverse",
-      "category": "retry_reserve",
-      "package_id": "43996412179:1",
-      "reservation_id": "63cdea97470b4b4a89a3c9cecc7d170f"
-    },
-    {
-      "reserved_at_utc": "2026-11-17T07:40:35.869958+00:00",
-      "source": "open-research-forward",
-      "category": "retry_reserve",
-      "package_id": "44040345546:1",
-      "reservation_id": "4030888ff6fc403bb5dda35238085572"
-    },
-    {
-      "reserved_at_utc": "2026-11-17T07:46:31.350779+00:00",
-      "source": "open-research-reverse",
-      "category": "retry_reserve",
-      "package_id": "44040345546:1",
-      "reservation_id": "313051d843144920ace37adf65731984"
-    },
-    {
-      "reserved_at_utc": "2026-11-17T19:25:13.169860+00:00",
-      "source": "open-research-forward",
-      "category": "retry_reserve",
-      "package_id": "44158108709:1",
-      "reservation_id": "7ed39efb708647adbe8a916406921227"
-    },
-    {
-      "reserved_at_utc": "2026-11-17T19:31:05.302563+00:00",
-      "source": "open-research-reverse",
-      "category": "retry_reserve",
-      "package_id": "44158108709:1",
-      "reservation_id": "760b2042156648ad939423a42eb04232"
+      "category": "forward_discovery",
+      "package_id": "45899745667:1",
+      "reservation_id": "0e2a9e4d00b34c24aeb18833f6214784"
     }
   ],
-  "schema_version": 3,
-  "daily_window_seconds": 86400,
   "diagnostic_run_ids": [
     "41452458103",
     "41540083645",
@@ -71,5 +35,6 @@
     "43246058904",
     "43537220871",
     "43771155471"
-  ]
+  ],
+  "updated_at_utc": "2026-11-26T21:41:44.462164+00:00"
 }
