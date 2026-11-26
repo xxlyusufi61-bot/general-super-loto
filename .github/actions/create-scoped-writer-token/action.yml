@@ -49,6 +49,8 @@ runs:
       run: |
         set -euo pipefail
         WRITERS_VALIDATED="${WRITERS_VALIDATED:-false}"
+        # Match GitHub Actions' case-insensitive string comparison semantics.
+        WRITERS_VALIDATED="${WRITERS_VALIDATED,,}"
         ALLOW_PREVALIDATION_BUDGET_MIGRATION="${ALLOW_PREVALIDATION_BUDGET_MIGRATION:-false}"
         ALLOW_PREVALIDATION_SAFETY_LOCK="${ALLOW_PREVALIDATION_SAFETY_LOCK:-false}"
         BUDGET_WRITER_CLIENT_ID="${BUDGET_WRITER_CLIENT_ID:-}"
