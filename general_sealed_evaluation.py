@@ -1371,20 +1371,6 @@ def create_claim(
             "real_archive_evaluation_performed": False,
             "reason": "Need one DSL-valid specification for the first eligible proposal in each direction, with no alternatives.",
         }
-    used_dates = _used_validation_dates(ledger)
-    package_exposure = None
-    if research_package_id is not None:
-        split, package_exposure = _build_v3_package_split(
-            archive, ledger, offline_memory_path=offline_memory_path,
-            package_id=research_package_id, attempt_id=scheduler_attempt_id,
-        )
-        if package_exposure is None:
-            raise SealedEvaluationError("V3 claim requires a persisted pre-request package reservation.")
-    else:
-        split = split_archive(
-            archive["rows"], archive_sha256=archive["archive_sha256"],
-            used_validation_dates=used_dates, offline_memory_path=offline_memory_path,
-        )
     completed_match = next((
         item for item in ledger["entries"]
         if item.get("state") == "EVALUATED"
@@ -1395,8 +1381,11 @@ def create_claim(
         and item.get("reverse_hypothesis_id") == candidate["reverse_hypothesis_id"]
         and item.get("reverse_spec_sha256") == candidate["reverse_spec_sha256"]
         and (
-            split.get("partition_version") != UNSEEN_PARTITION_VERSION
-            or item.get("research_package_id") == split.get("research_package", {}).get("package_id")
+            (research_package_id is None and item.get("partition_version") != UNSEEN_PARTITION_VERSION)
+            or (
+                research_package_id is not None
+                and item.get("research_package_id") == research_package_id
+            )
         )
     ), None)
     if completed_match is not None:
@@ -1427,6 +1416,20 @@ def create_claim(
             "current_target_numbers_exposed": False,
             "duplicate_holdout_scoring_performed": False,
         }
+    used_dates = _used_validation_dates(ledger)
+    package_exposure = None
+    if research_package_id is not None:
+        split, package_exposure = _build_v3_package_split(
+            archive, ledger, offline_memory_path=offline_memory_path,
+            package_id=research_package_id, attempt_id=scheduler_attempt_id,
+        )
+        if package_exposure is None:
+            raise SealedEvaluationError("V3 claim requires a persisted pre-request package reservation.")
+    else:
+        split = split_archive(
+            archive["rows"], archive_sha256=archive["archive_sha256"],
+            used_validation_dates=used_dates, offline_memory_path=offline_memory_path,
+        )
     canonical_pre_target_rows = [
         row for row in archive["rows"] if row["date"] < split["target_date"]
     ]
