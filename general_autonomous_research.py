@@ -1178,6 +1178,7 @@ def prepare_cycle(
         "pending_claim_id": plan.get("pending_claim_id"),
         "research_package_id": plan.get("research_package_id"),
         "research_package": plan.get("research_package"),
+        "research_package_attempt_id": plan.get("scheduler_attempt_id"),
     }
 
 
@@ -1308,10 +1309,9 @@ def claim_attempt(
         )
         if unlock_at > _timestamp(claimed_at, "attempt.claimed_at_utc"):
             raise AutonomousResearchError("Manual unlock provenance postdates the retry claim.")
-    package = plan.get("research_package")
     package_exposure_attempt_id = (
-        package.get("scheduler_attempt_id")
-        if isinstance(package, dict) and isinstance(package.get("scheduler_attempt_id"), str)
+        plan.get("research_package_attempt_id")
+        if isinstance(plan.get("research_package_attempt_id"), str)
         else attempt_id
     )
     attempt = {
@@ -1831,6 +1831,7 @@ def main(argv: list[str] | None = None) -> int:
                 "retryable": result.get("retryable") is True,
                 "retry_number": result.get("retry_number"),
                 "research_package_id": result.get("research_package_id") or "",
+                "research_package_attempt_id": result.get("research_package_attempt_id") or "",
             })
         elif args.command == "claim":
             plan = prepare_cycle(
