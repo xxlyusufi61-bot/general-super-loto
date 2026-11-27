@@ -810,7 +810,7 @@ def get_used_validation_dates(ledger: dict[str, Any]) -> set[str]:
     return set(_used_validation_dates(ledger))
 
 
-def _build_v3_package_split(archive, ledger, *, offline_memory_path, package_id=None, attempt_id=None):
+def _build_v3_package_split(archive, ledger, *, offline_memory_path, package_id=None, attempt_id=None, allow_evaluated_recovery=False):
     """Build or replay one exact package from dates not previously exposed."""
     try:
         from general_research_memory import load_memory
@@ -855,9 +855,38 @@ def _build_v3_package_split(archive, ledger, *, offline_memory_path, package_id=
                     raise research_windows.ResearchWindowError(
                         "An exposed package now overlaps another consumed date or claim."
                     )
+            elif reservation_state == "EVALUATED":
+                if allow_evaluated_recovery is not True:
+                    raise research_windows.ResearchWindowError(
+                        "An EVALUATED package can only be reopened for exact local-target-score recovery."
+                    )
+                current_without_own = current_unavailable - package_dates
+                if current_without_own != set(package.get("previously_unavailable_dates", [])):
+                    raise research_windows.ResearchWindowError(
+                        "Evaluated package prior-unavailable snapshot changed before local-score recovery."
+                    )
+                matching_claims = [
+                    entry for entry in ledger.get("entries", [])
+                    if entry.get("partition_version") == UNSEEN_PARTITION_VERSION
+                    and entry.get("research_package_id") == package_id
+                    and entry.get("scheduler_attempt_id") == attempt_id
+                    and entry.get("state") == "EVALUATED"
+                    and entry.get("target_date") == package.get("target_date")
+                    and entry.get("archive_sha256") == package.get("archive_sha256")
+                    and entry.get("archive_record_count") == package.get("archive_record_count")
+                    and entry.get("validation_dates") == package.get("validation_dates")
+                    and entry.get("reverse_validation_dates") == package.get("reverse_validation_dates")
+                    and entry.get("r60_discovery_count") == package.get("discovery_count")
+                    and entry.get("discovery_start_date") == package.get("discovery_start_date")
+                    and entry.get("discovery_end_date") == package.get("discovery_end_date")
+                ]
+                if len(matching_claims) != 1:
+                    raise research_windows.ResearchWindowError(
+                        "Evaluated package does not have one exact completed sealed claim."
+                    )
             else:
                 raise research_windows.ResearchWindowError(
-                    "A V3 package can only be resumed while reserved or discovery-exposed."
+                    "A V3 package can only be resumed while reserved, discovery-exposed, or explicitly recovered after evaluation."
                 )
         if package_id is None:
             unavailable = research_windows.unavailable_dates(
@@ -882,6 +911,9 @@ def _build_v3_package_split(archive, ledger, *, offline_memory_path, package_id=
         split = research_windows.split_from_package(
             archive["rows"], package, archive_sha256=archive["archive_sha256"]
         )
+        split["evaluated_package_recovery"] = (
+            package_id is not None and reservation_state == "EVALUATED"
+        ) if 'reservation_state' in locals() else False
         split["scheduler_attempt_id"] = (
             attempt_id if exposure is not None else None
         )
@@ -1112,8 +1144,11 @@ def preflight(
     partition_version: int = PARTITION_VERSION,
     package_id: str | None = None,
     attempt_id: str | None = None,
+    allow_evaluated_package_recovery: bool = False,
 ) -> dict[str, Any]:
     """Fail before any hosted-model request if no fresh validation interval exists."""
+    if type(allow_evaluated_package_recovery) is not bool:
+        raise SealedEvaluationError("Evaluated-package recovery selector must be a boolean.")
     archive = load_archive(archive_path)
     ledger = load_ledger(ledger_path)
     pending = _pending_claim_with_split(
@@ -1131,6 +1166,7 @@ def preflight(
             split, _ = _build_v3_package_split(
                 archive, ledger, offline_memory_path=offline_memory_path,
                 package_id=package_id, attempt_id=attempt_id,
+                allow_evaluated_recovery=allow_evaluated_package_recovery,
             )
         else:
             split = split_archive(
@@ -1190,6 +1226,7 @@ def preflight(
         "hosted_model_request_performed": False,
         "real_archive_evaluation_performed": False,
         "pending_claim_resume_available": pending_entry is not None,
+        "evaluated_package_recovery": split.get("evaluated_package_recovery") is True,
         "pending_claim_id": pending_entry["claim_id"] if pending_entry is not None else None,
         "research_package_id": split.get("research_package", {}).get("package_id"),
         "research_package": split.get("research_package"),
