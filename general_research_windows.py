@@ -249,8 +249,24 @@ def append_package_status(ledger, exposure, *, state, recorded_at_utc, reason):
 
 def reserve_research_package(ledger, package, *, attempt_id, created_at_utc):
     already = exposure_dates(ledger) | holdout_dates(ledger)
-    if set(package["dates"]) & already: raise ResearchWindowError("Package overlaps prior exposure or claim.")
+    overlaps = set(package["dates"]) & already
+    previous = [
+        item for item in ledger.get("discovery_exposures", [])
+        if isinstance(item, dict) and item.get("kind") == "RESEARCH_PACKAGE"
+        and item.get("package_id") == package.get("package_id")
+    ]
+    retry_allowed = False
+    if previous:
+        latest = previous[-1]
+        if latest.get("package") != package:
+            raise ResearchWindowError("A package ID cannot be rebound to different dates or roles.")
+        retry_allowed = package_status(ledger, latest) in {"EXPOSED", "RELEASED"}
+    if overlaps and not retry_allowed:
+        raise ResearchWindowError("Package overlaps prior exposure or claim.")
     exposure = make_package_exposure(package, attempt_id=attempt_id, created_at_utc=created_at_utc)
+    if any(item.get("attempt_id") == attempt_id and item.get("package_id") == package.get("package_id")
+           for item in ledger.get("discovery_exposures", []) if isinstance(item, dict)):
+        raise ResearchWindowError("This attempt already reserved the package.")
     ledger.setdefault("discovery_exposures", []).append(exposure)
     return exposure
 
