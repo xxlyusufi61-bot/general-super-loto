@@ -146,6 +146,35 @@ class V3SealedPackageTests(unittest.TestCase):
                 unavailable=set(),
             )
 
+    def test_released_package_identity_cannot_be_reopened_in_persisted_ledger(self):
+        ledger = sealed.load_ledger(self.ledger_path)
+        exposure = windows.package_exposure_for_attempt(
+            ledger, package_id=self.package["package_id"], attempt_id=self.attempt_id
+        )
+        windows.append_package_status(
+            ledger,
+            exposure,
+            state="RELEASED",
+            recorded_at_utc="2026-11-27T10:01:00+00:00",
+            reason="No provider request was made",
+        )
+        event = {
+            "kind": "RESEARCH_PACKAGE_STATUS",
+            "schema_version": 1,
+            "exposure_id": exposure["exposure_id"],
+            "package_id": exposure["package_id"],
+            "attempt_id": exposure["attempt_id"],
+            "prior_state": "RELEASED",
+            "state": "RESERVED",
+            "recorded_at_utc": "2026-11-27T10:02:00+00:00",
+            "reason": "Invalid same-identity restart",
+        }
+        event["event_id"] = windows.digest(event)
+        ledger["discovery_exposures"].append(event)
+        self.ledger_path.write_text(json.dumps(ledger), encoding="utf-8")
+        with self.assertRaises(sealed.SealedEvaluationError):
+            sealed.load_ledger(self.ledger_path)
+
     def test_claimed_or_evaluated_exposure_must_match_exact_claim_entry(self):
         ledger = sealed.load_ledger(self.ledger_path)
         exposure = windows.package_exposure_for_attempt(
