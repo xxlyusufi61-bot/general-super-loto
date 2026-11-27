@@ -56,6 +56,31 @@ def legacy_discovery_dates(rows, memory):
         if len(matched) < count:
             raise ResearchWindowError("A legacy discovery window cannot be reconstructed from the archive.")
         exposed.update(matched)
+
+    # The offline symbolic researcher has its own namespace and separate
+    # discovery windows. Those dates are exposed development data too; they
+    # must not silently reappear as V3 sealed holdouts.
+    offline = memory.get("offline_research", {})
+    if not isinstance(offline, dict) or not isinstance(offline.get("entries", []), list):
+        raise ResearchWindowError("Offline research-memory entries are malformed.")
+    for index, entry in enumerate(offline.get("entries", [])):
+        if not isinstance(entry, dict):
+            raise ResearchWindowError("Offline research-memory entry is malformed.")
+        window = entry.get("discovery_window")
+        target = day(entry.get("target_date"))
+        if not isinstance(window, dict):
+            raise ResearchWindowError(f"Offline memory entry {index + 1} lacks discovery provenance.")
+        start, end = day(window.get("start_date")), day(window.get("end_date"))
+        count = window.get("draw_count")
+        if (
+            start > end or end >= target or type(count) is not int
+            or count < MIN_DISCOVERY_DRAWS
+        ):
+            raise ResearchWindowError("Offline discovery-window metadata is malformed.")
+        matched = {d for d in dates[:-1] if start <= d <= end}
+        if len(matched) < count:
+            raise ResearchWindowError("An offline discovery window cannot be reconstructed from the archive.")
+        exposed.update(matched)
     return exposed
 
 def offline_dates(memory):
