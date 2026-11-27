@@ -2214,7 +2214,7 @@ def evaluate_claim(
     evaluation_excluded_dates = (
         set(split.get("research_package", {}).get("previously_unavailable_dates", []))
         if claim_partition_version == UNSEEN_PARTITION_VERSION
-        else evaluation_excluded_dates | set(current_offline_dates)
+        else set(expected_prior_dates) | set(current_offline_dates)
     )
     _validate_dsl_v2_directional_context(
         candidate, split, replay_canonical_pre_target, evaluation_excluded_dates,
