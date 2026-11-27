@@ -73,8 +73,7 @@ def legacy_discovery_dates(rows, memory):
         start, end = day(window.get("start_date")), day(window.get("end_date"))
         count = window.get("draw_count")
         if (
-            start > end or end >= target or type(count) is not int
-            or count < MIN_DISCOVERY_DRAWS
+            start > end or end >= target or type(count) is not int or count < 0
         ):
             raise ResearchWindowError("Offline discovery-window metadata is malformed.")
         matched = {d for d in dates[:-1] if start <= d <= end}
