@@ -311,6 +311,20 @@ class LocalTargetEvaluationTests(unittest.TestCase):
         root.mkdir()
         archive_path = root / "archive.json"
         write_archive(archive_path, self.rows)
+        source_archive = sealed.load_archive(archive_path)
+        snapshot_item = target_queue._make_item(
+            self.rows,
+            source_archive_sha256=source_archive["archive_sha256"],
+            enqueued_at_utc="2026-11-18T12:00:00+00:00",
+        )
+        active_queue = {
+            "schema_version": 2,
+            "observed_through_date": self.rows[-1]["date"],
+            "active": snapshot_item,
+            "latest_snapshot": snapshot_item,
+            "completed": [],
+        }
+        target_queue.materialize_front(active_queue, archive_path)
         archive = sealed.load_archive(archive_path)
         ledger_path = root / "evaluation-ledger.json"
         ledger_path.write_text(
@@ -368,19 +382,6 @@ class LocalTargetEvaluationTests(unittest.TestCase):
             package=package,
         )
 
-        snapshot_item = target_queue._make_item(
-            self.rows,
-            source_archive_sha256=archive["archive_sha256"],
-            enqueued_at_utc="2026-11-18T12:00:00+00:00",
-        )
-        active_queue = {
-            "schema_version": 2,
-            "observed_through_date": self.rows[-1]["date"],
-            "active": snapshot_item,
-            "latest_snapshot": snapshot_item,
-            "completed": [],
-        }
-        target_queue.materialize_front(active_queue, archive_path)
         state = auto.initial_state()
         state["target_queue"] = active_queue
         first_attempt = {
