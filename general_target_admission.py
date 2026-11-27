@@ -32,6 +32,10 @@ INSUFFICIENT_WINDOW_ERRORS = {
         "DISCOVERY_HISTORY_BELOW_MINIMUM",
 }
 INELIGIBLE_REASON_CODE = "INSUFFICIENT_FRESH_SEALED_WINDOWS"
+UNSEEN_PACKAGE_UNAVAILABLE = (
+    "V3 unseen-package preflight failed closed (ResearchWindowError): "
+    "No genuinely unseen contiguous package remains."
+)
 
 
 class TargetAdmissionError(RuntimeError):
@@ -58,9 +62,12 @@ def _preflight_snapshot(
             archive_path,
             ledger_path,
             offline_memory_path=memory_path,
+            partition_version=sealed.UNSEEN_PARTITION_VERSION,
         )
     except sealed.SealedEvaluationError as exc:
         reason_code = INSUFFICIENT_WINDOW_ERRORS.get(str(exc))
+        if reason_code is None and str(exc) == UNSEEN_PACKAGE_UNAVAILABLE:
+            reason_code = "NO_GENUINELY_UNSEEN_PACKAGE"
         if reason_code is None:
             raise TargetAdmissionError(
                 "Sealed preflight failed for a reason that is not an approved insufficient-window condition."
@@ -78,7 +85,7 @@ def _preflight_snapshot(
     if (
         not isinstance(plan, dict)
         or plan.get("status") != "READY"
-        or plan.get("partition_version") != sealed.PARTITION_VERSION
+        or plan.get("partition_version") != sealed.UNSEEN_PARTITION_VERSION
     ):
         raise TargetAdmissionError("Sealed preflight returned an unknown, outdated, or non-ready result.")
     if (
