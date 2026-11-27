@@ -1879,11 +1879,16 @@ def main(argv: list[str] | None = None) -> int:
                         attempt_id=exposure_attempt_id,
                     )
                     if existing_exposure is None:
+                        archive_rows = sealed.load_archive(args.archive)["rows"]
+                        current_unavailable = research_windows.unavailable_dates(
+                            archive_rows, ledger=ledger, memory=memory, attempts=[]
+                        )
                         research_windows.reserve_research_package(
                             ledger,
                             package,
                             attempt_id=exposure_attempt_id,
                             created_at_utc=attempt["claimed_at_utc"],
+                            unavailable=current_unavailable,
                         )
                     elif research_windows.package_exposure_status(
                         ledger, existing_exposure
