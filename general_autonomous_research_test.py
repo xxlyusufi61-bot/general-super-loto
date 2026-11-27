@@ -112,7 +112,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
                 unavailable=set(package.get("previously_unavailable_dates", [])),
             )
             ledger_path.write_text(
-                json.dumps(ledger, ensure_ascii=False, indent=2) + "\\n",
+                json.dumps(ledger, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
 
