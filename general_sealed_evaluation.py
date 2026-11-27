@@ -2025,7 +2025,7 @@ def evaluate_claim(
     else:
         split = split_archive(
             archive["rows"], archive_sha256=archive["archive_sha256"],
-            used_validation_dates=set(recorded_prior_dates), offline_memory_path=offline_memory_path,
+            used_validation_dates=evaluation_excluded_dates, offline_memory_path=offline_memory_path,
             partition_version=claim_partition_version,
         )
     if (
@@ -2057,7 +2057,7 @@ def evaluate_claim(
     evaluation_excluded_dates = (
         set(split.get("research_package", {}).get("previously_unavailable_dates", []))
         if claim_partition_version == UNSEEN_PARTITION_VERSION
-        else set(recorded_prior_dates) | set(current_offline_dates)
+        else evaluation_excluded_dates | set(current_offline_dates)
     )
     _validate_dsl_v2_directional_context(
         candidate, split, replay_canonical_pre_target, evaluation_excluded_dates,
@@ -2121,7 +2121,7 @@ def evaluate_claim(
         spec_sha256=candidate["spec_sha256"],
         execution_spec=spec,
         canonical_history=canonical_pre_target_history,
-        excluded_dates=set(recorded_prior_dates),
+        excluded_dates=evaluation_excluded_dates,
     )
     detail_mean = round(
         sum(item["hit_count"] for item in forward_details) / len(forward_details), 6
@@ -2143,7 +2143,7 @@ def evaluate_claim(
             folds=folds,
             min_train_draws=DEFAULT_MIN_TRAIN_DRAWS,
             canonical_history=canonical_pre_target_history,
-            excluded_dates=set(recorded_prior_dates),
+            excluded_dates=evaluation_excluded_dates,
         )
     else:
         cv = evaluate_time_ordered_cv(
@@ -2167,7 +2167,7 @@ def evaluate_claim(
         spec_sha256=candidate["reverse_spec_sha256"],
         execution_spec=reverse_spec,
         canonical_history=canonical_pre_target_history,
-        excluded_dates=set(recorded_prior_dates),
+        excluded_dates=evaluation_excluded_dates,
         min_train_draws=DEFAULT_MIN_TRAIN_DRAWS,
     )
     if len(reverse_candidate_holdout["per_draw"]) >= MIN_VALIDATION_DRAWS:
@@ -2194,7 +2194,7 @@ def evaluate_claim(
         execution_spec=reverse_diagnostic_spec,
         min_train_draws=DEFAULT_MIN_TRAIN_DRAWS,
         canonical_history=canonical_pre_target_history,
-        excluded_dates=set(recorded_prior_dates),
+        excluded_dates=evaluation_excluded_dates,
     )
     reverse["hypothesis_id"] = reverse_diagnostic_id
     reverse["spec_sha256"] = reverse_diagnostic_sha
