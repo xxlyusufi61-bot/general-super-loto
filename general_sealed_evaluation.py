@@ -1228,6 +1228,10 @@ def create_claim(
         and item.get("spec_sha256") == candidate["spec_sha256"]
         and item.get("reverse_hypothesis_id") == candidate["reverse_hypothesis_id"]
         and item.get("reverse_spec_sha256") == candidate["reverse_spec_sha256"]
+        and (
+            split.get("partition_version") != UNSEEN_PARTITION_VERSION
+            or item.get("research_package_id") == split.get("research_package", {}).get("package_id")
+        )
     ), None)
     if completed_match is not None:
         # Recovery path: the sealed historical evaluation is already complete,
