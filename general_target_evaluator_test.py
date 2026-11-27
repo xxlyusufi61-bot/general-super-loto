@@ -409,6 +409,25 @@ class LocalTargetEvaluationTests(unittest.TestCase):
         }]
         state_path = root / "general_autonomous_research_state.json"
         auto.write_state(state_path, state)
+
+        wrong_package_state = copy.deepcopy(state)
+        wrong_package_state["attempts"][-1]["research_package_id"] = "f" * 64
+        auto.write_state(state_path, wrong_package_state)
+        wrong_package_output = root / "wrong-package-claim.json"
+        wrong_package_recovery = recover_evaluated_claim_for_attempt(
+            retry_attempt_id,
+            scheduler_state_path=state_path,
+            ledger_path=ledger_path,
+            memory_path=memory_path,
+            proposals_path=proposals,
+            specs_path=specs_path,
+            claim_output_path=wrong_package_output,
+        )
+        self.assertTrue(wrong_package_recovery["recovery_required"])
+        self.assertFalse(wrong_package_recovery["recovery_available"])
+        self.assertFalse(wrong_package_output.exists())
+        auto.write_state(state_path, state)
+
         claim_output = root / "recovered-claim.json"
 
         recovered = recover_evaluated_claim_for_attempt(
