@@ -1702,7 +1702,17 @@ def find_pending_candidate(
             or entry["discovery_window"].get("package_id") == package_id
             or (
                 package_start_date is not None
-                and entry["discovery_window"]["end_date"] < package_start_date
+                and (
+                    (
+                        entry["discovery_window"].get("partition_version") == 3
+                        and entry["discovery_window"].get("package_end_date", "") < package_start_date
+                    )
+                    or (
+                        entry["discovery_window"].get("partition_version") is None
+                        and entry["target_date"] < package_start_date
+                        and entry["discovery_window"]["end_date"] < package_start_date
+                    )
+                )
             )
         )
     ]
@@ -1940,7 +1950,17 @@ def direction_context(
         and _validate_timestamp(item["created_at_utc"]) < now
         and (
             package_start_date is None
-            or item["discovery_window"]["end_date"] < package_start_date
+            or (
+                (
+                    item["discovery_window"].get("partition_version") == 3
+                    and item["discovery_window"].get("package_end_date", "") < package_start_date
+                )
+                or (
+                    item["discovery_window"].get("partition_version") is None
+                    and item["target_date"] < package_start_date
+                    and item["discovery_window"]["end_date"] < package_start_date
+                )
+            )
         )
     ]
     for entry in reversed(entries):
