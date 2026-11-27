@@ -597,7 +597,7 @@ def load_ledger(path: str | Path) -> dict[str, Any]:
         "EXPOSED": {"CLAIMED", "EVALUATED"},
         "CLAIMED": {"EVALUATED"},
         "EVALUATED": set(),
-        "RELEASED": {"RESERVED"},
+        "RELEASED": set(),
     }
     for item in exposures:
         if not isinstance(item, dict):
