@@ -42,6 +42,62 @@ class UnseenPackageTests(unittest.TestCase):
         memory={"entries":[{"discovery_window":{"start_date":self.rows[1]["date"],"end_date":self.rows[10]["date"],"draw_count":10}}]}
         self.assertEqual(rw.legacy_discovery_dates(self.rows,memory),{r["date"] for r in self.rows[1:11]})
 
+    def test_legacy_sealed_ledger_discovery_is_unavailable_without_memory_entry(self):
+        ledger = {
+            "entries": [{
+                "partition_version": 2,
+                "target_date": self.rows[-1]["date"],
+                "discovery_start_date": self.rows[10]["date"],
+                "discovery_end_date": self.rows[60]["date"],
+                "r60_discovery_count": 51,
+                "validation_dates": [],
+                "reverse_validation_dates": [],
+            }],
+            "discovery_exposures": [],
+        }
+        unavailable = rw.unavailable_dates(
+            self.rows,
+            ledger=ledger,
+            memory={"entries": []},
+            attempts=[],
+        )
+        expected = {row["date"] for row in self.rows[10:61]}
+        self.assertTrue(expected.issubset(unavailable))
+        packages = rw.build_research_packages(
+            self.rows, archive_sha256=self.sha, unavailable=unavailable
+        )
+        self.assertTrue(all(not (set(package["dates"]) & expected) for package in packages))
+
+    def test_legacy_sealed_ledger_missing_discovery_provenance_fails_closed(self):
+        ledger = {
+            "entries": [{
+                "partition_version": 1,
+                "target_date": self.rows[-1]["date"],
+                "validation_dates": [],
+                "reverse_validation_dates": [],
+            }],
+            "discovery_exposures": [],
+        }
+        with self.assertRaises(rw.ResearchWindowError):
+            rw.unavailable_dates(
+                self.rows, ledger=ledger, memory={"entries": []}, attempts=[]
+            )
+
+    def test_unknown_package_lifecycle_state_fails_closed(self):
+        ledger = {
+            "entries": [],
+            "discovery_exposures": [{
+                "kind": "RESEARCH_PACKAGE",
+                "state": "CORRUPTED",
+                "dates": [],
+                "discovery_dates": [],
+                "validation_dates": [],
+                "reverse_validation_dates": [],
+            }],
+        }
+        with self.assertRaises(rw.ResearchWindowError):
+            rw.exposure_dates(ledger)
+
     def test_offline_symbolic_discovery_ranges_are_also_unavailable(self):
         rows = self.rows
         offline_entry = {
