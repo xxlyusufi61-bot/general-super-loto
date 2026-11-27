@@ -1870,12 +1870,27 @@ def main(argv: list[str] | None = None) -> int:
                         archive_sha256=attempt["archive_sha256"],
                         unavailable=set(package.get("previously_unavailable_dates", [])),
                     )
-                    research_windows.reserve_research_package(
-                        ledger,
-                        package,
-                        attempt_id=attempt["attempt_id"],
-                        created_at_utc=attempt["claimed_at_utc"],
+                    exposure_attempt_id = attempt.get(
+                        "research_package_attempt_id", attempt["attempt_id"]
                     )
+                    existing_exposure = research_windows.package_exposure_for_attempt(
+                        ledger,
+                        package_id=attempt["research_package_id"],
+                        attempt_id=exposure_attempt_id,
+                    )
+                    if existing_exposure is None:
+                        research_windows.reserve_research_package(
+                            ledger,
+                            package,
+                            attempt_id=exposure_attempt_id,
+                            created_at_utc=attempt["claimed_at_utc"],
+                        )
+                    elif research_windows.package_exposure_status(
+                        ledger, existing_exposure
+                    ) not in {"RESERVED", "EXPOSED"}:
+                        raise AutonomousResearchError(
+                            "V3 package reservation is not eligible for a new sealed claim."
+                        )
                 ledger_path = Path(args.ledger)
                 temporary_ledger = ledger_path.with_name(ledger_path.name + ".tmp")
                 temporary_ledger.write_text(
