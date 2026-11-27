@@ -72,7 +72,7 @@ Partition V1 and V2 remain supported exactly for their recorded historical claim
 
 The unavailable-date set is the union of:
 - both directional holdout dates in the append-only sealed evaluation ledger, including dates reserved by a pending claim;
-- dates in the offline development consumption ledger;
+- dates in the offline development consumption ledger and complete offline-symbolic discovery intervals recorded in its separate memory namespace;
 - dates in previous V3 research-package exposures, according to their lifecycle state;
 - the complete date intervals covered by legacy GENERAL discovery-memory records. Legacy intervals are treated conservatively as exposed; a range that cannot be reconstructed against the canonical archive fails closed.
 
