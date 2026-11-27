@@ -1856,15 +1856,31 @@ def direction_context(
     now = datetime.now(timezone.utc)
     context = []
 
-    # The offline symbolic namespace is forward-only. It is deliberately kept
-    # out of reverse prompts to preserve directional separation. Only the most
-    # recent eligible offline cycle is projected into the forward prompt.
-    if direction == "forward" and package_start_date is None:
+    # The offline symbolic namespace is forward-only. In V3 it is eligible
+    # only when both its discovery interval and every consumed development date
+    # are strictly earlier than this package's first row.
+    if direction == "forward":
+        consumed_by_cycle = {
+            item["cycle_id"]: item
+            for item in memory["offline_research"]["consumed_development_windows"]
+        }
         for offline_entry in reversed(memory["offline_research"]["entries"]):
             if date.fromisoformat(offline_entry["target_date"]) > current_target:
                 continue
             if _validate_timestamp(offline_entry["created_at_utc"]) >= now:
                 continue
+            if package_start_date is not None:
+                consumed = consumed_by_cycle.get(offline_entry["cycle_id"])
+                if not isinstance(consumed, dict):
+                    continue
+                consumed_dates = consumed.get("dates")
+                if (
+                    not isinstance(consumed_dates, list)
+                    or len(consumed_dates) != offline_entry["development_window"]["draw_count"]
+                    or any(day >= package_start_date for day in consumed_dates)
+                    or offline_entry["discovery_window"]["end_date"] >= package_start_date
+                ):
+                    continue
 
             # Transfer complete validated candidate records in original generation
             # order. Preserve proposals, full DSL ASTs, hashes, and all test metrics.
