@@ -93,12 +93,15 @@ The loop does not change discovery or evaluation methodology:
 - Candidates remain hypotheses. There is no automatic selection, promotion, or
   canonical approval.
 
-A terminal NO_ELIGIBLE_CANDIDATE for the same active target ends the current
-session instead of inventing random attempts. If the latest archive has advanced
-to a different eligible target, the existing scheduler preflight decides
-whether that newer target may begin. Retryable failures can continue only
-through existing retry rules; manual-unlock requirements for
-WORKFLOW_FAILED and PROVIDER_DELIVERY_UNCERTAIN are unchanged.
+A `NO_ELIGIBLE_CANDIDATE` outcome ends the current active-target session only
+when the scheduler has no different genuinely unseen V3 package to reserve.
+The controller never invents random attempts: it continues only through the
+normal package-eligibility preflight and the existing authorization, lock,
+rate-budget, and reporting gates. If the latest archive has advanced to a
+different eligible target, the existing scheduler preflight decides whether
+that newer target may begin. Retryable failures can continue only through
+existing retry rules; manual-unlock requirements for `WORKFLOW_FAILED` and
+`PROVIDER_DELIVERY_UNCERTAIN` are unchanged.
 
 ## Telegram and dispatch reliability
 
