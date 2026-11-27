@@ -419,7 +419,7 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           GENERAL_DEFAULT_BRANCH: main
           GENERAL_RESEARCH_PACKAGE_ID: ${{ steps.attempt_reservation.outputs.research_package_id }}
-          GENERAL_RESEARCH_ATTEMPT_ID: ${{ steps.attempt_reservation.outputs.attempt_id }}
+          GENERAL_RESEARCH_ATTEMPT_ID: ${{ steps.attempt_reservation.outputs.research_package_attempt_id }}
           TASK_TEXT: "Explore only the frozen, genuinely unseen chronological package. Propose independently testable hypotheses for the forward and reverse directions. Do not request, infer, or report winning-number predictions."
           GENERAL_CONFIRM_LIVE_CALLS: "I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_SHARED_1500_PER_24H_NVIDIA_BUDGET"
           GENERAL_ALLOW_NVIDIA_CALL: "true"
@@ -466,7 +466,7 @@ jobs:
         if: ${{ success() && steps.research.outcome == 'success' }}
         env:
           RESEARCH_PACKAGE_ID: ${{ steps.attempt_reservation.outputs.research_package_id }}
-          ATTEMPT_ID: ${{ steps.attempt_reservation.outputs.attempt_id }}
+          ATTEMPT_ID: ${{ steps.attempt_reservation.outputs.research_package_attempt_id }}
         run: |
           python3 general_sealed_evaluation.py claim \
             --archive super_loto_archive.json \
