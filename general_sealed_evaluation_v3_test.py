@@ -37,6 +37,7 @@ class V3SealedPackageTests(unittest.TestCase):
             self.package,
             attempt_id=self.attempt_id,
             created_at_utc="2026-11-27T10:00:00+00:00",
+            unavailable=set(self.package.get("previously_unavailable_dates", [])),
         )
         self.ledger_path.write_text(json.dumps(ledger), encoding="utf-8")
         self.exposure_id = exposure["exposure_id"]
