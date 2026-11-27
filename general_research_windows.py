@@ -253,8 +253,8 @@ def append_package_status(ledger, exposure, *, state, recorded_at_utc, reason):
     allowed = {"RESERVED": {"EXPOSED", "CLAIMED", "RELEASED"},
                "EXPOSED": {"CLAIMED", "EVALUATED"}, "CLAIMED": {"EVALUATED"},
                "EVALUATED": set(), "RELEASED": {"RESERVED"}}
-    if state != current and state not in allowed.get(current, set()):
-        raise ResearchWindowError(f"Invalid package lifecycle transition {current}->{state}.")
+    if state == current or state not in allowed.get(current, set()):
+        raise ResearchWindowError(f"Invalid or duplicate package lifecycle transition {current}->{state}.")
     event = {"kind": "RESEARCH_PACKAGE_STATUS", "schema_version": 1,
              "exposure_id": exposure["exposure_id"], "package_id": exposure["package_id"],
              "attempt_id": exposure["attempt_id"], "prior_state": current, "state": state,
