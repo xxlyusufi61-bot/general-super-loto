@@ -641,6 +641,42 @@ def load_ledger(path: str | Path) -> dict[str, Any]:
                 raise SealedEvaluationError("Research package exposure record is malformed.")
             base_by_id[exposure_id] = item
             states[exposure_id] = "RESERVED"
+    if len(exposures) > 100000:
+        raise SealedEvaluationError("Discovery exposure ledger exceeds its bounded append-only size.")
+    for entry in payload["entries"]:
+        if entry.get("partition_version", LEGACY_PARTITION_VERSION) != UNSEEN_PARTITION_VERSION:
+            continue
+        package_id = entry.get("research_package_id")
+        attempt_id = entry.get("scheduler_attempt_id")
+        matches = [
+            (exposure_id, exposure)
+            for exposure_id, exposure in base_by_id.items()
+            if exposure.get("package_id") == package_id
+            and exposure.get("attempt_id") == attempt_id
+        ]
+        if len(matches) != 1:
+            raise SealedEvaluationError("V3 claim does not have one exact package exposure reservation.")
+        exposure_id, exposure = matches[0]
+        if (
+            entry.get("previously_unavailable_dates_sha256")
+            != exposure.get("previously_unavailable_dates_sha256")
+            or states.get(exposure_id) != entry.get("state")
+            or exposure.get("archive_sha256") != entry.get("archive_sha256")
+            or exposure.get("target_date") != entry.get("target_date")
+        ):
+            raise SealedEvaluationError("V3 claim and package exposure lifecycle are inconsistent.")
+    for exposure_id, exposure in base_by_id.items():
+        state = states.get(exposure_id)
+        if state in {"CLAIMED", "EVALUATED"}:
+            matching_claims = [
+                entry for entry in payload["entries"]
+                if entry.get("partition_version") == UNSEEN_PARTITION_VERSION
+                and entry.get("research_package_id") == exposure.get("package_id")
+                and entry.get("scheduler_attempt_id") == exposure.get("attempt_id")
+                and entry.get("state") == state
+            ]
+            if len(matching_claims) != 1:
+                raise SealedEvaluationError("Claimed/evaluated package exposure lacks its exact sealed-ledger entry.")
     return payload
 
 
