@@ -585,7 +585,10 @@ def load_ledger(path: str | Path) -> dict[str, Any]:
         seen_claims.add(claim_id)
         used_dates.update(parsed_dates)
     exposures = payload.get("discovery_exposures", [])
+    if not isinstance(exposures, list) or len(exposures) > 100000:
+        raise SealedEvaluationError("Discovery exposure ledger exceeds its bounded schema.")
     seen_ids: set[str] = set()
+    seen_package_ids: set[str] = set()
     seen_package_attempts: set[tuple[str, str]] = set()
     base_by_id: dict[str, dict[str, Any]] = {}
     states: dict[str, str] = {}
@@ -601,6 +604,11 @@ def load_ledger(path: str | Path) -> dict[str, Any]:
             raise SealedEvaluationError("Discovery exposure entry is malformed.")
         kind = item.get("kind")
         if kind == "RESEARCH_PACKAGE_STATUS":
+            if set(item) != {
+                "kind", "schema_version", "exposure_id", "package_id", "attempt_id",
+                "prior_state", "state", "recorded_at_utc", "reason", "event_id",
+            }:
+                raise SealedEvaluationError("Research package status event keys are invalid.")
             base = base_by_id.get(item.get("exposure_id"))
             event = dict(item)
             event_id = event.pop("event_id", None)
@@ -635,6 +643,10 @@ def load_ledger(path: str | Path) -> dict[str, Any]:
         if item.get("schema_version") != 1:
             raise SealedEvaluationError("Discovery exposure schema version is invalid.")
         if kind == "LEGACY_DISCOVERY_RANGES":
+            if set(item) != {
+                "kind", "schema_version", "exposure_id", "memory_sha256", "dates", "created_at_utc"
+            }:
+                raise SealedEvaluationError("Legacy discovery exposure keys are invalid.")
             dates = item.get("dates")
             if not isinstance(dates, list) or dates != sorted(set(dates)):
                 raise SealedEvaluationError("Legacy exposure date list is malformed.")
@@ -657,6 +669,15 @@ def load_ledger(path: str | Path) -> dict[str, Any]:
                 except (TypeError, ValueError): raise SealedEvaluationError("Legacy exposure date is invalid.") from None
                 if parsed.isoformat() != value: raise SealedEvaluationError("Legacy exposure date is non-canonical.")
         else:
+            if set(item) != {
+                "kind", "schema_version", "exposure_id", "attempt_id", "package_id",
+                "package", "target_date", "archive_sha256", "archive_record_count",
+                "partition_version", "package_sequence", "package_start_date",
+                "package_end_date", "discovery_dates", "validation_dates",
+                "reverse_validation_dates", "dates", "previously_unavailable_dates_sha256",
+                "created_at_utc", "target_numbers_exposed", "state",
+            }:
+                raise SealedEvaluationError("Research package exposure keys are invalid.")
             package = item.get("package")
             package_attempt = item.get("attempt_id")
             created_at = item.get("created_at_utc")
@@ -691,6 +712,9 @@ def load_ledger(path: str | Path) -> dict[str, Any]:
                 datetime.fromisoformat(created_at)
             except ValueError:
                 raise SealedEvaluationError("Research package exposure timestamp is invalid.") from None
+            if item["package_id"] in seen_package_ids:
+                raise SealedEvaluationError("Duplicate V3 package ID in discovery exposure ledger.")
+            seen_package_ids.add(item["package_id"])
             package_attempt_key = (item["package_id"], package_attempt)
             if package_attempt_key in seen_package_attempts:
                 raise SealedEvaluationError("Duplicate V3 package reservation for one scheduler attempt.")
