@@ -93,3 +93,10 @@ Package lifecycle:
 A same-package retry after discovery exposure must use the exact original package and exposure identity. A pending sealed claim always takes precedence and can only resume with its original candidates, package, archive snapshot, and holdout dates. A successful research package does not exhaust the active target: the existing continuous scheduler may proceed to the next eligible package. If fewer than 44 genuinely unseen contiguous rows remain, the scheduler waits for new archive data; previously exposed discovery rows are never recycled as a new holdout.
 
 The package registry contains only dates and safe provenance metadata, not draw-number sets, target values, or per-draw scores. Reverse results remain retrospective-only.
+
+
+## Recovery after a completed V3 sealed evaluation
+
+If a V3 claim has reached `EVALUATED` but the local hidden-target scoring step is interrupted, recovery reuses only the exact evaluated claim, archive snapshot, and forward/reverse candidate pair recovered from validated GENERAL memory. It does not send another hosted-model request and does not score either sealed holdout again.
+
+The scheduler permits this path only after a terminal `FAILED/SEALED_EVALUATION_INCOMPLETE` attempt bound to the same V3 package. Before reusing the package, preflight revalidates its archive and package identity, the complete prior-unavailable-date snapshot, both original holdout date lists, and the unique matching `EVALUATED` claim. The new scheduler attempt remains bound to the original package-exposure attempt ID. If the exact claim or candidate pair cannot be recovered, the workflow fails closed rather than starting fresh discovery or reopening consumed dates.
