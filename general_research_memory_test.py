@@ -1653,13 +1653,14 @@ class AutonomousResearchMemoryIntegrationTests(unittest.TestCase):
             unavailable=set(package.get("previously_unavailable_dates", [])),
         )
         write_json(ledger_path, evaluation_ledger)
-        sealed_plan = sealed.preflight(
+        prepared_plan = sealed.preflight(
             archive_path,
             ledger_path,
             partition_version=sealed.UNSEEN_PARTITION_VERSION,
             package_id=package["package_id"],
             attempt_id=exposure_attempt_id,
         )
+        sealed_plan = sealed.public_plan(prepared_plan)
         write_json(sealed_plan_path, sealed_plan)
         write_json(scheduler_state_path, state)
 
