@@ -157,7 +157,7 @@ This repository is public. Persistent memory records, hypotheses, definitions, a
 
 ## V3 chronological package context
 
-A V3 research prompt is bound to one immutable, contiguous package. The discovery data supplied to the model are only the package's discovery middle; neither directional holdout is sent to discovery. A later package can use prior same-direction GENERAL memory only when the earlier memory entry's entire discovery interval ends strictly before the later package's first date. Overlapping, later, or otherwise chronologically ambiguous records are omitted.
+A V3 research prompt is bound to one immutable, contiguous package. The discovery data supplied to the model are only the package's discovery middle; neither directional holdout is sent to discovery. A later package can use a previous V3 same-direction memory entry only when that entry's complete package interval ends strictly before the later package's first date. Legacy V1/V2 memory has no immutable package-end field, so it is eligible only when both its target date and its recorded discovery interval end strictly before the later package's first date. Overlapping, later, or otherwise chronologically ambiguous records are omitted.
 
 The forward offline-symbolic namespace remains forward-only. A prior offline cycle may enter a V3 forward prompt only when both its discovery interval and every date in its consumed development window are strictly earlier than the active package. Reverse prompts never receive offline forward context. If the consumed-window provenance is missing, it is omitted rather than guessed.
 
