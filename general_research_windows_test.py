@@ -6,7 +6,7 @@ import general_research_windows as rw
 
 
 def archive(count):
-    start=date(2020,1,1)
+    start=date(2020,8,2)
     return [{"date":(start+timedelta(days=2*i)).isoformat(),"numbers":[1,2,3,4,5,6]} for i in range(count)]
 
 
@@ -82,6 +82,28 @@ class UnseenPackageTests(unittest.TestCase):
         self.assertEqual([r["date"] for r in r60["reverse_validation_rows"]],p["reverse_validation_dates"])
         self.assertFalse(split["target_numbers_exposed"])
         self.assertNotIn(self.rows[-1]["date"],[r["date"] for r in split["discovery_rows"]])
+
+    def test_no_provider_request_releases_all_package_dates_for_safe_reuse(self):
+        ledger={"schema_version":1,"purpose":"test","entries":[],"discovery_exposures":[]}
+        package=rw.build_research_packages(self.rows,archive_sha256=self.sha,unavailable=set())[0]
+        first=rw.reserve_research_package(
+            ledger,package,attempt_id=hashlib.sha256(b"first").hexdigest(),
+            created_at_utc="2026-11-27T10:00:00+00:00")
+        rw.append_package_status(
+            ledger,first,state="RELEASED",recorded_at_utc="2026-11-27T10:01:00+00:00",
+            reason="No provider request was made")
+        self.assertEqual(rw.exposure_dates(ledger),set())
+        second=rw.reserve_research_package(
+            ledger,package,attempt_id=hashlib.sha256(b"second").hexdigest(),
+            created_at_utc="2026-11-27T10:02:00+00:00")
+        self.assertEqual(second["package_id"],package["package_id"])
+        self.assertEqual(rw.package_status(ledger,second),"RESERVED")
+
+    def test_pre_scope_records_are_rejected(self):
+        rows=archive(60)
+        rows[0]["date"]="2020-08-01"
+        with self.assertRaises(rw.ResearchWindowError):
+            rw.build_research_packages(rows,archive_sha256=self.sha,unavailable=set())
 
 if __name__=="__main__":
     unittest.main(verbosity=2)
