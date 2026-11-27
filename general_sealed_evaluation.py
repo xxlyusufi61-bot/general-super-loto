@@ -624,6 +624,16 @@ def load_ledger(path: str | Path) -> dict[str, Any]:
             dates = item.get("dates")
             if not isinstance(dates, list) or dates != sorted(set(dates)):
                 raise SealedEvaluationError("Legacy exposure date list is malformed.")
+            memory_sha = item.get("memory_sha256")
+            if (
+                not isinstance(memory_sha, str)
+                or len(memory_sha) != 64
+                or any(ch not in "0123456789abcdef" for ch in memory_sha)
+            ):
+                raise SealedEvaluationError("Legacy discovery exposure memory hash is invalid.")
+            created_at = item.get("created_at_utc")
+            if not isinstance(created_at, str) or not created_at.endswith("+00:00"):
+                raise SealedEvaluationError("Legacy discovery exposure timestamp must be UTC.")
             for value in dates:
                 try: parsed = date.fromisoformat(value)
                 except (TypeError, ValueError): raise SealedEvaluationError("Legacy exposure date is invalid.") from None
@@ -737,6 +747,12 @@ def _build_v3_package_split(archive, ledger, *, offline_memory_path, package_id=
         memory = load_memory(offline_memory_path)
         offline_dates, offline_digest = _offline_development_consumption(offline_memory_path)
         if package_id is not None:
+            if not isinstance(attempt_id, str) or len(attempt_id) != 64 or any(
+                ch not in "0123456789abcdef" for ch in attempt_id
+            ):
+                raise research_windows.ResearchWindowError(
+                    "A V3 package replay requires its exact original exposure-attempt ID."
+                )
             exposure = research_windows.package_exposure_for_attempt(
                 ledger, package_id=package_id, attempt_id=attempt_id
             )
