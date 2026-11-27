@@ -1667,6 +1667,7 @@ def find_pending_candidate(
     *,
     memory_path: str | Path = MEMORY_PATH,
     package_id: str | None = None,
+    package_start_date: str | None = None,
 ) -> dict[str, Any] | None:
     """Return the oldest exact-target candidate with a validated DSL spec and no completed evaluation.
 
@@ -1685,6 +1686,11 @@ def find_pending_candidate(
     if not isinstance(archive_sha256, str) or not HEX64.fullmatch(archive_sha256):
         raise ResearchMemoryError("Pending-candidate archive hash is invalid.")
 
+    if package_start_date is not None:
+        try:
+            package_start_date = date.fromisoformat(package_start_date).isoformat()
+        except (TypeError, ValueError):
+            raise ResearchMemoryError("Pending-candidate package start date is invalid.") from None
     memory = load_memory(memory_path)
     matching = [
         entry for entry in memory["entries"]
@@ -1694,6 +1700,10 @@ def find_pending_candidate(
         and (
             package_id is None
             or entry["discovery_window"].get("package_id") == package_id
+            or (
+                package_start_date is not None
+                and entry["discovery_window"]["end_date"] < package_start_date
+            )
         )
     ]
     evaluated_spec_hashes = {
