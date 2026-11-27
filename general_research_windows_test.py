@@ -191,6 +191,21 @@ class UnseenPackageTests(unittest.TestCase):
             unavailable=set(second_package.get("previously_unavailable_dates", [])))
         self.assertEqual(rw.package_status(ledger,second),"RESERVED")
 
+    def test_released_exposure_cannot_be_reopened_under_same_identity(self):
+        ledger={"schema_version":1,"purpose":"test","entries":[],"discovery_exposures":[]}
+        package=rw.build_research_packages(self.rows,archive_sha256=self.sha,unavailable=set())[0]
+        exposure=rw.reserve_research_package(
+            ledger,package,attempt_id=hashlib.sha256(b"release-once").hexdigest(),
+            created_at_utc="2026-11-27T10:00:00+00:00",
+            unavailable=set(package.get("previously_unavailable_dates", [])))
+        rw.append_package_status(
+            ledger,exposure,state="RELEASED",recorded_at_utc="2026-11-27T10:01:00+00:00",
+            reason="No provider request was made")
+        with self.assertRaises(rw.ResearchWindowError):
+            rw.append_package_status(
+                ledger,exposure,state="RESERVED",recorded_at_utc="2026-11-27T10:02:00+00:00",
+                reason="A new attempt must receive a fresh package identity")
+
     def test_pre_scope_records_are_rejected(self):
         rows=archive(60)
         rows[0]["date"]="2020-08-01"
