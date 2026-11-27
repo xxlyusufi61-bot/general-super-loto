@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 import unittest
 from datetime import date, datetime, timedelta, timezone
@@ -6,6 +7,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 import general_autonomous_research as auto
+import general_research_memory as research_memory
+import general_research_windows as research_windows
 from general_nvidia_guard import initial_lock_state, make_locked_state, make_unlocked_state
 from general_sealed_evaluation_test import write_candidate_documents
 
@@ -76,6 +79,139 @@ def _write_evaluated_test_ledger(path, attempt):
 
 
 class AutonomousResearchStateTests(unittest.TestCase):
+    def test_v3_evaluated_package_retry_is_limited_to_local_score_recovery(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root / "archive.json"
+            ledger_path = root / "ledger.json"
+            lock = root / "lock.json"
+            state_path = root / "general_autonomous_research_state.json"
+            memory_path = root / "general_research_memory.json"
+            rows = synthetic_rows(120)
+            archive.write_text(json.dumps({"draws": rows}), encoding="utf-8")
+            ledger_path.write_text(
+                json.dumps({"schema_version": 1, "purpose": "test", "entries": []}),
+                encoding="utf-8",
+            )
+            lock.write_text(json.dumps(initial_lock_state()), encoding="utf-8")
+            research_memory._write_memory(research_memory.empty_memory(), memory_path)
+            actual_now = datetime.now(timezone.utc).replace(microsecond=0)
+            state = auto.activate_state(
+                auto.initial_state(),
+                confirmation=AUTO_PHRASE,
+                free_usage_verified=True,
+                authorization_days=7,
+                global_lock=initial_lock_state(),
+                now=actual_now,
+            )
+            auto.write_state(state_path, state)
+
+            previous_cwd = Path.cwd()
+            try:
+                os.chdir(root)
+                args = [
+                    "claim",
+                    "--state", str(state_path),
+                    "--archive", str(archive),
+                    "--ledger", str(ledger_path),
+                    "--global-lock", str(lock),
+                    "--run-id", "420000100",
+                ]
+                with patch("builtins.print"):
+                    self.assertEqual(auto.main(args), 0)
+
+                first_state = auto.read_state(state_path)
+                first_attempt = first_state["attempts"][-1]
+                self.assertIsInstance(first_attempt.get("research_package_id"), str)
+                self.assertEqual(
+                    first_attempt.get("research_package_attempt_id"),
+                    first_attempt["attempt_id"],
+                )
+
+                ledger = auto.sealed.load_ledger(ledger_path)
+                exposure = research_windows.package_exposure_for_attempt(
+                    ledger,
+                    package_id=first_attempt["research_package_id"],
+                    attempt_id=first_attempt["research_package_attempt_id"],
+                )
+                self.assertIsNotNone(exposure)
+                package = research_windows.package_from_exposure(exposure)
+                proposals, specs = write_candidate_documents(root)
+                claim = auto.sealed.create_claim(
+                    archive,
+                    ledger_path,
+                    proposals,
+                    specs,
+                    snapshot_directory=root / "snapshots",
+                    research_package_id=package["package_id"],
+                    scheduler_attempt_id=first_attempt["research_package_attempt_id"],
+                )
+                self.assertTrue(claim["claim_created"])
+                auto.sealed.evaluate_claim(
+                    claim["claim_id"],
+                    ledger_path,
+                    proposals,
+                    specs,
+                    output_path=root / "sealed-evaluation.json",
+                )
+                evaluated_ledger = auto.sealed.load_ledger(ledger_path)
+                evaluated_exposure = research_windows.package_exposure_for_attempt(
+                    evaluated_ledger,
+                    package_id=package["package_id"],
+                    attempt_id=first_attempt["research_package_attempt_id"],
+                )
+                self.assertEqual(
+                    research_windows.package_exposure_status(evaluated_ledger, evaluated_exposure),
+                    "EVALUATED",
+                )
+
+                failed_state = auto.record_outcome(
+                    first_state,
+                    first_attempt["attempt_id"],
+                    outcome="FAILED",
+                    reason_code="SEALED_EVALUATION_INCOMPLETE",
+                    evaluation_ledger_path=ledger_path,
+                    now=actual_now + timedelta(minutes=2),
+                )
+                auto.write_state(state_path, failed_state)
+
+                with self.assertRaises(auto.sealed.SealedEvaluationError):
+                    auto.sealed.preflight(
+                        archive,
+                        ledger_path,
+                        partition_version=auto.sealed.UNSEEN_PARTITION_VERSION,
+                        package_id=package["package_id"],
+                        attempt_id=first_attempt["research_package_attempt_id"],
+                    )
+
+                with patch("builtins.print"):
+                    self.assertEqual(auto.main(args), 0)
+
+                retried_state = auto.read_state(state_path)
+                self.assertEqual(len(retried_state["attempts"]), 2)
+                retry_attempt = retried_state["attempts"][-1]
+                self.assertNotEqual(retry_attempt["attempt_id"], first_attempt["attempt_id"])
+                self.assertEqual(retry_attempt["research_package_id"], package["package_id"])
+                self.assertEqual(
+                    retry_attempt["research_package_attempt_id"],
+                    first_attempt["research_package_attempt_id"],
+                )
+                final_ledger = auto.sealed.load_ledger(ledger_path)
+                final_exposure = research_windows.package_exposure_for_attempt(
+                    final_ledger,
+                    package_id=package["package_id"],
+                    attempt_id=first_attempt["research_package_attempt_id"],
+                )
+                self.assertEqual(
+                    research_windows.package_exposure_status(final_ledger, final_exposure),
+                    "EVALUATED",
+                )
+                self.assertEqual(len(final_ledger["entries"]), 1)
+                self.assertEqual(final_ledger["entries"][0]["claim_id"], claim["claim_id"])
+                self.assertEqual(final_ledger["entries"][0]["state"], "EVALUATED")
+            finally:
+                os.chdir(previous_cwd)
+
     def test_v3_no_provider_request_releases_identity_and_next_preflight_remints_it(self):
         import general_research_windows as windows
 
