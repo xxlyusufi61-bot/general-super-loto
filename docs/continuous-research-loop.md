@@ -120,3 +120,9 @@ Passing these tests verifies the code paths they exercise only. It does not
 activate the production writer-validation variable, migrate the live budget
 ledger, dispatch a live research run, make a live NVIDIA request, or prove that
 Telegram delivery occurred in production.
+
+## V3 package chaining
+
+For each eligible active target, the existing continuous controller evaluates one complete V3 package per iteration. After terminal state and Telegram reporting are confirmed, PR #129's existing continuation job starts the next full workflow run. The next iteration selects the next package from the currently unused contiguous date blocks. It does not repeat discovery on dates already exposed by a completed package, and it does not reuse sealed holdouts.
+
+The continuous session remains open-ended subject to the existing authorization, global-lock, rolling NVIDIA budget, FIFO, reporting, and package-eligibility gates. When no package meeting the fixed chronology and history minimums remains, the session stops with `WAITING_FOR_FRESH_SEALED_WINDOWS`. No archive row is invented, no consumed holdout minimum is lowered, and no exposed discovery date is reclassified as untouched validation data.
