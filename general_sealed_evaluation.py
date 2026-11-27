@@ -861,6 +861,7 @@ def _build_v3_package_split(archive, ledger, *, offline_memory_path, package_id=
         split["scheduler_attempt_id"] = (
             attempt_id if exposure is not None else None
         )
+        split["previously_consumed_validation_draw_count"] = len(_used_validation_dates(ledger))
         split["previously_consumed_offline_development_draw_count"] = len(offline_dates)
         return split, exposure
     except Exception as exc:
@@ -930,6 +931,7 @@ def _pending_claim_with_split(
             archive["rows"], package, archive_sha256=archive["archive_sha256"]
         )
         split["scheduler_attempt_id"] = entry.get("scheduler_attempt_id")
+        split["previously_consumed_validation_draw_count"] = len(expected_prior_dates)
         _, offline_digest = _offline_development_consumption(offline_memory_path)
         if package.get("offline_development_memory_sha256") != offline_digest:
             raise SealedEvaluationError("Offline development memory changed after pending V3 claim.")
@@ -2149,6 +2151,7 @@ def evaluate_claim(
         split = research_windows.split_from_package(
             archive["rows"], package, archive_sha256=archive["archive_sha256"]
         )
+        split["previously_consumed_validation_draw_count"] = len(recorded_prior_dates)
         split["previously_consumed_offline_development_draw_count"] = entry.get(
             "previously_consumed_offline_development_draw_count", 0
         )
