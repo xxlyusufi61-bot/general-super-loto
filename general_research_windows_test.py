@@ -60,14 +60,14 @@ class UnseenPackageTests(unittest.TestCase):
         ledger={"schema_version":1,"purpose":"test","entries":[],"discovery_exposures":[]}
         p=rw.build_research_packages(self.rows,archive_sha256=self.sha,unavailable=set())[0]
         attempt=hashlib.sha256(b"attempt").hexdigest()
-        exposure=rw.reserve_research_package(ledger,p,attempt_id=attempt,created_at_utc="2026-11-27T10:00:00+00:00")
+        exposure=rw.reserve_research_package(ledger,p,attempt_id=attempt,created_at_utc="2026-11-27T10:00:00+00:00",unavailable=set(p.get("previously_unavailable_dates", [])))
         rw.append_package_status(ledger,exposure,state="CLAIMED",recorded_at_utc="2026-11-27T10:01:00+00:00",reason="claim")
         self.assertTrue(set(p["dates"]).issubset(rw.exposure_dates(ledger)))
 
     def test_exposed_package_keeps_discovery_but_releases_unclaimed_holdouts(self):
         ledger={"schema_version":1,"purpose":"test","entries":[],"discovery_exposures":[]}
         p=rw.build_research_packages(self.rows,archive_sha256=self.sha,unavailable=set())[0]
-        exposure=rw.reserve_research_package(ledger,p,attempt_id=hashlib.sha256(b"a").hexdigest(),created_at_utc="2026-11-27T10:00:00+00:00")
+        exposure=rw.reserve_research_package(ledger,p,attempt_id=hashlib.sha256(b"a").hexdigest(),created_at_utc="2026-11-27T10:00:00+00:00",unavailable=set(p.get("previously_unavailable_dates", [])))
         rw.append_package_status(ledger,exposure,state="EXPOSED",recorded_at_utc="2026-11-27T10:01:00+00:00",reason="model saw discovery")
         used=rw.exposure_dates(ledger)
         self.assertEqual(used,set(p["discovery_dates"]))
@@ -88,14 +88,14 @@ class UnseenPackageTests(unittest.TestCase):
         package=rw.build_research_packages(self.rows,archive_sha256=self.sha,unavailable=set())[0]
         first=rw.reserve_research_package(
             ledger,package,attempt_id=hashlib.sha256(b"first").hexdigest(),
-            created_at_utc="2026-11-27T10:00:00+00:00")
+            created_at_utc="2026-11-27T10:00:00+00:00",unavailable=set(p.get("previously_unavailable_dates", [])))
         rw.append_package_status(
             ledger,first,state="RELEASED",recorded_at_utc="2026-11-27T10:01:00+00:00",
             reason="No provider request was made")
         self.assertEqual(rw.exposure_dates(ledger),set())
         second=rw.reserve_research_package(
             ledger,package,attempt_id=hashlib.sha256(b"second").hexdigest(),
-            created_at_utc="2026-11-27T10:02:00+00:00")
+            created_at_utc="2026-11-27T10:02:00+00:00",unavailable=set(package.get("previously_unavailable_dates", [])))
         self.assertEqual(second["package_id"],package["package_id"])
         self.assertEqual(rw.package_status(ledger,second),"RESERVED")
 
