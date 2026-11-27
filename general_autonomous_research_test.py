@@ -96,6 +96,20 @@ class AutonomousResearchStateTests(unittest.TestCase):
             lock.write_text(json.dumps(initial_lock_state()), encoding="utf-8")
             research_memory._write_memory(research_memory.empty_memory(), memory_path)
             actual_now = datetime.now(timezone.utc).replace(microsecond=0)
+            source_archive = auto.sealed.load_archive(archive)
+            active_item = auto.target_queue._make_item(
+                rows,
+                source_archive_sha256=source_archive["archive_sha256"],
+                enqueued_at_utc=actual_now.isoformat(),
+            )
+            active_queue = {
+                "schema_version": 2,
+                "observed_through_date": rows[-1]["date"],
+                "active": active_item,
+                "latest_snapshot": active_item,
+                "completed": [],
+            }
+            auto.target_queue.materialize_front(active_queue, archive)
             state = auto.activate_state(
                 auto.initial_state(),
                 confirmation=AUTO_PHRASE,
@@ -104,6 +118,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
                 global_lock=initial_lock_state(),
                 now=actual_now,
             )
+            state["target_queue"] = active_queue
             auto.write_state(state_path, state)
 
             previous_cwd = Path.cwd()
