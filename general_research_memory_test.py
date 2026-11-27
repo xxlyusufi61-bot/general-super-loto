@@ -667,7 +667,7 @@ class DirectionalMemoryContextTests(unittest.TestCase):
             "package_id": "c" * 64,
             "partition_version": 3,
             "package_start_date": "2026-08-20",
-            "package_end_date": "2026-10-10",
+            "package_end_date": "2026-10-05",
         })
         valid["content_sha256"] = _hash_entry(valid)
         self.assertEqual(memory._validate_entry(valid, 1), valid)
