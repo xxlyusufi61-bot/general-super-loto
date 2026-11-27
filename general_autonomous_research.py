@@ -1811,6 +1811,7 @@ def main(argv: list[str] | None = None) -> int:
                 "discovery_count": result.get("discovery_count"),
                 "retryable": result.get("retryable") is True,
                 "retry_number": result.get("retry_number"),
+                "research_package_id": result.get("research_package_id") or "",
             })
         elif args.command == "claim":
             plan = prepare_cycle(
