@@ -1478,6 +1478,50 @@ def record_outcome(
         "recorded_at_utc": _now_utc(now).isoformat(),
         "reason_code": reason_code,
     })
+
+    package_id = attempt.get("research_package_id")
+    if package_id is not None:
+        if evaluation_ledger_path is None:
+            raise AutonomousResearchError("V3 package lifecycle requires the append-only evaluation ledger.")
+        ledger = sealed.load_ledger(evaluation_ledger_path)
+        exposure = research_windows.package_exposure_for_attempt(
+            ledger, package_id=package_id, attempt_id=attempt_id
+        )
+        if exposure is None:
+            candidates = [
+                item for item in ledger.get("discovery_exposures", [])
+                if isinstance(item, dict) and item.get("kind") == "RESEARCH_PACKAGE"
+                and item.get("package_id") == package_id
+            ]
+            claimed = [
+                item for item in candidates
+                if research_windows.package_exposure_status(ledger, item) in {"CLAIMED", "EVALUATED"}
+            ]
+            if len(claimed) == 1:
+                exposure = claimed[0]
+            elif outcome == "FAILED" and reason_code == "NO_PROVIDER_REQUEST_SENT" and not candidates:
+                exposure = None
+            else:
+                raise AutonomousResearchError("V3 attempt is not bound to one exact package exposure.")
+        if exposure is not None:
+            package_state = research_windows.package_exposure_status(ledger, exposure)
+            next_state = None
+            if outcome == "SUCCEEDED":
+                if package_state != "EVALUATED":
+                    raise AutonomousResearchError("Successful V3 outcome requires the package holdout to be EVALUATED.")
+            elif package_state == "RESERVED":
+                if outcome == "NO_ELIGIBLE_CANDIDATE":
+                    next_state = "EXPOSED"
+                elif outcome == "FAILED":
+                    next_state = "RELEASED" if reason_code == "NO_PROVIDER_REQUEST_SENT" else "EXPOSED"
+            if next_state is not None:
+                research_windows.append_package_status(
+                    ledger, exposure, state=next_state,
+                    recorded_at_utc=_now_utc(now).isoformat(),
+                    reason=("Provider discovery was not started" if next_state == "RELEASED"
+                            else "Directional discovery used the package; unclaimed holdouts remain reusable"),
+                )
+                _write_json_atomic(Path(evaluation_ledger_path), ledger)
     # EVALUATED completes this frozen-formula test, not the target's entire
     # research lifetime. The active target remains available for new discovery
     # packages until a newer draw is observed.
