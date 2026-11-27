@@ -132,8 +132,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
                     "--global-lock", str(lock),
                     "--run-id", "420000100",
                 ]
-                with patch("builtins.print"):
-                    self.assertEqual(auto.main(args), 0)
+                self.assertEqual(auto.main(args), 0)
 
                 first_state = auto.read_state(state_path)
                 first_attempt = first_state["attempts"][-1]
@@ -199,8 +198,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
                         attempt_id=first_attempt["research_package_attempt_id"],
                     )
 
-                with patch("builtins.print"):
-                    self.assertEqual(auto.main(args), 0)
+                self.assertEqual(auto.main(args), 0)
 
                 retried_state = auto.read_state(state_path)
                 self.assertEqual(len(retried_state["attempts"]), 2)
