@@ -2182,7 +2182,7 @@ def evaluate_claim(
     else:
         split = split_archive(
             archive["rows"], archive_sha256=archive["archive_sha256"],
-            used_validation_dates=evaluation_excluded_dates, offline_memory_path=offline_memory_path,
+            used_validation_dates=set(expected_prior_dates), offline_memory_path=offline_memory_path,
             partition_version=claim_partition_version,
         )
     if (
