@@ -586,6 +586,7 @@ def load_ledger(path: str | Path) -> dict[str, Any]:
         used_dates.update(parsed_dates)
     exposures = payload.get("discovery_exposures", [])
     seen_ids: set[str] = set()
+    seen_package_attempts: set[tuple[str, str]] = set()
     base_by_id: dict[str, dict[str, Any]] = {}
     states: dict[str, str] = {}
     transitions = {
@@ -604,7 +605,18 @@ def load_ledger(path: str | Path) -> dict[str, Any]:
             event = dict(item)
             event_id = event.pop("event_id", None)
             current = states.get(item.get("exposure_id"))
-            if (base is None or item.get("package_id") != base.get("package_id")
+            recorded_at = item.get("recorded_at_utc")
+            if not isinstance(recorded_at, str) or not recorded_at.endswith("+00:00"):
+                raise SealedEvaluationError("Research package lifecycle timestamp must be UTC.")
+            try:
+                datetime.fromisoformat(recorded_at)
+            except ValueError:
+                raise SealedEvaluationError("Research package lifecycle timestamp is invalid.") from None
+            reason = item.get("reason")
+            if not isinstance(reason, str) or not reason or len(reason) > 120:
+                raise SealedEvaluationError("Research package lifecycle reason is invalid.")
+            if (base is None or item.get("schema_version") != 1
+                or item.get("package_id") != base.get("package_id")
                 or item.get("attempt_id") != base.get("attempt_id")
                 or item.get("prior_state") != current
                 or item.get("state") not in transitions.get(current, set())
@@ -620,6 +632,8 @@ def load_ledger(path: str | Path) -> dict[str, Any]:
             or exposure_id != research_windows.digest(hashed) or exposure_id in seen_ids):
             raise SealedEvaluationError("Discovery exposure identity/hash is invalid or duplicated.")
         seen_ids.add(exposure_id)
+        if item.get("schema_version") != 1:
+            raise SealedEvaluationError("Discovery exposure schema version is invalid.")
         if kind == "LEGACY_DISCOVERY_RANGES":
             dates = item.get("dates")
             if not isinstance(dates, list) or dates != sorted(set(dates)):
@@ -634,21 +648,53 @@ def load_ledger(path: str | Path) -> dict[str, Any]:
             created_at = item.get("created_at_utc")
             if not isinstance(created_at, str) or not created_at.endswith("+00:00"):
                 raise SealedEvaluationError("Legacy discovery exposure timestamp must be UTC.")
+            try:
+                datetime.fromisoformat(created_at)
+            except ValueError:
+                raise SealedEvaluationError("Legacy discovery exposure timestamp is invalid.") from None
             for value in dates:
                 try: parsed = date.fromisoformat(value)
                 except (TypeError, ValueError): raise SealedEvaluationError("Legacy exposure date is invalid.") from None
                 if parsed.isoformat() != value: raise SealedEvaluationError("Legacy exposure date is non-canonical.")
         else:
             package = item.get("package")
-            if (not isinstance(package, dict) or package.get("partition_version") != UNSEEN_PARTITION_VERSION
+            package_attempt = item.get("attempt_id")
+            created_at = item.get("created_at_utc")
+            if (
+                not isinstance(package_attempt, str) or len(package_attempt) != 64
+                or any(ch not in "0123456789abcdef" for ch in package_attempt)
+                or not isinstance(created_at, str) or not created_at.endswith("+00:00")
+                or not isinstance(package, dict)
+                or package.get("partition_version") != UNSEEN_PARTITION_VERSION
                 or package.get("package_id") != item.get("package_id")
-                or package.get("package_id") != research_windows.digest({k:v for k,v in package.items() if k != "package_id"})
-                or item.get("state") != "RESERVED" or item.get("target_numbers_exposed") is not False
+                or package.get("package_id") != research_windows.digest(
+                    {k: v for k, v in package.items() if k != "package_id"}
+                )
+                or item.get("state") != "RESERVED"
+                or item.get("target_numbers_exposed") is not False
                 or item.get("dates") != package.get("dates")
                 or item.get("discovery_dates") != package.get("discovery_dates")
                 or item.get("validation_dates") != package.get("validation_dates")
-                or item.get("reverse_validation_dates") != package.get("reverse_validation_dates")):
+                or item.get("reverse_validation_dates") != package.get("reverse_validation_dates")
+                or item.get("previously_unavailable_dates_sha256")
+                   != package.get("previously_unavailable_dates_sha256")
+                or item.get("target_date") != package.get("target_date")
+                or item.get("archive_sha256") != package.get("archive_sha256")
+                or item.get("archive_record_count") != package.get("archive_record_count")
+                or item.get("package_sequence") != package.get("package_sequence")
+                or item.get("package_start_date") != package.get("package_start_date")
+                or item.get("package_end_date") != package.get("package_end_date")
+                or item.get("partition_version") != UNSEEN_PARTITION_VERSION
+            ):
                 raise SealedEvaluationError("Research package exposure record is malformed.")
+            try:
+                datetime.fromisoformat(created_at)
+            except ValueError:
+                raise SealedEvaluationError("Research package exposure timestamp is invalid.") from None
+            package_attempt_key = (item["package_id"], package_attempt)
+            if package_attempt_key in seen_package_attempts:
+                raise SealedEvaluationError("Duplicate V3 package reservation for one scheduler attempt.")
+            seen_package_attempts.add(package_attempt_key)
             base_by_id[exposure_id] = item
             states[exposure_id] = "RESERVED"
     if len(exposures) > 100000:
