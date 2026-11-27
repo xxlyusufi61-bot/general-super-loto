@@ -816,6 +816,7 @@ def _build_v3_package_split(archive, ledger, *, offline_memory_path, package_id=
         from general_research_memory import load_memory
         memory = load_memory(offline_memory_path)
         offline_dates, offline_digest = _offline_development_consumption(offline_memory_path)
+        reservation_state = None
         if package_id is not None:
             if not isinstance(attempt_id, str) or len(attempt_id) != 64 or any(
                 ch not in "0123456789abcdef" for ch in attempt_id
@@ -911,9 +912,7 @@ def _build_v3_package_split(archive, ledger, *, offline_memory_path, package_id=
         split = research_windows.split_from_package(
             archive["rows"], package, archive_sha256=archive["archive_sha256"]
         )
-        split["evaluated_package_recovery"] = (
-            package_id is not None and reservation_state == "EVALUATED"
-        ) if 'reservation_state' in locals() else False
+        split["evaluated_package_recovery"] = reservation_state == "EVALUATED"
         split["scheduler_attempt_id"] = (
             attempt_id if exposure is not None else None
         )
