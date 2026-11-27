@@ -88,15 +88,21 @@ class UnseenPackageTests(unittest.TestCase):
         package=rw.build_research_packages(self.rows,archive_sha256=self.sha,unavailable=set())[0]
         first=rw.reserve_research_package(
             ledger,package,attempt_id=hashlib.sha256(b"first").hexdigest(),
-            created_at_utc="2026-11-27T10:00:00+00:00",unavailable=set(p.get("previously_unavailable_dates", [])))
+            created_at_utc="2026-11-27T10:00:00+00:00",
+            unavailable=set(package.get("previously_unavailable_dates", [])))
         rw.append_package_status(
             ledger,first,state="RELEASED",recorded_at_utc="2026-11-27T10:01:00+00:00",
             reason="No provider request was made")
         self.assertEqual(rw.exposure_dates(ledger),set())
+        second_package=rw.build_research_packages(
+            self.rows,archive_sha256=self.sha,unavailable=rw.exposure_dates(ledger),
+            sequence_start=2)[0]
+        self.assertEqual(second_package["dates"],package["dates"])
+        self.assertNotEqual(second_package["package_id"],package["package_id"])
         second=rw.reserve_research_package(
-            ledger,package,attempt_id=hashlib.sha256(b"second").hexdigest(),
-            created_at_utc="2026-11-27T10:02:00+00:00",unavailable=set(package.get("previously_unavailable_dates", [])))
-        self.assertEqual(second["package_id"],package["package_id"])
+            ledger,second_package,attempt_id=hashlib.sha256(b"second").hexdigest(),
+            created_at_utc="2026-11-27T10:02:00+00:00",
+            unavailable=set(second_package.get("previously_unavailable_dates", [])))
         self.assertEqual(rw.package_status(ledger,second),"RESERVED")
 
     def test_pre_scope_records_are_rejected(self):
