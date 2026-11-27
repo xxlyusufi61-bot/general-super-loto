@@ -748,6 +748,19 @@ def write_state(path: str | Path, value: dict[str, Any]) -> None:
     temporary.replace(target)
 
 
+def _write_evaluation_ledger_atomic(path: str | Path, ledger: dict[str, Any]) -> None:
+    """Persist a validated append-only evaluation ledger through atomic replacement."""
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(target.name + ".tmp")
+    temporary.write_text(
+        json.dumps(ledger, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
+    sealed.load_ledger(temporary)
+    temporary.replace(target)
+
+
 def read_global_lock(path: str | Path) -> dict[str, Any]:
     try:
         value = json.loads(Path(path).read_text(encoding="utf-8"))
@@ -1541,7 +1554,7 @@ def record_outcome(
                     reason=("Provider discovery was not started" if next_state == "RELEASED"
                             else "Directional discovery used the package; unclaimed holdouts remain reusable"),
                 )
-                _write_json_atomic(Path(evaluation_ledger_path), ledger)
+                _write_evaluation_ledger_atomic(evaluation_ledger_path, ledger)
     # EVALUATED completes this frozen-formula test, not the target's entire
     # research lifetime. The active target remains available for new discovery
     # packages until a newer draw is observed.
