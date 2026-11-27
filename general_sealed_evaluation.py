@@ -1157,6 +1157,8 @@ def create_claim(
     snapshot_directory: str | Path = SNAPSHOT_DIRECTORY,
     offline_memory_path: str | Path = "general_research_memory.json",
     sealed_plan_path: str | Path | None = None,
+    research_package_id: str | None = None,
+    scheduler_attempt_id: str | None = None,
 ) -> dict[str, Any]:
     """Claim a fresh interval or resume the exact existing claim for this frozen candidate."""
     candidate = _select_one_frozen_candidate(proposals_path, specs_path)
@@ -1167,6 +1169,8 @@ def create_claim(
     )
     if pending is not None:
         entry, split = pending
+        if research_package_id is not None and entry.get("research_package_id") != research_package_id:
+            raise SealedEvaluationError("Requested package differs from exact pending claim.")
         if candidate is None:
             raise SealedEvaluationError("A pending sealed claim exists but its frozen candidate pair is unavailable.")
         if (
@@ -1183,6 +1187,8 @@ def create_claim(
             "claim_created": True,
             "claim_resumed": True,
             "claim_id": entry["claim_id"],
+            "research_package_id": entry.get("research_package_id"),
+            "scheduler_attempt_id": entry.get("scheduler_attempt_id"),
             "target_date": entry["target_date"],
             "archive_sha256": entry["archive_sha256"],
             "hypothesis_id": entry["hypothesis_id"],
@@ -1247,20 +1253,29 @@ def create_claim(
             "duplicate_holdout_scoring_performed": False,
         }
     used_dates = _used_validation_dates(ledger)
-    split = split_archive(
-        archive["rows"],
-        archive_sha256=archive["archive_sha256"],
-        used_validation_dates=used_dates,
-        offline_memory_path=offline_memory_path,
-    )
+    package_exposure = None
+    if research_package_id is not None:
+        split, package_exposure = _build_v3_package_split(
+            archive, ledger, offline_memory_path=offline_memory_path,
+            package_id=research_package_id, attempt_id=scheduler_attempt_id,
+        )
+        if package_exposure is None:
+            raise SealedEvaluationError("V3 claim requires a persisted pre-request package reservation.")
+    else:
+        split = split_archive(
+            archive["rows"], archive_sha256=archive["archive_sha256"],
+            used_validation_dates=used_dates, offline_memory_path=offline_memory_path,
+        )
     canonical_pre_target_rows = [
         row for row in archive["rows"] if row["date"] < split["target_date"]
     ]
     offline_dates, offline_digest = _offline_development_consumption(offline_memory_path)
     if offline_digest != split["offline_development_memory_sha256"]:
         raise SealedEvaluationError("Offline development memory changed during claim creation.")
+    package_unavailable = set(split.get("research_package", {}).get("previously_unavailable_dates", []))
     _validate_dsl_v2_directional_context(
-        candidate, split, canonical_pre_target_rows, used_dates | set(offline_dates)
+        candidate, split, canonical_pre_target_rows,
+        (package_unavailable if split.get("partition_version") == UNSEEN_PARTITION_VERSION else used_dates | set(offline_dates)),
     )
     r60 = split["regimes"]["R60"]
     validation = r60["validation_rows"]
@@ -1300,6 +1315,11 @@ def create_claim(
         "execution_spec_dsl_version": candidate["execution_spec_dsl_version"],
         "reverse_execution_spec_dsl_version": candidate["reverse_execution_spec_dsl_version"],
         "engine_version": ENGINE_VERSION,
+        **({
+            "research_package_id": split["research_package"]["package_id"],
+            "scheduler_attempt_id": scheduler_attempt_id,
+            "previously_unavailable_dates_sha256": split["research_package"]["previously_unavailable_dates_sha256"],
+        } if split.get("partition_version") == UNSEEN_PARTITION_VERSION else {}),
     }
     claim_id = _sha256_bytes(_canonical_json(claim_material))
     snapshot_path = Path(snapshot_directory) / (archive["archive_sha256"] + ".json")
@@ -1317,6 +1337,11 @@ def create_claim(
     entry = {
         "claim_id": claim_id,
         "partition_version": split["partition_version"],
+        **({
+            "research_package_id": split["research_package"]["package_id"],
+            "scheduler_attempt_id": scheduler_attempt_id,
+            "previously_unavailable_dates_sha256": split["research_package"]["previously_unavailable_dates_sha256"],
+        } if split.get("partition_version") == UNSEEN_PARTITION_VERSION else {}),
         "state": "CLAIMED",
         "claimed_at_utc": datetime.now(timezone.utc).isoformat(),
         "orchestrator_version": VERSION,
@@ -1354,12 +1379,20 @@ def create_claim(
         "numbers_stored_in_ledger": False,
     }
     ledger["entries"].append(entry)
+    if package_exposure is not None:
+        research_windows.append_package_status(
+            ledger, package_exposure, state="CLAIMED",
+            recorded_at_utc=datetime.now(timezone.utc).isoformat(),
+            reason="Frozen directional candidates claimed for sealed evaluation",
+        )
     _write_json_atomic(Path(ledger_path), ledger)
     return {
         "status": "CLAIMED",
         "claim_created": True,
         "claim_resumed": False,
         "claim_id": claim_id,
+        "research_package_id": split.get("research_package", {}).get("package_id"),
+        "scheduler_attempt_id": scheduler_attempt_id,
         "target_date": split["target_date"],
         "archive_sha256": archive["archive_sha256"],
         "hypothesis_id": candidate["hypothesis_id"],
@@ -1968,13 +2001,28 @@ def evaluate_claim(
     archive = load_archive(snapshot_path)
     if archive["archive_sha256"] != entry["archive_sha256"]:
         raise SealedEvaluationError("Immutable archive snapshot hash does not match the ledger.")
-    split = split_archive(
-        archive["rows"],
-        archive_sha256=archive["archive_sha256"],
-        used_validation_dates=set(recorded_prior_dates),
-        offline_memory_path=offline_memory_path,
-        partition_version=entry.get("partition_version", LEGACY_PARTITION_VERSION),
-    )
+    claim_partition_version = entry.get("partition_version", LEGACY_PARTITION_VERSION)
+    package_exposure = None
+    if claim_partition_version == UNSEEN_PARTITION_VERSION:
+        package_exposure = research_windows.package_exposure_for_attempt(
+            ledger, package_id=entry.get("research_package_id"),
+            attempt_id=entry.get("scheduler_attempt_id"),
+        )
+        if package_exposure is None:
+            raise SealedEvaluationError("V3 sealed claim lost its exact package reservation.")
+        package = research_windows.package_from_exposure(package_exposure)
+        split = research_windows.split_from_package(
+            archive["rows"], package, archive_sha256=archive["archive_sha256"]
+        )
+        split["previously_consumed_offline_development_draw_count"] = entry.get(
+            "previously_consumed_offline_development_draw_count", 0
+        )
+    else:
+        split = split_archive(
+            archive["rows"], archive_sha256=archive["archive_sha256"],
+            used_validation_dates=set(recorded_prior_dates), offline_memory_path=offline_memory_path,
+            partition_version=claim_partition_version,
+        )
     if (
         "offline_development_memory_sha256" not in entry
         or "previously_consumed_offline_development_draw_count" not in entry
@@ -2001,9 +2049,13 @@ def evaluate_claim(
     current_offline_dates, current_offline_digest = _offline_development_consumption(offline_memory_path)
     if current_offline_digest != split["offline_development_memory_sha256"]:
         raise SealedEvaluationError("Offline development memory changed during evaluation replay.")
+    evaluation_excluded_dates = (
+        set(split.get("research_package", {}).get("previously_unavailable_dates", []))
+        if claim_partition_version == UNSEEN_PARTITION_VERSION
+        else set(recorded_prior_dates) | set(current_offline_dates)
+    )
     _validate_dsl_v2_directional_context(
-        candidate, split, replay_canonical_pre_target,
-        set(recorded_prior_dates) | set(current_offline_dates),
+        candidate, split, replay_canonical_pre_target, evaluation_excluded_dates,
     )
     if split["target_date"] != entry["target_date"]:
         raise SealedEvaluationError("Snapshot target cutoff does not match the ledger.")
@@ -2046,7 +2098,7 @@ def evaluate_claim(
             execution_spec=spec,
             min_train_draws=DEFAULT_MIN_TRAIN_DRAWS,
             canonical_history=canonical_pre_target_history,
-            excluded_dates=set(recorded_prior_dates),
+            excluded_dates=evaluation_excluded_dates,
         )
     else:
         forward = evaluate_holdout(
@@ -2246,6 +2298,12 @@ def evaluate_claim(
         "bidirectional_catalog_reverse_predictive_evidence": False,
     }
     entry["per_draw_values_stored"] = False
+    if package_exposure is not None:
+        research_windows.append_package_status(
+            ledger, package_exposure, state="EVALUATED",
+            recorded_at_utc=datetime.now(timezone.utc).isoformat(),
+            reason="Frozen V3 sealed evaluation completed",
+        )
     _write_json_atomic(Path(ledger_path), ledger)
     return {
         "status": report["status"],
@@ -2274,6 +2332,8 @@ def _write_github_output(path: str | None, result: dict[str, Any]) -> None:
         stream.write("claim_reused=" + ("true" if result.get("claim_reused") is True else "false") + "\n")
         if isinstance(result.get("claim_id"), str):
             stream.write("claim_id=" + result["claim_id"] + "\n")
+        if isinstance(result.get("research_package_id"), str):
+            stream.write("research_package_id=" + result["research_package_id"] + "\n")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -2290,6 +2350,8 @@ def main(argv: list[str] | None = None) -> int:
     claim.add_argument("--output", type=Path, default=Path("open_research_evaluation_claim.json"))
     claim.add_argument("--snapshot-directory", type=Path, default=Path(SNAPSHOT_DIRECTORY))
     claim.add_argument("--sealed-plan", type=Path, default=None)
+    claim.add_argument("--package-id", default=None)
+    claim.add_argument("--attempt-id", default=None)
     claim.add_argument("--github-output", type=str, default=None)
     pending = sub.add_parser("pending-claim", help="Check whether the exact active archive has a resumable sealed claim.")
     pending.add_argument("--archive", type=Path, required=True)
@@ -2325,6 +2387,8 @@ def main(argv: list[str] | None = None) -> int:
                 args.archive, args.ledger, args.proposals, args.specs,
                 snapshot_directory=args.snapshot_directory,
                 sealed_plan_path=args.sealed_plan,
+                research_package_id=args.package_id,
+                scheduler_attempt_id=args.attempt_id,
             )
             _write_json_atomic(args.output, result)
             _write_github_output(args.github_output, result)
