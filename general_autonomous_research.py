@@ -951,6 +951,7 @@ def prepare_cycle(
     manual_recovery_unlock_at_utc: str | None = None
     resume_package_id: str | None = None
     resume_package_attempt_id: str | None = None
+    evaluated_package_recovery_requested = False
     if attempts:
         last_attempt = attempts[-1]
         last_target = last_attempt["target_date"]
@@ -1011,6 +1012,9 @@ def prepare_cycle(
                         resume_package_id = last_attempt["research_package_id"]
                         resume_package_attempt_id = last_attempt.get(
                             "research_package_attempt_id", last_attempt["attempt_id"]
+                        )
+                        evaluated_package_recovery_requested = (
+                            reason_code == "SEALED_EVALUATION_INCOMPLETE"
                         )
                 else:
                     if reason_code == "PROVIDER_HTTP_REJECTION_NO_RETRY":
@@ -1122,6 +1126,7 @@ def prepare_cycle(
             partition_version=sealed.UNSEEN_PARTITION_VERSION,
             package_id=resume_package_id,
             attempt_id=resume_package_attempt_id,
+            allow_evaluated_package_recovery=evaluated_package_recovery_requested,
         )
     except sealed.SealedEvaluationError as exc:
         reason = str(exc)
@@ -1188,6 +1193,7 @@ def prepare_cycle(
         "manual_recovery_confirmed": manual_recovery_confirmed_for_failure,
         "manual_recovery_unlock_at_utc": manual_recovery_unlock_at_utc,
         "pending_claim_resume_available": plan.get("pending_claim_resume_available") is True,
+        "evaluated_package_recovery": plan.get("evaluated_package_recovery") is True,
         "pending_claim_id": plan.get("pending_claim_id"),
         "research_package_id": plan.get("research_package_id"),
         "research_package": plan.get("research_package"),
@@ -1903,12 +1909,17 @@ def main(argv: list[str] | None = None) -> int:
                             created_at_utc=attempt["claimed_at_utc"],
                             unavailable=current_unavailable,
                         )
-                    elif research_windows.package_exposure_status(
-                        ledger, existing_exposure
-                    ) not in {"RESERVED", "EXPOSED"}:
-                        raise AutonomousResearchError(
-                            "V3 package reservation is not eligible for a new sealed claim."
+                    else:
+                        existing_state = research_windows.package_exposure_status(
+                            ledger, existing_exposure
                         )
+                        if existing_state not in {"RESERVED", "EXPOSED"} and not (
+                            existing_state == "EVALUATED"
+                            and plan.get("evaluated_package_recovery") is True
+                        ):
+                            raise AutonomousResearchError(
+                                "V3 package reservation is not eligible for this claim or local-score recovery."
+                            )
                 ledger_path = Path(args.ledger)
                 temporary_ledger = ledger_path.with_name(ledger_path.name + ".tmp")
                 temporary_ledger.write_text(
