@@ -661,6 +661,45 @@ class PendingCandidateResumeTests(unittest.TestCase):
 
 
 class DirectionalMemoryContextTests(unittest.TestCase):
+    def test_v3_memory_rejects_invalid_package_scope_and_filters_overlapping_history(self):
+        valid = sample_entry(entry_id=1, target="2026-10-20")
+        valid["discovery_window"].update({
+            "package_id": "c" * 64,
+            "partition_version": 3,
+            "package_start_date": "2026-08-20",
+            "package_end_date": "2026-10-05",
+        })
+        valid["content_sha256"] = _hash_entry(valid)
+        self.assertEqual(memory._validate_entry(valid, 1), valid)
+
+        invalid = copy.deepcopy(valid)
+        invalid["discovery_window"]["package_start_date"] = "2026-09-15"
+        invalid["content_sha256"] = _hash_entry(invalid)
+        with self.assertRaisesRegex(memory.ResearchMemoryError, "outside its immutable package interval"):
+            memory._validate_entry(invalid, 1)
+
+        overlapping = sample_entry(entry_id=2, target="2026-10-25")
+        overlapping["discovery_window"]["end_date"] = "2026-10-15"
+        overlapping["discovery_window"].update({
+            "package_id": "d" * 64,
+            "partition_version": 3,
+            "package_start_date": "2026-08-20",
+            "package_end_date": "2026-10-20",
+        })
+        overlapping["content_sha256"] = _hash_entry(overlapping)
+        payload = memory.empty_memory()
+        payload["entries"] = [valid, overlapping]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "memory.json"
+            write_json(path, payload)
+            context = memory.direction_context(
+                "forward", "2026-11-26",
+                memory_path=path,
+                package_start_date="2026-10-10",
+            )
+        self.assertEqual(len(context), 1)
+        self.assertEqual(context[0]["prior_target_date"], "2026-10-20")
+
     def test_context_uses_only_same_direction_and_older_target_entries(self):
         value = memory.empty_memory()
         value["entries"] = [
@@ -1528,6 +1567,7 @@ class AutonomousResearchMemoryIntegrationTests(unittest.TestCase):
 
     def _make_claimed_cycle(self, root):
         import general_sealed_evaluation as sealed
+        import general_research_windows as research_windows
 
         start = date(2026, 8, 1)
         rows = []
@@ -1582,13 +1622,6 @@ class AutonomousResearchMemoryIntegrationTests(unittest.TestCase):
         autonomous.target_queue.materialize_front(captured_queue, archive_path)
         archive = sealed.load_archive(archive_path)
 
-        partition = sealed.split_archive(
-            archive["rows"],
-            archive_sha256=archive["archive_sha256"],
-            used_validation_dates=set(),
-        )
-        sealed_plan = sealed.public_plan(partition)
-        write_json(sealed_plan_path, sealed_plan)
         prepared = autonomous.prepare_cycle(
             state,
             archive_path=archive_path,
@@ -1607,6 +1640,28 @@ class AutonomousResearchMemoryIntegrationTests(unittest.TestCase):
             github_run_id=self.GITHUB_RUN_ID,
             now=self.AUTONOMOUS_NOW,
         )
+        package = prepared["research_package"]
+        exposure_attempt_id = attempt.get(
+            "research_package_attempt_id", attempt["attempt_id"]
+        )
+        evaluation_ledger = sealed.load_ledger(ledger_path)
+        research_windows.reserve_research_package(
+            evaluation_ledger,
+            package,
+            attempt_id=exposure_attempt_id,
+            created_at_utc=attempt["claimed_at_utc"],
+            unavailable=set(package.get("previously_unavailable_dates", [])),
+        )
+        write_json(ledger_path, evaluation_ledger)
+        prepared_plan = sealed.preflight(
+            archive_path,
+            ledger_path,
+            partition_version=sealed.UNSEEN_PARTITION_VERSION,
+            package_id=package["package_id"],
+            attempt_id=exposure_attempt_id,
+        )
+        sealed_plan = sealed.public_plan(prepared_plan)
+        write_json(sealed_plan_path, sealed_plan)
         write_json(scheduler_state_path, state)
 
         return {

@@ -257,6 +257,8 @@ def isolate_discovery_only(
     rows: list[dict[str, Any]],
     *,
     ledger_path: str | Path | None = None,
+    package_id: str | None = None,
+    attempt_id: str | None = None,
 ) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
     """Return only fresh discovery rows; previously consumed holdouts stay excluded."""
     target, _pre_target = isolate_pre_target(rows)
@@ -266,7 +268,9 @@ def isolate_discovery_only(
         raise RuntimeError("Archive changed while reconstructing the sealed discovery partition.")
     ledger = sealed.load_ledger(resolved_ledger)
     used_dates = sealed.get_used_validation_dates(ledger)
-    split = sealed.split_for_research(ARCHIVE, resolved_ledger)
+    split = sealed.split_for_research(
+        ARCHIVE, resolved_ledger, package_id=package_id, attempt_id=attempt_id
+    )
     if split.get("target_date") != target:
         raise RuntimeError("Sealed split target disagrees with Data Guard.")
     discovery = split.get("discovery_rows")
@@ -1954,9 +1958,16 @@ def main() -> int:
         ledger_path = BASE / "general_evaluation_ledger.json"
         # Repeat preflight inside the runner so a direct invocation cannot bypass
         # the workflow's no-request gate after validation dates have been consumed.
-        sealed.preflight(ARCHIVE, ledger_path)
+        package_id = os.environ.get("GENERAL_RESEARCH_PACKAGE_ID", "").strip() or None
+        attempt_id = os.environ.get("GENERAL_RESEARCH_ATTEMPT_ID", "").strip() or None
+        sealed.preflight(
+            ARCHIVE, ledger_path, partition_version=(sealed.UNSEEN_PARTITION_VERSION if package_id else sealed.PARTITION_VERSION),
+            package_id=package_id, attempt_id=attempt_id,
+        )
         rows = parse_archive()
-        target, train, _initial_plan = isolate_discovery_only(rows, ledger_path=ledger_path)
+        target, train, _initial_plan = isolate_discovery_only(
+            rows, ledger_path=ledger_path, package_id=package_id, attempt_id=attempt_id
+        )
         # Bind the plan to exact archive bytes, then recheck it has not changed.
         archive_proof = sealed.load_archive(ARCHIVE)
         archive_sha256 = archive_proof["archive_sha256"]
@@ -1964,7 +1975,9 @@ def main() -> int:
             raise RuntimeError("Archive changed between validation and sealed split.")
         # Reuse the exact original discovery/holdout split when this target
         # has a pending CLAIMED evaluation; otherwise use the fresh split.
-        partition = sealed.split_for_research(ARCHIVE, ledger_path)
+        partition = sealed.split_for_research(
+            ARCHIVE, ledger_path, package_id=package_id, attempt_id=attempt_id
+        )
         sealed_plan = sealed.public_plan(partition)
         if partition["target_date"] != target or partition["discovery_rows"] != train:
             raise RuntimeError("Sealed discovery split changed before prompt construction.")
@@ -1977,13 +1990,19 @@ def main() -> int:
         # target date and exact archive bytes match. Otherwise discover afresh.
         reused_directions: set[str] = set()
         memory_path = BASE / "general_research_memory.json"
+        active_package_id = partition.get("research_package", {}).get("package_id")
+        package_start_date = partition.get("research_package", {}).get("package_start_date")
+        pending_claim = sealed.pending_claim_for_archive(ARCHIVE, ledger_path)
         pending_forward = research_memory.find_pending_candidate(
-            "forward", target, archive_sha256, memory_path=memory_path
+            "forward", target, archive_sha256, memory_path=memory_path,
+            package_id=active_package_id,
+            package_start_date=(package_start_date if pending_claim is None else None),
         )
         pending_reverse = research_memory.find_pending_candidate(
-            "reverse", target, archive_sha256, memory_path=memory_path
+            "reverse", target, archive_sha256, memory_path=memory_path,
+            package_id=active_package_id,
+            package_start_date=(package_start_date if pending_claim is None else None),
         )
-        pending_claim = sealed.pending_claim_for_archive(ARCHIVE, ledger_path)
         if pending_claim is not None and not sealed.pending_claim_matches_candidates(
             pending_claim, pending_forward, pending_reverse
         ):
@@ -1995,8 +2014,9 @@ def main() -> int:
         stage = "forward_inference"
         failed_direction = "forward"
         write_run_status("RUNNING", stage, target=target, archive_sha256=archive_sha256, failed_direction=failed_direction)
+        package_start_date = partition.get("research_package", {}).get("package_start_date")
         forward_memory = research_memory.direction_context(
-            "forward", target, memory_path=memory_path
+            "forward", target, memory_path=memory_path, package_start_date=package_start_date
         )
         if pending_forward is not None:
             report_forward = render_pending_candidate_report(pending_forward, "forward")
@@ -2025,7 +2045,7 @@ def main() -> int:
         failed_direction = "reverse"
         write_run_status("RUNNING", stage, target=target, archive_sha256=archive_sha256, failed_direction=failed_direction)
         reverse_memory = research_memory.direction_context(
-            "reverse", target, memory_path=memory_path
+            "reverse", target, memory_path=memory_path, package_start_date=package_start_date
         )
         if pending_reverse is not None:
             report_reverse = render_pending_candidate_report(pending_reverse, "reverse")

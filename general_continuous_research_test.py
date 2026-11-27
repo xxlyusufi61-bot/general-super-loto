@@ -192,11 +192,11 @@ class ContinuousSessionContextTests(unittest.TestCase):
             current_run_id="45150000001",
             report_delivered=True,
             research_attempt_made=True,
-            probe_result=(False, "NO_EXECUTABLE_HYPOTHESIS"),
+            probe_result=(False, "WAITING_FOR_FRESH_SEALED_WINDOWS"),
             now=current,
         )
         self.assertFalse(no_work["continue_enabled"])
-        self.assertEqual(no_work["stop_reason"], "NO_EXECUTABLE_HYPOTHESIS")
+        self.assertEqual(no_work["stop_reason"], "WAITING_FOR_FRESH_SEALED_WINDOWS")
 
         no_new_target = continuous.build_continuation_plan(
             context=self.context,
@@ -220,6 +220,74 @@ class ContinuousSessionContextTests(unittest.TestCase):
         self.assertTrue(ready["continue_enabled"])
         self.assertEqual(ready["next_iteration"], 2)
         self.assertFalse(ready["session_values_rendered"])
+
+    def test_no_candidate_continues_when_scheduler_has_another_unseen_package(self):
+        attempt_id = "a" * 64
+        archive_sha = "b" * 64
+        target_date = "2026-11-26"
+        state = {
+            "attempts": [{
+                "attempt_id": attempt_id,
+                "target_date": target_date,
+                "archive_sha256": archive_sha,
+            }],
+            "events": [{
+                "attempt_id": attempt_id,
+                "outcome": "NO_ELIGIBLE_CANDIDATE",
+                "reason_code": "NO_FROZEN_DIRECTIONAL_CANDIDATE",
+            }],
+            "target_queue": {"schema_version": 1},
+        }
+        active = {
+            "target_date": target_date,
+            "archive_sha256": archive_sha,
+        }
+
+        class ReadOnlyStore:
+            def __init__(self, repository, token):
+                self.repository = repository
+                self.token = token
+
+            def hydrate(self, destination):
+                return None
+
+        with (
+            patch.object(continuous.state_writer, "GitHubStateStoreWriter", ReadOnlyStore),
+            patch.object(continuous.autonomous, "read_state", return_value=state),
+            patch.object(
+                continuous.autonomous, "authorization_status",
+                return_value={"authorized": True},
+            ),
+            patch.object(
+                continuous.nvidia, "read_remote_lock",
+                return_value=({"locked": False}, "lock-sha"),
+            ),
+            patch.object(continuous.target_queue, "active_item", return_value=active),
+            patch.object(continuous.target_queue, "materialize_front"),
+            patch.object(
+                continuous.autonomous, "prepare_cycle",
+                return_value={
+                    "eligible": True,
+                    "status": "READY",
+                    "pending_claim_resume_available": False,
+                    "retryable": True,
+                },
+            ),
+            patch.object(
+                continuous.nvidia, "read_remote_rate_limit",
+                return_value=({}, "rate-sha"),
+            ),
+            patch.object(
+                continuous, "budget_has_next_turn_capacity",
+                return_value=(True, "NEXT_CYCLE_ELIGIBLE"),
+            ),
+        ):
+            result = continuous._read_only_next_cycle_probe(
+                repository=continuous.REPOSITORY,
+                token="offline-test-token",
+            )
+
+        self.assertEqual(result, (True, "NEXT_CYCLE_ELIGIBLE"))
 
     def test_session_does_not_expire_or_stop_at_150_iterations(self):
         long_running = dict(self.context, iteration=150)

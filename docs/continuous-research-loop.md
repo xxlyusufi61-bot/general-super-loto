@@ -46,6 +46,15 @@ The controller proceeds only when all conditions pass:
    archive snapshot, retry provenance, pending sealed claim, consumed holdout
    dates, and fresh directional validation windows make another attempt eligible.
 
+A `NO_ELIGIBLE_CANDIDATE` result for one V3 package is not terminal by itself.
+The session continues only when the normal scheduler preflight has already
+reserved or can safely reserve a different package with genuinely unused,
+contiguous dates. Discovery dates exposed to the model remain unavailable.
+Unclaimed dates from a prior package may be considered only when they were never
+shown to the model and were never scored; they must be bound to a fresh package
+identity. The session stops when no such package remains, or when the existing
+authorization, lock, rate-budget, report-delivery, or other safety gates fail.
+
 The controller reads state through the existing verified state-store hydration
 path and checks the NVIDIA lock and rate-limit ledger read-only. It runs
 prepare_cycle against a temporary hydrated copy. It does not publish runtime
@@ -84,12 +93,15 @@ The loop does not change discovery or evaluation methodology:
 - Candidates remain hypotheses. There is no automatic selection, promotion, or
   canonical approval.
 
-A terminal NO_ELIGIBLE_CANDIDATE for the same active target ends the current
-session instead of inventing random attempts. If the latest archive has advanced
-to a different eligible target, the existing scheduler preflight decides
-whether that newer target may begin. Retryable failures can continue only
-through existing retry rules; manual-unlock requirements for
-WORKFLOW_FAILED and PROVIDER_DELIVERY_UNCERTAIN are unchanged.
+A `NO_ELIGIBLE_CANDIDATE` outcome ends the current active-target session only
+when the scheduler has no different genuinely unseen V3 package to reserve.
+The controller never invents random attempts: it continues only through the
+normal package-eligibility preflight and the existing authorization, lock,
+rate-budget, and reporting gates. If the latest archive has advanced to a
+different eligible target, the existing scheduler preflight decides whether
+that newer target may begin. Retryable failures can continue only through
+existing retry rules; manual-unlock requirements for `WORKFLOW_FAILED` and
+`PROVIDER_DELIVERY_UNCERTAIN` are unchanged.
 
 ## Telegram and dispatch reliability
 
@@ -120,3 +132,9 @@ Passing these tests verifies the code paths they exercise only. It does not
 activate the production writer-validation variable, migrate the live budget
 ledger, dispatch a live research run, make a live NVIDIA request, or prove that
 Telegram delivery occurred in production.
+
+## V3 package chaining
+
+For each eligible active target, the existing continuous controller evaluates one complete V3 package per iteration. After terminal state and Telegram reporting are confirmed, PR #129's existing continuation job starts the next full workflow run. The next iteration selects the next package from the currently unused contiguous date blocks. It does not repeat discovery on dates already exposed by a completed package, and it does not reuse sealed holdouts.
+
+The continuous session remains open-ended subject to the existing authorization, global-lock, rolling NVIDIA budget, FIFO, reporting, and package-eligibility gates. When no package meeting the fixed chronology and history minimums remains, the session stops with `WAITING_FOR_FRESH_SEALED_WINDOWS`. No archive row is invented, no consumed holdout minimum is lowered, and no exposed discovery date is reclassified as untouched validation data.

@@ -48,12 +48,12 @@ def write_empty_ledger(path):
     }), encoding="utf-8")
 
 
-def ready_preflight(archive_path, ledger_path, *, offline_memory_path):
+def ready_preflight(archive_path, ledger_path, *, offline_memory_path, partition_version):
     archive = sealed.load_archive(archive_path)
     history = archive["rows"][:-1]
     return {
         "status": "READY",
-        "partition_version": sealed.PARTITION_VERSION,
+        "partition_version": sealed.UNSEEN_PARTITION_VERSION,
         "directional_validation_windows_disjoint": True,
         "target_date": archive["last_date"],
         "archive_sha256": archive["archive_sha256"],
@@ -211,6 +211,42 @@ class TargetAdmissionMaintenanceTests(unittest.TestCase):
         self.assertEqual(updated["target_queue"]["active"]["target_date"], active["target_date"])
         self.assertEqual(updated["target_queue"]["completed"], [])
         self.assertEqual(len(updated["attempts"]), 1)
+
+    def test_v3_no_unseen_package_keeps_latest_target_staged(self):
+        # 43 pre-target rows cannot satisfy 40 discovery + 2 + 2 sealed targets.
+        rows = synthetic_rows(44)
+        write_archive(self.archive, rows)
+        staged, _ = queue.capture_new_targets(
+            queue.initial_queue(),
+            archive_path=self.archive,
+            attempts=[],
+            events=[],
+            now=NOW,
+            admit_latest=False,
+        )
+        state = auto.initial_state()
+        state["target_queue"] = staged
+        before = copy.deepcopy(state)
+        failure = sealed.SealedEvaluationError(
+            "V3 unseen-package preflight failed closed (ResearchWindowError): "
+            "No genuinely unseen contiguous package remains."
+        )
+        with patch.object(admission.sealed, "preflight", side_effect=failure):
+            updated, report = admission.maintain_targets(
+                state,
+                archive_path=self.archive,
+                ledger_path=self.ledger,
+                memory_path=self.memory,
+                workspace=self.root,
+                now=NOW + timedelta(minutes=1),
+            )
+        self.assertEqual(report["status"], "WAITING_FOR_FRESH_SEALED_WINDOWS")
+        self.assertFalse(report["active_available"])
+        self.assertEqual(updated["target_queue"], before["target_queue"])
+        self.assertEqual(updated["attempts"], before["attempts"])
+        self.assertEqual(updated["events"], before["events"])
+        self.assertFalse(report["hosted_model_request_performed"])
+        self.assertFalse(report["target_values_rendered"])
 
     def test_unrecognized_preflight_failure_fails_closed_without_mutating_input(self):
         rows = synthetic_rows(90)

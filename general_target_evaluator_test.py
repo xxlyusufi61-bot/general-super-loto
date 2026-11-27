@@ -1,3 +1,4 @@
+import copy
 import json
 import tempfile
 import unittest
@@ -7,6 +8,7 @@ from datetime import date, timedelta
 import general_autonomous_research as auto
 import general_hypothesis_execution_v2 as execution_v2
 import general_research_memory as research_memory
+import general_research_windows as research_windows
 import general_sealed_evaluation as sealed
 from general_target_evaluator import (
     TargetEvaluationError,
@@ -62,8 +64,28 @@ def _write_v2_documents(directory):
     return proposals, specs
 
 
-def _write_evaluated_memory_pair(path, claim, specs, target_date, archive_sha, created_at):
+def _write_evaluated_memory_pair(path, claim, specs, target_date, archive_sha, created_at, package=None):
     memory = research_memory.empty_memory()
+    if package is None:
+        discovery_window = {
+            "start_date": (date.fromisoformat(target_date) - timedelta(days=80)).isoformat(),
+            "end_date": (date.fromisoformat(target_date) - timedelta(days=1)).isoformat(),
+            "draw_count": 80,
+            "holdout_dates_copied": False,
+            "archive_rows_copied": False,
+        }
+    else:
+        discovery_window = {
+            "start_date": package["discovery_start_date"],
+            "end_date": package["discovery_end_date"],
+            "draw_count": package["discovery_count"],
+            "holdout_dates_copied": False,
+            "archive_rows_copied": False,
+            "package_id": package["package_id"],
+            "partition_version": 3,
+            "package_start_date": package["package_start_date"],
+            "package_end_date": package["package_end_date"],
+        }
     for direction, spec, hypothesis_id in (
         ("forward", specs[0], "HYP-001"),
         ("reverse", specs[1], "HYP-501"),
@@ -121,13 +143,7 @@ def _write_evaluated_memory_pair(path, claim, specs, target_date, archive_sha, c
             },
             "evaluation_feedback": feedback,
             "failure": None,
-            "discovery_window": {
-                "start_date": (date.fromisoformat(target_date) - timedelta(days=80)).isoformat(),
-                "end_date": (date.fromisoformat(target_date) - timedelta(days=1)).isoformat(),
-                "draw_count": 80,
-                "holdout_dates_copied": False,
-                "archive_rows_copied": False,
-            },
+            "discovery_window": dict(discovery_window),
         }
         entry["content_sha256"] = research_memory._entry_hash(entry)
         memory["entries"].append(entry)
@@ -290,6 +306,174 @@ class LocalTargetEvaluationTests(unittest.TestCase):
         persisted = auto.read_state(self.state_path)["target_evaluations"]
         self.assertEqual(len(persisted), 1)
         self.assertNotIn("hit_count", persisted[0])
+
+    def test_v3_interrupted_local_score_recovers_exact_evaluated_pair_without_provider(self):
+        root = self.root / "v3-local-score-recovery"
+        root.mkdir()
+        archive_path = root / "archive.json"
+        write_archive(archive_path, self.rows)
+        source_archive = sealed.load_archive(archive_path)
+        snapshot_item = target_queue._make_item(
+            self.rows,
+            source_archive_sha256=source_archive["archive_sha256"],
+            enqueued_at_utc="2026-11-18T12:00:00+00:00",
+        )
+        active_queue = {
+            "schema_version": 2,
+            "observed_through_date": self.rows[-1]["date"],
+            "active": snapshot_item,
+            "latest_snapshot": snapshot_item,
+            "completed": [],
+        }
+        target_queue.materialize_front(active_queue, archive_path)
+        archive = sealed.load_archive(archive_path)
+        ledger_path = root / "evaluation-ledger.json"
+        ledger_path.write_text(
+            json.dumps(sealed._ledger_empty()), encoding="utf-8"
+        )
+        snapshot_directory = root / "general_evaluation_snapshots"
+        proposals, specs_path = _write_v2_documents(root)
+        package = research_windows.build_research_packages(
+            archive["rows"],
+            archive_sha256=archive["archive_sha256"],
+            unavailable=set(),
+        )[0]
+        original_attempt_id = "c" * 64
+        retry_attempt_id = "d" * 64
+        ledger = sealed.load_ledger(ledger_path)
+        exposure = research_windows.reserve_research_package(
+            ledger,
+            package,
+            attempt_id=original_attempt_id,
+            created_at_utc="2026-11-18T11:00:00+00:00",
+            unavailable=set(package["previously_unavailable_dates"]),
+        )
+        ledger_path.write_text(json.dumps(ledger), encoding="utf-8")
+
+        claim = sealed.create_claim(
+            archive_path,
+            ledger_path,
+            proposals,
+            specs_path,
+            snapshot_directory=snapshot_directory,
+            research_package_id=package["package_id"],
+            scheduler_attempt_id=original_attempt_id,
+        )
+        self.assertTrue(claim["claim_created"])
+        sealed.evaluate_claim(
+            claim["claim_id"],
+            ledger_path,
+            proposals,
+            specs_path,
+            output_path=root / "sealed-report.json",
+        )
+
+        spec_doc = json.loads(specs_path.read_text(encoding="utf-8"))
+        recovered_specs = [
+            item["execution_spec"] for item in spec_doc["specifications"]
+        ]
+        memory_path = root / "research-memory.json"
+        _write_evaluated_memory_pair(
+            memory_path,
+            claim,
+            recovered_specs,
+            claim["target_date"],
+            claim["archive_sha256"],
+            "2026-11-18T11:30:00+00:00",
+            package=package,
+        )
+
+        state = auto.initial_state()
+        state["target_queue"] = active_queue
+        first_attempt = {
+            "attempt_id": original_attempt_id,
+            "target_date": claim["target_date"],
+            "archive_sha256": claim["archive_sha256"],
+            "archive_record_count": len(self.rows),
+            "claimed_at_utc": "2026-11-18T11:00:00+00:00",
+            "github_run_id": "10000",
+            "research_package_id": package["package_id"],
+            "research_package_attempt_id": original_attempt_id,
+        }
+        retry_attempt = {
+            **first_attempt,
+            "attempt_id": retry_attempt_id,
+            "claimed_at_utc": "2026-11-18T12:30:00+00:00",
+            "github_run_id": "10001",
+        }
+        state["attempts"] = [first_attempt, retry_attempt]
+        state["events"] = [{
+            "attempt_id": original_attempt_id,
+            "outcome": "FAILED",
+            "recorded_at_utc": "2026-11-18T12:00:00+00:00",
+            "reason_code": "SEALED_EVALUATION_INCOMPLETE",
+        }]
+        state_path = root / "general_autonomous_research_state.json"
+        auto.write_state(state_path, state)
+
+        wrong_package_state = copy.deepcopy(state)
+        wrong_package_state["attempts"][-1]["research_package_id"] = "f" * 64
+        auto.write_state(state_path, wrong_package_state)
+        wrong_package_output = root / "wrong-package-claim.json"
+        wrong_package_recovery = recover_evaluated_claim_for_attempt(
+            retry_attempt_id,
+            scheduler_state_path=state_path,
+            ledger_path=ledger_path,
+            memory_path=memory_path,
+            proposals_path=proposals,
+            specs_path=specs_path,
+            claim_output_path=wrong_package_output,
+        )
+        self.assertTrue(wrong_package_recovery["recovery_required"])
+        self.assertFalse(wrong_package_recovery["recovery_available"])
+        self.assertFalse(wrong_package_output.exists())
+        auto.write_state(state_path, state)
+
+        claim_output = root / "recovered-claim.json"
+
+        recovered = recover_evaluated_claim_for_attempt(
+            retry_attempt_id,
+            scheduler_state_path=state_path,
+            ledger_path=ledger_path,
+            memory_path=memory_path,
+            proposals_path=proposals,
+            specs_path=specs_path,
+            claim_output_path=claim_output,
+        )
+        self.assertTrue(recovered["recovery_required"])
+        self.assertTrue(recovered["recovery_available"])
+        self.assertEqual(recovered["claim_id"], claim["claim_id"])
+        recovered_claim = json.loads(claim_output.read_text(encoding="utf-8"))
+        self.assertTrue(recovered_claim["claim_reused"])
+        self.assertEqual(recovered_claim["claim_id"], claim["claim_id"])
+
+        report = evaluate_frozen_target(
+            recovered_claim["claim_id"],
+            retry_attempt_id,
+            ledger_path,
+            proposals,
+            specs_path,
+            scheduler_state_path=state_path,
+            snapshot_directory=snapshot_directory,
+        )
+        self.assertEqual(report["status"], "LOCAL_TARGET_EVALUATION_COMPLETED")
+        self.assertFalse(report["target_numbers_exposed"])
+        self.assertFalse(report["target_values_sent_to_model"])
+        self.assertFalse(report["target_score_sent_to_model"])
+        persisted = auto.read_state(state_path)["target_evaluations"]
+        self.assertEqual(len(persisted), 1)
+        self.assertEqual(persisted[0]["claim_id"], claim["claim_id"])
+        self.assertNotIn("hit_count", persisted[0])
+        final_ledger = sealed.load_ledger(ledger_path)
+        final_exposure = research_windows.package_exposure_for_attempt(
+            final_ledger,
+            package_id=package["package_id"],
+            attempt_id=original_attempt_id,
+        )
+        self.assertEqual(
+            research_windows.package_exposure_status(final_ledger, final_exposure),
+            "EVALUATED",
+        )
 
     def test_local_score_recovery_fails_closed_when_exact_pair_is_missing(self):
         state = auto.read_state(self.state_path)

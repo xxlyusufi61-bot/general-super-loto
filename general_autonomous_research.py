@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import general_sealed_evaluation as sealed
+import general_research_windows as research_windows
 from general_nvidia_guard import validate_lock_state
 import general_target_queue as target_queue
 import general_target_evaluation_ledger as target_evaluation_ledger
@@ -230,8 +231,18 @@ def validate_state(value: Any) -> dict[str, Any]:
         "claimed_at_utc", "github_run_id",
     }
     for item in attempts:
-        if not isinstance(item, dict) or set(item) != required_attempt:
+        if not isinstance(item, dict) or set(item) not in (
+            required_attempt,
+            required_attempt | {"research_package_id"},
+            required_attempt | {"research_package_id", "research_package_attempt_id"},
+        ):
             raise AutonomousResearchError("Attempt entry has an invalid schema.")
+        if "research_package_id" in item and not _is_sha256(item["research_package_id"]):
+            raise AutonomousResearchError("Attempt research-package identity is invalid.")
+        if "research_package_attempt_id" in item and not _is_sha256(item["research_package_attempt_id"]):
+            raise AutonomousResearchError("Attempt package-exposure attempt identity is invalid.")
+        if "research_package_attempt_id" in item and "research_package_id" not in item:
+            raise AutonomousResearchError("Package-exposure attempt identity lacks a package identity.")
         attempt_id = item["attempt_id"]
         if not isinstance(attempt_id, str) or len(attempt_id) != 64 or any(
             character not in "0123456789abcdef" for character in attempt_id
@@ -737,6 +748,19 @@ def write_state(path: str | Path, value: dict[str, Any]) -> None:
     temporary.replace(target)
 
 
+def _write_evaluation_ledger_atomic(path: str | Path, ledger: dict[str, Any]) -> None:
+    """Persist a validated append-only evaluation ledger through atomic replacement."""
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(target.name + ".tmp")
+    temporary.write_text(
+        json.dumps(ledger, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
+    sealed.load_ledger(temporary)
+    temporary.replace(target)
+
+
 def read_global_lock(path: str | Path) -> dict[str, Any]:
     try:
         value = json.loads(Path(path).read_text(encoding="utf-8"))
@@ -925,6 +949,9 @@ def prepare_cycle(
     retry_number = 1
     manual_recovery_confirmed_for_failure = False
     manual_recovery_unlock_at_utc: str | None = None
+    resume_package_id: str | None = None
+    resume_package_attempt_id: str | None = None
+    evaluated_package_recovery_requested = False
     if attempts:
         last_attempt = attempts[-1]
         last_target = last_attempt["target_date"]
@@ -981,6 +1008,14 @@ def prepare_cycle(
                         }
                     retryable = True
                     retry_number = same_target_attempts + 1
+                    if last_attempt.get("research_package_id") is not None:
+                        resume_package_id = last_attempt["research_package_id"]
+                        resume_package_attempt_id = last_attempt.get(
+                            "research_package_attempt_id", last_attempt["attempt_id"]
+                        )
+                        evaluated_package_recovery_requested = (
+                            reason_code == "SEALED_EVALUATION_INCOMPLETE"
+                        )
                 else:
                     if reason_code == "PROVIDER_HTTP_REJECTION_NO_RETRY":
                         blocked_status = "PROVIDER_HTTP_REJECTION_NO_RETRY"
@@ -1086,7 +1121,13 @@ def prepare_cycle(
                 }
 
     try:
-        plan = sealed.preflight(archive_path, ledger_path)
+        plan = sealed.preflight(
+            archive_path, ledger_path,
+            partition_version=sealed.UNSEEN_PARTITION_VERSION,
+            package_id=resume_package_id,
+            attempt_id=resume_package_attempt_id,
+            allow_evaluated_package_recovery=evaluated_package_recovery_requested,
+        )
     except sealed.SealedEvaluationError as exc:
         reason = str(exc)
         lower = reason.lower()
@@ -1098,6 +1139,7 @@ def prepare_cycle(
             or "adjacency-safe bidirectional partition" in lower
             or "r60 discovery history is shorter than the default minimum training window" in lower
             or "discovery history is shorter than the default minimum" in lower
+            or "no genuinely unseen contiguous package remains" in lower
         ):
             return {
                 "status": "WAITING_FOR_FRESH_SEALED_WINDOWS",
@@ -1151,7 +1193,11 @@ def prepare_cycle(
         "manual_recovery_confirmed": manual_recovery_confirmed_for_failure,
         "manual_recovery_unlock_at_utc": manual_recovery_unlock_at_utc,
         "pending_claim_resume_available": plan.get("pending_claim_resume_available") is True,
+        "evaluated_package_recovery": plan.get("evaluated_package_recovery") is True,
         "pending_claim_id": plan.get("pending_claim_id"),
+        "research_package_id": plan.get("research_package_id"),
+        "research_package": plan.get("research_package"),
+        "research_package_attempt_id": plan.get("scheduler_attempt_id"),
     }
 
 
@@ -1282,6 +1328,11 @@ def claim_attempt(
         )
         if unlock_at > _timestamp(claimed_at, "attempt.claimed_at_utc"):
             raise AutonomousResearchError("Manual unlock provenance postdates the retry claim.")
+    package_exposure_attempt_id = (
+        plan.get("research_package_attempt_id")
+        if isinstance(plan.get("research_package_attempt_id"), str)
+        else attempt_id
+    )
     attempt = {
         "attempt_id": attempt_id,
         "target_date": target_date,
@@ -1289,6 +1340,10 @@ def claim_attempt(
         "archive_record_count": plan["archive_record_count"],
         "claimed_at_utc": claimed_at,
         "github_run_id": github_run_id,
+        **({
+            "research_package_id": plan["research_package_id"],
+            "research_package_attempt_id": package_exposure_attempt_id,
+        } if isinstance(plan.get("research_package_id"), str) else {}),
     }
     state["attempts"].append(attempt)
     if workflow_failure_to_recover is not None:
@@ -1461,6 +1516,51 @@ def record_outcome(
         "recorded_at_utc": _now_utc(now).isoformat(),
         "reason_code": reason_code,
     })
+
+    package_id = attempt.get("research_package_id")
+    if package_id is not None:
+        if evaluation_ledger_path is None:
+            raise AutonomousResearchError("V3 package lifecycle requires the append-only evaluation ledger.")
+        ledger = sealed.load_ledger(evaluation_ledger_path)
+        exposure = research_windows.package_exposure_for_attempt(
+            ledger, package_id=package_id,
+            attempt_id=attempt.get("research_package_attempt_id", attempt_id),
+        )
+        if exposure is None:
+            candidates = [
+                item for item in ledger.get("discovery_exposures", [])
+                if isinstance(item, dict) and item.get("kind") == "RESEARCH_PACKAGE"
+                and item.get("package_id") == package_id
+            ]
+            claimed = [
+                item for item in candidates
+                if research_windows.package_exposure_status(ledger, item) in {"CLAIMED", "EVALUATED"}
+            ]
+            if len(claimed) == 1:
+                exposure = claimed[0]
+            elif outcome == "FAILED" and reason_code == "NO_PROVIDER_REQUEST_SENT" and not candidates:
+                exposure = None
+            else:
+                raise AutonomousResearchError("V3 attempt is not bound to one exact package exposure.")
+        if exposure is not None:
+            package_state = research_windows.package_exposure_status(ledger, exposure)
+            next_state = None
+            if outcome == "SUCCEEDED":
+                if package_state != "EVALUATED":
+                    raise AutonomousResearchError("Successful V3 outcome requires the package holdout to be EVALUATED.")
+            elif package_state == "RESERVED":
+                if outcome == "NO_ELIGIBLE_CANDIDATE":
+                    next_state = "EXPOSED"
+                elif outcome == "FAILED":
+                    next_state = "RELEASED" if reason_code == "NO_PROVIDER_REQUEST_SENT" else "EXPOSED"
+            if next_state is not None:
+                research_windows.append_package_status(
+                    ledger, exposure, state=next_state,
+                    recorded_at_utc=_now_utc(now).isoformat(),
+                    reason=("Provider discovery was not started" if next_state == "RELEASED"
+                            else "Directional discovery used the package; unclaimed holdouts remain reusable"),
+                )
+                _write_evaluation_ledger_atomic(evaluation_ledger_path, ledger)
     # EVALUATED completes this frozen-formula test, not the target's entire
     # research lifetime. The active target remains available for new discovery
     # packages until a newer draw is observed.
@@ -1749,6 +1849,8 @@ def main(argv: list[str] | None = None) -> int:
                 "discovery_count": result.get("discovery_count"),
                 "retryable": result.get("retryable") is True,
                 "retry_number": result.get("retry_number"),
+                "research_package_id": result.get("research_package_id") or "",
+                "research_package_attempt_id": result.get("research_package_attempt_id") or "",
             })
         elif args.command == "claim":
             plan = prepare_cycle(
@@ -1764,9 +1866,74 @@ def main(argv: list[str] | None = None) -> int:
                 plan,
                 github_run_id=args.run_id or None,
             )
+            if isinstance(attempt.get("research_package_id"), str):
+                ledger = sealed.load_ledger(args.ledger)
+                memory_path = Path("general_research_memory.json")
+                memory = __import__("general_research_memory").load_memory(memory_path)
+                memory_sha = hashlib.sha256(memory_path.read_bytes()).hexdigest()
+                research_windows.ensure_legacy_exposure(
+                    ledger,
+                    sealed.load_archive(args.archive)["rows"],
+                    memory,
+                    memory_sha256=memory_sha,
+                    created_at_utc=attempt["claimed_at_utc"],
+                )
+                pending = sealed.pending_claim_for_archive(args.archive, args.ledger)
+                if pending is None:
+                    package = plan.get("research_package")
+                    if not isinstance(package, dict) or package.get("package_id") != attempt["research_package_id"]:
+                        raise AutonomousResearchError("V3 attempt does not contain its exact frozen package.")
+                    research_windows.validate_package(
+                        package,
+                        sealed.load_archive(args.archive)["rows"],
+                        archive_sha256=attempt["archive_sha256"],
+                        unavailable=set(package.get("previously_unavailable_dates", [])),
+                    )
+                    exposure_attempt_id = attempt.get(
+                        "research_package_attempt_id", attempt["attempt_id"]
+                    )
+                    existing_exposure = research_windows.package_exposure_for_attempt(
+                        ledger,
+                        package_id=attempt["research_package_id"],
+                        attempt_id=exposure_attempt_id,
+                    )
+                    if existing_exposure is None:
+                        archive_rows = sealed.load_archive(args.archive)["rows"]
+                        current_unavailable = research_windows.unavailable_dates(
+                            archive_rows, ledger=ledger, memory=memory, attempts=[]
+                        )
+                        research_windows.reserve_research_package(
+                            ledger,
+                            package,
+                            attempt_id=exposure_attempt_id,
+                            created_at_utc=attempt["claimed_at_utc"],
+                            unavailable=current_unavailable,
+                        )
+                    else:
+                        existing_state = research_windows.package_exposure_status(
+                            ledger, existing_exposure
+                        )
+                        if existing_state not in {"RESERVED", "EXPOSED"} and not (
+                            existing_state == "EVALUATED"
+                            and plan.get("evaluated_package_recovery") is True
+                        ):
+                            raise AutonomousResearchError(
+                                "V3 package reservation is not eligible for this claim or local-score recovery."
+                            )
+                ledger_path = Path(args.ledger)
+                temporary_ledger = ledger_path.with_name(ledger_path.name + ".tmp")
+                temporary_ledger.write_text(
+                    json.dumps(ledger, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
+                    encoding="utf-8",
+                )
+                temporary_ledger.replace(ledger_path)
             write_state(args.state, state)
             result = {"status": "ATTEMPT_CLAIMED_BEFORE_PROVIDER_CALL", **attempt}
-            _write_github_output(args.github_output, {"attempt_id": attempt["attempt_id"]})
+            _write_github_output(args.github_output, {
+                "attempt_id": attempt["attempt_id"],
+                "research_package_id": attempt.get("research_package_id", ""),
+                "research_package_attempt_id": attempt.get("research_package_attempt_id", ""),
+            })
         else:
             state = record_outcome(
                 state,

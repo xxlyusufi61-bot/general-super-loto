@@ -19,6 +19,7 @@ from typing import Any
 
 import general_data_guard as guard
 import general_hypothesis_execution_v2 as execution_v2
+import general_research_windows as research_windows
 from general_bidirectional_evaluation import evaluate_bidirectional_full_history
 from general_execution_spec_dispatch import (
     execution_spec_direction,
@@ -39,9 +40,10 @@ from general_hypothesis_execution import (
     validate_execution_spec,
 )
 
-VERSION = "0.5.0"
+VERSION = "0.6.0"
 PARTITION_VERSION = 2
 LEGACY_PARTITION_VERSION = 1
+UNSEEN_PARTITION_VERSION = 3
 RESEARCH_SCOPE_START = date(2020, 8, 2)
 DEFAULT_MIN_TRAIN_DRAWS = 40
 DEFAULT_MAX_VALIDATION_DRAWS = 30
@@ -514,12 +516,13 @@ def load_ledger(path: str | Path) -> dict[str, Any]:
     payload, _ = _read_json(ledger_path, "Evaluation ledger")
     if (
         not isinstance(payload, dict)
-        or set(payload) != {"schema_version", "purpose", "entries"}
+        or set(payload) not in ({"schema_version", "purpose", "entries"}, {"schema_version", "purpose", "entries", "discovery_exposures"})
         or type(payload.get("schema_version")) is not int
         or payload.get("schema_version") != LEDGER_SCHEMA_VERSION
         or not isinstance(payload.get("purpose"), str)
         or not isinstance(payload.get("entries"), list)
         or len(payload["entries"]) > 10000
+        or ("discovery_exposures" in payload and not isinstance(payload["discovery_exposures"], list))
     ):
         raise SealedEvaluationError("Evaluation ledger has an invalid schema; failing closed.")
     seen_claims: set[str] = set()
@@ -543,7 +546,7 @@ def load_ledger(path: str | Path) -> dict[str, Any]:
             raise SealedEvaluationError("Evaluation ledger entry is malformed; failing closed.")
         partition_version = entry.get("partition_version", LEGACY_PARTITION_VERSION)
         if type(partition_version) is not int or partition_version not in {
-            LEGACY_PARTITION_VERSION, PARTITION_VERSION
+            LEGACY_PARTITION_VERSION, PARTITION_VERSION, UNSEEN_PARTITION_VERSION
         }:
             raise SealedEvaluationError("Evaluation ledger partition version is invalid.")
         reverse_dates = entry.get("reverse_validation_dates", [])
@@ -581,6 +584,179 @@ def load_ledger(path: str | Path) -> dict[str, Any]:
             raise SealedEvaluationError("Evaluation ledger already contains overlapping directional validation dates.")
         seen_claims.add(claim_id)
         used_dates.update(parsed_dates)
+    exposures = payload.get("discovery_exposures", [])
+    if not isinstance(exposures, list) or len(exposures) > 100000:
+        raise SealedEvaluationError("Discovery exposure ledger exceeds its bounded schema.")
+    seen_ids: set[str] = set()
+    seen_package_ids: set[str] = set()
+    seen_package_attempts: set[tuple[str, str]] = set()
+    base_by_id: dict[str, dict[str, Any]] = {}
+    states: dict[str, str] = {}
+    transitions = {
+        "RESERVED": {"EXPOSED", "CLAIMED", "RELEASED"},
+        "EXPOSED": {"CLAIMED", "EVALUATED"},
+        "CLAIMED": {"EVALUATED"},
+        "EVALUATED": set(),
+        "RELEASED": set(),
+    }
+    for item in exposures:
+        if not isinstance(item, dict):
+            raise SealedEvaluationError("Discovery exposure entry is malformed.")
+        kind = item.get("kind")
+        if kind == "RESEARCH_PACKAGE_STATUS":
+            if set(item) != {
+                "kind", "schema_version", "exposure_id", "package_id", "attempt_id",
+                "prior_state", "state", "recorded_at_utc", "reason", "event_id",
+            }:
+                raise SealedEvaluationError("Research package status event keys are invalid.")
+            base = base_by_id.get(item.get("exposure_id"))
+            event = dict(item)
+            event_id = event.pop("event_id", None)
+            current = states.get(item.get("exposure_id"))
+            recorded_at = item.get("recorded_at_utc")
+            if not isinstance(recorded_at, str) or not recorded_at.endswith("+00:00"):
+                raise SealedEvaluationError("Research package lifecycle timestamp must be UTC.")
+            try:
+                datetime.fromisoformat(recorded_at)
+            except ValueError:
+                raise SealedEvaluationError("Research package lifecycle timestamp is invalid.") from None
+            reason = item.get("reason")
+            if not isinstance(reason, str) or not reason or len(reason) > 120:
+                raise SealedEvaluationError("Research package lifecycle reason is invalid.")
+            if (base is None or item.get("schema_version") != 1
+                or item.get("package_id") != base.get("package_id")
+                or item.get("attempt_id") != base.get("attempt_id")
+                or item.get("prior_state") != current
+                or item.get("state") not in transitions.get(current, set())
+                or not isinstance(event_id, str) or event_id != research_windows.digest(event)):
+                raise SealedEvaluationError("Research package lifecycle event failed validation.")
+            states[item["exposure_id"]] = item["state"]
+            continue
+        if kind not in {"LEGACY_DISCOVERY_RANGES", "RESEARCH_PACKAGE"}:
+            raise SealedEvaluationError("Unknown discovery exposure record type.")
+        exposure_id = item.get("exposure_id")
+        hashed = dict(item); hashed["exposure_id"] = ""
+        if (not isinstance(exposure_id, str) or len(exposure_id) != 64
+            or exposure_id != research_windows.digest(hashed) or exposure_id in seen_ids):
+            raise SealedEvaluationError("Discovery exposure identity/hash is invalid or duplicated.")
+        seen_ids.add(exposure_id)
+        if item.get("schema_version") != 1:
+            raise SealedEvaluationError("Discovery exposure schema version is invalid.")
+        if kind == "LEGACY_DISCOVERY_RANGES":
+            if set(item) != {
+                "kind", "schema_version", "exposure_id", "memory_sha256", "dates", "created_at_utc"
+            }:
+                raise SealedEvaluationError("Legacy discovery exposure keys are invalid.")
+            dates = item.get("dates")
+            if not isinstance(dates, list) or dates != sorted(set(dates)):
+                raise SealedEvaluationError("Legacy exposure date list is malformed.")
+            memory_sha = item.get("memory_sha256")
+            if (
+                not isinstance(memory_sha, str)
+                or len(memory_sha) != 64
+                or any(ch not in "0123456789abcdef" for ch in memory_sha)
+            ):
+                raise SealedEvaluationError("Legacy discovery exposure memory hash is invalid.")
+            created_at = item.get("created_at_utc")
+            if not isinstance(created_at, str) or not created_at.endswith("+00:00"):
+                raise SealedEvaluationError("Legacy discovery exposure timestamp must be UTC.")
+            try:
+                datetime.fromisoformat(created_at)
+            except ValueError:
+                raise SealedEvaluationError("Legacy discovery exposure timestamp is invalid.") from None
+            for value in dates:
+                try: parsed = date.fromisoformat(value)
+                except (TypeError, ValueError): raise SealedEvaluationError("Legacy exposure date is invalid.") from None
+                if parsed.isoformat() != value: raise SealedEvaluationError("Legacy exposure date is non-canonical.")
+        else:
+            if set(item) != {
+                "kind", "schema_version", "exposure_id", "attempt_id", "package_id",
+                "package", "target_date", "archive_sha256", "archive_record_count",
+                "partition_version", "package_sequence", "package_start_date",
+                "package_end_date", "discovery_dates", "validation_dates",
+                "reverse_validation_dates", "dates", "previously_unavailable_dates_sha256",
+                "created_at_utc", "target_numbers_exposed", "state",
+            }:
+                raise SealedEvaluationError("Research package exposure keys are invalid.")
+            package = item.get("package")
+            package_attempt = item.get("attempt_id")
+            created_at = item.get("created_at_utc")
+            if (
+                not isinstance(package_attempt, str) or len(package_attempt) != 64
+                or any(ch not in "0123456789abcdef" for ch in package_attempt)
+                or not isinstance(created_at, str) or not created_at.endswith("+00:00")
+                or not isinstance(package, dict)
+                or package.get("partition_version") != UNSEEN_PARTITION_VERSION
+                or package.get("package_id") != item.get("package_id")
+                or package.get("package_id") != research_windows.digest(
+                    {k: v for k, v in package.items() if k != "package_id"}
+                )
+                or item.get("state") != "RESERVED"
+                or item.get("target_numbers_exposed") is not False
+                or item.get("dates") != package.get("dates")
+                or item.get("discovery_dates") != package.get("discovery_dates")
+                or item.get("validation_dates") != package.get("validation_dates")
+                or item.get("reverse_validation_dates") != package.get("reverse_validation_dates")
+                or item.get("previously_unavailable_dates_sha256")
+                   != package.get("previously_unavailable_dates_sha256")
+                or item.get("target_date") != package.get("target_date")
+                or item.get("archive_sha256") != package.get("archive_sha256")
+                or item.get("archive_record_count") != package.get("archive_record_count")
+                or item.get("package_sequence") != package.get("package_sequence")
+                or item.get("package_start_date") != package.get("package_start_date")
+                or item.get("package_end_date") != package.get("package_end_date")
+                or item.get("partition_version") != UNSEEN_PARTITION_VERSION
+            ):
+                raise SealedEvaluationError("Research package exposure record is malformed.")
+            try:
+                datetime.fromisoformat(created_at)
+            except ValueError:
+                raise SealedEvaluationError("Research package exposure timestamp is invalid.") from None
+            if item["package_id"] in seen_package_ids:
+                raise SealedEvaluationError("Duplicate V3 package ID in discovery exposure ledger.")
+            seen_package_ids.add(item["package_id"])
+            package_attempt_key = (item["package_id"], package_attempt)
+            if package_attempt_key in seen_package_attempts:
+                raise SealedEvaluationError("Duplicate V3 package reservation for one scheduler attempt.")
+            seen_package_attempts.add(package_attempt_key)
+            base_by_id[exposure_id] = item
+            states[exposure_id] = "RESERVED"
+    if len(exposures) > 100000:
+        raise SealedEvaluationError("Discovery exposure ledger exceeds its bounded append-only size.")
+    for entry in payload["entries"]:
+        if entry.get("partition_version", LEGACY_PARTITION_VERSION) != UNSEEN_PARTITION_VERSION:
+            continue
+        package_id = entry.get("research_package_id")
+        attempt_id = entry.get("scheduler_attempt_id")
+        matches = [
+            (exposure_id, exposure)
+            for exposure_id, exposure in base_by_id.items()
+            if exposure.get("package_id") == package_id
+            and exposure.get("attempt_id") == attempt_id
+        ]
+        if len(matches) != 1:
+            raise SealedEvaluationError("V3 claim does not have one exact package exposure reservation.")
+        exposure_id, exposure = matches[0]
+        if (
+            entry.get("previously_unavailable_dates_sha256")
+            != exposure.get("previously_unavailable_dates_sha256")
+            or states.get(exposure_id) != entry.get("state")
+            or exposure.get("archive_sha256") != entry.get("archive_sha256")
+            or exposure.get("target_date") != entry.get("target_date")
+        ):
+            raise SealedEvaluationError("V3 claim and package exposure lifecycle are inconsistent.")
+    for exposure_id, exposure in base_by_id.items():
+        state = states.get(exposure_id)
+        if state in {"CLAIMED", "EVALUATED"}:
+            matching_claims = [
+                entry for entry in payload["entries"]
+                if entry.get("partition_version") == UNSEEN_PARTITION_VERSION
+                and entry.get("research_package_id") == exposure.get("package_id")
+                and entry.get("scheduler_attempt_id") == exposure.get("attempt_id")
+                and entry.get("state") == state
+            ]
+            if len(matching_claims) != 1:
+                raise SealedEvaluationError("Claimed/evaluated package exposure lacks its exact sealed-ledger entry.")
     return payload
 
 
@@ -612,7 +788,13 @@ def public_plan(split: dict[str, Any]) -> dict[str, Any]:
             "target_in_reverse_validation", "directional_validation_windows_disjoint",
             "discovery_count",
         )
-    } | {"regimes": regimes}
+    } | {"regimes": regimes} | (
+        {"research_package": split["research_package"]}
+        if isinstance(split.get("research_package"), dict) else {}
+    ) | (
+        {"scheduler_attempt_id": split["scheduler_attempt_id"]}
+        if isinstance(split.get("scheduler_attempt_id"), str) else {}
+    )
 
 
 def _used_validation_dates(ledger: dict[str, Any]) -> set[str]:
@@ -626,6 +808,121 @@ def _used_validation_dates(ledger: dict[str, Any]) -> set[str]:
 def get_used_validation_dates(ledger: dict[str, Any]) -> set[str]:
     """Return all dates reserved or permanently consumed by directional holdouts."""
     return set(_used_validation_dates(ledger))
+
+
+def _build_v3_package_split(archive, ledger, *, offline_memory_path, package_id=None, attempt_id=None, allow_evaluated_recovery=False):
+    """Build or replay one exact package from dates not previously exposed."""
+    try:
+        from general_research_memory import load_memory
+        memory = load_memory(offline_memory_path)
+        offline_dates, offline_digest = _offline_development_consumption(offline_memory_path)
+        reservation_state = None
+        if package_id is not None:
+            if not isinstance(attempt_id, str) or len(attempt_id) != 64 or any(
+                ch not in "0123456789abcdef" for ch in attempt_id
+            ):
+                raise research_windows.ResearchWindowError(
+                    "A V3 package replay requires its exact original exposure-attempt ID."
+                )
+            exposure = research_windows.package_exposure_for_attempt(
+                ledger, package_id=package_id, attempt_id=attempt_id
+            )
+            if exposure is None:
+                raise research_windows.ResearchWindowError("Exact package reservation not found.")
+            package = research_windows.package_from_exposure(exposure)
+            reservation_state = research_windows.package_exposure_status(ledger, exposure)
+            research_windows.validate_package(
+                package, archive["rows"], archive_sha256=archive["archive_sha256"],
+                unavailable=set(package.get("previously_unavailable_dates", [])),
+            )
+            current_unavailable = research_windows.unavailable_dates(
+                archive["rows"], ledger=ledger, memory=memory, attempts=[]
+            )
+            package_dates = set(package["dates"])
+            if reservation_state == "RELEASED":
+                # No provider ever saw this package. Treat the old reservation
+                # as released, then mint a fresh package ID from the current ledger.
+                exposure = None
+                package_id = None
+            elif reservation_state == "RESERVED":
+                current_without_own = current_unavailable - package_dates
+                if current_without_own != set(package["previously_unavailable_dates"]):
+                    raise research_windows.ResearchWindowError(
+                        "Reserved package prior-unavailable snapshot changed before discovery."
+                    )
+            elif reservation_state == "EXPOSED":
+                own_discovery = set(exposure["discovery_dates"])
+                if package_dates.intersection(current_unavailable - own_discovery):
+                    raise research_windows.ResearchWindowError(
+                        "An exposed package now overlaps another consumed date or claim."
+                    )
+            elif reservation_state == "EVALUATED":
+                if allow_evaluated_recovery is not True:
+                    raise research_windows.ResearchWindowError(
+                        "An EVALUATED package can only be reopened for exact local-target-score recovery."
+                    )
+                current_without_own = current_unavailable - package_dates
+                if current_without_own != set(package.get("previously_unavailable_dates", [])):
+                    raise research_windows.ResearchWindowError(
+                        "Evaluated package prior-unavailable snapshot changed before local-score recovery."
+                    )
+                matching_claims = [
+                    entry for entry in ledger.get("entries", [])
+                    if entry.get("partition_version") == UNSEEN_PARTITION_VERSION
+                    and entry.get("research_package_id") == package_id
+                    and entry.get("scheduler_attempt_id") == attempt_id
+                    and entry.get("state") == "EVALUATED"
+                    and entry.get("target_date") == package.get("target_date")
+                    and entry.get("archive_sha256") == package.get("archive_sha256")
+                    and entry.get("archive_record_count") == package.get("archive_record_count")
+                    and entry.get("validation_dates") == package.get("validation_dates")
+                    and entry.get("reverse_validation_dates") == package.get("reverse_validation_dates")
+                    and entry.get("r60_discovery_count") == package.get("discovery_count")
+                    and entry.get("discovery_start_date") == package.get("discovery_start_date")
+                    and entry.get("discovery_end_date") == package.get("discovery_end_date")
+                ]
+                if len(matching_claims) != 1:
+                    raise research_windows.ResearchWindowError(
+                        "Evaluated package does not have one exact completed sealed claim."
+                    )
+            else:
+                raise research_windows.ResearchWindowError(
+                    "A V3 package can only be resumed while reserved, discovery-exposed, or explicitly recovered after evaluation."
+                )
+        if package_id is None:
+            unavailable = research_windows.unavailable_dates(
+                archive["rows"], ledger=ledger, memory=memory, attempts=[]
+            )
+            sequences = [
+                e.get("package_sequence", 0) for e in ledger.get("discovery_exposures", [])
+                if isinstance(e, dict) and e.get("kind") == "RESEARCH_PACKAGE"
+                and e.get("target_date") == archive["last_date"]
+                and e.get("archive_sha256") == archive["archive_sha256"]
+            ]
+            packages = research_windows.build_research_packages(
+                archive["rows"], archive_sha256=archive["archive_sha256"],
+                unavailable=unavailable, sequence_start=max(sequences, default=0) + 1,
+                offline_memory_sha256=offline_digest,
+            )
+            if not packages:
+                raise research_windows.ResearchWindowError("No genuinely unseen contiguous package remains.")
+            package, exposure = packages[0], None
+        if package.get("offline_development_memory_sha256") != offline_digest:
+            raise research_windows.ResearchWindowError("Offline development memory digest changed.")
+        split = research_windows.split_from_package(
+            archive["rows"], package, archive_sha256=archive["archive_sha256"]
+        )
+        split["evaluated_package_recovery"] = reservation_state == "EVALUATED"
+        split["scheduler_attempt_id"] = (
+            attempt_id if exposure is not None else None
+        )
+        split["previously_consumed_validation_draw_count"] = len(_used_validation_dates(ledger))
+        split["previously_consumed_offline_development_draw_count"] = len(offline_dates)
+        return split, exposure
+    except Exception as exc:
+        raise SealedEvaluationError(
+            "V3 unseen-package preflight failed closed (" + type(exc).__name__ + "): " + str(exc)
+        ) from None
 
 
 def _pending_claim_with_split(
@@ -676,13 +973,32 @@ def _pending_claim_with_split(
     ):
         raise SealedEvaluationError("Pending claim immutable snapshot does not match the active FIFO archive.")
 
-    split = split_archive(
-        archive["rows"],
-        archive_sha256=archive["archive_sha256"],
-        used_validation_dates=set(expected_prior_dates),
-        offline_memory_path=offline_memory_path,
-        partition_version=entry.get("partition_version", LEGACY_PARTITION_VERSION),
-    )
+    partition_version = entry.get("partition_version", LEGACY_PARTITION_VERSION)
+    if partition_version == UNSEEN_PARTITION_VERSION:
+        exposure = research_windows.package_exposure_for_attempt(
+            ledger, package_id=entry.get("research_package_id"),
+            attempt_id=entry.get("scheduler_attempt_id"),
+        )
+        if exposure is None:
+            raise SealedEvaluationError("Pending V3 claim has no exact package reservation.")
+        package = research_windows.package_from_exposure(exposure)
+        split = research_windows.split_from_package(
+            archive["rows"], package, archive_sha256=archive["archive_sha256"]
+        )
+        split["scheduler_attempt_id"] = entry.get("scheduler_attempt_id")
+        split["previously_consumed_validation_draw_count"] = len(expected_prior_dates)
+        _, offline_digest = _offline_development_consumption(offline_memory_path)
+        if package.get("offline_development_memory_sha256") != offline_digest:
+            raise SealedEvaluationError("Offline development memory changed after pending V3 claim.")
+        split["previously_consumed_offline_development_draw_count"] = entry.get(
+            "previously_consumed_offline_development_draw_count", 0
+        )
+    else:
+        split = split_archive(
+            archive["rows"], archive_sha256=archive["archive_sha256"],
+            used_validation_dates=set(expected_prior_dates), offline_memory_path=offline_memory_path,
+            partition_version=partition_version,
+        )
     if split["target_date"] != entry.get("target_date"):
         raise SealedEvaluationError("Pending claim target does not match its original chronological partition.")
     r60 = split["regimes"]["R60"]
@@ -734,7 +1050,9 @@ def _pending_claim_with_split(
             },
             split,
             canonical_pre_target,
-            set(expected_prior_dates) | set(offline_dates),
+            (set(split.get("research_package", {}).get("previously_unavailable_dates", []))
+             if partition_version == UNSEEN_PARTITION_VERSION
+             else set(expected_prior_dates) | set(offline_dates)),
         )
 
     for field in ("hypothesis_id", "spec_sha256", "reverse_hypothesis_id", "reverse_spec_sha256"):
@@ -768,6 +1086,8 @@ def split_for_research(
     ledger_path: str | Path,
     *,
     offline_memory_path: str | Path = "general_research_memory.json",
+    package_id: str | None = None,
+    attempt_id: str | None = None,
 ) -> dict[str, Any]:
     """Use fresh dates normally, or the original split for an exact pending claim."""
     archive = load_archive(archive_path)
@@ -776,12 +1096,18 @@ def split_for_research(
         archive, ledger, offline_memory_path=offline_memory_path
     )
     if pending is not None:
+        if package_id is not None and pending[0].get("research_package_id") != package_id:
+            raise SealedEvaluationError("Requested package differs from pending claim.")
         return pending[1]
+    if package_id is not None:
+        split, _ = _build_v3_package_split(
+            archive, ledger, offline_memory_path=offline_memory_path,
+            package_id=package_id, attempt_id=attempt_id,
+        )
+        return split
     return split_archive(
-        archive["rows"],
-        archive_sha256=archive["archive_sha256"],
-        used_validation_dates=_used_validation_dates(ledger),
-        offline_memory_path=offline_memory_path,
+        archive["rows"], archive_sha256=archive["archive_sha256"],
+        used_validation_dates=_used_validation_dates(ledger), offline_memory_path=offline_memory_path,
     )
 
 
@@ -814,8 +1140,14 @@ def preflight(
     ledger_path: str | Path,
     *,
     offline_memory_path: str | Path = "general_research_memory.json",
+    partition_version: int = PARTITION_VERSION,
+    package_id: str | None = None,
+    attempt_id: str | None = None,
+    allow_evaluated_package_recovery: bool = False,
 ) -> dict[str, Any]:
     """Fail before any hosted-model request if no fresh validation interval exists."""
+    if type(allow_evaluated_package_recovery) is not bool:
+        raise SealedEvaluationError("Evaluated-package recovery selector must be a boolean.")
     archive = load_archive(archive_path)
     ledger = load_ledger(ledger_path)
     pending = _pending_claim_with_split(
@@ -823,17 +1155,25 @@ def preflight(
     )
     if pending is not None:
         pending_entry, split = pending
+        if package_id is not None and pending_entry.get("research_package_id") != package_id:
+            raise SealedEvaluationError("Requested package differs from pending claim.")
         used_dates = set(pending_entry["previously_consumed_validation_dates"])
     else:
         pending_entry = None
         used_dates = _used_validation_dates(ledger)
-        split = split_archive(
-            archive["rows"],
-            archive_sha256=archive["archive_sha256"],
-            used_validation_dates=used_dates,
-            offline_memory_path=offline_memory_path,
-        )
-    if split.get("partition_version") == PARTITION_VERSION:
+        if partition_version == UNSEEN_PARTITION_VERSION:
+            split, _ = _build_v3_package_split(
+                archive, ledger, offline_memory_path=offline_memory_path,
+                package_id=package_id, attempt_id=attempt_id,
+                allow_evaluated_recovery=allow_evaluated_package_recovery,
+            )
+        else:
+            split = split_archive(
+                archive["rows"], archive_sha256=archive["archive_sha256"],
+                used_validation_dates=used_dates, offline_memory_path=offline_memory_path,
+                partition_version=partition_version,
+            )
+    if split.get("partition_version") in {PARTITION_VERSION, UNSEEN_PARTITION_VERSION}:
         offline_dates, offline_digest = _offline_development_consumption(offline_memory_path)
         if offline_digest != split["offline_development_memory_sha256"]:
             raise SealedEvaluationError("Offline development memory changed during sealed preflight.")
@@ -844,7 +1184,9 @@ def preflight(
             {"execution_spec_dsl_version": 2, "reverse_execution_spec_dsl_version": 2},
             split,
             canonical_pre_target,
-            set(used_dates) | set(offline_dates),
+            (set(split.get("research_package", {}).get("previously_unavailable_dates", []))
+             if split.get("partition_version") == UNSEEN_PARTITION_VERSION
+             else set(used_dates) | set(offline_dates)),
         )
     r60 = split["regimes"]["R60"]
     validation_dates = [row["date"] for row in r60["validation_rows"]]
@@ -861,7 +1203,22 @@ def preflight(
         )
     if set(validation_dates).intersection(reverse_validation_dates):
         raise SealedEvaluationError("Forward and reverse validation intervals overlap.")
-    overlap = sorted((set(validation_dates) | set(reverse_validation_dates)).intersection(used_dates))
+    overlap_guard_dates = set(used_dates)
+    evaluated_recovery = split.get("evaluated_package_recovery") is True
+    if evaluated_recovery:
+        # This exact package's holdouts were already scored by its one EVALUATED
+        # claim. Local target-score recovery must reuse the frozen claim without
+        # treating its own dates as a second holdout reservation. No other
+        # consumed dates are exempted from the normal overlap guard.
+        own_evaluated_holdouts = set(validation_dates) | set(reverse_validation_dates)
+        if not own_evaluated_holdouts or not own_evaluated_holdouts.issubset(used_dates):
+            raise SealedEvaluationError(
+                "Evaluated-package recovery does not match the holdouts consumed by its exact claim."
+            )
+        overlap_guard_dates.difference_update(own_evaluated_holdouts)
+    overlap = sorted(
+        (set(validation_dates) | set(reverse_validation_dates)).intersection(overlap_guard_dates)
+    )
     if overlap:
         raise SealedEvaluationError(
             "Current sealed validation window overlaps already-consumed dates; stop before any model request."
@@ -873,7 +1230,7 @@ def preflight(
         "status": "READY",
         "partition_version": split.get("partition_version", LEGACY_PARTITION_VERSION),
         "ledger_entry_count": len(ledger["entries"]),
-        "validation_dates_previously_consumed": False,
+        "validation_dates_previously_consumed": evaluated_recovery,
         "previously_consumed_sealed_validation_draw_count": len(used_dates),
         "previously_consumed_validation_draw_count": split["previously_consumed_validation_draw_count"],
         "previously_consumed_offline_development_draw_count": split["previously_consumed_offline_development_draw_count"],
@@ -883,7 +1240,11 @@ def preflight(
         "hosted_model_request_performed": False,
         "real_archive_evaluation_performed": False,
         "pending_claim_resume_available": pending_entry is not None,
+        "evaluated_package_recovery": split.get("evaluated_package_recovery") is True,
         "pending_claim_id": pending_entry["claim_id"] if pending_entry is not None else None,
+        "research_package_id": split.get("research_package", {}).get("package_id"),
+        "research_package": split.get("research_package"),
+        "scheduler_attempt_id": split.get("scheduler_attempt_id", attempt_id),
     })
     return result
 
@@ -1004,6 +1365,8 @@ def create_claim(
     snapshot_directory: str | Path = SNAPSHOT_DIRECTORY,
     offline_memory_path: str | Path = "general_research_memory.json",
     sealed_plan_path: str | Path | None = None,
+    research_package_id: str | None = None,
+    scheduler_attempt_id: str | None = None,
 ) -> dict[str, Any]:
     """Claim a fresh interval or resume the exact existing claim for this frozen candidate."""
     candidate = _select_one_frozen_candidate(proposals_path, specs_path)
@@ -1014,6 +1377,8 @@ def create_claim(
     )
     if pending is not None:
         entry, split = pending
+        if research_package_id is not None and entry.get("research_package_id") != research_package_id:
+            raise SealedEvaluationError("Requested package differs from exact pending claim.")
         if candidate is None:
             raise SealedEvaluationError("A pending sealed claim exists but its frozen candidate pair is unavailable.")
         if (
@@ -1030,6 +1395,8 @@ def create_claim(
             "claim_created": True,
             "claim_resumed": True,
             "claim_id": entry["claim_id"],
+            "research_package_id": entry.get("research_package_id"),
+            "scheduler_attempt_id": entry.get("scheduler_attempt_id"),
             "target_date": entry["target_date"],
             "archive_sha256": entry["archive_sha256"],
             "hypothesis_id": entry["hypothesis_id"],
@@ -1064,6 +1431,13 @@ def create_claim(
         and item.get("spec_sha256") == candidate["spec_sha256"]
         and item.get("reverse_hypothesis_id") == candidate["reverse_hypothesis_id"]
         and item.get("reverse_spec_sha256") == candidate["reverse_spec_sha256"]
+        and (
+            (research_package_id is None and item.get("partition_version") != UNSEEN_PARTITION_VERSION)
+            or (
+                research_package_id is not None
+                and item.get("research_package_id") == research_package_id
+            )
+        )
     ), None)
     if completed_match is not None:
         # Recovery path: the sealed historical evaluation is already complete,
@@ -1094,20 +1468,29 @@ def create_claim(
             "duplicate_holdout_scoring_performed": False,
         }
     used_dates = _used_validation_dates(ledger)
-    split = split_archive(
-        archive["rows"],
-        archive_sha256=archive["archive_sha256"],
-        used_validation_dates=used_dates,
-        offline_memory_path=offline_memory_path,
-    )
+    package_exposure = None
+    if research_package_id is not None:
+        split, package_exposure = _build_v3_package_split(
+            archive, ledger, offline_memory_path=offline_memory_path,
+            package_id=research_package_id, attempt_id=scheduler_attempt_id,
+        )
+        if package_exposure is None:
+            raise SealedEvaluationError("V3 claim requires a persisted pre-request package reservation.")
+    else:
+        split = split_archive(
+            archive["rows"], archive_sha256=archive["archive_sha256"],
+            used_validation_dates=used_dates, offline_memory_path=offline_memory_path,
+        )
     canonical_pre_target_rows = [
         row for row in archive["rows"] if row["date"] < split["target_date"]
     ]
     offline_dates, offline_digest = _offline_development_consumption(offline_memory_path)
     if offline_digest != split["offline_development_memory_sha256"]:
         raise SealedEvaluationError("Offline development memory changed during claim creation.")
+    package_unavailable = set(split.get("research_package", {}).get("previously_unavailable_dates", []))
     _validate_dsl_v2_directional_context(
-        candidate, split, canonical_pre_target_rows, used_dates | set(offline_dates)
+        candidate, split, canonical_pre_target_rows,
+        (package_unavailable if split.get("partition_version") == UNSEEN_PARTITION_VERSION else used_dates | set(offline_dates)),
     )
     r60 = split["regimes"]["R60"]
     validation = r60["validation_rows"]
@@ -1147,6 +1530,11 @@ def create_claim(
         "execution_spec_dsl_version": candidate["execution_spec_dsl_version"],
         "reverse_execution_spec_dsl_version": candidate["reverse_execution_spec_dsl_version"],
         "engine_version": ENGINE_VERSION,
+        **({
+            "research_package_id": split["research_package"]["package_id"],
+            "scheduler_attempt_id": scheduler_attempt_id,
+            "previously_unavailable_dates_sha256": split["research_package"]["previously_unavailable_dates_sha256"],
+        } if split.get("partition_version") == UNSEEN_PARTITION_VERSION else {}),
     }
     claim_id = _sha256_bytes(_canonical_json(claim_material))
     snapshot_path = Path(snapshot_directory) / (archive["archive_sha256"] + ".json")
@@ -1164,6 +1552,11 @@ def create_claim(
     entry = {
         "claim_id": claim_id,
         "partition_version": split["partition_version"],
+        **({
+            "research_package_id": split["research_package"]["package_id"],
+            "scheduler_attempt_id": scheduler_attempt_id,
+            "previously_unavailable_dates_sha256": split["research_package"]["previously_unavailable_dates_sha256"],
+        } if split.get("partition_version") == UNSEEN_PARTITION_VERSION else {}),
         "state": "CLAIMED",
         "claimed_at_utc": datetime.now(timezone.utc).isoformat(),
         "orchestrator_version": VERSION,
@@ -1201,12 +1594,20 @@ def create_claim(
         "numbers_stored_in_ledger": False,
     }
     ledger["entries"].append(entry)
+    if package_exposure is not None:
+        research_windows.append_package_status(
+            ledger, package_exposure, state="CLAIMED",
+            recorded_at_utc=datetime.now(timezone.utc).isoformat(),
+            reason="Frozen directional candidates claimed for sealed evaluation",
+        )
     _write_json_atomic(Path(ledger_path), ledger)
     return {
         "status": "CLAIMED",
         "claim_created": True,
         "claim_resumed": False,
         "claim_id": claim_id,
+        "research_package_id": split.get("research_package", {}).get("package_id"),
+        "scheduler_attempt_id": scheduler_attempt_id,
         "target_date": split["target_date"],
         "archive_sha256": archive["archive_sha256"],
         "hypothesis_id": candidate["hypothesis_id"],
@@ -1815,13 +2216,29 @@ def evaluate_claim(
     archive = load_archive(snapshot_path)
     if archive["archive_sha256"] != entry["archive_sha256"]:
         raise SealedEvaluationError("Immutable archive snapshot hash does not match the ledger.")
-    split = split_archive(
-        archive["rows"],
-        archive_sha256=archive["archive_sha256"],
-        used_validation_dates=set(recorded_prior_dates),
-        offline_memory_path=offline_memory_path,
-        partition_version=entry.get("partition_version", LEGACY_PARTITION_VERSION),
-    )
+    claim_partition_version = entry.get("partition_version", LEGACY_PARTITION_VERSION)
+    package_exposure = None
+    if claim_partition_version == UNSEEN_PARTITION_VERSION:
+        package_exposure = research_windows.package_exposure_for_attempt(
+            ledger, package_id=entry.get("research_package_id"),
+            attempt_id=entry.get("scheduler_attempt_id"),
+        )
+        if package_exposure is None:
+            raise SealedEvaluationError("V3 sealed claim lost its exact package reservation.")
+        package = research_windows.package_from_exposure(package_exposure)
+        split = research_windows.split_from_package(
+            archive["rows"], package, archive_sha256=archive["archive_sha256"]
+        )
+        split["previously_consumed_validation_draw_count"] = len(recorded_prior_dates)
+        split["previously_consumed_offline_development_draw_count"] = entry.get(
+            "previously_consumed_offline_development_draw_count", 0
+        )
+    else:
+        split = split_archive(
+            archive["rows"], archive_sha256=archive["archive_sha256"],
+            used_validation_dates=set(expected_prior_dates), offline_memory_path=offline_memory_path,
+            partition_version=claim_partition_version,
+        )
     if (
         "offline_development_memory_sha256" not in entry
         or "previously_consumed_offline_development_draw_count" not in entry
@@ -1848,9 +2265,13 @@ def evaluate_claim(
     current_offline_dates, current_offline_digest = _offline_development_consumption(offline_memory_path)
     if current_offline_digest != split["offline_development_memory_sha256"]:
         raise SealedEvaluationError("Offline development memory changed during evaluation replay.")
+    evaluation_excluded_dates = (
+        set(split.get("research_package", {}).get("previously_unavailable_dates", []))
+        if claim_partition_version == UNSEEN_PARTITION_VERSION
+        else set(expected_prior_dates) | set(current_offline_dates)
+    )
     _validate_dsl_v2_directional_context(
-        candidate, split, replay_canonical_pre_target,
-        set(recorded_prior_dates) | set(current_offline_dates),
+        candidate, split, replay_canonical_pre_target, evaluation_excluded_dates,
     )
     if split["target_date"] != entry["target_date"]:
         raise SealedEvaluationError("Snapshot target cutoff does not match the ledger.")
@@ -1893,7 +2314,7 @@ def evaluate_claim(
             execution_spec=spec,
             min_train_draws=DEFAULT_MIN_TRAIN_DRAWS,
             canonical_history=canonical_pre_target_history,
-            excluded_dates=set(recorded_prior_dates),
+            excluded_dates=evaluation_excluded_dates,
         )
     else:
         forward = evaluate_holdout(
@@ -1911,7 +2332,7 @@ def evaluate_claim(
         spec_sha256=candidate["spec_sha256"],
         execution_spec=spec,
         canonical_history=canonical_pre_target_history,
-        excluded_dates=set(recorded_prior_dates),
+        excluded_dates=evaluation_excluded_dates,
     )
     detail_mean = round(
         sum(item["hit_count"] for item in forward_details) / len(forward_details), 6
@@ -1933,7 +2354,7 @@ def evaluate_claim(
             folds=folds,
             min_train_draws=DEFAULT_MIN_TRAIN_DRAWS,
             canonical_history=canonical_pre_target_history,
-            excluded_dates=set(recorded_prior_dates),
+            excluded_dates=evaluation_excluded_dates,
         )
     else:
         cv = evaluate_time_ordered_cv(
@@ -1957,7 +2378,7 @@ def evaluate_claim(
         spec_sha256=candidate["reverse_spec_sha256"],
         execution_spec=reverse_spec,
         canonical_history=canonical_pre_target_history,
-        excluded_dates=set(recorded_prior_dates),
+        excluded_dates=evaluation_excluded_dates,
         min_train_draws=DEFAULT_MIN_TRAIN_DRAWS,
     )
     if len(reverse_candidate_holdout["per_draw"]) >= MIN_VALIDATION_DRAWS:
@@ -1984,7 +2405,7 @@ def evaluate_claim(
         execution_spec=reverse_diagnostic_spec,
         min_train_draws=DEFAULT_MIN_TRAIN_DRAWS,
         canonical_history=canonical_pre_target_history,
-        excluded_dates=set(recorded_prior_dates),
+        excluded_dates=evaluation_excluded_dates,
     )
     reverse["hypothesis_id"] = reverse_diagnostic_id
     reverse["spec_sha256"] = reverse_diagnostic_sha
@@ -2093,6 +2514,12 @@ def evaluate_claim(
         "bidirectional_catalog_reverse_predictive_evidence": False,
     }
     entry["per_draw_values_stored"] = False
+    if package_exposure is not None:
+        research_windows.append_package_status(
+            ledger, package_exposure, state="EVALUATED",
+            recorded_at_utc=datetime.now(timezone.utc).isoformat(),
+            reason="Frozen V3 sealed evaluation completed",
+        )
     _write_json_atomic(Path(ledger_path), ledger)
     return {
         "status": report["status"],
@@ -2121,6 +2548,8 @@ def _write_github_output(path: str | None, result: dict[str, Any]) -> None:
         stream.write("claim_reused=" + ("true" if result.get("claim_reused") is True else "false") + "\n")
         if isinstance(result.get("claim_id"), str):
             stream.write("claim_id=" + result["claim_id"] + "\n")
+        if isinstance(result.get("research_package_id"), str):
+            stream.write("research_package_id=" + result["research_package_id"] + "\n")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -2137,6 +2566,8 @@ def main(argv: list[str] | None = None) -> int:
     claim.add_argument("--output", type=Path, default=Path("open_research_evaluation_claim.json"))
     claim.add_argument("--snapshot-directory", type=Path, default=Path(SNAPSHOT_DIRECTORY))
     claim.add_argument("--sealed-plan", type=Path, default=None)
+    claim.add_argument("--package-id", default=None)
+    claim.add_argument("--attempt-id", default=None)
     claim.add_argument("--github-output", type=str, default=None)
     pending = sub.add_parser("pending-claim", help="Check whether the exact active archive has a resumable sealed claim.")
     pending.add_argument("--archive", type=Path, required=True)
@@ -2172,6 +2603,8 @@ def main(argv: list[str] | None = None) -> int:
                 args.archive, args.ledger, args.proposals, args.specs,
                 snapshot_directory=args.snapshot_directory,
                 sealed_plan_path=args.sealed_plan,
+                research_package_id=args.package_id,
+                scheduler_attempt_id=args.attempt_id,
             )
             _write_json_atomic(args.output, result)
             _write_github_output(args.github_output, result)

@@ -412,7 +412,9 @@ def _validate_sealed_plan_binding(
         get_used_validation_dates,
         public_plan,
         split_archive,
+        _offline_development_consumption,
     )
+    import general_research_windows
 
     prior_used_dates = get_used_validation_dates(ledger)
     if isinstance(claim, dict) and claim.get("claim_created") is True:
@@ -462,13 +464,55 @@ def _validate_sealed_plan_binding(
     elif claim is not None and not isinstance(claim, dict):
         raise ResearchMemoryError("Current claim metadata is malformed.")
 
-    expected = public_plan(
-        split_archive(
-            archive.get("rows"),
-            archive_sha256=archive.get("archive_sha256", ""),
-            used_validation_dates=prior_used_dates,
+    package = plan.get("research_package") if isinstance(plan, dict) else None
+    if isinstance(package, dict):
+        package_id = package.get("package_id")
+        attempt_id = plan.get("scheduler_attempt_id")
+        if isinstance(claim, dict) and claim.get("claim_created") is True:
+            claim_matches = [
+                item for item in ledger.get("entries", [])
+                if isinstance(item, dict) and item.get("claim_id") == claim.get("claim_id")
+            ]
+            if len(claim_matches) != 1:
+                raise ResearchMemoryError("V3 package claim is not uniquely recorded.")
+            current_claim = claim_matches[0]
+            if (
+                current_claim.get("partition_version") != 3
+                or current_claim.get("research_package_id") != package_id
+                or current_claim.get("scheduler_attempt_id") != attempt_id
+            ):
+                raise ResearchMemoryError("V3 package plan does not match its immutable claim.")
+        exposure = general_research_windows.package_exposure_for_attempt(
+            ledger, package_id=package_id, attempt_id=attempt_id
         )
-    )
+        if exposure is None:
+            raise ResearchMemoryError("V3 package plan has no exact persisted exposure reservation.")
+        stored_package = general_research_windows.package_from_exposure(exposure)
+        if stored_package != package:
+            raise ResearchMemoryError("V3 package plan differs from the append-only exposure record.")
+        general_research_windows.validate_package(
+            stored_package, archive.get("rows"),
+            archive_sha256=archive.get("archive_sha256", ""),
+            unavailable=set(stored_package.get("previously_unavailable_dates", [])),
+        )
+        split = general_research_windows.split_from_package(
+            archive.get("rows"), stored_package, archive_sha256=archive.get("archive_sha256", "")
+        )
+        split["scheduler_attempt_id"] = attempt_id
+        offline_dates, offline_digest = _offline_development_consumption()
+        if stored_package.get("offline_development_memory_sha256") != offline_digest:
+            raise ResearchMemoryError("V3 package no longer matches the offline-memory digest.")
+        split["previously_consumed_validation_draw_count"] = len(get_used_validation_dates(ledger))
+        split["previously_consumed_offline_development_draw_count"] = len(offline_dates)
+        expected = public_plan(split)
+    else:
+        expected = public_plan(
+            split_archive(
+                archive.get("rows"),
+                archive_sha256=archive.get("archive_sha256", ""),
+                used_validation_dates=prior_used_dates,
+            )
+        )
     if plan != expected:
         raise ResearchMemoryError(
             "Sealed plan differs from the archive-derived chronological partition."
@@ -776,9 +820,13 @@ def _validate_entry(entry: Any, expected_id: int) -> dict[str, Any]:
                     raise ResearchMemoryError("Structured rejection metadata is invalid.")
         _reject_number_values(failure, "Failure metadata")
     window = entry["discovery_window"]
-    if not isinstance(window, dict) or set(window) != {
+    legacy_window_keys = {
         "start_date", "end_date", "draw_count", "holdout_dates_copied", "archive_rows_copied"
-    }:
+    }
+    v3_window_keys = legacy_window_keys | {
+        "package_id", "partition_version", "package_start_date", "package_end_date"
+    }
+    if not isinstance(window, dict) or set(window) not in (legacy_window_keys, v3_window_keys):
         raise ResearchMemoryError("Discovery-window metadata is invalid.")
     if window.get("holdout_dates_copied") is not False or window.get("archive_rows_copied") is not False:
         raise ResearchMemoryError("Raw holdout/archive rows cannot be copied into research memory.")
@@ -808,6 +856,29 @@ def _validate_entry(entry: Any, expected_id: int) -> dict[str, Any]:
             or count < 1
         ):
             raise ResearchMemoryError("Discovery-window chronology or scope is invalid.")
+    if set(window) == v3_window_keys:
+        if (
+            window.get("partition_version") != 3
+            or not isinstance(window.get("package_id"), str)
+            or not HEX64.fullmatch(window["package_id"])
+        ):
+            raise ResearchMemoryError("V3 discovery-window package identity is invalid.")
+        try:
+            package_start = date.fromisoformat(window.get("package_start_date", ""))
+            package_end = date.fromisoformat(window.get("package_end_date", ""))
+        except (TypeError, ValueError):
+            raise ResearchMemoryError("V3 package date bounds are invalid.") from None
+        if (
+            package_start.isoformat() != window["package_start_date"]
+            or package_end.isoformat() != window["package_end_date"]
+            or package_start < RESEARCH_SCOPE_START
+            or package_end >= day
+            or package_end < package_start
+            or start is None
+            or package_start > start_day
+            or end_day > package_end
+        ):
+            raise ResearchMemoryError("V3 discovery window falls outside its immutable package interval.")
     _reject_number_values(window, "Discovery-window metadata")
     if REPORT_SECRET_PATTERN.search(_canonical(entry).decode("utf-8")):
         raise ResearchMemoryError("Research-memory entry contains a secret-like value.")
@@ -1425,6 +1496,10 @@ def record_cycle(
     if needs_directional_record:
         _validate_sealed_plan_binding(plan, archive, ledger, claim)
     reserved_report_dates = _reserved_validation_dates(plan) if needs_directional_record else set()
+    if needs_directional_record and isinstance(plan.get("research_package"), dict):
+        reserved_report_dates.update(
+            plan["research_package"].get("previously_unavailable_dates", [])
+        )
     forbidden_report_dates = used_validation_dates | reserved_report_dates
     r60 = plan.get("regimes", {}).get("R60", {}) if isinstance(plan.get("regimes"), dict) else {}
     discovery_window = {
@@ -1434,6 +1509,14 @@ def record_cycle(
         "holdout_dates_copied": False,
         "archive_rows_copied": False,
     }
+    package = plan.get("research_package") if isinstance(plan, dict) else None
+    if isinstance(package, dict):
+        discovery_window.update({
+            "package_id": package["package_id"],
+            "partition_version": 3,
+            "package_start_date": package["package_start_date"],
+            "package_end_date": package["package_end_date"],
+        })
     if needs_directional_record:
         if (
             not isinstance(discovery_window["start_date"], str)
@@ -1590,6 +1673,8 @@ def find_pending_candidate(
     archive_sha256: str,
     *,
     memory_path: str | Path = MEMORY_PATH,
+    package_id: str | None = None,
+    package_start_date: str | None = None,
 ) -> dict[str, Any] | None:
     """Return the oldest exact-target candidate with a validated DSL spec and no completed evaluation.
 
@@ -1608,12 +1693,35 @@ def find_pending_candidate(
     if not isinstance(archive_sha256, str) or not HEX64.fullmatch(archive_sha256):
         raise ResearchMemoryError("Pending-candidate archive hash is invalid.")
 
+    if package_start_date is not None:
+        try:
+            package_start_date = date.fromisoformat(package_start_date).isoformat()
+        except (TypeError, ValueError):
+            raise ResearchMemoryError("Pending-candidate package start date is invalid.") from None
     memory = load_memory(memory_path)
     matching = [
         entry for entry in memory["entries"]
         if entry["direction"] == direction
         and entry["target_date"] == target_date
         and entry["archive_sha256"] == archive_sha256
+        and (
+            package_id is None
+            or entry["discovery_window"].get("package_id") == package_id
+            or (
+                package_start_date is not None
+                and (
+                    (
+                        entry["discovery_window"].get("partition_version") == 3
+                        and entry["discovery_window"].get("package_end_date", "") < package_start_date
+                    )
+                    or (
+                        entry["discovery_window"].get("partition_version") is None
+                        and entry["target_date"] < package_start_date
+                        and entry["discovery_window"]["end_date"] < package_start_date
+                    )
+                )
+            )
+        )
     ]
     evaluated_spec_hashes = {
         entry["execution_spec_sha256"]
@@ -1746,6 +1854,7 @@ def direction_context(
     *,
     memory_path: str | Path = MEMORY_PATH,
     limit: int = MAX_CONTEXT_ENTRIES,
+    package_start_date: str | None = None,
 ) -> list[dict[str, Any]]:
     """Return bounded same-direction GENERAL history and forward-only offline learning."""
     if direction not in {"forward", "reverse"}:
@@ -1758,19 +1867,42 @@ def direction_context(
         raise ResearchMemoryError("Current target date is not canonical.")
     if type(limit) is not int or not 1 <= limit <= MAX_CONTEXT_ENTRIES:
         raise ResearchMemoryError("Research-memory context limit is invalid.")
+    if package_start_date is not None:
+        package_start_date = date.fromisoformat(package_start_date).isoformat()
     memory = load_memory(memory_path)
     now = datetime.now(timezone.utc)
     context = []
 
-    # The offline symbolic namespace is forward-only. It is deliberately kept
-    # out of reverse prompts to preserve directional separation. Only the most
-    # recent eligible offline cycle is projected into the forward prompt.
+    # The offline symbolic namespace is forward-only. In V3 it is eligible
+    # only when both its discovery interval and every consumed development date
+    # are strictly earlier than this package's first row.
     if direction == "forward":
+        consumed_by_cycle = {
+            item["cycle_id"]: item
+            for item in memory["offline_research"].get("consumed_development_windows", [])
+        }
         for offline_entry in reversed(memory["offline_research"]["entries"]):
             if date.fromisoformat(offline_entry["target_date"]) > current_target:
                 continue
             if _validate_timestamp(offline_entry["created_at_utc"]) >= now:
                 continue
+            if package_start_date is not None:
+                consumed = consumed_by_cycle.get(offline_entry["cycle_id"])
+                discovery_window = offline_entry.get("discovery_window")
+                development_window = offline_entry.get("development_window")
+                if not isinstance(consumed, dict) or not isinstance(discovery_window, dict):
+                    # No complete chronological provenance means no V3 prompt reuse.
+                    continue
+                consumed_dates = consumed.get("dates")
+                if (
+                    not isinstance(development_window, dict)
+                    or not isinstance(consumed_dates, list)
+                    or len(consumed_dates) != development_window.get("draw_count")
+                    or any(not isinstance(day, str) or day >= package_start_date for day in consumed_dates)
+                    or discovery_window.get("end_date") is None
+                    or discovery_window["end_date"] >= package_start_date
+                ):
+                    continue
 
             # Transfer complete validated candidate records in original generation
             # order. Preserve proposals, full DSL ASTs, hashes, and all test metrics.
@@ -1828,6 +1960,20 @@ def direction_context(
         if item["direction"] == direction
         and date.fromisoformat(item["target_date"]) <= current_target
         and _validate_timestamp(item["created_at_utc"]) < now
+        and (
+            package_start_date is None
+            or (
+                (
+                    item["discovery_window"].get("partition_version") == 3
+                    and item["discovery_window"].get("package_end_date", "") < package_start_date
+                )
+                or (
+                    item["discovery_window"].get("partition_version") is None
+                    and item["target_date"] < package_start_date
+                    and item["discovery_window"]["end_date"] < package_start_date
+                )
+            )
+        )
     ]
     for entry in reversed(entries):
         compact = {

@@ -64,3 +64,39 @@ Unit tests and offline preflight do not send hosted inference requests or score 
 - The restricted DSL cannot faithfully express every conceivable state transition/crossover rule. Unsupported semantics remain untested rather than approximated.
 - The reverse direction is inherently retrospective because it uses later data. It must never be combined with forward results as evidence of future prediction.
 - Lottery draws are uncertain; no prediction guarantee or advantage claim is made.
+
+
+## V3: genuinely unseen sequential research packages
+
+Partition V1 and V2 remain supported exactly for their recorded historical claims. New autonomous research uses partition V3 and may only build a package from pre-target draw dates that have never previously been exposed to GENERAL discovery and have never been used by sealed or offline development evaluation.
+
+The unavailable-date set is the union of:
+- both directional holdout dates in the append-only sealed evaluation ledger, including dates reserved by a pending claim;
+- dates in the offline development consumption ledger and complete offline-symbolic discovery intervals recorded in its separate memory namespace;
+- dates in previous V3 research-package exposures, according to their lifecycle state;
+- the complete date intervals covered by legacy GENERAL discovery-memory records;
+- the discovery intervals recorded directly in pre-V3 V1/V2 sealed claims, even when a corresponding research-memory entry is absent. These intervals are reconstructed conservatively from the canonical archive; missing or unreconstructable provenance fails closed.
+
+Both legacy sources are checked independently, so a claim cannot become a fresh V3 holdout merely because its matching memory write was interrupted.
+
+V3 does not compact rows across an unavailable date. Every package is one exact contiguous chronological interval and is divided into a reverse holdout, a discovery middle, and a forward holdout. The minimums remain 40 discovery draws and at least two validation draws in each direction; each directional holdout is bounded to 30 draws and a package is limited to 100 rows. The exact canonical neighbouring context required by the DSL remains inside the package's chronological roles. The target row and every later row remain outside the package.
+
+The planner walks eligible contiguous blocks from oldest to newest and divides them into disjoint packages. Only one package is reserved for an individual research attempt. Its canonical package ID binds the archive, target, role dates, prior-unavailable-date snapshot, and offline-development-memory digest. The package reservation is appended to the same evaluation ledger before either provider request can run. The scheduler state and evaluation ledger are persisted together before discovery is enabled.
+
+Package lifecycle:
+- `RESERVED`: exact package reserved before provider access.
+- `EXPOSED`: discovery was submitted to the provider; discovery dates remain unavailable, while unclaimed holdout rows may be considered by later fresh packages.
+- `CLAIMED`: an exact frozen directional pair owns the two holdouts; recovery must resume the same claim and dates.
+- `EVALUATED`: exact sealed evaluation completed; all package dates remain unavailable.
+- `RELEASED`: workflow proves that no provider request was sent; none of the package dates were exposed. A later attempt must create a fresh package reservation and identity from the current unavailable-date snapshot.
+
+A same-package retry after discovery exposure must use the exact original package and exposure identity. A pending sealed claim always takes precedence and can only resume with its original candidates, package, archive snapshot, and holdout dates. A successful research package does not exhaust the active target: the existing continuous scheduler may proceed to the next eligible package. If fewer than 44 genuinely unseen contiguous rows remain, the scheduler waits for new archive data; previously exposed discovery rows are never recycled as a new holdout.
+
+The package registry contains only dates and safe provenance metadata, not draw-number sets, target values, or per-draw scores. Reverse results remain retrospective-only.
+
+
+## Recovery after a completed V3 sealed evaluation
+
+If a V3 claim has reached `EVALUATED` but the local hidden-target scoring step is interrupted, recovery reuses only the exact evaluated claim, archive snapshot, and forward/reverse candidate pair recovered from validated GENERAL memory. It does not send another hosted-model request and does not score either sealed holdout again.
+
+The scheduler permits this path only after a terminal `FAILED/SEALED_EVALUATION_INCOMPLETE` attempt bound to the same V3 package. Before reusing the package, preflight revalidates its archive and package identity, the complete prior-unavailable-date snapshot, both original holdout date lists, and the unique matching `EVALUATED` claim. The new scheduler attempt remains bound to the original package-exposure attempt ID. If the exact claim or candidate pair cannot be recovered, the workflow fails closed rather than starting fresh discovery or reopening consumed dates.

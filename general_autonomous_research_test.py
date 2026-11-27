@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 import unittest
 from datetime import date, datetime, timedelta, timezone
@@ -6,6 +7,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 import general_autonomous_research as auto
+import general_research_memory as research_memory
+import general_research_windows as research_windows
 from general_nvidia_guard import initial_lock_state, make_locked_state, make_unlocked_state
 from general_sealed_evaluation_test import write_candidate_documents
 
@@ -28,6 +31,17 @@ def active_state(*, days=7, lock=None):
         global_lock=lock or initial_lock_state(),
         now=NOW,
     )
+
+
+def claim_legacy_attempt(state, plan, *, github_run_id, now=None):
+    """Exercise V1/V2 scheduler-history compatibility without a V3 package binding."""
+    attempt = auto.claim_attempt(
+        state, plan, github_run_id=github_run_id, now=now
+    )
+    attempt.pop("research_package_id", None)
+    attempt.pop("research_package_attempt_id", None)
+    auto.validate_state(state)
+    return attempt
 
 
 def synthetic_rows(count, start="2021-01-01"):
@@ -65,6 +79,240 @@ def _write_evaluated_test_ledger(path, attempt):
 
 
 class AutonomousResearchStateTests(unittest.TestCase):
+    def test_v3_evaluated_package_retry_is_limited_to_local_score_recovery(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root / "archive.json"
+            ledger_path = root / "ledger.json"
+            lock = root / "lock.json"
+            state_path = root / "general_autonomous_research_state.json"
+            memory_path = root / "general_research_memory.json"
+            rows = synthetic_rows(120)
+            archive.write_text(json.dumps({"draws": rows}), encoding="utf-8")
+            ledger_path.write_text(
+                json.dumps({"schema_version": 1, "purpose": "test", "entries": []}),
+                encoding="utf-8",
+            )
+            lock.write_text(json.dumps(initial_lock_state()), encoding="utf-8")
+            research_memory._write_memory(research_memory.empty_memory(), memory_path)
+            actual_now = datetime.now(timezone.utc).replace(microsecond=0)
+            source_archive = auto.sealed.load_archive(archive)
+            active_item = auto.target_queue._make_item(
+                rows,
+                source_archive_sha256=source_archive["archive_sha256"],
+                enqueued_at_utc=actual_now.isoformat(),
+            )
+            active_queue = {
+                "schema_version": 2,
+                "observed_through_date": rows[-1]["date"],
+                "active": active_item,
+                "latest_snapshot": active_item,
+                "completed": [],
+            }
+            auto.target_queue.materialize_front(active_queue, archive)
+            state = auto.activate_state(
+                auto.initial_state(),
+                confirmation=AUTO_PHRASE,
+                free_usage_verified=True,
+                authorization_days=7,
+                global_lock=initial_lock_state(),
+                now=actual_now,
+            )
+            state["target_queue"] = active_queue
+            auto.write_state(state_path, state)
+
+            previous_cwd = Path.cwd()
+            try:
+                os.chdir(root)
+                args = [
+                    "claim",
+                    "--state", str(state_path),
+                    "--archive", str(archive),
+                    "--ledger", str(ledger_path),
+                    "--global-lock", str(lock),
+                    "--run-id", "420000100",
+                ]
+                self.assertEqual(auto.main(args), 0)
+
+                first_state = auto.read_state(state_path)
+                first_attempt = first_state["attempts"][-1]
+                self.assertIsInstance(first_attempt.get("research_package_id"), str)
+                self.assertEqual(
+                    first_attempt.get("research_package_attempt_id"),
+                    first_attempt["attempt_id"],
+                )
+
+                ledger = auto.sealed.load_ledger(ledger_path)
+                exposure = research_windows.package_exposure_for_attempt(
+                    ledger,
+                    package_id=first_attempt["research_package_id"],
+                    attempt_id=first_attempt["research_package_attempt_id"],
+                )
+                self.assertIsNotNone(exposure)
+                package = research_windows.package_from_exposure(exposure)
+                proposals, specs = write_candidate_documents(root)
+                claim = auto.sealed.create_claim(
+                    archive,
+                    ledger_path,
+                    proposals,
+                    specs,
+                    snapshot_directory=root / "snapshots",
+                    research_package_id=package["package_id"],
+                    scheduler_attempt_id=first_attempt["research_package_attempt_id"],
+                )
+                self.assertTrue(claim["claim_created"])
+                auto.sealed.evaluate_claim(
+                    claim["claim_id"],
+                    ledger_path,
+                    proposals,
+                    specs,
+                    output_path=root / "sealed-evaluation.json",
+                )
+                evaluated_ledger = auto.sealed.load_ledger(ledger_path)
+                evaluated_exposure = research_windows.package_exposure_for_attempt(
+                    evaluated_ledger,
+                    package_id=package["package_id"],
+                    attempt_id=first_attempt["research_package_attempt_id"],
+                )
+                self.assertEqual(
+                    research_windows.package_exposure_status(evaluated_ledger, evaluated_exposure),
+                    "EVALUATED",
+                )
+
+                failed_state = auto.record_outcome(
+                    first_state,
+                    first_attempt["attempt_id"],
+                    outcome="FAILED",
+                    reason_code="SEALED_EVALUATION_INCOMPLETE",
+                    evaluation_ledger_path=ledger_path,
+                    now=actual_now + timedelta(minutes=2),
+                )
+                auto.write_state(state_path, failed_state)
+
+                with self.assertRaises(auto.sealed.SealedEvaluationError):
+                    auto.sealed.preflight(
+                        archive,
+                        ledger_path,
+                        partition_version=auto.sealed.UNSEEN_PARTITION_VERSION,
+                        package_id=package["package_id"],
+                        attempt_id=first_attempt["research_package_attempt_id"],
+                    )
+
+                recovery_plan = auto.sealed.preflight(
+                    archive,
+                    ledger_path,
+                    partition_version=auto.sealed.UNSEEN_PARTITION_VERSION,
+                    package_id=package["package_id"],
+                    attempt_id=first_attempt["research_package_attempt_id"],
+                    allow_evaluated_package_recovery=True,
+                )
+                self.assertEqual(recovery_plan["status"], "READY")
+                self.assertTrue(recovery_plan["evaluated_package_recovery"])
+                self.assertTrue(recovery_plan["validation_dates_previously_consumed"])
+                self.assertFalse(recovery_plan["pending_claim_resume_available"])
+                self.assertEqual(
+                    recovery_plan["forward_validation_dates"],
+                    package["validation_dates"],
+                )
+                self.assertEqual(
+                    recovery_plan["reverse_validation_dates"],
+                    package["reverse_validation_dates"],
+                )
+
+                self.assertEqual(auto.main(args), 0)
+
+                retried_state = auto.read_state(state_path)
+                self.assertEqual(len(retried_state["attempts"]), 2)
+                retry_attempt = retried_state["attempts"][-1]
+                self.assertNotEqual(retry_attempt["attempt_id"], first_attempt["attempt_id"])
+                self.assertEqual(retry_attempt["research_package_id"], package["package_id"])
+                self.assertEqual(
+                    retry_attempt["research_package_attempt_id"],
+                    first_attempt["research_package_attempt_id"],
+                )
+                final_ledger = auto.sealed.load_ledger(ledger_path)
+                final_exposure = research_windows.package_exposure_for_attempt(
+                    final_ledger,
+                    package_id=package["package_id"],
+                    attempt_id=first_attempt["research_package_attempt_id"],
+                )
+                self.assertEqual(
+                    research_windows.package_exposure_status(final_ledger, final_exposure),
+                    "EVALUATED",
+                )
+                self.assertEqual(len(final_ledger["entries"]), 1)
+                self.assertEqual(final_ledger["entries"][0]["claim_id"], claim["claim_id"])
+                self.assertEqual(final_ledger["entries"][0]["state"], "EVALUATED")
+            finally:
+                os.chdir(previous_cwd)
+
+    def test_v3_no_provider_request_releases_identity_and_next_preflight_remints_it(self):
+        import general_research_windows as windows
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root / "archive.json"
+            ledger_path = root / "ledger.json"
+            lock = root / "lock.json"
+            archive.write_text(json.dumps({"draws": synthetic_rows(90)}), encoding="utf-8")
+            ledger_path.write_text(
+                json.dumps({"schema_version": 1, "purpose": "test", "entries": []}),
+                encoding="utf-8",
+            )
+            lock.write_text(json.dumps(initial_lock_state()), encoding="utf-8")
+            state = active_state()
+            plan = auto.prepare_cycle(
+                state, archive_path=archive, ledger_path=ledger_path,
+                global_lock_path=lock, now=NOW,
+            )
+            self.assertTrue(plan["eligible"], plan)
+            package = plan["research_package"]
+            attempt = auto.claim_attempt(
+                state, plan, github_run_id="420000100", now=NOW,
+            )
+            ledger = auto.sealed.load_ledger(ledger_path)
+            exposure_attempt_id = attempt.get(
+                "research_package_attempt_id", attempt["attempt_id"]
+            )
+            exposure = windows.reserve_research_package(
+                ledger,
+                package,
+                attempt_id=exposure_attempt_id,
+                created_at_utc=attempt["claimed_at_utc"],
+                unavailable=set(package.get("previously_unavailable_dates", [])),
+            )
+            ledger_path.write_text(
+                json.dumps(ledger, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+
+            auto.record_outcome(
+                state, attempt["attempt_id"], outcome="FAILED",
+                reason_code="NO_PROVIDER_REQUEST_SENT",
+                evaluation_ledger_path=ledger_path, now=NOW,
+            )
+            persisted = auto.sealed.load_ledger(ledger_path)
+            persisted_exposure = windows.package_exposure_for_attempt(
+                persisted,
+                package_id=package["package_id"],
+                attempt_id=exposure_attempt_id,
+            )
+            self.assertIsNotNone(persisted_exposure)
+            self.assertEqual(
+                windows.package_exposure_status(persisted, persisted_exposure),
+                "RELEASED",
+            )
+
+            retry_plan = auto.prepare_cycle(
+                state, archive_path=archive, ledger_path=ledger_path,
+                global_lock_path=lock, now=NOW + timedelta(minutes=1),
+            )
+            self.assertTrue(retry_plan["eligible"], retry_plan)
+            self.assertTrue(retry_plan["retryable"])
+            self.assertNotEqual(
+                retry_plan["research_package_id"], package["package_id"]
+            )
+
     def test_initial_state_is_disabled_and_has_no_attempts(self):
         state = auto.initial_state()
         self.assertFalse(auto.authorization_status(state, now=NOW)["authorized"])
@@ -246,7 +494,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
             with self.assertRaisesRegex(
                 auto.AutonomousResearchError, "Only a ready sealed cycle can be claimed"
             ):
-                auto.claim_attempt(state, plan, github_run_id="445583", now=NOW)
+                claim_legacy_attempt(state, plan, github_run_id="445583", now=NOW)
             self.assertEqual(state["attempts"], attempts_before)
 
     def test_active_global_lock_blocks_prepare_before_archive_analysis(self):
@@ -282,12 +530,12 @@ class AutonomousResearchStateTests(unittest.TestCase):
                 state, archive_path=archive, ledger_path=ledger,
                 global_lock_path=lock, now=NOW,
             )
-            attempt = auto.claim_attempt(
+            attempt = claim_legacy_attempt(
                 state, plan, github_run_id="445566", now=NOW,
             )
             self.assertEqual(attempt["target_date"], plan["target_date"])
             with self.assertRaisesRegex(auto.AutonomousResearchError, "retryable failure"):
-                auto.claim_attempt(state, plan, github_run_id="445567", now=NOW)
+                claim_legacy_attempt(state, plan, github_run_id="445567", now=NOW)
             skipped = auto.prepare_cycle(
                 state, archive_path=archive, ledger_path=ledger,
                 global_lock_path=lock, now=NOW,
@@ -325,7 +573,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
                 state, archive_path=archive, ledger_path=ledger,
                 global_lock_path=lock, now=NOW,
             )
-            previous = auto.claim_attempt(state, plan, github_run_id="420000001", now=NOW)
+            previous = claim_legacy_attempt(state, plan, github_run_id="420000001", now=NOW)
             auto.record_outcome(
                 state, previous["attempt_id"], outcome="FAILED",
                 reason_code="NO_PROVIDER_REQUEST_SENT", now=NOW,
@@ -340,7 +588,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
                 self.assertTrue(retry_plan["eligible"])
                 self.assertTrue(retry_plan["retryable"])
                 self.assertEqual(retry_plan["retry_number"], number)
-                current = auto.claim_attempt(
+                current = claim_legacy_attempt(
                     state, retry_plan, github_run_id=str(420000000 + number), now=at,
                 )
                 self.assertNotEqual(previous["attempt_id"], current["attempt_id"])
@@ -653,7 +901,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
                 state, archive_path=archive, ledger_path=ledger,
                 global_lock_path=lock, now=NOW,
             )
-            first_attempt = auto.claim_attempt(
+            first_attempt = claim_legacy_attempt(
                 state, plan, github_run_id="420000012", now=NOW,
             )
             auto.record_outcome(
@@ -695,7 +943,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
             self.assertEqual(retry_plan["retry_number"], 2)
             self.assertEqual(retry_plan["manual_recovery_unlock_at_utc"], later_unlock.isoformat())
 
-            retry_attempt = auto.claim_attempt(
+            retry_attempt = claim_legacy_attempt(
                 state, retry_plan, github_run_id="420000013",
                 now=NOW + timedelta(minutes=4),
             )
@@ -735,7 +983,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
             first_forward = list(first_windows["forward_validation_dates"])
             first_reverse = list(first_windows["reverse_validation_dates"])
 
-            attempt = auto.claim_attempt(
+            attempt = claim_legacy_attempt(
                 state, first_plan, github_run_id="420000007", now=NOW,
             )
             proposals, specs = write_candidate_documents(root)
@@ -762,7 +1010,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
             resumed_windows = auto.sealed.preflight(archive, ledger)
             self.assertEqual(resumed_windows["forward_validation_dates"], first_forward)
             self.assertEqual(resumed_windows["reverse_validation_dates"], first_reverse)
-            retry_attempt = auto.claim_attempt(
+            retry_attempt = claim_legacy_attempt(
                 state, retry_plan, github_run_id="420000010", now=NOW + timedelta(minutes=2),
             )
             self.assertEqual(retry_attempt["target_date"], attempt["target_date"])
@@ -786,7 +1034,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
                 state, archive_path=archive, ledger_path=ledger,
                 global_lock_path=lock, now=NOW,
             )
-            attempt = auto.claim_attempt(state, plan, github_run_id="420000004", now=NOW)
+            attempt = claim_legacy_attempt(state, plan, github_run_id="420000004", now=NOW)
             auto.record_outcome(
                 state, attempt["attempt_id"], outcome="FAILED",
                 reason_code="PROVIDER_DELIVERY_UNCERTAIN", now=NOW,
@@ -815,7 +1063,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
                 state, archive_path=archive, ledger_path=ledger,
                 global_lock_path=lock, now=NOW,
             )
-            first_attempt = auto.claim_attempt(
+            first_attempt = claim_legacy_attempt(
                 state, first_plan, github_run_id="420000008", now=NOW,
             )
             auto.record_outcome(
@@ -857,7 +1105,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
             self.assertTrue(retry_plan["eligible"])
             self.assertTrue(retry_plan["retryable"])
             self.assertTrue(retry_plan["manual_recovery_confirmed"])
-            retry_attempt = auto.claim_attempt(
+            retry_attempt = claim_legacy_attempt(
                 state, retry_plan, github_run_id="420000009",
                 now=NOW + timedelta(minutes=3),
             )
@@ -882,7 +1130,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
                 state, archive_path=archive, ledger_path=ledger,
                 global_lock_path=lock, now=NOW,
             )
-            attempt = auto.claim_attempt(
+            attempt = claim_legacy_attempt(
                 state, plan, github_run_id="420000011", now=NOW,
             )
             auto.record_outcome(
@@ -924,7 +1172,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
                     state, archive_path=archive, ledger_path=ledger,
                     global_lock_path=lock, now=NOW,
                 )
-                first_attempt = auto.claim_attempt(
+                first_attempt = claim_legacy_attempt(
                     state, first_plan, github_run_id="420000020", now=NOW,
                 )
                 auto.record_outcome(
@@ -939,7 +1187,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
                 self.assertTrue(retry_plan["eligible"])
                 self.assertTrue(retry_plan["retryable"])
                 self.assertFalse(retry_plan["manual_recovery_confirmed"])
-                retry_attempt = auto.claim_attempt(
+                retry_attempt = claim_legacy_attempt(
                     state, retry_plan, github_run_id="420000021",
                     now=NOW + timedelta(minutes=2),
                 )
@@ -967,7 +1215,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
                 state, archive_path=archive, ledger_path=ledger,
                 global_lock_path=lock, now=NOW,
             )
-            attempt = auto.claim_attempt(state, plan, github_run_id="420000005", now=NOW)
+            attempt = claim_legacy_attempt(state, plan, github_run_id="420000005", now=NOW)
             auto.record_outcome(
                 state, attempt["attempt_id"], outcome="FAILED",
                 reason_code="NO_PROVIDER_REQUEST_SENT", now=NOW,
@@ -1016,7 +1264,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
                 state, archive_path=archive, ledger_path=ledger,
                 global_lock_path=lock, now=NOW,
             )
-            auto.claim_attempt(state, plan, github_run_id="1", now=NOW)
+            claim_legacy_attempt(state, plan, github_run_id="1", now=NOW)
             archive.write_text(
                 json.dumps({"draws": rows[:-1]}),
                 encoding="utf-8",
@@ -1131,7 +1379,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
                 state, archive_path=archive, ledger_path=ledger,
                 global_lock_path=lock, now=NOW,
             )
-            attempt = auto.claim_attempt(state, plan, github_run_id="98766", now=NOW)
+            attempt = claim_legacy_attempt(state, plan, github_run_id="98766", now=NOW)
             _write_evaluated_test_ledger(ledger, attempt)
             auto.record_outcome(
                 state, attempt["attempt_id"], outcome="SUCCEEDED",
@@ -1189,7 +1437,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
                 state, archive_path=archive, ledger_path=ledger,
                 global_lock_path=lock, now=NOW,
             )
-            first = auto.claim_attempt(state, plan, github_run_id="420000091", now=NOW)
+            first = claim_legacy_attempt(state, plan, github_run_id="420000091", now=NOW)
             auto.record_outcome(
                 state, first["attempt_id"], outcome="NO_ELIGIBLE_CANDIDATE",
                 reason_code="NO_FROZEN_DIRECTIONAL_CANDIDATE", now=NOW,
@@ -1205,7 +1453,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
             self.assertTrue(retry["eligible"])
             self.assertTrue(retry["retryable"])
             self.assertEqual(retry["retry_number"], 2)
-            second = auto.claim_attempt(
+            second = claim_legacy_attempt(
                 state, retry, github_run_id="420000092", now=NOW + timedelta(minutes=1),
             )
             self.assertNotEqual(first["attempt_id"], second["attempt_id"])
@@ -1562,7 +1810,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
         attempts_before = json.loads(json.dumps(state["attempts"]))
         events_before = json.loads(json.dumps(state["events"]))
 
-        attempt = auto.claim_attempt(
+        attempt = claim_legacy_attempt(
             state, plan, github_run_id="445578", now=NOW + timedelta(hours=1),
         )
 
@@ -1583,7 +1831,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
             auto.AutonomousResearchError,
             "Completed previous FIFO target does not match its archived attempt identity",
         ):
-            auto.claim_attempt(state, plan, github_run_id="445579", now=NOW + timedelta(hours=1))
+            claim_legacy_attempt(state, plan, github_run_id="445579", now=NOW + timedelta(hours=1))
 
         self.assertEqual(state["attempts"], attempts_before)
 
@@ -1597,7 +1845,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
             auto.AutonomousResearchError,
             "Completed previous FIFO target does not match its archived attempt identity",
         ):
-            auto.claim_attempt(state, plan, github_run_id="445580", now=NOW + timedelta(hours=1))
+            claim_legacy_attempt(state, plan, github_run_id="445580", now=NOW + timedelta(hours=1))
 
         self.assertEqual(state["attempts"], attempts_before)
 
@@ -1612,7 +1860,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
             auto.AutonomousResearchError,
             "The previous target must be resolved before a new target is activated",
         ):
-            auto.claim_attempt(state, plan, github_run_id="445581", now=NOW + timedelta(hours=1))
+            claim_legacy_attempt(state, plan, github_run_id="445581", now=NOW + timedelta(hours=1))
 
     def test_claim_does_not_skip_an_uncompleted_previous_target_without_terminal_event(self):
         state, _, item_next = self._exhausted_target_fixture(omit_last_event=True)
@@ -1625,7 +1873,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
             auto.AutonomousResearchError,
             "The previous target is incomplete; new target activation is blocked",
         ):
-            auto.claim_attempt(state, plan, github_run_id="445582", now=NOW + timedelta(hours=1))
+            claim_legacy_attempt(state, plan, github_run_id="445582", now=NOW + timedelta(hours=1))
 
 if __name__ == "__main__":
     unittest.main()

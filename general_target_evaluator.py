@@ -198,12 +198,35 @@ def recover_evaluated_claim_for_attempt(
 
     ledger = sealed.load_ledger(ledger_path)
     memory = research_memory.load_memory(memory_path)
+    package_id = attempt.get("research_package_id")
+    package_attempt_id = attempt.get("research_package_attempt_id")
+    if package_id is not None:
+        if (
+            not isinstance(package_id, str)
+            or len(package_id) != 64
+            or any(ch not in "0123456789abcdef" for ch in package_id)
+            or not isinstance(package_attempt_id, str)
+            or len(package_attempt_id) != 64
+            or any(ch not in "0123456789abcdef" for ch in package_attempt_id)
+        ):
+            raise TargetEvaluationError("V3 local-score recovery package binding is malformed.")
+    elif package_attempt_id is not None:
+        raise TargetEvaluationError("A package-attempt binding cannot exist without a V3 package ID.")
+
     evaluated_claims = [
         entry for entry in ledger["entries"]
         if entry.get("state") == "EVALUATED"
         and entry.get("target_date") == attempt["target_date"]
         and entry.get("archive_sha256") == attempt["archive_sha256"]
         and entry.get("archive_record_count") == attempt["archive_record_count"]
+        and (
+            package_id is None
+            or (
+                entry.get("partition_version") == 3
+                and entry.get("research_package_id") == package_id
+                and entry.get("scheduler_attempt_id") == package_attempt_id
+            )
+        )
         and not any(
             receipt["claim_id"] == entry.get("claim_id")
             for receipt in state["target_evaluations"]
