@@ -45,7 +45,7 @@ class UnseenPackageTests(unittest.TestCase):
     def test_offline_symbolic_discovery_ranges_are_also_unavailable(self):
         rows = self.rows
         offline_entry = {
-            "target_date": rows[30]["date"],
+            "target_date": rows[40]["date"],
             "discovery_window": {
                 "start_date": rows[2]["date"],
                 "end_date": rows[20]["date"],
