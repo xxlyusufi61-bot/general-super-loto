@@ -382,8 +382,8 @@ jobs:
           private_key: ${{ secrets.GENERAL_AUTOMATION_STATE_WRITER_APP_PRIVATE_KEY }}
           writers_validated: ${{ vars.GENERAL_SCOPED_WRITERS_VALIDATED }}
           expected_generation: ${{ steps.persist_offline_memory.outputs.generation || steps.persist_target_admission.outputs.generation || steps.state_bootstrap.outputs.generation }}
-          objects: autonomous_research_state
-          message: "Reserve autonomous research target"
+          objects: autonomous_research_state evaluation_ledger
+          message: "Atomically reserve autonomous target and V3 unseen research package"
       - name: Recover exact evaluated candidate pair for an interrupted local score without NVIDIA
         id: frozen_recovery
         if: ${{ steps.attempt_reservation.outputs.attempt_id != '' }}
@@ -418,7 +418,9 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           GENERAL_DEFAULT_BRANCH: main
-          TASK_TEXT: "Explore the validated pre-target 6-of-60 archive from scratch. Propose independently testable hypotheses for the forward and reverse directions. Do not request, infer, or report winning-number predictions."
+          GENERAL_RESEARCH_PACKAGE_ID: ${{ steps.attempt_reservation.outputs.research_package_id }}
+          GENERAL_RESEARCH_ATTEMPT_ID: ${{ steps.attempt_reservation.outputs.attempt_id }}
+          TASK_TEXT: "Explore only the frozen, genuinely unseen chronological package. Propose independently testable hypotheses for the forward and reverse directions. Do not request, infer, or report winning-number predictions."
           GENERAL_CONFIRM_LIVE_CALLS: "I_CONFIRM_FREE_ONLY_NO_BILLING_AND_APPROVE_SHARED_1500_PER_24H_NVIDIA_BUDGET"
           GENERAL_ALLOW_NVIDIA_CALL: "true"
           GENERAL_NVIDIA_FREE_USAGE_VERIFIED: "true"
@@ -462,6 +464,9 @@ jobs:
       - name: Create the frozen sealed evaluation claim
         id: sealed_claim
         if: ${{ success() && steps.research.outcome == 'success' }}
+        env:
+          RESEARCH_PACKAGE_ID: ${{ steps.attempt_reservation.outputs.research_package_id }}
+          ATTEMPT_ID: ${{ steps.attempt_reservation.outputs.attempt_id }}
         run: |
           python3 general_sealed_evaluation.py claim \
             --archive super_loto_archive.json \
@@ -470,6 +475,8 @@ jobs:
             --specs open_research_execution_specs.json \
             --output open_research_evaluation_claim.json \
             --sealed-plan open_research_sealed_plan.json \
+            --package-id "$RESEARCH_PACKAGE_ID" \
+            --attempt-id "$ATTEMPT_ID" \
             --github-output "$GITHUB_OUTPUT"
           cat "$GITHUB_OUTPUT"
       - name: Create short-lived main writer token for sealed snapshot persistence
@@ -675,8 +682,8 @@ jobs:
           private_key: ${{ secrets.GENERAL_AUTOMATION_STATE_WRITER_APP_PRIVATE_KEY }}
           writers_validated: ${{ vars.GENERAL_SCOPED_WRITERS_VALIDATED }}
           expected_generation: ${{ steps.persist_eval.outputs.generation || steps.persist_claim.outputs.generation || steps.persist_attempt.outputs.generation || steps.state_bootstrap.outputs.generation }}
-          objects: autonomous_research_state research_memory
-          message: "Persist autonomous cycle outcome and sanitized research memory"
+          objects: autonomous_research_state research_memory evaluation_ledger
+          message: "Persist V3 package lifecycle, scheduler outcome and sanitized research memory"
 
       - name: Send separate forward and reverse Telegram reports
         id: telegram_success
