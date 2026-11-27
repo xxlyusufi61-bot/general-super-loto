@@ -1567,6 +1567,7 @@ class AutonomousResearchMemoryIntegrationTests(unittest.TestCase):
 
     def _make_claimed_cycle(self, root):
         import general_sealed_evaluation as sealed
+        import general_research_windows as research_windows
 
         start = date(2026, 8, 1)
         rows = []
@@ -1621,13 +1622,6 @@ class AutonomousResearchMemoryIntegrationTests(unittest.TestCase):
         autonomous.target_queue.materialize_front(captured_queue, archive_path)
         archive = sealed.load_archive(archive_path)
 
-        partition = sealed.split_archive(
-            archive["rows"],
-            archive_sha256=archive["archive_sha256"],
-            used_validation_dates=set(),
-        )
-        sealed_plan = sealed.public_plan(partition)
-        write_json(sealed_plan_path, sealed_plan)
         prepared = autonomous.prepare_cycle(
             state,
             archive_path=archive_path,
@@ -1646,6 +1640,27 @@ class AutonomousResearchMemoryIntegrationTests(unittest.TestCase):
             github_run_id=self.GITHUB_RUN_ID,
             now=self.AUTONOMOUS_NOW,
         )
+        package = prepared["research_package"]
+        exposure_attempt_id = attempt.get(
+            "research_package_attempt_id", attempt["attempt_id"]
+        )
+        evaluation_ledger = sealed.load_ledger(ledger_path)
+        research_windows.reserve_research_package(
+            evaluation_ledger,
+            package,
+            attempt_id=exposure_attempt_id,
+            created_at_utc=attempt["claimed_at_utc"],
+            unavailable=set(package.get("previously_unavailable_dates", [])),
+        )
+        write_json(ledger_path, evaluation_ledger)
+        sealed_plan = sealed.preflight(
+            archive_path,
+            ledger_path,
+            partition_version=sealed.UNSEEN_PARTITION_VERSION,
+            package_id=package["package_id"],
+            attempt_id=exposure_attempt_id,
+        )
+        write_json(sealed_plan_path, sealed_plan)
         write_json(scheduler_state_path, state)
 
         return {
