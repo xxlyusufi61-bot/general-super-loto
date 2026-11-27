@@ -74,7 +74,10 @@ The unavailable-date set is the union of:
 - both directional holdout dates in the append-only sealed evaluation ledger, including dates reserved by a pending claim;
 - dates in the offline development consumption ledger and complete offline-symbolic discovery intervals recorded in its separate memory namespace;
 - dates in previous V3 research-package exposures, according to their lifecycle state;
-- the complete date intervals covered by legacy GENERAL discovery-memory records. Legacy intervals are treated conservatively as exposed; a range that cannot be reconstructed against the canonical archive fails closed.
+- the complete date intervals covered by legacy GENERAL discovery-memory records;
+- the discovery intervals recorded directly in pre-V3 V1/V2 sealed claims, even when a corresponding research-memory entry is absent. These intervals are reconstructed conservatively from the canonical archive; missing or unreconstructable provenance fails closed.
+
+Both legacy sources are checked independently, so a claim cannot become a fresh V3 holdout merely because its matching memory write was interrupted.
 
 V3 does not compact rows across an unavailable date. Every package is one exact contiguous chronological interval and is divided into a reverse holdout, a discovery middle, and a forward holdout. The minimums remain 40 discovery draws and at least two validation draws in each direction; each directional holdout is bounded to 30 draws and a package is limited to 100 rows. The exact canonical neighbouring context required by the DSL remains inside the package's chronological roles. The target row and every later row remain outside the package.
 
