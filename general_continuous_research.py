@@ -441,15 +441,11 @@ def _read_only_next_cycle_probe(
         if plan.get("pending_claim_resume_available") is True:
             return True, "PENDING_SEALED_CLAIM_RECOVERY_READY"
 
-        # NO_ELIGIBLE_CANDIDATE ends a session only while the same target is
-        # still active. A subsequently captured newer target is independent
-        # work and may proceed through the normal scheduler preflight.
-        if last_event is not None and last_event["outcome"] == "NO_ELIGIBLE_CANDIDATE" and active is not None:
-            if (
-                active["target_date"] == last_attempt["target_date"]
-                and active["archive_sha256"] == last_attempt["archive_sha256"]
-            ):
-                return False, "NO_EXECUTABLE_HYPOTHESIS"
+        # A no-candidate result is not terminal for a V3 unseen-package
+        # session. prepare_cycle above has already checked whether another
+        # independent chronological package exists. If it does, continue below
+        # subject to the same remote rate-budget gate; otherwise it returned
+        # ineligible and the session stops without a provider request.
 
         rate_state, _rate_head = nvidia.read_remote_rate_limit()
         capacity, capacity_reason = budget_has_next_turn_capacity(
