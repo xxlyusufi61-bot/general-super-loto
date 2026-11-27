@@ -265,20 +265,27 @@ def append_package_status(ledger, exposure, *, state, recorded_at_utc, reason):
 
 def reserve_research_package(ledger, package, *, attempt_id, created_at_utc):
     already = exposure_dates(ledger) | holdout_dates(ledger)
-    overlaps = set(package["dates"]) & already
+    package_dates = set(package["dates"])
     previous = [
         item for item in ledger.get("discovery_exposures", [])
         if isinstance(item, dict) and item.get("kind") == "RESEARCH_PACKAGE"
         and item.get("package_id") == package.get("package_id")
     ]
     retry_allowed = False
+    retry_reusable_dates = set()
     if previous:
         latest = previous[-1]
         if latest.get("package") != package:
             raise ResearchWindowError("A package ID cannot be rebound to different dates or roles.")
-        retry_allowed = package_status(ledger, latest) in {"EXPOSED", "RELEASED"}
-    if overlaps and not retry_allowed:
-        raise ResearchWindowError("Package overlaps prior exposure or claim.")
+        latest_state = package_status(ledger, latest)
+        retry_allowed = latest_state in {"EXPOSED", "RELEASED"}
+        if latest_state == "EXPOSED":
+            # Only the prior discovery interval may be reused for an exact retry;
+            # its unclaimed holdouts are still required to be clear of every claim.
+            retry_reusable_dates = set(latest.get("discovery_dates", []))
+    other_overlaps = package_dates.intersection(already - retry_reusable_dates)
+    if other_overlaps or (previous and not retry_allowed):
+        raise ResearchWindowError("Package overlaps another exposure/claim or is not retryable.")
     exposure = make_package_exposure(package, attempt_id=attempt_id, created_at_utc=created_at_utc)
     if any(item.get("attempt_id") == attempt_id and item.get("package_id") == package.get("package_id")
            for item in ledger.get("discovery_exposures", []) if isinstance(item, dict)):
