@@ -213,7 +213,8 @@ class TargetAdmissionMaintenanceTests(unittest.TestCase):
         self.assertEqual(len(updated["attempts"]), 1)
 
     def test_v3_no_unseen_package_keeps_latest_target_staged(self):
-        rows = synthetic_rows(90)
+        # 43 pre-target rows cannot satisfy 40 discovery + 2 + 2 sealed targets.
+        rows = synthetic_rows(44)
         write_archive(self.archive, rows)
         staged, _ = queue.capture_new_targets(
             queue.initial_queue(),
