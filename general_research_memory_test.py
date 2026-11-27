@@ -680,7 +680,12 @@ class DirectionalMemoryContextTests(unittest.TestCase):
 
         overlapping = sample_entry(entry_id=2, target="2026-10-25")
         overlapping["discovery_window"]["end_date"] = "2026-10-15"
-        overlapping["discovery_window"]["package_end_date"] = "2026-10-20"
+        overlapping["discovery_window"].update({
+            "package_id": "d" * 64,
+            "partition_version": 3,
+            "package_start_date": "2026-08-20",
+            "package_end_date": "2026-10-20",
+        })
         overlapping["content_sha256"] = _hash_entry(overlapping)
         payload = memory.empty_memory()
         payload["entries"] = [valid, overlapping]
