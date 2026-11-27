@@ -98,6 +98,8 @@ def legacy_ledger_discovery_dates(rows, ledger):
         if version == 3:
             continue
         target = day(entry.get("target_date"))
+        if target not in dates:
+            raise ResearchWindowError("A legacy sealed-claim target is absent from the canonical archive.")
         start = day(entry.get("discovery_start_date"))
         end = day(entry.get("discovery_end_date"))
         count = entry.get("r60_discovery_count", entry.get("discovery_count"))
