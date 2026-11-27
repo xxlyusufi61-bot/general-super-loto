@@ -1991,13 +1991,18 @@ def main() -> int:
         reused_directions: set[str] = set()
         memory_path = BASE / "general_research_memory.json"
         active_package_id = partition.get("research_package", {}).get("package_id")
+        package_start_date = partition.get("research_package", {}).get("package_start_date")
+        pending_claim = sealed.pending_claim_for_archive(ARCHIVE, ledger_path)
         pending_forward = research_memory.find_pending_candidate(
-            "forward", target, archive_sha256, memory_path=memory_path, package_id=active_package_id
+            "forward", target, archive_sha256, memory_path=memory_path,
+            package_id=(active_package_id if pending_claim is not None else None),
+            package_start_date=(package_start_date if pending_claim is None else None),
         )
         pending_reverse = research_memory.find_pending_candidate(
-            "reverse", target, archive_sha256, memory_path=memory_path, package_id=active_package_id
+            "reverse", target, archive_sha256, memory_path=memory_path,
+            package_id=(active_package_id if pending_claim is not None else None),
+            package_start_date=(package_start_date if pending_claim is None else None),
         )
-        pending_claim = sealed.pending_claim_for_archive(ARCHIVE, ledger_path)
         if pending_claim is not None and not sealed.pending_claim_matches_candidates(
             pending_claim, pending_forward, pending_reverse
         ):
