@@ -1203,7 +1203,22 @@ def preflight(
         )
     if set(validation_dates).intersection(reverse_validation_dates):
         raise SealedEvaluationError("Forward and reverse validation intervals overlap.")
-    overlap = sorted((set(validation_dates) | set(reverse_validation_dates)).intersection(used_dates))
+    overlap_guard_dates = set(used_dates)
+    evaluated_recovery = split.get("evaluated_package_recovery") is True
+    if evaluated_recovery:
+        # This exact package's holdouts were already scored by its one EVALUATED
+        # claim. Local target-score recovery must reuse the frozen claim without
+        # treating its own dates as a second holdout reservation. No other
+        # consumed dates are exempted from the normal overlap guard.
+        own_evaluated_holdouts = set(validation_dates) | set(reverse_validation_dates)
+        if not own_evaluated_holdouts or not own_evaluated_holdouts.issubset(used_dates):
+            raise SealedEvaluationError(
+                "Evaluated-package recovery does not match the holdouts consumed by its exact claim."
+            )
+        overlap_guard_dates.difference_update(own_evaluated_holdouts)
+    overlap = sorted(
+        (set(validation_dates) | set(reverse_validation_dates)).intersection(overlap_guard_dates)
+    )
     if overlap:
         raise SealedEvaluationError(
             "Current sealed validation window overlaps already-consumed dates; stop before any model request."
@@ -1215,7 +1230,7 @@ def preflight(
         "status": "READY",
         "partition_version": split.get("partition_version", LEGACY_PARTITION_VERSION),
         "ledger_entry_count": len(ledger["entries"]),
-        "validation_dates_previously_consumed": False,
+        "validation_dates_previously_consumed": evaluated_recovery,
         "previously_consumed_sealed_validation_draw_count": len(used_dates),
         "previously_consumed_validation_draw_count": split["previously_consumed_validation_draw_count"],
         "previously_consumed_offline_development_draw_count": split["previously_consumed_offline_development_draw_count"],
