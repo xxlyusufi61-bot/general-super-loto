@@ -400,7 +400,7 @@ jobs:
             --claim-output open_research_evaluation_claim.json \
             --github-output "$GITHUB_OUTPUT"
       - name: Create short-lived NVIDIA budget writer token
-        if: ${{ steps.attempt_reservation.outputs.attempt_id != '' && steps.frozen_recovery.outcome == 'success' && steps.frozen_recovery.outputs.recovery_required != 'true' }}
+        if: ${{ steps.attempt_reservation.outputs.attempt_id != '' && steps.persist_attempt.outcome == 'success' && steps.frozen_recovery.outcome == 'success' && steps.frozen_recovery.outputs.recovery_required != 'true' }}
         id: nvidia-budget-writer
         uses: ./.github/actions/create-scoped-writer-token
         with:
@@ -412,7 +412,7 @@ jobs:
 
       - name: Run independent forward and reverse NVIDIA discovery
         id: research
-        if: ${{ steps.attempt_reservation.outputs.attempt_id != '' && steps.frozen_recovery.outcome == 'success' && steps.frozen_recovery.outputs.recovery_required != 'true' }}
+        if: ${{ steps.attempt_reservation.outputs.attempt_id != '' && steps.persist_attempt.outcome == 'success' && steps.frozen_recovery.outcome == 'success' && steps.frozen_recovery.outputs.recovery_required != 'true' }}
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
