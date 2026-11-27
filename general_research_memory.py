@@ -1879,7 +1879,7 @@ def direction_context(
     if direction == "forward":
         consumed_by_cycle = {
             item["cycle_id"]: item
-            for item in memory["offline_research"]["consumed_development_windows"]
+            for item in memory["offline_research"].get("consumed_development_windows", [])
         }
         for offline_entry in reversed(memory["offline_research"]["entries"]):
             if date.fromisoformat(offline_entry["target_date"]) > current_target:
