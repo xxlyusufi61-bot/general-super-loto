@@ -230,8 +230,10 @@ def validate_state(value: Any) -> dict[str, Any]:
         "claimed_at_utc", "github_run_id",
     }
     for item in attempts:
-        if not isinstance(item, dict) or set(item) != required_attempt:
+        if not isinstance(item, dict) or set(item) not in (required_attempt, required_attempt | {"research_package_id"}):
             raise AutonomousResearchError("Attempt entry has an invalid schema.")
+        if "research_package_id" in item and not _is_sha256(item["research_package_id"]):
+            raise AutonomousResearchError("Attempt research-package identity is invalid.")
         attempt_id = item["attempt_id"]
         if not isinstance(attempt_id, str) or len(attempt_id) != 64 or any(
             character not in "0123456789abcdef" for character in attempt_id
@@ -925,6 +927,8 @@ def prepare_cycle(
     retry_number = 1
     manual_recovery_confirmed_for_failure = False
     manual_recovery_unlock_at_utc: str | None = None
+    resume_package_id: str | None = None
+    resume_package_attempt_id: str | None = None
     if attempts:
         last_attempt = attempts[-1]
         last_target = last_attempt["target_date"]
@@ -981,6 +985,9 @@ def prepare_cycle(
                         }
                     retryable = True
                     retry_number = same_target_attempts + 1
+                    if last_attempt.get("research_package_id") is not None:
+                        resume_package_id = last_attempt["research_package_id"]
+                        resume_package_attempt_id = last_attempt["attempt_id"]
                 else:
                     if reason_code == "PROVIDER_HTTP_REJECTION_NO_RETRY":
                         blocked_status = "PROVIDER_HTTP_REJECTION_NO_RETRY"
@@ -1086,7 +1093,12 @@ def prepare_cycle(
                 }
 
     try:
-        plan = sealed.preflight(archive_path, ledger_path)
+        plan = sealed.preflight(
+            archive_path, ledger_path,
+            partition_version=sealed.UNSEEN_PARTITION_VERSION,
+            package_id=resume_package_id,
+            attempt_id=resume_package_attempt_id,
+        )
     except sealed.SealedEvaluationError as exc:
         reason = str(exc)
         lower = reason.lower()
@@ -1098,6 +1110,7 @@ def prepare_cycle(
             or "adjacency-safe bidirectional partition" in lower
             or "r60 discovery history is shorter than the default minimum training window" in lower
             or "discovery history is shorter than the default minimum" in lower
+            or "no genuinely unseen contiguous package remains" in lower
         ):
             return {
                 "status": "WAITING_FOR_FRESH_SEALED_WINDOWS",
@@ -1152,6 +1165,8 @@ def prepare_cycle(
         "manual_recovery_unlock_at_utc": manual_recovery_unlock_at_utc,
         "pending_claim_resume_available": plan.get("pending_claim_resume_available") is True,
         "pending_claim_id": plan.get("pending_claim_id"),
+        "research_package_id": plan.get("research_package_id"),
+        "research_package": plan.get("research_package"),
     }
 
 
@@ -1289,6 +1304,8 @@ def claim_attempt(
         "archive_record_count": plan["archive_record_count"],
         "claimed_at_utc": claimed_at,
         "github_run_id": github_run_id,
+        **({"research_package_id": plan["research_package_id"]}
+           if isinstance(plan.get("research_package_id"), str) else {}),
     }
     state["attempts"].append(attempt)
     if workflow_failure_to_recover is not None:
