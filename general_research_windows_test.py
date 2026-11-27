@@ -42,6 +42,28 @@ class UnseenPackageTests(unittest.TestCase):
         memory={"entries":[{"discovery_window":{"start_date":self.rows[1]["date"],"end_date":self.rows[10]["date"],"draw_count":10}}]}
         self.assertEqual(rw.legacy_discovery_dates(self.rows,memory),{r["date"] for r in self.rows[1:11]})
 
+    def test_offline_symbolic_discovery_ranges_are_also_unavailable(self):
+        rows = self.rows
+        offline_entry = {
+            "target_date": rows[30]["date"],
+            "discovery_window": {
+                "start_date": rows[2]["date"],
+                "end_date": rows[20]["date"],
+                "draw_count": 19,
+            },
+        }
+        memory = {
+            "entries": [],
+            "offline_research": {"entries": [offline_entry]},
+        }
+        exposed = rw.legacy_discovery_dates(rows, memory)
+        expected = {row["date"] for row in rows[2:21]}
+        self.assertTrue(expected.issubset(exposed))
+        packages = rw.build_research_packages(
+            rows, archive_sha256=self.sha, unavailable=exposed
+        )
+        self.assertTrue(all(not (set(package["dates"]) & expected) for package in packages))
+
     def test_legacy_missing_or_unreconstructable_provenance_fails_closed(self):
         with self.assertRaises(rw.ResearchWindowError):
             rw.legacy_discovery_dates(self.rows,{"entries":[{}]})
