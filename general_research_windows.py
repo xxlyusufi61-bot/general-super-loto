@@ -5,6 +5,7 @@ from datetime import date
 from typing import Any
 
 PARTITION_VERSION = 3
+RESEARCH_SCOPE_START = "2020-08-02"
 MIN_DISCOVERY_DRAWS = 40
 MIN_VALIDATION_DRAWS = 2
 MAX_VALIDATION_DRAWS = 30
@@ -31,6 +32,8 @@ def archive_dates(rows):
     if not isinstance(rows, list) or len(rows) < 2:
         raise ResearchWindowError("Archive must contain historical rows and one isolated target.")
     values = [day(row.get("date")) for row in rows]
+    if any(value < RESEARCH_SCOPE_START for value in values):
+        raise ResearchWindowError("Archive contains a pre-2020-08-02 record outside active scope.")
     if values != sorted(values) or len(values) != len(set(values)):
         raise ResearchWindowError("Archive chronology is not strictly increasing and unique.")
     return values
@@ -159,7 +162,9 @@ def build_research_packages(rows, *, archive_sha256, unavailable, sequence_start
     if type(sequence_start) is not int or sequence_start < 1:
         raise ResearchWindowError("Package sequence invalid.")
     offline_memory_sha256 = offline_memory_sha256 or digest([])
-    if len(offline_memory_sha256) != 64: raise ResearchWindowError("Offline memory hash invalid.")
+    if (not isinstance(offline_memory_sha256, str) or len(offline_memory_sha256) != 64
+        or any(ch not in "0123456789abcdef" for ch in offline_memory_sha256)):
+        raise ResearchWindowError("Offline memory hash invalid.")
     result, sequence, prior = [], sequence_start, set(unavailable)
     for block in _blocks(rows[:-1], prior):
         count = len(block) // MIN_PACKAGE_DRAWS
@@ -199,7 +204,13 @@ def validate_package(package, rows, *, archive_sha256, unavailable):
     return expected
 
 def make_package_exposure(package, *, attempt_id, created_at_utc):
-    if not isinstance(attempt_id, str) or len(attempt_id) != 64: raise ResearchWindowError("Attempt ID invalid.")
+    if (not isinstance(attempt_id, str) or len(attempt_id) != 64
+        or any(ch not in "0123456789abcdef" for ch in attempt_id)):
+        raise ResearchWindowError("Attempt ID invalid.")
+    if not isinstance(created_at_utc, str) or not created_at_utc.endswith("+00:00"):
+        raise ResearchWindowError("Package reservation timestamp must be explicit UTC.")
+    try: timestamp_day = date.fromisoformat(created_at_utc[:10])
+    except ValueError: raise ResearchWindowError("Package reservation timestamp date invalid.") from None
     item = {
         "kind": "RESEARCH_PACKAGE", "schema_version": 1, "exposure_id": "",
         "attempt_id": attempt_id, "package_id": package["package_id"], "package": package,
@@ -216,6 +227,9 @@ def make_package_exposure(package, *, attempt_id, created_at_utc):
 
 def legacy_exposure_record(dates, memory_sha256, created_at_utc):
     if not dates: return None
+    if (not isinstance(memory_sha256, str) or len(memory_sha256) != 64
+        or any(ch not in "0123456789abcdef" for ch in memory_sha256)):
+        raise ResearchWindowError("Legacy research-memory hash invalid.")
     item = {"kind": "LEGACY_DISCOVERY_RANGES", "schema_version": 1, "exposure_id": "",
             "memory_sha256": memory_sha256, "dates": sorted(dates), "created_at_utc": created_at_utc}
     item["exposure_id"] = digest(item)
