@@ -82,6 +82,44 @@ def legacy_discovery_dates(rows, memory):
         exposed.update(matched)
     return exposed
 
+
+def legacy_ledger_discovery_dates(rows, ledger):
+    """Conservatively recover discovery exposure from pre-V3 sealed claims."""
+    dates = archive_dates(rows)
+    if not isinstance(ledger, dict) or not isinstance(ledger.get("entries"), list):
+        raise ResearchWindowError("Evaluation ledger entries are malformed.")
+    exposed = set()
+    for index, entry in enumerate(ledger["entries"]):
+        if not isinstance(entry, dict):
+            raise ResearchWindowError("Evaluation ledger entry is malformed.")
+        version = entry.get("partition_version", 1)
+        if type(version) is not int or version not in {1, 2, 3}:
+            raise ResearchWindowError("Evaluation ledger partition version is invalid.")
+        if version == 3:
+            continue
+        target = day(entry.get("target_date"))
+        start = day(entry.get("discovery_start_date"))
+        end = day(entry.get("discovery_end_date"))
+        count = entry.get("r60_discovery_count", entry.get("discovery_count"))
+        if (
+            start < RESEARCH_SCOPE_START
+            or start > end
+            or end >= target
+            or type(count) is not int
+            or count < MIN_DISCOVERY_DRAWS
+        ):
+            raise ResearchWindowError(
+                f"Legacy sealed claim {index + 1} has incomplete discovery provenance."
+            )
+        matched = {value for value in dates[:-1] if start <= value <= end}
+        if len(matched) < count:
+            raise ResearchWindowError(
+                "A legacy sealed-claim discovery interval cannot be reconstructed from the archive."
+            )
+        exposed.update(matched)
+    return exposed
+
+
 def offline_dates(memory):
     if memory is None: return set()
     offline = memory.get("offline_research", {})
@@ -108,6 +146,8 @@ def exposure_dates(ledger):
             result.update(dates); continue
         if kind != "RESEARCH_PACKAGE": raise ResearchWindowError("Unknown exposure type.")
         status = package_status(ledger, item)
+        if status not in {"RESERVED", "EXPOSED", "CLAIMED", "EVALUATED", "RELEASED"}:
+            raise ResearchWindowError("Unknown research-package lifecycle state.")
         if status == "RELEASED":
             continue
         result.update(day(d) for d in item.get("discovery_dates", []))
@@ -122,7 +162,13 @@ def holdout_dates(ledger):
 
 def unavailable_dates(rows, *, ledger, memory, attempts):
     archive = set(archive_dates(rows)[:-1])
-    prior = legacy_discovery_dates(rows, memory) | offline_dates(memory) | exposure_dates(ledger) | holdout_dates(ledger)
+    prior = (
+        legacy_discovery_dates(rows, memory)
+        | legacy_ledger_discovery_dates(rows, ledger)
+        | offline_dates(memory)
+        | exposure_dates(ledger)
+        | holdout_dates(ledger)
+    )
     if not prior.issubset(archive):
         raise ResearchWindowError("A previously exposed or consumed date is absent from the canonical archive.")
     for attempt in attempts:
