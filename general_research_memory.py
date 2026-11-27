@@ -1489,6 +1489,10 @@ def record_cycle(
     if needs_directional_record:
         _validate_sealed_plan_binding(plan, archive, ledger, claim)
     reserved_report_dates = _reserved_validation_dates(plan) if needs_directional_record else set()
+    if needs_directional_record and isinstance(plan.get("research_package"), dict):
+        reserved_report_dates.update(
+            plan["research_package"].get("previously_unavailable_dates", [])
+        )
     forbidden_report_dates = used_validation_dates | reserved_report_dates
     r60 = plan.get("regimes", {}).get("R60", {}) if isinstance(plan.get("regimes"), dict) else {}
     discovery_window = {
