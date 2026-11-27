@@ -85,6 +85,14 @@ class UnseenPackageTests(unittest.TestCase):
         exposure=rw.reserve_research_package(ledger,p,attempt_id=attempt,created_at_utc="2026-11-27T10:00:00+00:00",unavailable=set(p.get("previously_unavailable_dates", [])))
         rw.append_package_status(ledger,exposure,state="CLAIMED",recorded_at_utc="2026-11-27T10:01:00+00:00",reason="claim")
         self.assertTrue(set(p["dates"]).issubset(rw.exposure_dates(ledger)))
+        memory={"entries":[]}
+        unavailable=rw.unavailable_dates(self.rows,ledger=ledger,memory=memory,attempts=[])
+        next_packages=rw.build_research_packages(
+            self.rows,archive_sha256=self.sha,unavailable=unavailable,sequence_start=2
+        )
+        self.assertTrue(next_packages)
+        self.assertFalse(set(p["dates"]).intersection(next_packages[0]["dates"]))
+        self.assertTrue(set(p["dates"]).issubset(set(next_packages[0]["previously_unavailable_dates"])))
 
     def test_exposed_package_keeps_discovery_but_releases_unclaimed_holdouts(self):
         ledger={"schema_version":1,"purpose":"test","entries":[],"discovery_exposures":[]}
