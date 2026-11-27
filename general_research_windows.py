@@ -263,29 +263,25 @@ def append_package_status(ledger, exposure, *, state, recorded_at_utc, reason):
     ledger.setdefault("discovery_exposures", []).append(event)
     return event
 
-def reserve_research_package(ledger, package, *, attempt_id, created_at_utc):
-    already = exposure_dates(ledger) | holdout_dates(ledger)
+def reserve_research_package(
+    ledger, package, *, attempt_id, created_at_utc, unavailable
+):
+    unavailable_dates = {day(value) for value in unavailable}
+    if sorted(unavailable_dates) != package.get("previously_unavailable_dates"):
+        raise ResearchWindowError("Package prior-unavailable snapshot changed before reservation.")
     package_dates = set(package["dates"])
+    if package_dates.intersection(unavailable_dates):
+        raise ResearchWindowError("A package includes a date already exposed or consumed.")
+    already = exposure_dates(ledger) | holdout_dates(ledger)
+    if package_dates.intersection(already):
+        raise ResearchWindowError("Package overlaps another exposure or sealed claim.")
     previous = [
         item for item in ledger.get("discovery_exposures", [])
         if isinstance(item, dict) and item.get("kind") == "RESEARCH_PACKAGE"
         and item.get("package_id") == package.get("package_id")
     ]
-    retry_allowed = False
-    retry_reusable_dates = set()
     if previous:
-        latest = previous[-1]
-        if latest.get("package") != package:
-            raise ResearchWindowError("A package ID cannot be rebound to different dates or roles.")
-        latest_state = package_status(ledger, latest)
-        retry_allowed = latest_state in {"EXPOSED", "RELEASED"}
-        if latest_state == "EXPOSED":
-            # Only the prior discovery interval may be reused for an exact retry;
-            # its unclaimed holdouts are still required to be clear of every claim.
-            retry_reusable_dates = set(latest.get("discovery_dates", []))
-    other_overlaps = package_dates.intersection(already - retry_reusable_dates)
-    if other_overlaps or (previous and not retry_allowed):
-        raise ResearchWindowError("Package overlaps another exposure/claim or is not retryable.")
+        raise ResearchWindowError("A new reservation cannot duplicate an existing package ID.")
     exposure = make_package_exposure(package, attempt_id=attempt_id, created_at_utc=created_at_utc)
     if any(item.get("attempt_id") == attempt_id and item.get("package_id") == package.get("package_id")
            for item in ledger.get("discovery_exposures", []) if isinstance(item, dict)):
