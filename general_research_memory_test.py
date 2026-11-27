@@ -661,6 +661,39 @@ class PendingCandidateResumeTests(unittest.TestCase):
 
 
 class DirectionalMemoryContextTests(unittest.TestCase):
+    def test_v3_memory_rejects_invalid_package_scope_and_filters_overlapping_history(self):
+        valid = sample_entry(entry_id=1, target="2026-10-20")
+        valid["discovery_window"].update({
+            "package_id": "c" * 64,
+            "partition_version": 3,
+            "package_start_date": "2026-08-20",
+            "package_end_date": "2026-10-10",
+        })
+        valid["content_sha256"] = _hash_entry(valid)
+        self.assertEqual(memory._validate_entry(valid, 1), valid)
+
+        invalid = copy.deepcopy(valid)
+        invalid["discovery_window"]["package_start_date"] = "2026-09-15"
+        invalid["content_sha256"] = _hash_entry(invalid)
+        with self.assertRaisesRegex(memory.ResearchMemoryError, "outside its immutable package interval"):
+            memory._validate_entry(invalid, 1)
+
+        overlapping = sample_entry(entry_id=2, target="2026-10-25")
+        overlapping["discovery_window"]["end_date"] = "2026-10-15"
+        overlapping["content_sha256"] = _hash_entry(overlapping)
+        payload = memory.empty_memory()
+        payload["entries"] = [valid, overlapping]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "memory.json"
+            write_json(path, payload)
+            context = memory.direction_context(
+                "forward", "2026-11-26",
+                memory_path=path,
+                package_start_date="2026-10-10",
+            )
+        self.assertEqual(len(context), 1)
+        self.assertEqual(context[0]["prior_target_date"], "2026-10-20")
+
     def test_context_uses_only_same_direction_and_older_target_entries(self):
         value = memory.empty_memory()
         value["entries"] = [
