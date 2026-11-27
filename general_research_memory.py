@@ -502,6 +502,7 @@ def _validate_sealed_plan_binding(
         offline_dates, offline_digest = _offline_development_consumption()
         if stored_package.get("offline_development_memory_sha256") != offline_digest:
             raise ResearchMemoryError("V3 package no longer matches the offline-memory digest.")
+        split["previously_consumed_validation_draw_count"] = len(get_used_validation_dates(ledger))
         split["previously_consumed_offline_development_draw_count"] = len(offline_dates)
         expected = public_plan(split)
     else:
