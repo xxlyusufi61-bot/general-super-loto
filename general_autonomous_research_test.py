@@ -198,6 +198,27 @@ class AutonomousResearchStateTests(unittest.TestCase):
                         attempt_id=first_attempt["research_package_attempt_id"],
                     )
 
+                recovery_plan = auto.sealed.preflight(
+                    archive,
+                    ledger_path,
+                    partition_version=auto.sealed.UNSEEN_PARTITION_VERSION,
+                    package_id=package["package_id"],
+                    attempt_id=first_attempt["research_package_attempt_id"],
+                    allow_evaluated_package_recovery=True,
+                )
+                self.assertEqual(recovery_plan["status"], "READY")
+                self.assertTrue(recovery_plan["evaluated_package_recovery"])
+                self.assertTrue(recovery_plan["validation_dates_previously_consumed"])
+                self.assertFalse(recovery_plan["pending_claim_resume_available"])
+                self.assertEqual(
+                    recovery_plan["forward_validation_dates"],
+                    package["validation_dates"],
+                )
+                self.assertEqual(
+                    recovery_plan["reverse_validation_dates"],
+                    package["reverse_validation_dates"],
+                )
+
                 self.assertEqual(auto.main(args), 0)
 
                 retried_state = auto.read_state(state_path)
