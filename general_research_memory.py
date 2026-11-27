@@ -863,11 +863,17 @@ def _validate_entry(entry: Any, expected_id: int) -> dict[str, Any]:
             or not HEX64.fullmatch(window["package_id"])
         ):
             raise ResearchMemoryError("V3 discovery-window package identity is invalid.")
-        package_start = date.fromisoformat(window.get("package_start_date", ""))
-        package_end = date.fromisoformat(window.get("package_end_date", ""))
+        try:
+            package_start = date.fromisoformat(window.get("package_start_date", ""))
+            package_end = date.fromisoformat(window.get("package_end_date", ""))
+        except (TypeError, ValueError):
+            raise ResearchMemoryError("V3 package date bounds are invalid.") from None
         if (
             package_start.isoformat() != window["package_start_date"]
             or package_end.isoformat() != window["package_end_date"]
+            or package_start < RESEARCH_SCOPE_START
+            or package_end >= day
+            or package_end < package_start
             or start is None
             or package_start > start_day
             or end_day > package_end
