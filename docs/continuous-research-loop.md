@@ -46,6 +46,15 @@ The controller proceeds only when all conditions pass:
    archive snapshot, retry provenance, pending sealed claim, consumed holdout
    dates, and fresh directional validation windows make another attempt eligible.
 
+A `NO_ELIGIBLE_CANDIDATE` result for one V3 package is not terminal by itself.
+The session continues only when the normal scheduler preflight has already
+reserved or can safely reserve a different package with genuinely unused,
+contiguous dates. Discovery dates exposed to the model remain unavailable.
+Unclaimed dates from a prior package may be considered only when they were never
+shown to the model and were never scored; they must be bound to a fresh package
+identity. The session stops when no such package remains, or when the existing
+authorization, lock, rate-budget, report-delivery, or other safety gates fail.
+
 The controller reads state through the existing verified state-store hydration
 path and checks the NVIDIA lock and rate-limit ledger read-only. It runs
 prepare_cycle against a temporary hydrated copy. It does not publish runtime
