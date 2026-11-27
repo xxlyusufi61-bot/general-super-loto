@@ -81,6 +81,8 @@ def exposure_dates(ledger):
             result.update(dates); continue
         if kind != "RESEARCH_PACKAGE": raise ResearchWindowError("Unknown exposure type.")
         status = package_status(ledger, item)
+        if status == "RELEASED":
+            continue
         result.update(day(d) for d in item.get("discovery_dates", []))
         if status in {"RESERVED", "CLAIMED", "EVALUATED"}:
             result.update(day(d) for d in item.get("validation_dates", []) + item.get("reverse_validation_dates", []))
