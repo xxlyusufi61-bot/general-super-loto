@@ -29,6 +29,9 @@ name: GENERAL Offline Discovery CI
       - "general_research_memory_test.py"
       - "general_target_admission.py"
       - "general_target_admission_test.py"
+      - "general_target_evaluator.py"
+      - "general_target_evaluator_test.py"
+      - "general_target_evaluation_ledger.py"
       - "general_target_queue.py"
       - "general_nvidia_guard.py"
       - "general_automation_state_writer.py"
@@ -65,6 +68,9 @@ name: GENERAL Offline Discovery CI
       - "general_research_memory_test.py"
       - "general_target_admission.py"
       - "general_target_admission_test.py"
+      - "general_target_evaluator.py"
+      - "general_target_evaluator_test.py"
+      - "general_target_evaluation_ledger.py"
       - "general_target_queue.py"
       - "general_nvidia_guard.py"
       - "general_automation_state_writer.py"
@@ -116,6 +122,9 @@ jobs:
             general_continuous_research_test.py \
             general_target_admission.py \
             general_target_admission_test.py \
+            general_target_evaluator.py \
+            general_target_evaluator_test.py \
+            general_target_evaluation_ledger.py \
             general_target_queue.py \
             general_nvidia_guard.py \
             general_automation_state_writer.py
@@ -131,4 +140,5 @@ jobs:
             general_research_memory_test \
             general_autonomous_research_test \
             general_continuous_research_test \
-            general_target_admission_test
+            general_target_admission_test \
+            general_target_evaluator_test
