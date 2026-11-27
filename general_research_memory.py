@@ -1881,14 +1881,19 @@ def direction_context(
                 continue
             if package_start_date is not None:
                 consumed = consumed_by_cycle.get(offline_entry["cycle_id"])
-                if not isinstance(consumed, dict):
+                discovery_window = offline_entry.get("discovery_window")
+                development_window = offline_entry.get("development_window")
+                if not isinstance(consumed, dict) or not isinstance(discovery_window, dict):
+                    # No complete chronological provenance means no V3 prompt reuse.
                     continue
                 consumed_dates = consumed.get("dates")
                 if (
-                    not isinstance(consumed_dates, list)
-                    or len(consumed_dates) != offline_entry["development_window"]["draw_count"]
-                    or any(day >= package_start_date for day in consumed_dates)
-                    or offline_entry["discovery_window"]["end_date"] >= package_start_date
+                    not isinstance(development_window, dict)
+                    or not isinstance(consumed_dates, list)
+                    or len(consumed_dates) != development_window.get("draw_count")
+                    or any(not isinstance(day, str) or day >= package_start_date for day in consumed_dates)
+                    or discovery_window.get("end_date") is None
+                    or discovery_window["end_date"] >= package_start_date
                 ):
                     continue
 
