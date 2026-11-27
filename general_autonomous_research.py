@@ -231,10 +231,18 @@ def validate_state(value: Any) -> dict[str, Any]:
         "claimed_at_utc", "github_run_id",
     }
     for item in attempts:
-        if not isinstance(item, dict) or set(item) not in (required_attempt, required_attempt | {"research_package_id"}):
+        if not isinstance(item, dict) or set(item) not in (
+            required_attempt,
+            required_attempt | {"research_package_id"},
+            required_attempt | {"research_package_id", "research_package_attempt_id"},
+        ):
             raise AutonomousResearchError("Attempt entry has an invalid schema.")
         if "research_package_id" in item and not _is_sha256(item["research_package_id"]):
             raise AutonomousResearchError("Attempt research-package identity is invalid.")
+        if "research_package_attempt_id" in item and not _is_sha256(item["research_package_attempt_id"]):
+            raise AutonomousResearchError("Attempt package-exposure attempt identity is invalid.")
+        if "research_package_attempt_id" in item and "research_package_id" not in item:
+            raise AutonomousResearchError("Package-exposure attempt identity lacks a package identity.")
         attempt_id = item["attempt_id"]
         if not isinstance(attempt_id, str) or len(attempt_id) != 64 or any(
             character not in "0123456789abcdef" for character in attempt_id
@@ -988,7 +996,9 @@ def prepare_cycle(
                     retry_number = same_target_attempts + 1
                     if last_attempt.get("research_package_id") is not None:
                         resume_package_id = last_attempt["research_package_id"]
-                        resume_package_attempt_id = last_attempt["attempt_id"]
+                        resume_package_attempt_id = last_attempt.get(
+                            "research_package_attempt_id", last_attempt["attempt_id"]
+                        )
                 else:
                     if reason_code == "PROVIDER_HTTP_REJECTION_NO_RETRY":
                         blocked_status = "PROVIDER_HTTP_REJECTION_NO_RETRY"
@@ -1298,6 +1308,12 @@ def claim_attempt(
         )
         if unlock_at > _timestamp(claimed_at, "attempt.claimed_at_utc"):
             raise AutonomousResearchError("Manual unlock provenance postdates the retry claim.")
+    package = plan.get("research_package")
+    package_exposure_attempt_id = (
+        package.get("scheduler_attempt_id")
+        if isinstance(package, dict) and isinstance(package.get("scheduler_attempt_id"), str)
+        else attempt_id
+    )
     attempt = {
         "attempt_id": attempt_id,
         "target_date": target_date,
@@ -1305,8 +1321,10 @@ def claim_attempt(
         "archive_record_count": plan["archive_record_count"],
         "claimed_at_utc": claimed_at,
         "github_run_id": github_run_id,
-        **({"research_package_id": plan["research_package_id"]}
-           if isinstance(plan.get("research_package_id"), str) else {}),
+        **({
+            "research_package_id": plan["research_package_id"],
+            "research_package_attempt_id": package_exposure_attempt_id,
+        } if isinstance(plan.get("research_package_id"), str) else {}),
     }
     state["attempts"].append(attempt)
     if workflow_failure_to_recover is not None:
@@ -1486,7 +1504,8 @@ def record_outcome(
             raise AutonomousResearchError("V3 package lifecycle requires the append-only evaluation ledger.")
         ledger = sealed.load_ledger(evaluation_ledger_path)
         exposure = research_windows.package_exposure_for_attempt(
-            ledger, package_id=package_id, attempt_id=attempt_id
+            ledger, package_id=package_id,
+            attempt_id=attempt.get("research_package_attempt_id", attempt_id),
         )
         if exposure is None:
             candidates = [
@@ -1868,6 +1887,7 @@ def main(argv: list[str] | None = None) -> int:
             _write_github_output(args.github_output, {
                 "attempt_id": attempt["attempt_id"],
                 "research_package_id": attempt.get("research_package_id", ""),
+                "research_package_attempt_id": attempt.get("research_package_attempt_id", ""),
             })
         else:
             state = record_outcome(
