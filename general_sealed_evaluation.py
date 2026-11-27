@@ -810,11 +810,32 @@ def _build_v3_package_split(archive, ledger, *, offline_memory_path, package_id=
                 package, archive["rows"], archive_sha256=archive["archive_sha256"],
                 unavailable=set(package.get("previously_unavailable_dates", [])),
             )
-            # A RELEASED package had no provider exposure. Reuse its exact
-            # immutable date plan, but create a fresh reservation for this attempt.
+            current_unavailable = research_windows.unavailable_dates(
+                archive["rows"], ledger=ledger, memory=memory, attempts=[]
+            )
+            package_dates = set(package["dates"])
             if reservation_state == "RELEASED":
+                # No provider ever saw this package. Treat the old reservation
+                # as released, then mint a fresh package ID from the current ledger.
                 exposure = None
-        else:
+                package_id = None
+            elif reservation_state == "RESERVED":
+                current_without_own = current_unavailable - package_dates
+                if current_without_own != set(package["previously_unavailable_dates"]):
+                    raise research_windows.ResearchWindowError(
+                        "Reserved package prior-unavailable snapshot changed before discovery."
+                    )
+            elif reservation_state == "EXPOSED":
+                own_discovery = set(exposure["discovery_dates"])
+                if package_dates.intersection(current_unavailable - own_discovery):
+                    raise research_windows.ResearchWindowError(
+                        "An exposed package now overlaps another consumed date or claim."
+                    )
+            else:
+                raise research_windows.ResearchWindowError(
+                    "A V3 package can only be resumed while reserved or discovery-exposed."
+                )
+        if package_id is None:
             unavailable = research_windows.unavailable_dates(
                 archive["rows"], ledger=ledger, memory=memory, attempts=[]
             )
