@@ -743,10 +743,15 @@ def _build_v3_package_split(archive, ledger, *, offline_memory_path, package_id=
             if exposure is None:
                 raise research_windows.ResearchWindowError("Exact package reservation not found.")
             package = research_windows.package_from_exposure(exposure)
+            reservation_state = research_windows.package_exposure_status(ledger, exposure)
             research_windows.validate_package(
                 package, archive["rows"], archive_sha256=archive["archive_sha256"],
                 unavailable=set(package.get("previously_unavailable_dates", [])),
             )
+            # A RELEASED package had no provider exposure. Reuse its exact
+            # immutable date plan, but create a fresh reservation for this attempt.
+            if reservation_state == "RELEASED":
+                exposure = None
         else:
             unavailable = research_windows.unavailable_dates(
                 archive["rows"], ledger=ledger, memory=memory, attempts=[]
@@ -770,7 +775,9 @@ def _build_v3_package_split(archive, ledger, *, offline_memory_path, package_id=
         split = research_windows.split_from_package(
             archive["rows"], package, archive_sha256=archive["archive_sha256"]
         )
-        split["scheduler_attempt_id"] = attempt_id
+        split["scheduler_attempt_id"] = (
+            attempt_id if exposure is not None else None
+        )
         split["previously_consumed_offline_development_draw_count"] = len(offline_dates)
         return split, exposure
     except Exception as exc:
@@ -1077,7 +1084,7 @@ def preflight(
         "pending_claim_id": pending_entry["claim_id"] if pending_entry is not None else None,
         "research_package_id": split.get("research_package", {}).get("package_id"),
         "research_package": split.get("research_package"),
-        "scheduler_attempt_id": attempt_id,
+        "scheduler_attempt_id": split.get("scheduler_attempt_id", attempt_id),
     })
     return result
 
