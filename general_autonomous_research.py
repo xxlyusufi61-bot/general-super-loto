@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import general_sealed_evaluation as sealed
+import general_research_windows as research_windows
 from general_nvidia_guard import validate_lock_state
 import general_target_queue as target_queue
 import general_target_evaluation_ledger as target_evaluation_ledger
@@ -1825,9 +1826,48 @@ def main(argv: list[str] | None = None) -> int:
                 plan,
                 github_run_id=args.run_id or None,
             )
+            if isinstance(attempt.get("research_package_id"), str):
+                ledger = sealed.load_ledger(args.ledger)
+                memory_path = Path("general_research_memory.json")
+                memory = __import__("general_research_memory").load_memory(memory_path)
+                memory_sha = hashlib.sha256(memory_path.read_bytes()).hexdigest()
+                research_windows.ensure_legacy_exposure(
+                    ledger,
+                    sealed.load_archive(args.archive)["rows"],
+                    memory,
+                    memory_sha256=memory_sha,
+                    created_at_utc=attempt["claimed_at_utc"],
+                )
+                pending = sealed.pending_claim_for_archive(args.archive, args.ledger)
+                if pending is None:
+                    package = plan.get("research_package")
+                    if not isinstance(package, dict) or package.get("package_id") != attempt["research_package_id"]:
+                        raise AutonomousResearchError("V3 attempt does not contain its exact frozen package.")
+                    research_windows.validate_package(
+                        package,
+                        sealed.load_archive(args.archive)["rows"],
+                        archive_sha256=attempt["archive_sha256"],
+                        unavailable=set(package.get("previously_unavailable_dates", [])),
+                    )
+                    research_windows.reserve_research_package(
+                        ledger,
+                        package,
+                        attempt_id=attempt["attempt_id"],
+                        created_at_utc=attempt["claimed_at_utc"],
+                    )
+                ledger_path = Path(args.ledger)
+                temporary_ledger = ledger_path.with_name(ledger_path.name + ".tmp")
+                temporary_ledger.write_text(
+                    json.dumps(ledger, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
+                    encoding="utf-8",
+                )
+                temporary_ledger.replace(ledger_path)
             write_state(args.state, state)
             result = {"status": "ATTEMPT_CLAIMED_BEFORE_PROVIDER_CALL", **attempt}
-            _write_github_output(args.github_output, {"attempt_id": attempt["attempt_id"]})
+            _write_github_output(args.github_output, {
+                "attempt_id": attempt["attempt_id"],
+                "research_package_id": attempt.get("research_package_id", ""),
+            })
         else:
             state = record_outcome(
                 state,
