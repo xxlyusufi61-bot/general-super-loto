@@ -98,7 +98,7 @@ class AutonomousResearchStateTests(unittest.TestCase):
             self.assertTrue(plan["eligible"], plan)
             package = plan["research_package"]
             attempt = auto.claim_attempt(
-                state, plan, github_run_id="v3-release-test", now=NOW,
+                state, plan, github_run_id="420000100", now=NOW,
             )
             ledger = auto.sealed.load_ledger(ledger_path)
             exposure_attempt_id = attempt.get(
